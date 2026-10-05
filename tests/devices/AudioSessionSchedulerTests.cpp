@@ -83,6 +83,26 @@ using SchedulerTest = ShapedSchedulerTest<kCmpDevice>;
 using ApogeeTest = ShapedSchedulerTest<kApogeeDevice>;
 using DiceQuietPeriodTest = ShapedSchedulerTest<kDiceDevice>;
 
+TEST_F(SchedulerTest, RejectedIdleRateDoesNotBecomeStartupRate) {
+    rig.FailDevice("apply_clock");
+    EXPECT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 32000},
+                                     DuplexRestartReason::kSampleRateChange), kIOReturnError);
+    EXPECT_EQ(Snapshot().desiredClock.sampleRateHz, 0U);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid, AudioClockConfig{.sampleRateHz = 48000}),
+              kIOReturnSuccess);
+    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 48000U);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
+TEST_F(SchedulerTest, ExplicitHalRateReplacesPriorIdleRateAtStart) {
+    ASSERT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 32000},
+                                      DuplexRestartReason::kSampleRateChange), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid, AudioClockConfig{.sampleRateHz = 48000}),
+              kIOReturnSuccess);
+    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 48000U);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
 TEST_F(DiceQuietPeriodTest, EachEventRearmsTheQuietPeriod) {
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
     const uint64_t firstRun = Snapshot().run;

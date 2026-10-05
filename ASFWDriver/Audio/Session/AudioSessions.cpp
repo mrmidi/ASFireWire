@@ -147,12 +147,12 @@ void AudioSessions::Erase(uint64_t guid) noexcept {
     }
 }
 
-IOReturn AudioSessions::Attach(uint64_t guid) noexcept {
+IOReturn AudioSessions::Attach(uint64_t guid, AudioClockConfig clock) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
     const auto session = Ensure(guid);
-    return session ? session->Attach() : kIOReturnNoResources;
+    return session ? session->Attach(clock) : kIOReturnNoResources;
 }
 
 IOReturn AudioSessions::Detach(uint64_t guid) noexcept {

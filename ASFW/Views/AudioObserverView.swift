@@ -22,6 +22,7 @@ final class AudioObserverPanelModel: ObservableObject {
     private var lastScalarPublish = Date.distantPast
     private var publicationHz = 4.0
     private var lastPolicyRead = Date.distantPast
+    private var lastCalibrationConfig: AnalyzerCalibrationConfig?
 
     init(guid: UInt64) {
         client = ASFWAudioObserverClient(guid: guid)
@@ -39,6 +40,7 @@ final class AudioObserverPanelModel: ObservableObject {
                           let stateReader = client.stateReader else {
                         throw AudioObserverError.metalUnavailable
                     }
+                    client.metrics.setCalibrationConfig(AnalyzerCalibrationState.shared.config)
                     engine = try await AudioAnalysisEngine.make(device: device,
                         ringBuffer: ringBuffer,
                         stateReader: stateReader,
@@ -61,6 +63,11 @@ final class AudioObserverPanelModel: ObservableObject {
                     self.snapshot = current
                     self.status = current.ioRunning ? "Observing the live output ring" : "Waiting for playback samples…"
                     if !current.ioRunning {
+                        let currentConfig = AnalyzerCalibrationState.shared.config
+                        if self.lastCalibrationConfig != currentConfig {
+                            self.lastCalibrationConfig = currentConfig
+                            self.client.metrics.setCalibrationConfig(currentConfig)
+                        }
                         self.metrics = self.client.metrics.read(includeHistory: false)
                         self.publishScalarPanels(self.metrics, snapshot: current)
                         self.client.renderSubmission.withFrame {
@@ -92,6 +99,11 @@ final class AudioObserverPanelModel: ObservableObject {
 
     private func publishCompletedAnalysis() {
         let now = Date()
+        let currentConfig = AnalyzerCalibrationState.shared.config
+        if lastCalibrationConfig != currentConfig {
+            lastCalibrationConfig = currentConfig
+            client.metrics.setCalibrationConfig(currentConfig)
+        }
         client.renderSubmission.withFrame {
             NotificationCenter.default.post(name: .asfwAnalysisCompleted, object: client.renderState)
         }
@@ -141,6 +153,8 @@ final class AudioObserverPanelModel: ObservableObject {
 
 struct AudioObserverPanel: View {
     @StateObject private var model: AudioObserverPanelModel
+    @ObservedObject private var themeState = AnalyzerThemeState.shared
+    @ObservedObject private var calibrationState = AnalyzerCalibrationState.shared
     @State private var leftChannel: UInt32 = 0
     @State private var rightChannel: UInt32 = 1
     @State private var spectrumVisualization: SpectrumVisualization = .spectrum
@@ -156,6 +170,9 @@ struct AudioObserverPanel: View {
     @State private var midSide = false
     @State private var slowSpectrum = false
     @State private var peakHold = true
+    @State private var isEditingOffset = false
+    @State private var offsetInputText = ""
+    @FocusState private var isOffsetFocused: Bool
     private let deviceName: String
 
     init(guid: UInt64, deviceName: String) {
@@ -176,7 +193,8 @@ struct AudioObserverPanel: View {
                 }
             }
         }
-        .background(.thinMaterial)
+        .background(themeState.mode.outerBackground)
+        .preferredColorScheme(themeState.mode.isLight ? .light : .dark)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .task { await model.run() }
     }
@@ -187,10 +205,14 @@ struct AudioObserverPanel: View {
                 Label(model.snapshot.ioRunning ? "Running" : "Waiting for audio", systemImage: "circle.fill")
                     .font(.caption.weight(.semibold)).foregroundStyle(model.snapshot.ioRunning ? .mint : .secondary)
                     .help(model.status)
-                Text(deviceName).font(.caption).foregroundStyle(.secondary)
+                Text(deviceName).font(.caption).foregroundStyle(themeState.mode.secondaryTextColor)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            if calibrationState.config.effectiveOffsetDB != 0.0 {
+                calibrationBadge
+            }
+            themePicker
             channelPicker("L / A", selection: $leftChannel)
                 .onChange(of: leftChannel) { _, value in model.setChannels(left: value, right: rightChannel) }
             channelPicker("R / B", selection: $rightChannel)
@@ -198,9 +220,53 @@ struct AudioObserverPanel: View {
             Label(String(format: "%.1f kHz · %u ch", Double(model.snapshot.sampleRateHz) / 1_000,
                          model.snapshot.channels),
                   systemImage: model.snapshot.ioRunning ? "waveform" : "pause.circle")
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .font(.caption.monospacedDigit()).foregroundStyle(themeState.mode.secondaryTextColor)
                 .fixedSize()
         }
+    }
+
+    private var calibrationBadge: some View {
+        Button {
+            diagnosticTab = "Calibration"
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "tuningfork")
+                Text(String(format: "Calibrated %+.1f dB", calibrationState.config.effectiveOffsetDB))
+                    .fontWeight(.medium)
+            }
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.orange.opacity(0.18))
+            .foregroundStyle(Color.orange)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Color.orange.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Metering calibrated by \(String(format: "%+.1f dB", calibrationState.config.effectiveOffsetDB)). Click to configure.")
+    }
+
+    private var themePicker: some View {
+        Menu {
+            ForEach(AnalyzerThemeMode.allCases) { mode in
+                Button {
+                    themeState.setMode(mode)
+                } label: {
+                    HStack {
+                        Text(mode.rawValue)
+                        if themeState.mode == mode {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(themeState.mode.rawValue, systemImage: "paintpalette")
+                .font(.caption)
+                .foregroundStyle(themeState.mode.secondaryTextColor)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 
     private func standardDashboard(in size: CGSize) -> some View {
@@ -292,12 +358,12 @@ struct AudioObserverPanel: View {
     private func liveTile(_ title: String,
                           value: @escaping (AudioObserverMetrics) -> String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.caption).foregroundStyle(themeState.mode.secondaryTextColor)
             AnalyzerMetalText("tile.\(title)", style: .tileValue, template: "-00.0 dBTP",
                               alignment: .leading) { metrics, _ in value(metrics) }
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-        .background(.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
+        .background(themeState.mode.isLight ? Color.black.opacity(0.04) : Color.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private var spectrumPanel: some View {
@@ -380,11 +446,15 @@ struct AudioObserverPanel: View {
                     }.font(.caption2).foregroundStyle(.secondary)
                 } else {
                     HStack(spacing: 14) {
-                        spectrumLegend(.mint, midSide ? "Mid" : "Stereo power")
+                        let isLight = themeState.mode.isLight
+                        let mainColor: Color = isLight ? Color(red: 0.04, green: 0.48, blue: 0.68) : .mint
+                        let sideColor: Color = isLight ? Color(red: 0.85, green: 0.28, blue: 0.05) : .orange
+                        let peakColor: Color = isLight ? Color(red: 0.82, green: 0.45, blue: 0.05) : Color(red: 0.75, green: 0.55, blue: 0.22)
+                        spectrumLegend(mainColor, midSide ? "Mid" : "Stereo power")
                         if midSide {
-                            spectrumLegend(.orange, midSide ? "Side" : "Output \(rightChannel + 1)")
+                            spectrumLegend(sideColor, midSide ? "Side" : "Output \(rightChannel + 1)")
                         }
-                        if peakHold { spectrumLegend(Color(red: 0.75, green: 0.55, blue: 0.22), "Peak hold") }
+                        if peakHold { spectrumLegend(peakColor, "Peak hold") }
                         Spacer(minLength: 0)
                     }
                     .font(.caption2)
@@ -411,7 +481,7 @@ struct AudioObserverPanel: View {
                                 dbValue(metrics.analysis.loudness.loudnessRangeLU, unit: "LU")
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                            .background(.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
+                            .background(themeState.mode.isLight ? Color.black.opacity(0.04) : Color.white.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 7))
                         liveTile("True Peak") { dbtpText($0.analysis.loudness.maximumTruePeakDBTP) }
                     }
                     HStack(spacing: 8) {
@@ -421,11 +491,15 @@ struct AudioObserverPanel: View {
                 }.frame(maxWidth: .infinity)
             }.frame(height: 125)
             Text("Loudness History").font(.caption.weight(.medium))
+                .foregroundStyle(themeState.mode.primaryTextColor)
             LoudnessHistoryView(client: model.client).frame(maxHeight: .infinity)
-            HStack(spacing: 14) {
-                spectrumLegend(.green, "Momentary")
-                spectrumLegend(.blue, "Short-term")
-                spectrumLegend(.purple, "Integrated")
+            HStack(spacing: 12) {
+                let isLight = themeState.mode.isLight
+                spectrumLegend(isLight ? Color(red: 0.08, green: 0.60, blue: 0.22) : .green, "Momentary")
+                spectrumLegend(isLight ? Color(red: 0.08, green: 0.42, blue: 0.88) : .blue, "Short-term")
+                spectrumLegend(isLight ? Color(red: 0.55, green: 0.15, blue: 0.85) : .purple, "Integrated")
+                targetLegend(isLight ? Color(red: 0.02, green: 0.45, blue: 0.75) : .cyan, "−14 Streaming")
+                targetLegend(isLight ? Color(red: 0.80, green: 0.38, blue: 0.02) : .orange, "−23 EBU R128")
                 Spacer()
                 AnalyzerLivePanel(state: model.loudnessControlsUI) { metrics, _ in
                     loudnessSessionControls(metrics.analysis.loudness)
@@ -440,7 +514,7 @@ struct AudioObserverPanel: View {
 
     private func loudnessCard(_ title: String, keyPath: KeyPath<AudioLoudnessMetrics, AudioMeasurement<Float>>) -> some View {
         VStack(spacing: 7) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.caption).foregroundStyle(themeState.mode.secondaryTextColor)
             AnalyzerMetalText("card.\(title)", style: .loudnessHero, template: "-00.0",
                               alignment: .center) { metrics, _ in
                 let measurement = metrics.analysis.loudness[keyPath: keyPath]
@@ -452,10 +526,10 @@ struct AudioObserverPanel: View {
                 return measurement.value == nil ? measurementText(measurement) : "LUFS"
             }
             AnalyzerCanvasSlot(mode: 4, index: title == "Momentary" ? 0 : title == "Short-term" ? 1 : 2)
-                .frame(height: 5).background(.white.opacity(0.08)).clipShape(Capsule())
+                .frame(height: 5).background(themeState.mode.isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.08)).clipShape(Capsule())
         }
         .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.white.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(themeState.mode.isLight ? Color.black.opacity(0.04) : Color.white.opacity(0.035)).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var diagnosticsPanel: some View {
@@ -492,9 +566,7 @@ struct AudioObserverPanel: View {
                     }
                 }.frame(maxHeight: .infinity)
             } else if diagnosticTab == "Calibration" {
-                ContentUnavailableView("Calibration", systemImage: "slider.horizontal.3",
-                    description: Text("Calibration tools are planned. No correction is applied to the signal."))
-                    .frame(maxHeight: .infinity)
+                calibrationDiagnostics
             } else if diagnosticTab == "Log" {
                 diagnosticCard("Observer status") {
                     Text(model.status).font(.caption)
@@ -508,7 +580,7 @@ struct AudioObserverPanel: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
-            if diagnosticTab != "GPU" {
+            if diagnosticTab != "GPU" && diagnosticTab != "Calibration" {
                 HStack(alignment: .top, spacing: 10) {
                     diagnosticCard("Test Signal Generator · preview") {
                         HStack {
@@ -535,6 +607,145 @@ struct AudioObserverPanel: View {
                 }.frame(height: 105)
             }
         }
+    }
+
+    private var calibrationDiagnostics: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Observer Gain Calibration")
+                        .font(.headline)
+                        .foregroundStyle(themeState.mode.primaryTextColor)
+                    Text("Compensates for post-DAW room correction attenuation (e.g. Sonarworks SoundID Reference) so true programme loudness is measured.")
+                        .font(.caption)
+                        .foregroundStyle(themeState.mode.secondaryTextColor)
+                }
+                Spacer()
+                Toggle("Active", isOn: Binding(
+                    get: { calibrationState.config.isEnabled },
+                    set: { _ in calibrationState.toggleEnabled() }
+                ))
+                .toggleStyle(.switch)
+            }
+            .padding(.bottom, 2)
+
+            HStack(spacing: 12) {
+                diagnosticCard("Offset Control") {
+                    HStack(spacing: 10) {
+                        if isEditingOffset {
+                            TextField("0.0", text: $offsetInputText)
+                                .textFieldStyle(.plain)
+                                .font(.system(.title2, design: .monospaced).weight(.bold))
+                                .focused($isOffsetFocused)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .frame(width: 100)
+                                .background(themeState.mode.isLight ? Color.white : Color.black.opacity(0.4))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.orange, lineWidth: 1.5))
+                                .onSubmit { commitOffsetEdit() }
+                                .onExitCommand { isEditingOffset = false; isOffsetFocused = false }
+                                .onChange(of: isOffsetFocused) { _, focused in
+                                    if !focused && isEditingOffset {
+                                        commitOffsetEdit()
+                                    }
+                                }
+
+                            Button("Done") { commitOffsetEdit() }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                        } else {
+                            Button {
+                                offsetInputText = String(format: "%+.1f", calibrationState.config.offsetDB)
+                                isEditingOffset = true
+                                isOffsetFocused = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(String(format: "%+.1f", calibrationState.config.offsetDB))
+                                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                                    Text("dB")
+                                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                                        .foregroundStyle(themeState.mode.secondaryTextColor)
+                                }
+                                .foregroundStyle(calibrationState.config.isEnabled ? (calibrationState.config.effectiveOffsetDB != 0 ? Color.orange : themeState.mode.primaryTextColor) : themeState.mode.secondaryTextColor)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(themeState.mode.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Click or double-click to enter calibration offset directly")
+
+                            Stepper("", value: Binding(
+                                get: { calibrationState.config.offsetDB },
+                                set: { calibrationState.setOffset($0) }
+                            ), in: AnalyzerCalibrationConfig.minimumOffsetDB...AnalyzerCalibrationConfig.maximumOffsetDB, step: 0.1)
+                            .labelsHidden()
+                            .disabled(!calibrationState.config.isEnabled)
+                        }
+
+                        Spacer()
+
+                        Button("Reset (0 dB)") {
+                            calibrationState.reset()
+                        }
+                        .disabled(calibrationState.config.offsetDB == 0.0)
+                    }
+
+                    HStack {
+                        Text("Click number for manual entry · Stepper adjusts ±0.1 dB")
+                            .font(.caption2)
+                            .foregroundStyle(themeState.mode.secondaryTextColor)
+                        Spacer()
+                        Text(String(format: "Linear: ×%.3f · Energy: ×%.3f",
+                                    calibrationState.config.linearGain,
+                                    calibrationState.config.energyScale))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(themeState.mode.secondaryTextColor)
+                    }
+                }
+
+                diagnosticCard("Presets") {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+                        ForEach(AnalyzerCalibrationConfig.presets) { preset in
+                            Button {
+                                calibrationState.setOffset(preset.offsetDB)
+                            } label: {
+                                Text(preset.label)
+                                    .font(.caption)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(calibrationState.config.offsetDB == preset.offsetDB && calibrationState.config.isEnabled ? .orange : nil)
+                        }
+                    }
+                }
+                .frame(maxWidth: 240)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+                Text("Non-destructive: audio samples passing through the driver to hardware are untouched.")
+                    .font(.caption2)
+                    .foregroundStyle(themeState.mode.secondaryTextColor)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 4)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func commitOffsetEdit() {
+        let cleaned = offsetInputText.replacingOccurrences(of: "dB", with: "", options: .caseInsensitive)
+                                     .replacingOccurrences(of: "+", with: "")
+                                     .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let val = Double(cleaned) {
+            calibrationState.setOffset(val)
+        }
+        isEditingOffset = false
+        isOffsetFocused = false
     }
 
 
@@ -657,7 +868,7 @@ struct AudioObserverPanel: View {
         interval: Double = AnalyzerTextSpec.diagnostics,
         value: @escaping (AudioObserverMetrics, AudioObserverSnapshot) -> String) -> some View {
         HStack {
-            Text(title).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor).lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 12)
             AnalyzerMetalText("diag.\(id ?? title)", style: .captionMono, template: "000000000000",
                               alignment: .trailing, interval: interval, format: value)
@@ -667,17 +878,28 @@ struct AudioObserverPanel: View {
     private func diagnosticCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title).font(.caption.weight(.semibold))
+                .foregroundStyle(themeState.mode.primaryTextColor)
             content()
         }.padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(.black.opacity(0.12))
-            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.06)) }
+            .background(themeState.mode.isLight ? Color.black.opacity(0.04) : Color.black.opacity(0.12))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(themeState.mode.cardBorder) }
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func spectrumLegend(_ color: Color, _ title: String) -> some View {
         HStack(spacing: 4) {
             Capsule().fill(color).frame(width: 10, height: 4)
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor)
+        }
+    }
+
+    private func targetLegend(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 2) {
+                RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 4, height: 2)
+                RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 4, height: 2)
+            }
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor)
         }
     }
 
@@ -691,26 +913,28 @@ struct AudioObserverPanel: View {
     }
 
     private func scopePlot(mode: AudioObserverDisplayMode) -> some View {
-        ZStack {
-            Color(red: 0.025, green: 0.035, blue: 0.05)
+        let isPhaseScope = mode == .phaseScope
+        return ZStack {
+            themeState.mode.plotBackground
             if model.snapshot.ioRunning {
-                if mode == .phaseScope {
+                if isPhaseScope {
                     AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(30)
                 } else {
                     MetalAudioObserverView(client: model.client, mode: mode,
                                            leftChannel: leftChannel, rightChannel: rightChannel)
-                        .id("\(model.snapshot.memoryGeneration)-\(mode)-\(leftChannel)-\(rightChannel)")
+                        .id("\(model.snapshot.memoryGeneration)-\(mode)-\(leftChannel)-\(rightChannel)-\(themeState.mode.rawValue)")
                 }
             } else {
-                Text("Waiting for audio").foregroundStyle(.secondary)
+                Text("Waiting for audio").foregroundStyle(themeState.mode.secondaryTextColor)
             }
-            if mode == .phaseScope {
+            if isPhaseScope {
                 AnalyzerPlotAxes(kind: .goniometer)
             } else {
                 AnalyzerPlotAxes(kind: .waveform)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(themeState.mode.plotBorder, lineWidth: 1))
     }
 
     private var historyPlotAxes: AnalyzerPlotAxes.Kind {
@@ -724,21 +948,28 @@ struct AudioObserverPanel: View {
     }
 
     private func spectrumPlot(channel: UInt32, side: Bool) -> some View {
-        VStack(spacing: 4) {
+        let usesHistory3D = spectrumVisualization.usesHistory
+        return VStack(spacing: 4) {
             Text(midSide ? (side ? "Side · (L−R)/√2" : "Mid · (L+R)/√2") : "L/R · averaged channel power")
                 .font(.caption2)
+                .foregroundStyle(themeState.mode.secondaryTextColor)
             ZStack {
-                Color(red: 0.025, green: 0.035, blue: 0.05)
+                if usesHistory3D {
+                    Color(red: 0.025, green: 0.035, blue: 0.05)
+                } else {
+                    themeState.mode.plotBackground
+                }
                 if model.snapshot.ioRunning {
                     SpectrumCanvasSlot(transform: midSide ? (side ? 2 : 1) : 3)
                         .padding(.leading, 38).padding(.trailing, 12)
                         .padding(.top, 12).padding(.bottom, 30)
                 } else {
-                    Text("Waiting for audio").foregroundStyle(.secondary)
+                    Text("Waiting for audio").foregroundStyle(usesHistory3D ? Color.gray : themeState.mode.secondaryTextColor)
                 }
                 AnalyzerPlotAxes(kind: historyPlotAxes)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(usesHistory3D ? Color.white.opacity(0.12) : themeState.mode.plotBorder, lineWidth: 1))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -749,7 +980,8 @@ struct AudioObserverPanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.title3.weight(.semibold))
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                        .foregroundStyle(themeState.mode.primaryTextColor)
+                    Text(subtitle).font(.caption).foregroundStyle(themeState.mode.secondaryTextColor)
                         .lineLimit(1).minimumScaleFactor(0.85)
                 }
                 if spectrumSelector {
@@ -766,8 +998,8 @@ struct AudioObserverPanel: View {
         .analyzerCanvas(client: model.client)
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(LinearGradient(colors: [Color(red: 0.105, green: 0.14, blue: 0.165), Color(red: 0.065, green: 0.085, blue: 0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.09), lineWidth: 1).allowsHitTesting(false) }
+        .background(LinearGradient(colors: [themeState.mode.cardBackgroundTop, themeState.mode.cardBackgroundBottom], startPoint: .topLeading, endPoint: .bottomTrailing))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(themeState.mode.cardBorder, lineWidth: 1).allowsHitTesting(false) }
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -796,10 +1028,11 @@ struct AudioObserverPanel: View {
 
     private func diagnosticsRow(_ title: String, _ value: String) -> some View {
         HStack {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(themeState.mode.secondaryTextColor)
                 .lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 12)
             Text(value).font(.system(.caption, design: .monospaced))
+                .foregroundStyle(themeState.mode.primaryTextColor)
                 .multilineTextAlignment(.trailing).lineLimit(1).minimumScaleFactor(0.65)
         }
     }

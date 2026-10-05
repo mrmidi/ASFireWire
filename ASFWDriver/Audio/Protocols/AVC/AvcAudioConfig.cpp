@@ -104,16 +104,12 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         return std::nullopt;
     }
     PreferDefaultStartRate(config);
-    // Duet and Phase88 can reconfigure among the graph's same-shape formations.
-    // Other generic devices retain the single-rate policy (Onyx-i regression).
-    const bool canReconfigure = plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet ||
-                                plan.protocolImplementation == DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88;
-    if (!canReconfigure) config.sampleRates = {config.currentSampleRate};
-    else {
-        std::erase_if(config.sampleRates, [](uint32_t rate) { return !::ASFW::Audio::IsSupportedAudioClockConfig({rate}); });
-        if (config.sampleRates.empty()) return std::nullopt;
-        PreferDefaultStartRate(config);
-    }
+    // Interim single-rate HAL contract. ADK streams accept advertised formats
+    // independently of the deferred hardware clock transaction. Until that
+    // transaction updates/rolls back the whole graph atomically, advertising
+    // alternatives can leave HAL streams at 32 kHz with transport at 48 kHz.
+    // Keep discovered capabilities intact; narrow only the published endpoint.
+    config.sampleRates = {config.currentSampleRate};
     config.inputChannelNames = capture.channelNames;
     config.outputChannelNames = playback.channelNames;
     config.playbackStreams = {{.pcmChannels = playback.channelCount,

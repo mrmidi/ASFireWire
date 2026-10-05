@@ -127,7 +127,7 @@ public:
     SessionScheduler& operator=(const SessionScheduler&) = delete;
 
     // CoreAudio wants streams (StartIO) or no longer does (StopIO).
-    [[nodiscard]] IOReturn Attach() noexcept;
+    [[nodiscard]] IOReturn Attach(AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn Detach() noexcept;
     // A new clock: applied now while idle, or by a restart while running.
     // Returns kIOReturnAborted when a later change superseded this one.

@@ -69,7 +69,7 @@ public:
     }
     void HandleCycleInconsistent() noexcept;
 
-    [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;
+    [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn RequestClockConfig(
         uint64_t guid,

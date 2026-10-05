@@ -1,20 +1,52 @@
 import SwiftUI
 
 struct AnalyzerPlotAxes: View {
-    enum Kind { case goniometer; case waveform; case spectrum(sampleRate: UInt32); case spectrogram(sampleRate: UInt32, seconds: Double); case waterfall(sampleRate: UInt32, seconds: Double) }
+    @ObservedObject private var themeState = AnalyzerThemeState.shared
+
+    enum Kind: Sendable, Equatable {
+        case goniometer
+        case waveform
+        case spectrum(sampleRate: UInt32)
+        case spectrogram(sampleRate: UInt32, seconds: Double)
+        case waterfall(sampleRate: UInt32, seconds: Double)
+    }
+
     let kind: Kind
 
+    private var staysOnDarkBackground: Bool {
+        switch kind {
+        case .spectrogram, .waterfall:
+            return true
+        case .goniometer, .waveform, .spectrum:
+            return false
+        }
+    }
+
     var body: some View {
+        let mode = themeState.mode
+        let useLightScheme = mode.isLight && !staysOnDarkBackground
+        let gridLineColor = useLightScheme
+            ? (kind == .goniometer ? Color.black.opacity(0.18) : mode.plotGridLine)
+            : Color.white.opacity(0.20)
+        let labelColor = useLightScheme ? mode.plotLabelColor : Color(red: 0.72, green: 0.78, blue: 0.85)
+
         Canvas { context, size in
             func label(_ text: String, at point: CGPoint, anchor: UnitPoint = .center) {
-                context.draw(Text(text).font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.gray), at: point, anchor: anchor)
+                context.draw(
+                    Text(text)
+                        .font(.system(size: 10, weight: useLightScheme ? .medium : .regular, design: .monospaced))
+                        .foregroundStyle(labelColor),
+                    at: point, anchor: anchor
+                )
             }
+
             func line(_ start: CGPoint, _ end: CGPoint) {
                 var path = Path()
-                path.move(to: start); path.addLine(to: end)
-                context.stroke(path, with: .color(.white.opacity(0.20)), lineWidth: 0.7)
+                path.move(to: start)
+                path.addLine(to: end)
+                context.stroke(path, with: .color(gridLineColor), lineWidth: 0.7)
             }
+
             switch kind {
             case .goniometer:
                 let plot = CGRect(x: 30, y: 30, width: size.width - 60, height: size.height - 60)
@@ -27,12 +59,14 @@ struct AnalyzerPlotAxes: View {
                 label("0", at: CGPoint(x: plot.midX - 8, y: plot.midY + 12))
                 label("Y: (L+R)/√2 · in phase", at: CGPoint(x: size.width / 2, y: 12))
                 label("X: (L−R)/√2 · opposite phase", at: CGPoint(x: size.width / 2, y: size.height - 12))
+
             case .waveform:
                 for lane in 0..<2 {
                     let middle = size.height * (CGFloat(lane) + 0.5) / 2
                     line(CGPoint(x: 0, y: middle), CGPoint(x: size.width, y: middle))
                     label(lane == 0 ? "L" : "R", at: CGPoint(x: 10, y: middle - 12))
                 }
+
             case .waterfall(let rate, let seconds):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 func projected(_ frequency: Double, _ age: Double, _ level: Double = 0) -> CGPoint {
@@ -72,6 +106,7 @@ struct AnalyzerPlotAxes: View {
                 label("Level · dBFS", at: CGPoint(x: level.x, y: level.y - 14), anchor: .leading)
                 let time = projected(1, 1)
                 label("History · s", at: CGPoint(x: time.x, y: time.y - 16), anchor: .trailing)
+
             case .spectrogram(let rate, let seconds):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 let maximum = min(20000.0, Double(rate == 0 ? 48000 : rate) / 2)
@@ -87,6 +122,7 @@ struct AnalyzerPlotAxes: View {
                           anchor: tick == 4 ? .trailing : tick == 0 ? .leading : .center)
                 }
                 label("Hz", at: CGPoint(x: 18, y: size.height - 10))
+
             case .spectrum(let rate):
                 let plot = CGRect(x: 38, y: 12, width: max(1, size.width - 50), height: max(1, size.height - 42))
                 for db in [6, 0, -30, -60, -90, -120] {

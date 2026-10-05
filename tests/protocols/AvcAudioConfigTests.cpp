@@ -64,7 +64,7 @@ TEST(AvcAudioConfig, GraphOffersOnlyTheRateItStartsAt) {
     EXPECT_EQ(pinned->currentSampleRate, 96000U);
 }
 
-TEST(AvcAudioConfig, ReconfigurableDevicesOfferOnlySharedStreamableRates) {
+TEST(AvcAudioConfig, AvcDevicesPublishOnlyStartupRateUntilTransactionalMultiRate) {
     DeviceGraph graph;
     graph.playback = Stream(2, 2, {32000, 44100, 48000, 96000}, 96000);
     graph.capture = Stream(2, 2, {44100, 48000, 96000}, 96000);
@@ -76,14 +76,14 @@ TEST(AvcAudioConfig, ReconfigurableDevicesOfferOnlySharedStreamableRates) {
         plan.streamTraits.start.startAtObservedRate = true;
         const auto config = BuildGraphAudioConfig({}, plan, graph);
         ASSERT_TRUE(config);
-        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{44100, 48000}));
+        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{48000}));
         EXPECT_EQ(config->currentSampleRate, 48000U);
     }
 }
 
 TEST(AvcAudioConfig, DifferentInitialPlugRatesPublishACommonStartupRate) {
     DeviceGraph graph;
-    graph.playback = Stream(10, 11, {32000, 44100, 48000, 88200, 96000}, 44100);
+    graph.playback = Stream(10, 11, {32000, 44100, 48000, 88200, 96000}, 32000);
     graph.capture = Stream(10, 11, {32000, 44100, 48000, 88200, 96000}, 48000);
     for (const auto implementation : {
              ASFW::DeviceProfiles::Audio::ProtocolImplementationId::BeBoBPhase88,
@@ -95,7 +95,7 @@ TEST(AvcAudioConfig, DifferentInitialPlugRatesPublishACommonStartupRate) {
         EXPECT_EQ(config->currentSampleRate, 48000U);
         EXPECT_EQ(config->inputChannelCount, 10U);
         EXPECT_EQ(config->outputChannelCount, 10U);
-        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{32000, 44100, 48000}));
+        EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{48000}));
     }
     // The generic startup also sets both plug formats, with one published rate.
     auto generic = BuildGraphAudioConfig({}, StaticAudioEndpointPlan{}, graph);
@@ -189,7 +189,7 @@ TEST(AvcAudioConfig, PublishesOnlyConfirmedControlsWithDeviceReportedRanges) {
     plan.protocolImplementation = ASFW::DeviceProfiles::Audio::ProtocolImplementationId::ApogeeDuet;
     auto config = BuildGraphAudioConfig({.guid = 42}, plan, graph);
     ASSERT_TRUE(config); ASSERT_EQ(config->avcControls.size(), 1);
-    EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{44100, 48000}));
+    EXPECT_EQ(config->sampleRates, (std::vector<uint32_t>{48000}));
     EXPECT_EQ(config->avcControls[0].scope, static_cast<uint32_t>('outp'));
     EXPECT_EQ(config->avcControls[0].element, 0);
     EXPECT_TRUE(config->avcControls[0].hasVolume); EXPECT_TRUE(config->avcControls[0].hasMute);

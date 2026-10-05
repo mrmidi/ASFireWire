@@ -631,7 +631,10 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnNotReady;
     }
 
-    const IOReturn kr = coordinator->StartStreaming(ivars->guid);
+    ASFW_LOG(Audio, "[SessionClock] HAL start GUID=%llx preparedRate=%u",
+             ivars->guid, sampleRateHz);
+    const IOReturn kr = coordinator->StartStreaming(ivars->guid,
+        ASFW::Audio::AudioClockConfig{.sampleRateHz = sampleRateHz});
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
     } else {

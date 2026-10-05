@@ -59,7 +59,7 @@ public:
     // The device is gone for good: forget its session.
     void Erase(uint64_t guid) noexcept;
 
-    [[nodiscard]] IOReturn Attach(uint64_t guid) noexcept;
+    [[nodiscard]] IOReturn Attach(uint64_t guid, AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn Detach(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn ChangeClock(uint64_t guid, const AudioClockConfig& clock,
                                        DuplexRestartReason reason) noexcept;

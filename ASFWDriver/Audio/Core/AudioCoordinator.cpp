@@ -243,7 +243,7 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     return nullptr;
 }
 
-IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
+IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock) noexcept {
     if (publisher_.IsGeometryChangeBlocked(guid)) return kIOReturnNotReady;
     if (guid == 0) return kIOReturnBadArgument;
 
@@ -257,11 +257,7 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
         if (activeGuid_ == 0) {
             activeGuid_ = guid;
             setActive = true;
-        } else if (activeGuid_ == guid) {
-            IOLockUnlock(lock_);
-            // Idempotent start: avoid reconfiguring already-running IR/IT contexts.
-            return kIOReturnSuccess;
-        } else {
+        } else if (activeGuid_ != guid) {
             const uint64_t active = activeGuid_;
             IOLockUnlock(lock_);
 
@@ -279,7 +275,10 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    const IOReturn kr = sessions_.Attach(guid);
+    // Ownership can survive a failed stop after host transport has quiesced.
+    // Only the session knows whether this is an idempotent running start or
+    // whether retained device connections must be cleaned up before restarting.
+    const IOReturn kr = sessions_.Attach(guid, clock);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x",

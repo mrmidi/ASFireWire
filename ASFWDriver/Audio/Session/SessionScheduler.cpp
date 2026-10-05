@@ -117,7 +117,7 @@ bool SessionScheduler::StartAllowed() const noexcept {
 // Requests
 // ---------------------------------------------------------------------------
 
-IOReturn SessionScheduler::Attach() noexcept {
+IOReturn SessionScheduler::Attach(AudioClockConfig clock) noexcept {
     if (!StartAllowed()) {
         return kIOReturnNotReady;
     }
@@ -129,7 +129,15 @@ IOReturn SessionScheduler::Attach() noexcept {
         return kIOReturnNoDevice;
     }
     CancelPendingRestart();
-    return Submit([](Wanted& wanted, Actual& actual) {
+    if (clock.sampleRateHz != 0) {
+        const auto record = deps_.registry.SnapshotByGuid(guid_);
+        if (!record || !IsSupportedClockForRecord(*record, clock)) return kIOReturnUnsupported;
+    }
+    return Submit([clock](Wanted& wanted, Actual& actual) {
+        if (clock.sampleRateHz != 0) {
+            wanted.clockDirty = wanted.clock.sampleRateHz != clock.sampleRateHz;
+            wanted.clock = clock;
+        }
         wanted.halAttached = true;
         // A new attach is a fresh chance for a session that gave up on faults.
         if (actual.state == SessionState::Faulted) {
@@ -535,6 +543,11 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         const IOReturn status = Reconcile(snapshot);
 
         IOLockLock(lock_);
+        // A rejected clock request must not survive as a future start target.
+        // Preserve a newer overlapping request; it owns the next reconcile.
+        if (status != kIOReturnSuccess && snapshot.clockDirty && requested_ == covering) {
+            wanted_.clock = actual_.appliedClock;
+        }
         completed_ = covering;
         RecordResultLocked(covering, status, snapshot.clock);
         if (!mine) {
@@ -688,6 +701,10 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     } else if (IsSupportedClockForRecord(record, actual.appliedClock)) {
         clock = actual.appliedClock;
     }
+    ASFW_LOG(Audio,
+             "[SessionClock] start GUID=%llx requested=%u previouslyApplied=%u selected=%u",
+             guid_, wanted.clock.sampleRateHz, actual.appliedClock.sampleRateHz,
+             clock.sampleRateHz);
     const DuplexRestartReason reason = wanted.restart     ? wanted.restartReason
                                        : wanted.clockDirty ? wanted.clockReason
                                                            : DuplexRestartReason::kInitialStart;

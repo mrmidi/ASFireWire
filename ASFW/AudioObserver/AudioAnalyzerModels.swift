@@ -176,4 +176,5 @@ nonisolated struct AudioAnalyzerSnapshot: Sendable, Equatable {
     var stereo = AudioStereoMetrics()
     var loudness = AudioLoudnessMetrics()
     var diagnostics = AudioDiagnosticsMetrics()
+    var calibrationOffsetDB: Double = 0.0
 }
