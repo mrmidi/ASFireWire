@@ -695,7 +695,7 @@ struct AudioObserverPanel: View {
             Color(red: 0.025, green: 0.035, blue: 0.05)
             if model.snapshot.ioRunning {
                 if mode == .phaseScope {
-                    AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(30)
+                    AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(16)
                 } else {
                     MetalAudioObserverView(client: model.client, mode: mode,
                                            leftChannel: leftChannel, rightChannel: rightChannel)

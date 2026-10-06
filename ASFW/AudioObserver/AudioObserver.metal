@@ -29,7 +29,10 @@ vertex ObserverVertex asfwPhaseVertex(
     constant ObserverParams& params [[buffer(1)]]) {
     const float left = sampleAt(samples, params, vertexID, params.channel);
     const float right = sampleAt(samples, params, vertexID, params.rightChannel);
-    const float x = (left - right) * 0.70710678118f;
+    // Standard goniometer / vectorscope orientation:
+    // Y: Mid = (L + R) / √2 (in-phase mono points up)
+    // X: Side = (R - L) / √2 (Left deflects to -X / top-left, Right deflects to +X / top-right)
+    const float x = (right - left) * 0.70710678118f;
     const float y = (left + right) * 0.70710678118f;
     return { float4(clamp(x, -1.0f, 1.0f), clamp(y, -1.0f, 1.0f), 0.0f, 1.0f) };
 }
