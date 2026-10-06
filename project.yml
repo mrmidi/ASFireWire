@@ -18,11 +18,6 @@ configs:
   Debug: debug
   Release: release
 
-packages:
-  swift-sdk:
-    url: https://github.com/modelcontextprotocol/swift-sdk.git
-    majorVersion: 0.11.0
-
 fileGroups:
   - ASFW.xctestplan
   - bump.sh
@@ -177,8 +172,6 @@ targets:
       - target: ASFWDriver
         embed: true
         codeSign: false
-      - package: swift-sdk
-        product: MCP
     settings:
       base:
         PRODUCT_NAME: $(TARGET_NAME)
@@ -223,8 +216,6 @@ targets:
     dependencies:
       - target: ASFW
         link: false
-      - package: swift-sdk
-        product: MCP
     settings:
       base:
         PRODUCT_NAME: $(TARGET_NAME)
