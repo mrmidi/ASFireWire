@@ -1196,6 +1196,7 @@
 		A36AAFA02BF525767005906A /* DeviceRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeviceRegistry.cpp; sourceTree = "<group>"; };
 		A3F1CD90FB6A6FC29BB1BBAB /* AudioDeviceValidation.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDeviceValidation.cpp; sourceTree = "<group>"; };
 		A418B8B548743D3952A8089B /* OHCIConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OHCIConstants.hpp; sourceTree = "<group>"; };
+		A44CE611A4D71772ABB1BC0E /* App.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.Debug.entitlements; sourceTree = "<group>"; };
 		A4C9F8FE48511BE2BD69FC18 /* LocalIRMResourceCSRHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalIRMResourceCSRHandler.cpp; sourceTree = "<group>"; };
 		A4F3C9444C03138628893C2B /* StopRoutine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StopRoutine.hpp; sourceTree = "<group>"; };
 		A55435EA2259DC1B8FC0061F /* FireworksProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FireworksProtocol.hpp; sourceTree = "<group>"; };
@@ -1323,6 +1324,7 @@
 		C4428DAA8DA9967C8DC18F26 /* RuntimeLifecycleCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RuntimeLifecycleCoordinator.cpp; sourceTree = "<group>"; };
 		C516291F7D576A9672B1D447 /* RootSelectionCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RootSelectionCoordinator.cpp; sourceTree = "<group>"; };
 		C5390203CDB35CB79E64B942 /* BusManagerElection.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusManagerElection.cpp; sourceTree = "<group>"; };
+		C56EEA8DE009B8C7E98B320A /* ASFWDriver.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ASFWDriver.Debug.entitlements; sourceTree = "<group>"; };
 		C5776F6B807031795F90788F /* ASFWMCPToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPToolCatalog.swift; sourceTree = "<group>"; };
 		C585AEE3BB2B09A798AB2E6D /* MCPLiveDriverControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPLiveDriverControlTests.swift; sourceTree = "<group>"; };
 		C5C219767F4362028CC2FEEA /* ASFWMCPTelemetryTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPTelemetryTools.swift; sourceTree = "<group>"; };
@@ -2627,6 +2629,7 @@
 		7BCCFF09A683D96EA5570C56 /* ASFW */ = {
 			isa = PBXGroup;
 			children = (
+				A44CE611A4D71772ABB1BC0E /* App.Debug.entitlements */,
 				9A17820A3A580BFA5594E937 /* App.entitlements */,
 				AE208856E70C5C9AC1A54F71 /* ASFW-Bridging-Header.h */,
 				6103F39DBF1EDAC73FDD5CB8 /* ASFWApp.swift */,
@@ -2898,6 +2901,7 @@
 			isa = PBXGroup;
 			children = (
 				BC54AD9BD749D537A0D2BF05 /* ASFWDriver.cpp */,
+				C56EEA8DE009B8C7E98B320A /* ASFWDriver.Debug.entitlements */,
 				7C269EF508CFAF654ABF9C1A /* ASFWDriver.entitlements */,
 				49272738AA5479B3357D6624 /* ASFWDriver.iig */,
 				2254C12CF4D1CC75F2B3216B /* Async */,
@@ -4473,12 +4477,11 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
-				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -4495,6 +4498,7 @@
 					"$(SRCROOT)/ASFWDriver/Audio/Model",
 				);
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "ASFireWire Driver";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.4.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
@@ -4515,8 +4519,7 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = ASFW/App.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 6;
@@ -4530,6 +4533,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/ASFWDriver/Shared",
 				);
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4557,13 +4561,12 @@
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -4580,6 +4583,7 @@
 					"$(SRCROOT)/ASFWDriver/Audio/Model",
 				);
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "ASFireWire Driver";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.4.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
@@ -4666,12 +4670,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
-				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
-				ENABLE_APP_SANDBOX = NO;
+				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -4680,6 +4683,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/ASFWDriver/Shared",
 				);
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

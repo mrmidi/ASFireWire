@@ -8,7 +8,7 @@
   <array>
     <dict>
       <key>IOPCIPrimaryMatch</key>
-      <string>0x000011c1&amp;0x0000FFFF</string>
+      <string>0xFFFFFFFF&amp;0x00000000</string>
     </dict>
   </array>
   <key>com.apple.developer.driverkit.family.audio</key>

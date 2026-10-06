@@ -39,6 +39,7 @@ struct UnitSpec {
     uint32_t offset{4};
     std::optional<uint32_t> specifierId{};
     std::optional<uint32_t> version{};
+    std::optional<uint32_t> modelId{};
 };
 
 [[nodiscard]] Discovery::DeviceRecord MakeDevice(uint64_t guid,
@@ -56,6 +57,7 @@ struct UnitSpec {
         unit.unitDirectoryOffset = spec.offset;
         unit.specifierId = spec.specifierId;
         unit.version = spec.version;
+        unit.modelId = spec.modelId;
         device.identity.units.push_back(unit);
     }
     return device;
@@ -323,6 +325,57 @@ TEST(AudioDeviceCatalog, RmeFormerModelsRequireExactUnitIdentityAndBlockAvc) {
             EXPECT_FALSE(AudioDeviceCatalog::Resolve(otherRmeModel,
                                                       otherRmeModel.identity.units[0]).has_value());
         }
+    }
+}
+
+TEST(AudioDeviceCatalog, RmeRealHardwareMatchesFromUnitDirectoryModelId) {
+    for (const auto [definitionId, modelName, version] : {
+             std::tuple{DeviceDefinitionId::RmeFireface400, "Fireface 400",
+                        kRmeFireface400UnitVersion},
+             std::tuple{DeviceDefinitionId::RmeFireface800, "Fireface 800",
+                        kRmeFireface800UnitVersion}}) {
+        // Real hardware evidence (IEEE 1212 Unit Directory key 0x17):
+        // rootModelId is absent (std::nullopt), and model_id (0x101800) is
+        // published in the unit directory alongside specifierId and version.
+        const auto device = MakeDevice(0x000a35004da2b528ULL, kRmeVendorId,
+                                       /*rootModelId=*/std::nullopt,
+                                       {{.offset = 7,
+                                         .specifierId = kRmeUnitSpecifierId,
+                                         .version = version,
+                                         .modelId = kRmeModelId}});
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        ASSERT_TRUE(plan.has_value());
+        EXPECT_NE(std::ranges::find(plan->candidates, definitionId), plan->candidates.end());
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_EQ(plan->modelName, modelName);
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::RmeRegister);
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::RmeRegister);
+        EXPECT_EQ(plan->profileBuilder,
+                  version == kRmeFireface400UnitVersion ? ProfileBuilderId::RmeFireface400
+                                                        : ProfileBuilderId::RmeFireface800);
+        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::RmeFireface);
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                  Discovery::AvcCommandFilterId::BlockAll);
+
+        // Whole-device resolution
+        const auto devicePlan = AudioDeviceCatalog::Resolve(device);
+        ASSERT_TRUE(devicePlan.has_value());
+        EXPECT_EQ(devicePlan->modelName, modelName);
+        EXPECT_EQ(devicePlan->profileBuilder,
+                  version == kRmeFireface400UnitVersion ? ProfileBuilderId::RmeFireface400
+                                                        : ProfileBuilderId::RmeFireface800);
+
+        // Wrong unit model ID fails
+        auto wrongUnitModel = device;
+        wrongUnitModel.identity.units[0].modelId = 0x123456;
+        EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongUnitModel,
+                                                  wrongUnitModel.identity.units[0]).has_value());
+
+        // Absent unit model ID fails (real hardware without 0x101800 is not recognized)
+        auto missingUnitModel = device;
+        missingUnitModel.identity.units[0].modelId = std::nullopt;
+        EXPECT_FALSE(AudioDeviceCatalog::Resolve(missingUnitModel,
+                                                  missingUnitModel.identity.units[0]).has_value());
     }
 }
 
