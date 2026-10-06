@@ -9,7 +9,7 @@ struct AnalyzerPlotParams {
     var count: UInt32
     var latestFrame: UInt64
     var sampleRate: UInt32
-    var padding: UInt32 = 0
+    var isLight: UInt32 = 0
     var value: Float
     var peak: Float
     var width: Float
@@ -218,7 +218,6 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private var glyphAtlases: [AnalyzerTextStyle: (scale: CGFloat, atlas: AnalyzerGlyphAtlas)] = [:]
     private var readoutText = AnalyzerTextCache()
     private let readoutBatch = AnalyzerReadoutBatch()
-    private var readoutAppearance: String?
     private var readoutPrimary = SIMD4<Float>(1, 1, 1, 1)
     private var readoutSecondary = SIMD4<Float>(1, 1, 1, 0.55)
     private let submission: AnalyzerRenderSubmission
@@ -326,6 +325,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 encoder.setRenderPipelineState(phasePipeline)
                 encoder.setVertexBuffer(ring, offset: 0, index: 0)
                 encoder.setVertexBytes(&phase, length: MemoryLayout<ObserverParams>.stride, index: 1)
+                var phaseColor = AnalyzerThemeState.shared.mode.isLight
+                    ? SIMD4<Float>(0.02, 0.52, 0.40, 1.0)
+                    : SIMD4<Float>(0.20, 0.91, 0.73, 1.0)
+                encoder.setFragmentBytes(&phaseColor, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
                 encoder.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: Int(frames))
                 continue
             }
@@ -344,9 +347,10 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
                 displaySmoothers[key] = smoother
                 value = smoothed.value; peak = smoothed.peak
             }
+            let isLight: UInt32 = AnalyzerThemeState.shared.mode.isLight ? 1 : 0
             var params = AnalyzerPlotParams(mode: plot.mode, index: plot.index,
                 active: snapshot.ioRunning && valid ? 1 : 0, count: UInt32(count),
-                latestFrame: latestFrame, sampleRate: snapshot.sampleRateHz,
+                latestFrame: latestFrame, sampleRate: snapshot.sampleRateHz, isLight: isLight,
                 value: value, peak: peak, width: Float(rect.width * scale), height: Float(rect.height * scale))
             encoder.setVertexBytes(&params, length: MemoryLayout<AnalyzerPlotParams>.stride, index: 0)
             var emptyPoint = AnalyzerHistoryVertex(frame: 0, correlation: 0, sideEnergy: 0, breakBefore: 0)
@@ -376,19 +380,9 @@ private final class AnalyzerPlotRenderer: NSObject, MTKViewDelegate {
     private func drawReadouts(_ slots: [AnalyzerPlotRegion], encoder: MTLRenderCommandEncoder,
                               view: MTKView, scale: CGFloat, now: Double) {
         guard !slots.isEmpty, let glyphPipeline else { return }
-        let appearance = view.effectiveAppearance.name.rawValue
-        if readoutAppearance != appearance {
-            view.effectiveAppearance.performAsCurrentDrawingAppearance {
-                func rgba(_ color: NSColor) -> SIMD4<Float>? {
-                    color.usingColorSpace(.sRGB).map {
-                        SIMD4(Float($0.redComponent), Float($0.greenComponent), Float($0.blueComponent), Float($0.alphaComponent))
-                    }
-                }
-                readoutPrimary = rgba(.labelColor) ?? readoutPrimary
-                readoutSecondary = rgba(.secondaryLabelColor) ?? readoutSecondary
-            }
-            readoutAppearance = appearance
-        }
+        let theme = AnalyzerThemeState.shared.mode
+        readoutPrimary = theme.readoutPrimary
+        readoutSecondary = theme.readoutSecondary
         var metricsSnapshot: AudioObserverMetrics?
         let readMetrics = { [metrics] () -> AudioObserverMetrics in
             if let metricsSnapshot { return metricsSnapshot }

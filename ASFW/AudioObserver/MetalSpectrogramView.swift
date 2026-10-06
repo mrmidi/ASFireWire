@@ -57,8 +57,10 @@ struct MetalSpectrogramView: NSViewRepresentable {
 
 private struct SpectrogramFFTParams {
     var writeEnd: UInt64 = 0
-    var ringFrames: UInt32; var channels: UInt32; var channel: UInt32; var sampleRate: UInt32
-    var otherChannel: UInt32; var transform: UInt32; var fftSize: UInt32; var window: UInt32
+    var ringFrames: UInt32 = 0; var channels: UInt32 = 0; var channel: UInt32 = 0; var sampleRate: UInt32 = 0
+    var otherChannel: UInt32 = 0; var transform: UInt32 = 0; var fftSize: UInt32 = 0; var window: UInt32 = 0
+    var calibrationOffsetDB: Float = 0
+    var padding: UInt32 = 0
 }
 private struct SpectrogramParams { var fft: SpectrogramFFTParams; var firstSlice: UInt64; var hop: UInt32; var columns: UInt32 = 1024 }
 private struct SpectrogramDisplay { var latestSlice: UInt64; var columns: UInt32 = 1024; var fftSize: UInt32; var sampleRate: UInt32; var pixelHeight: UInt32 }
@@ -166,10 +168,12 @@ final class SpectrogramRenderer: NSObject, MTKViewDelegate {
         encoder.setThreadgroupMemoryLength(SpectrumFFTLayout.scratchBytes(fftSize), index: 0)
         encoder.setBuffer(stereoScratch, offset: 0, index: 3)
         encoder.setBuffer(ring, offset: 0, index: 0)
+        let cal = AnalyzerCalibrationState.shared.config
         for lane in lanes {
             var params = SpectrogramParams(fft: SpectrogramFFTParams(ringFrames: snapshot.activeRingFrames,
                 channels: snapshot.channels, channel: channel, sampleRate: snapshot.sampleRateHz,
-                otherChannel: otherChannel, transform: lane.transform, fftSize: fftSize, window: window),
+                otherChannel: otherChannel, transform: lane.transform, fftSize: fftSize, window: window,
+                calibrationOffsetDB: Float(cal.effectiveOffsetDB), padding: 0),
                 firstSlice: slices.lowerBound, hop: UInt32(SpectrogramTimeline.hop(sampleRate: snapshot.sampleRateHz)))
             encoder.setBuffer(lane.stamps, offset: 0, index: 1)
             encoder.setTexture(lane.texture, index: 0)
