@@ -8,7 +8,7 @@
 #include "../../Discovery/FWDevice.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include <net.asfw.driver/ASFWAudioNub.h>
 #include <cstdio>
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"

@@ -15,7 +15,7 @@ import os
 // driven); resource reads log at debug because health/telemetry are polled
 // by every client connect and would otherwise drown the default view.
 nonisolated enum ASFWMCPConsoleLog {
-    private static let logger = Logger(subsystem: "net.mrmidi.ASFW", category: "MCP")
+    private static let logger = Logger(subsystem: "net.asfw.app", category: "MCP")
     private static let argumentLimit = 300
     private static let resultLimit = 700
     private static let reasonLimit = 200

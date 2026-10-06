@@ -1,5 +1,5 @@
 # LLDB commands for debugging ASFWDriver bus-reset packet parsing
-# Usage: sudo lldb -p $(pgrep -n net.mrmidi.ASFW.ASFWDriver) -s lldb_commands.txt
+# Usage: sudo lldb -p $(pgrep -n net.asfw.driver) -s lldb_commands.txt
 
 # Set breakpoint on packet processing
 b ASFW::Async::AsyncSubsystem::_ProcessReceivedPacket

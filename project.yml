@@ -136,8 +136,8 @@ targets:
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
-        PRODUCT_NAME: net.mrmidi.ASFW.ASFWDriver
-        PRODUCT_BUNDLE_IDENTIFIER: net.mrmidi.ASFW.ASFWDriver
+        PRODUCT_NAME: net.asfw.driver
+        PRODUCT_BUNDLE_IDENTIFIER: net.asfw.driver
         AD_HOC_CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
@@ -182,7 +182,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: $(TARGET_NAME)
-        PRODUCT_BUNDLE_IDENTIFIER: net.mrmidi.ASFW
+        PRODUCT_BUNDLE_IDENTIFIER: net.asfw.app
         AD_HOC_CODE_SIGNING_ALLOWED: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: fwicons
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -228,7 +228,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: $(TARGET_NAME)
-        PRODUCT_BUNDLE_IDENTIFIER: net.mrmidi.ASFWTests
+        PRODUCT_BUNDLE_IDENTIFIER: net.asfw.appTests
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/ASFW.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ASFW
         CODE_SIGN_STYLE: Automatic

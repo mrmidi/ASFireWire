@@ -68,7 +68,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
-    private let extensionIdentifier = "net.mrmidi.ASFW.ASFWDriver"
+    private let extensionIdentifier = "net.asfw.driver"
     private let verificationTimeout: TimeInterval = 10
     private var pending: PendingOperation?
     private var verificationTimer: DispatchSourceTimer?

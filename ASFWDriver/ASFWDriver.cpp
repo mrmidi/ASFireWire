@@ -32,8 +32,8 @@
 #include "Common/ActionTeardown.hpp"
 #include <string>
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>           // generated from .iig
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h> // generated from .iig
+#include <net.asfw.driver/ASFWDriver.h>           // generated from .iig
+#include <net.asfw.driver/ASFWDriverUserClient.h> // generated from .iig
 
 #include "Async/AsyncSubsystem.hpp"
 #include "Async/DMAMemoryImpl.hpp"
@@ -79,7 +79,7 @@
 #include "SCSIController/SBP2NubPublisher.hpp"
 #include "SCSIController/SBP2TargetBridge.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include <net.asfw.driver/ASFWAudioNub.h>
 
 using namespace ASFW::Driver;
 

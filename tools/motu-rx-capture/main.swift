@@ -20,7 +20,7 @@ guard let command = commands[arguments[1]],
 }
 var iterator: io_iterator_t = 0
 let matched = IOServiceGetMatchingServices(kIOMainPortDefault,
-    IOServiceMatching("net_mrmidi_ASFW_ASFWDriver"), &iterator)
+    IOServiceMatching("net_asfw_driver"), &iterator)
 guard matched == KERN_SUCCESS else { fail("Cannot enumerate ASFWDriver: \(matched)") }
 defer { IOObjectRelease(iterator) }
 var lastError: kern_return_t = kIOReturnNotFound

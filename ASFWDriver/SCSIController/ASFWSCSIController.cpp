@@ -35,7 +35,7 @@
 // placement new without libc++'s abi_tag, and the reverse order is a hard error.
 #include <new>
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWSCSIController.h>
+#include <net.asfw.driver/ASFWSCSIController.h>
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>

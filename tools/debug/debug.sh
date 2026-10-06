@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DRIVER_NAME="net.mrmidi.ASFW.ASFWDriver"
+DRIVER_NAME="net.asfw.driver"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mode="manual"

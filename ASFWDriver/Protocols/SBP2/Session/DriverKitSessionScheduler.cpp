@@ -5,7 +5,7 @@
 #include "../../../Logging/Logging.hpp"
 
 #ifndef ASFW_HOST_TEST
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
+#include <net.asfw.driver/ASFWDriver.h>
 #endif
 
 #include <algorithm>

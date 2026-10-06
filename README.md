@@ -500,7 +500,7 @@ itself.
 
 If the machine ever ends up in a boot panic loop with the driver installed: boot
 into Recovery, `csrutil disable`, boot normally, uninstall the extension
-(`systemextensionsctl uninstall - net.mrmidi.ASFW.ASFWDriver`), then re-enable SIP.
+(`systemextensionsctl uninstall - net.asfw.driver`), then re-enable SIP.
 As a last resort, `sudo nvram boot-args="io=0"` makes macOS log the failure instead
 of panicking (clear with `sudo nvram -d boot-args`).
 

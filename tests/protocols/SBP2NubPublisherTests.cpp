@@ -15,7 +15,7 @@
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWSBP2Nub.h>
+#include <net.asfw.driver/ASFWSBP2Nub.h>
 
 #include <memory>
 #include <vector>

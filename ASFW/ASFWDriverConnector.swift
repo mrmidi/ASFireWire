@@ -102,7 +102,7 @@ final class ASFWDriverConnector: ObservableObject {
     // MARK: - Connection State
 
     var connection: io_connect_t = 0
-    let connectionQueue = DispatchQueue(label: "net.mrmidi.ASFWDriverConnector.connection")
+    let connectionQueue = DispatchQueue(label: "net.asfw.app.DriverConnector.connection")
 
     /// Marks `connectionQueue` so `deinit` can tell whether it is already running on
     /// it. The async-notification event handler takes a temporary strong `self` for the

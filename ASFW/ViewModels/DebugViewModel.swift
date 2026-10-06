@@ -23,7 +23,7 @@ class DebugViewModel: ObservableObject {
 
     let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
     private var driverViewModel: DriverViewModel?
-    private let statusFetchQueue = DispatchQueue(label: "net.mrmidi.ASFW.debug.fetch", qos: .userInitiated)
+    private let statusFetchQueue = DispatchQueue(label: "net.asfw.app.debug.fetch", qos: .userInitiated)
     private var cancellables = Set<AnyCancellable>()
     
     init() {

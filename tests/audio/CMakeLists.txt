@@ -262,7 +262,7 @@ add_audio_test(AudioDriverTxProducerTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 target_include_directories(AudioDriverTxProducerTests PRIVATE
-    "${ASFW_TESTS_DIR}/mocks/net.mrmidi.ASFW.ASFWDriver"
+    "${ASFW_TESTS_DIR}/mocks/net.asfw.driver"
 )
 
 # ASFWAudioDriver graph teardown: Stop leaves the driver holding no ADK object
@@ -286,7 +286,7 @@ add_audio_test(AudioDriverTeardownTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
 )
 target_include_directories(AudioDriverTeardownTests PRIVATE
-    "${ASFW_TESTS_DIR}/mocks/net.mrmidi.ASFW.ASFWDriver"
+    "${ASFW_TESTS_DIR}/mocks/net.asfw.driver"
 )
 
 add_audio_test(AmdtpRateGeometryTests

@@ -114,7 +114,7 @@ jobs:
       # landed in the built dext so a plist regression cannot silently drop it.
       - name: Verify SCSI personality in built dext
         run: |
-          PLIST=$(find build/DerivedData/Build/Products -path "*net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" | head -1)
+          PLIST=$(find build/DerivedData/Build/Products -path "*net.asfw.driver.dext/Info.plist" | head -1)
           if [[ -z "$PLIST" ]]; then
             echo "::error::Built dext Info.plist not found"
             exit 1
