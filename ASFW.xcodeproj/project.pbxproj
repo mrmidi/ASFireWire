@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00CA983D134982805DA55753 /* AnalyzerCalibrationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD43066EE46FD26D0E8F3607 /* AnalyzerCalibrationState.swift */; };
 		0133F65C204E70DA7C097D04 /* AnalyzerPlotAxes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCC16C6B560CCA8DCD16838 /* AnalyzerPlotAxes.swift */; };
 		0138279CCF7380AF46C498FA /* DiscoveryReducer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8AEB1E7521FD09C727D7C415 /* DiscoveryReducer.cpp */; };
 		013D92C66A04DCF6EF7E5480 /* ASFWLogCategoryDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7310EEF238C732BC871BF56B /* ASFWLogCategoryDescriptor.swift */; };
@@ -453,6 +454,7 @@
 		E20C9825289ED0B74F256831 /* ASFWMCPResourceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F289F9C0DFA8D352FEA9CA08 /* ASFWMCPResourceCatalog.swift */; };
 		E2635479B902D4A7101B5F4A /* DiscoveryLog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2DB8D24526FA39D9363A15E3 /* DiscoveryLog.cpp */; };
 		E2BB42AEEB8BFF832A5F7A40 /* MCPTransactionSchemaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 030DE44371FB8109F515F09E /* MCPTransactionSchemaTests.swift */; };
+		E2C57E10594054F5F1C5C238 /* AnalyzerTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41197585EF247B3F02D8F20C /* AnalyzerTheme.swift */; };
 		E2C5B1210E3855AFD21989BE /* StreamFormatCommand.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 51BFBE312068D7734307D80E /* StreamFormatCommand.cpp */; };
 		E4ACB5B84B80A253F8D26CAD /* BufferRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 14C0BF14E3BF6243C8B6B04B /* BufferRing.cpp */; };
 		E4F5CF4EC419B3428F076E1F /* SaffireMixerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0BA2204CACB5C4CAD80E66F /* SaffireMixerModels.swift */; };
@@ -497,6 +499,7 @@
 		FA8EB77AE75DA096CD8B147C /* SaffireMixerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF26B9D9B6DD1E2CD447CB18 /* SaffireMixerView.swift */; };
 		FC274937C743B11008958EFB /* ASFWMCPAudioStreamTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6A8CEBCAFE125A3333F4B3 /* ASFWMCPAudioStreamTools.swift */; };
 		FE51B3659D68E398113DC16A /* MCPConsoleLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040E3246E90734BBE6ED2380 /* MCPConsoleLogTests.swift */; };
+		FE637EF925C41CE31E55B42B /* AnalyzerCalibrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C78E954A8A81AE50ABCCD7 /* AnalyzerCalibrationTests.swift */; };
 		FE6CA54D91492CE7A3CD713F /* ATTrace.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */; };
 		FED988555C8E78A32E6399B9 /* SBP2ManagementORB.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FB4F38B538B6F7A28F16625C /* SBP2ManagementORB.cpp */; };
 		FEF9E3E1F54EB89A0CD417A2 /* DiagnosticsService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E16CD7D8847B269F7291724B /* DiagnosticsService.cpp */; };
@@ -799,6 +802,7 @@
 		40B5596E889581A72B7E3E95 /* SelfIDDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfIDDetailView.swift; sourceTree = "<group>"; };
 		40CD6FCED919DD90FE9A1B9C /* SPro24DspProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SPro24DspProtocol.hpp; sourceTree = "<group>"; };
 		40E35CBBC53D00A9AAAF9A66 /* IAsyncSubsystemPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAsyncSubsystemPort.hpp; sourceTree = "<group>"; };
+		41197585EF247B3F02D8F20C /* AnalyzerTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerTheme.swift; sourceTree = "<group>"; };
 		413ED646922E3ACEA8B026DF /* DiagnosticsTextFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsTextFormatter.swift; sourceTree = "<group>"; };
 		4156CF4854D29F046519DDED /* RxAudioPacketProcessor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RxAudioPacketProcessor.cpp; sourceTree = "<group>"; };
 		418F9E42C9EE3727D3BC4E12 /* ASFWMCPDiceRegisterMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPDiceRegisterMapTests.swift; sourceTree = "<group>"; };
@@ -1035,6 +1039,7 @@
 		7839875282ED53BE637257D5 /* ActionTeardown.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ActionTeardown.hpp; sourceTree = "<group>"; };
 		78419429D11B1B96A60E99D2 /* AvcUnitDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcUnitDashboard.swift; sourceTree = "<group>"; };
 		7892E16293D409FFB4F00710 /* DriverViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverViewModel.swift; sourceTree = "<group>"; };
+		78C78E954A8A81AE50ABCCD7 /* AnalyzerCalibrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerCalibrationTests.swift; sourceTree = "<group>"; };
 		790F88B19E2C68FF684F5356 /* TxCompletionStampDrain.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxCompletionStampDrain.hpp; sourceTree = "<group>"; };
 		7910152EF5F5FF7268972325 /* AvcDiscoveryDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcDiscoveryDocument.swift; sourceTree = "<group>"; };
 		791D3F142C8E022EE27500B5 /* ASFWMCPHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPHost.swift; sourceTree = "<group>"; };
@@ -1225,6 +1230,7 @@
 		ABE5698A40D2D1F6EEE364CF /* AudioAnalysisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalysisEngine.swift; sourceTree = "<group>"; };
 		AC7A2164238E9D98E27E762F /* ASFWTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWTests.swift; sourceTree = "<group>"; };
 		ACBDCEDBC88AE37C5679DEE2 /* TopologyHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TopologyHandler.cpp; sourceTree = "<group>"; };
+		AD43066EE46FD26D0E8F3607 /* AnalyzerCalibrationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerCalibrationState.swift; sourceTree = "<group>"; };
 		ADD3863084A1DE181E9B049C /* DiceAudioBackend.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiceAudioBackend.cpp; sourceTree = "<group>"; };
 		ADDC685CE0354DEC6F205B48 /* DVCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DVCaptureView.swift; sourceTree = "<group>"; };
 		AE01B2EA28A717F023AFC23E /* AudioSubunitDescriptor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioSubunitDescriptor.hpp; sourceTree = "<group>"; };
@@ -2067,11 +2073,13 @@
 		471CD94EA2FCBA026542CC55 /* AudioObserver */ = {
 			isa = PBXGroup;
 			children = (
+				AD43066EE46FD26D0E8F3607 /* AnalyzerCalibrationState.swift */,
 				C132A71ADF96AA54ADD3CE8C /* AnalyzerDisplaySmoother.swift */,
 				6B8ED2DEB50F87D9BC5AE04C /* AnalyzerGlyphAtlas.swift */,
 				D8283B841996FA16DB2E577F /* AnalyzerKernelTiming.swift */,
 				6B4E3DBB11D09B17427FEAD0 /* AnalyzerReadoutBatch.swift */,
 				35E77E9DF2A0B759301A2D02 /* AnalyzerRenderSubmission.swift */,
+				41197585EF247B3F02D8F20C /* AnalyzerTheme.swift */,
 				4D7F3E7B85E3BCC651D2BC9C /* AnalyzerTimingStatistics.swift */,
 				ABE5698A40D2D1F6EEE364CF /* AudioAnalysisEngine.swift */,
 				5C21078F430E0BF165686440 /* AudioAnalyzerModels.swift */,
@@ -2254,6 +2262,7 @@
 		5A4E70ED75911158B0E744F2 /* AudioObserver */ = {
 			isa = PBXGroup;
 			children = (
+				78C78E954A8A81AE50ABCCD7 /* AnalyzerCalibrationTests.swift */,
 				7D36DF0EFC20F7D63E972AF4 /* AnalyzerDisplaySmootherTests.swift */,
 				BAFFC2B86F014F15E4E8D3C2 /* AnalyzerGlyphAtlasTests.swift */,
 				FFC4BE8590DCA461A1ADF1D4 /* AnalyzerPanelCanvasTests.swift */,
@@ -4075,6 +4084,7 @@
 				47C7D2797F3974490450A45A /* AVCNestedChannelTests.swift in Sources */,
 				BFA67B801CE2FD081CFA4BF5 /* AVCSampleRateMappingTests.swift in Sources */,
 				B48FA948465DEDE30BA18B47 /* AVCUnitWireParsingTests.swift in Sources */,
+				FE637EF925C41CE31E55B42B /* AnalyzerCalibrationTests.swift in Sources */,
 				3061C545F75232C2867C9B2A /* AnalyzerDisplaySmootherTests.swift in Sources */,
 				2411E9428D22E8D2FBD1D014 /* AnalyzerGlyphAtlasTests.swift in Sources */,
 				37E7F24471261AE0F3B63E55 /* AnalyzerPanelCanvasTests.swift in Sources */,
@@ -4172,6 +4182,7 @@
 				BCC377A8BC71F82C85384962 /* ASFWMCPTransactionSchemas.swift in Sources */,
 				CFBBAD244AEB98E20F3A0EC7 /* ASFWMCPWritePolicy.swift in Sources */,
 				26A75A60505D8A595CE72B24 /* AVCCommandView.swift in Sources */,
+				00CA983D134982805DA55753 /* AnalyzerCalibrationState.swift in Sources */,
 				9099951F78BB476861C84DAA /* AnalyzerDisplaySmoother.swift in Sources */,
 				720DBAF8DAE3EFFC29265C1D /* AnalyzerGlyphAtlas.swift in Sources */,
 				3C9075EF19299A5239323528 /* AnalyzerKernelTiming.swift in Sources */,
@@ -4180,6 +4191,7 @@
 				0133F65C204E70DA7C097D04 /* AnalyzerPlotAxes.swift in Sources */,
 				520CA9F8E87C81E066EFEDCB /* AnalyzerReadoutBatch.swift in Sources */,
 				D063A988555559BACBEE9ED6 /* AnalyzerRenderSubmission.swift in Sources */,
+				E2C57E10594054F5F1C5C238 /* AnalyzerTheme.swift in Sources */,
 				30549EBCB8187743C4A01357 /* AnalyzerTimingStatistics.swift in Sources */,
 				F379036039878685C8CE4566 /* AudioAnalysisEngine.swift in Sources */,
 				93C85EFDDBD3887ABFA1A37D /* AudioAnalyzerModels.swift in Sources */,
