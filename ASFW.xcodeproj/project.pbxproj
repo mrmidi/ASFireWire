@@ -170,6 +170,7 @@
 		4D826296F702BA5028A56BDD /* AvcDiscoveryDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7910152EF5F5FF7268972325 /* AvcDiscoveryDocument.swift */; };
 		4E41F15A7A5B4C342791987B /* DiscoveryGraph.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0E9D9D9859BBCA2DA4256491 /* DiscoveryGraph.cpp */; };
 		4EBE9CFD71C09AFC0D3747BF /* FWUnit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FF09D65685E88DC69256887D /* FWUnit.cpp */; };
+		4F6ED6CD89668AFF93E61BC4 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 7BFB1B9EAD7D4D66C86B4AB0 /* MCP */; };
 		4FD45DE09D312E94F4160B10 /* fwicons.icon in Resources */ = {isa = PBXBuildFile; fileRef = B31D2FEE1FD985CD7AE779D2 /* fwicons.icon */; };
 		501A2A879B5CE46A068C4895 /* DiceRegisterModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB526A29FF8CDD653C1E0F62 /* DiceRegisterModelTests.swift */; };
 		50919565F5D9A031D70542AC /* MetricsSink.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DC915CE751EF8C365B2EC9DB /* MetricsSink.cpp */; };
@@ -404,6 +405,7 @@
 		C656D47DCC5D9B25F8FFF37E /* BusManagerElectionDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3210D655C3118526E23B9C5F /* BusManagerElectionDriver.cpp */; };
 		C7305631F9DE2A041ED453DA /* IsochReceiveContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 15835116B43BF0DCF553C721 /* IsochReceiveContext.cpp */; };
 		C733B13A8846F7E697E851F6 /* MCPLiveDriverControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C585AEE3BB2B09A798AB2E6D /* MCPLiveDriverControlTests.swift */; };
+		C7AAC6F7956F6697815ED7E6 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 2AA6E1DFEA7E6D7870A62216 /* MCP */; };
 		C85CCDEBC807B0479B97B40A /* DiceNotificationRouter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 44F97EA86727E28505F4C03C /* DiceNotificationRouter.cpp */; };
 		C93F22D07F0766B5EEE459AC /* SpeedMapService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7FE1BA0051083509C9C6D940 /* SpeedMapService.cpp */; };
 		C9563A6482705A9D187803EE /* MAudioInternalTxTiming.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7155DB558AE058B12EE4EFE8 /* MAudioInternalTxTiming.cpp */; };
@@ -1556,6 +1558,25 @@
 		FFCB5815F56A8F71159C561B /* EfcProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = EfcProtocol.hpp; sourceTree = "<group>"; };
 		FFECEFF129A86B48E5608E41 /* ASFWAudioDriverIO.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverIO.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F2B3B9D39E59DF027E1C93D8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C7AAC6F7956F6697815ED7E6 /* MCP in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F3DFCF29D674913395DD9D79 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4F6ED6CD89668AFF93E61BC4 /* MCP in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		012EE77B2DD6E4CAF796B4EA /* Testing */ = {
@@ -3696,6 +3717,7 @@
 			buildConfigurationList = E7910EF228450EB5D51EF1AC /* Build configuration list for PBXNativeTarget "ASFWTests" */;
 			buildPhases = (
 				8E9F55D3AE6718EF5DC65FD9 /* Sources */,
+				F3DFCF29D674913395DD9D79 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -3704,6 +3726,7 @@
 			);
 			name = ASFWTests;
 			packageProductDependencies = (
+				7BFB1B9EAD7D4D66C86B4AB0 /* MCP */,
 			);
 			productName = ASFWTests;
 			productReference = E789FE1BCC1F31A996C8E799 /* ASFWTests.xctest */;
@@ -3715,6 +3738,7 @@
 			buildPhases = (
 				A3A652297E3A7185356D80F7 /* Sources */,
 				7CF6E975887DD9C2ADC69EBA /* Resources */,
+				F2B3B9D39E59DF027E1C93D8 /* Frameworks */,
 				3DA601052A90407482957628 /* Embed System Extensions */,
 			);
 			buildRules = (
@@ -3724,6 +3748,7 @@
 			);
 			name = ASFW;
 			packageProductDependencies = (
+				2AA6E1DFEA7E6D7870A62216 /* MCP */,
 			);
 			productName = ASFW;
 			productReference = E37CAE998855106595F9A703 /* ASFW.app */;
@@ -3761,6 +3786,9 @@
 			);
 			mainGroup = 9D9CD8063E69E242DF67651C;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5C9EECEE9DF57617F79BD546 /* XCRemoteSwiftPackageReference "swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = EFF220506953EAF2FCEEB3DA /* Products */;
 			projectDirPath = "";
@@ -4711,6 +4739,30 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5C9EECEE9DF57617F79BD546 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2AA6E1DFEA7E6D7870A62216 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C9EECEE9DF57617F79BD546 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+		7BFB1B9EAD7D4D66C86B4AB0 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C9EECEE9DF57617F79BD546 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 32F6DD5F3CDFF2BA5FE46A15 /* Project object */;
 }
