@@ -61,8 +61,6 @@ struct AnalyzerPlotAxes: View {
                 // Center crosshair (Mid vertical, Side horizontal)
                 line(CGPoint(x: plot.midX, y: plot.minY), CGPoint(x: plot.midX, y: plot.maxY))
                 line(CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY))
-<<<<<<< HEAD
-
                 // 45° Diagonals (L top-left, R top-right)
                 line(CGPoint(x: plot.minX, y: plot.minY), CGPoint(x: plot.maxX, y: plot.maxY))
                 line(CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.minY))
@@ -76,16 +74,6 @@ struct AnalyzerPlotAxes: View {
                 goniometerLabel("R", at: CGPoint(x: plot.maxX - 8, y: plot.minY + 6), anchor: .topTrailing)
                 goniometerLabel("Mid", at: CGPoint(x: plot.midX, y: plot.minY + 6), anchor: .top)
                 goniometerLabel("Side", at: CGPoint(x: plot.maxX - 6, y: plot.midY + 4), anchor: .topTrailing)
-=======
-                label("+1", at: CGPoint(x: plot.minX - 5, y: plot.minY), anchor: .trailing)
-                label("−1", at: CGPoint(x: plot.minX - 5, y: plot.maxY), anchor: .trailing)
-                label("−1", at: CGPoint(x: plot.minX, y: plot.midY + 12))
-                label("+1", at: CGPoint(x: plot.maxX, y: plot.midY + 12))
-                label("0", at: CGPoint(x: plot.midX - 8, y: plot.midY + 12))
-                label("Y: (L+R)/√2 · in phase", at: CGPoint(x: size.width / 2, y: 12))
-                label("X: (L−R)/√2 · opposite phase", at: CGPoint(x: size.width / 2, y: size.height - 12))
-
->>>>>>> origin/main
             case .waveform:
                 for lane in 0..<2 {
                     let middle = size.height * (CGFloat(lane) + 0.5) / 2

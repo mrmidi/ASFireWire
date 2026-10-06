@@ -917,13 +917,8 @@ struct AudioObserverPanel: View {
         return ZStack {
             themeState.mode.plotBackground
             if model.snapshot.ioRunning {
-<<<<<<< HEAD
-                if mode == .phaseScope {
-                    AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(16)
-=======
                 if isPhaseScope {
                     AnalyzerCanvasSlot(mode: 5, index: leftChannel, otherChannel: rightChannel).padding(30)
->>>>>>> origin/main
                 } else {
                     MetalAudioObserverView(client: model.client, mode: mode,
                                            leftChannel: leftChannel, rightChannel: rightChannel)
