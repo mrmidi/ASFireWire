@@ -211,6 +211,16 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
     private var loudnessWriteIndex = 0
     private var loudnessCount = 0
     private var loudnessSession = AudioLoudnessMeasurementSession()
+    private var calibrationConfig = AnalyzerCalibrationConfig()
+
+    func setCalibrationConfig(_ config: AnalyzerCalibrationConfig) {
+        lock.lock(); defer { lock.unlock() }
+        calibrationConfig = config
+    }
+    func getCalibrationConfig() -> AnalyzerCalibrationConfig {
+        lock.lock(); defer { lock.unlock() }
+        return calibrationConfig
+    }
 
     func read(includeHistory: Bool = true) -> AudioObserverMetrics {
         lock.lock()
@@ -313,18 +323,23 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
         value.inFlight = max(0, value.inFlight - 1)
         value.windowsRendered += 1
         let meterValues = (4...11).map { Float(bitPattern: floats[$0]) }
-        value.analysis.levels.left.samplePeak = .valid(Float(bitPattern: floats[0]))
-        value.analysis.levels.right.samplePeak = .valid(Float(bitPattern: floats[1]))
-        value.analysis.levels.mid.samplePeak = .valid(meterValues[0])
-        value.analysis.levels.side.samplePeak = .valid(meterValues[1])
-        value.analysis.levels.left.rms = .valid(meterValues[2])
-        value.analysis.levels.right.rms = .valid(meterValues[3])
-        value.analysis.levels.mid.rms = .valid(meterValues[4])
-        value.analysis.levels.side.rms = .valid(meterValues[5])
+        let cal = self.calibrationConfig
+        let gain = cal.linearGain
+        let energyGain = cal.energyScale
+        value.analysis.calibrationOffsetDB = cal.effectiveOffsetDB
+
+        value.analysis.levels.left.samplePeak = .valid(Float(bitPattern: floats[0]) * gain)
+        value.analysis.levels.right.samplePeak = .valid(Float(bitPattern: floats[1]) * gain)
+        value.analysis.levels.mid.samplePeak = .valid(meterValues[0] * gain)
+        value.analysis.levels.side.samplePeak = .valid(meterValues[1] * gain)
+        value.analysis.levels.left.rms = .valid(meterValues[2] * gain)
+        value.analysis.levels.right.rms = .valid(meterValues[3] * gain)
+        value.analysis.levels.mid.rms = .valid(meterValues[4] * gain)
+        value.analysis.levels.side.rms = .valid(meterValues[5] * gain)
         if token.geometry.sampleRateHz == 48_000 {
             if floats[94] != 0 {
-                let truePeakLeft = Float(bitPattern: floats[92])
-                let truePeakRight = Float(bitPattern: floats[93])
+                let truePeakLeft = Float(bitPattern: floats[92]) * gain
+                let truePeakRight = Float(bitPattern: floats[93]) * gain
                 value.analysis.levels.left.truePeak = .valid(truePeakLeft)
                 value.analysis.levels.right.truePeak = .valid(truePeakRight)
             } else {
@@ -395,15 +410,16 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
             for index in 0..<chunkCount {
                 let word = AudioAnalysisLayout.chunkOffset + index * AudioAnalysisLayout.chunkWords
                 let endFrame = UInt64(floats[word]) | (UInt64(floats[word + 1]) << 32)
-                let energy = Float(bitPattern: floats[word + 2]) + Float(bitPattern: floats[word + 3])
-                loudnessEnergyRing[loudnessWriteIndex] = AudioLoudnessEnergyChunk(
+                let energy = (Float(bitPattern: floats[word + 2]) + Float(bitPattern: floats[word + 3])) * energyGain
+                let chunk = AudioLoudnessEnergyChunk(
                     endFrame: endFrame,
                     weightedEnergy: energy,
-                    rawSampleEnergy: Float(bitPattern: floats[word + 4]),
-                    samplePeak: Float(bitPattern: floats[word + 5]),
-                    truePeakLeft: Float(bitPattern: floats[word + 6]),
-                    truePeakRight: Float(bitPattern: floats[word + 7]),
+                    rawSampleEnergy: Float(bitPattern: floats[word + 4]) * energyGain,
+                    samplePeak: Float(bitPattern: floats[word + 5]) * gain,
+                    truePeakLeft: Float(bitPattern: floats[word + 6]) * gain,
+                    truePeakRight: Float(bitPattern: floats[word + 7]) * gain,
                     frameCount: 480)
+                loudnessEnergyRing[loudnessWriteIndex] = chunk
                 loudnessWriteIndex = (loudnessWriteIndex + 1) % loudnessEnergyRing.count
                 loudnessCount = min(loudnessEnergyRing.count, loudnessCount + 1)
                 value.analysis.loudness.acceptedAudioFrames &+= 480
@@ -417,14 +433,7 @@ nonisolated final class AudioObserverMetricsState: @unchecked Sendable {
                 } else {
                     value.analysis.loudness.shortTermLUFS = .warmingUp
                 }
-                loudnessSession.consume(AudioLoudnessEnergyChunk(
-                    endFrame: endFrame,
-                    weightedEnergy: energy,
-                    rawSampleEnergy: Float(bitPattern: floats[word + 4]),
-                    samplePeak: Float(bitPattern: floats[word + 5]),
-                    truePeakLeft: Float(bitPattern: floats[word + 6]),
-                    truePeakRight: Float(bitPattern: floats[word + 7]),
-                    frameCount: 480))
+                loudnessSession.consume(chunk)
             }
             publishLoudnessSessionState()
         } else {
@@ -766,7 +775,7 @@ final class ASFWAudioObserverClient {
             throw AudioObserverError.shaderUnavailable
         }
         let phaseDescriptor = Self.renderDescriptor(vertex: phaseVertex,
-                                                    fragment: fragment)
+                                                    fragment: waveformFragment)
         let waveformDescriptor = Self.renderDescriptor(vertex: waveformVertex,
                                                        fragment: waveformFragment)
         do {

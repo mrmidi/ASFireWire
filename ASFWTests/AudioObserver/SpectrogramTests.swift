@@ -38,8 +38,8 @@ struct SpectrogramTests {
         descriptor.storageMode = .shared
         descriptor.usage = [.shaderWrite, .shaderRead]
         let texture = try #require(device.makeTexture(descriptor: descriptor))
-        // SpectrumParams (40 bytes), firstSlice (8), hop and columns (8).
-        let params: [UInt32] = [0, 0, 12288, 2, 0, 48000, 1, 3, size, 0, 32, 0, 512, 8]
+        // SpectrumParams (48 bytes: 10 fields + calibrationOffsetDB + padding), firstSlice (8), hop and columns (8).
+        let params: [UInt32] = [0, 0, 12288, 2, 0, 48000, 1, 3, size, 0, 0, 0, 32, 0, 512, 8]
         let command = try #require(queue.makeCommandBuffer())
         let encoder = try #require(command.makeComputeCommandEncoder())
         encoder.setComputePipelineState(pipeline)
