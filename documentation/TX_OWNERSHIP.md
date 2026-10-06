@@ -865,3 +865,18 @@ single-constant tweak.
 **Undecided and owned by no milestone yet:**
 - the RTL residual (§1);
 - the small-buffer glitches (§1).
+
+## IO hot-path lookup cost: Duet 96 kHz (2026-10-05)
+
+The user confirmed clean 96 kHz playback after `AmdtpPayloadWriter` stopped
+repeating its full timeline lookup for every frame. Consecutive frames reuse the
+same snapshot within a packet, with generation/state checks and a new lookup at
+packet boundaries or invalidation. A 16-frame packet now needs one successful
+scan instead of sixteen. Keep this property when changing timeline ownership:
+a bounded operation can still be too expensive when repeated per sample.
+
+The earlier scheduling-budget correction eliminated counted finality misses but
+left audible clicks. Removing redundant IO work resolved the remaining symptom
+in this run. `[TxPrep] fillUs` measures the interval maximum fill duration;
+retain coarse telemetry rather than logging from the IO callback. Detailed
+validation scope is recorded in `validation/FW221_AVC_HARDWARE_BATCH.md`.

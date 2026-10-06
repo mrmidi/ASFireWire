@@ -41,19 +41,10 @@ inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
 
 bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
                                   const AmdtpTxPolicy& txPolicy) noexcept {
-    // Resolve the rate's AMDTP geometry (SYT interval + AM824 FDF/SFC). Unknown
-    // rates are rejected. Blocking mode handles any rate via the rational
-    // cadence; non-blocking has no fractional form, so it stays integral-rate
-    // (48 kHz) only.
+    // Both cadence modes use the same resolved rate geometry.
     const auto geometry =
         ASFW::Encoding::AmdtpRateGeometryForSampleRate(streamConfig.sampleRate);
-    if (!geometry) {
-        return false;
-    }
-    if (streamConfig.streamMode != StreamMode::Blocking &&
-        streamConfig.sampleRate != 48000) {
-        return false;
-    }
+    if (!geometry) return false;
 
     AmdtpStreamConfig config = streamConfig;
     if (config.packetFraming != AmdtpStreamConfig::PacketFraming::Cip &&
@@ -66,7 +57,9 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
-    if (config.dbs == 0 || config.framesPerDataPacket == 0) {
+    const uint32_t requiredFrames = config.streamMode == StreamMode::Blocking
+        ? geometry->sytIntervalFrames : geometry->nominalFramesPerCycle;
+    if (config.dbs == 0 || config.framesPerDataPacket < requiredFrames) {
         return false;
     }
     if (config.packetFraming == AmdtpStreamConfig::PacketFraming::Headerless &&
@@ -104,14 +97,15 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipBuilder_.Configure(cipConfig);
 
     if (config.streamMode == StreamMode::Blocking) {
-        if (!blocking48kCadence_.Configure(
+        if (!blockingCadence_.Configure(
                 config.sampleRate,
                 static_cast<uint8_t>(geometry->sytIntervalFrames))) {
             return false;
         }
-        cadence_ = static_cast<IAmdtpCadence*>(&blocking48kCadence_);
+        cadence_ = static_cast<IAmdtpCadence*>(&blockingCadence_);
     } else {
-        cadence_ = static_cast<IAmdtpCadence*>(&nonBlocking48kCadence_);
+        if (!nonBlockingCadence_.Configure(config.sampleRate)) return false;
+        cadence_ = &nonBlockingCadence_;
     }
 
     Reset(0);

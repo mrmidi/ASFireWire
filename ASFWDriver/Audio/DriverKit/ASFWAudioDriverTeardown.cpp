@@ -1,3 +1,4 @@
+#include "ASFWAvcAudioStream.h"
 //
 // ASFWAudioDriverTeardown.cpp
 // ASFWDriver
@@ -24,6 +25,8 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     ivars.runtime.isRunning.store(false, std::memory_order_release);
     UnbindDirectAudioSkeleton(ivars);
 
+    if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.inputStream.get())) stream->Bind(nullptr);
+    if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.outputStream.get())) stream->Bind(nullptr);
     auto& state = ivars.graphState;
     if (ivars.audioDevice) {
         if (state.outputStreamAdded && ivars.outputStream) {

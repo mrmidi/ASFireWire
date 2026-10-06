@@ -156,6 +156,16 @@ public:
     // chain valid. Returns kIOReturnUnsupported for a rate the device does not
     // advertise.
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
+    // Configuration-window calls only. The observation is read-only and
+    // generation/incarnation bound; no cached rate is returned as evidence.
+    virtual kern_return_t ReadAvcClockState(uint64_t* outIncarnation,
+        uint64_t* outRouteEpoch, uint32_t* outBusGeneration,
+        uint32_t* outOutputRateHz, uint32_t* outInputRateHz);
+    virtual kern_return_t ApplyAvcRate(uint32_t sampleRateHz, uint64_t expectedIncarnation,
+        uint64_t expectedRouteEpoch, uint32_t expectedBusGeneration);
+    virtual kern_return_t InstallAvcRateFormation(uint32_t sampleRateHz,
+        uint64_t expectedIncarnation, uint64_t expectedRouteEpoch,
+        uint32_t expectedBusGeneration);
 
     // Confirmed graph-backed controls. token encodes subunit/block/channel;
     // the nub validates it against the current graph before sending traffic.
@@ -188,6 +198,12 @@ struct ASFWAudioNub_IVars {
     uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t currentSampleRateHz{48000};
+    bool avcObservationValid{false};
+    uint64_t avcObservedIncarnation{0};
+    uint64_t avcObservedRouteEpoch{0};
+    uint32_t avcObservedGeneration{0};
+    uint32_t avcObservedInputRate{0};
+    uint32_t avcObservedOutputRate{0};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};

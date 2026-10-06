@@ -1,0 +1,23 @@
+#ifndef ConfigurationProbeDevice_h
+#define ConfigurationProbeDevice_h
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+#include <DriverKit/IOTimerDispatchSource.iig>
+using namespace AudioDriverKit;
+class IOUserAudioDriver;
+class ConfigurationProbeStream;
+class ConfigurationProbeDevice : public IOUserAudioDevice {
+public:
+    virtual bool init(IOUserAudioDriver* driver, bool prewarming, OSString* uid,
+                      OSString* model, OSString* manufacturer, uint32_t period) override LOCALONLY;
+    virtual void free() override LOCALONLY;
+    virtual void Shutdown() LOCALONLY;
+    virtual kern_return_t StartIO(IOUserAudioStartStopFlags flags) override LOCALONLY;
+    virtual kern_return_t StopIO(IOUserAudioStartStopFlags flags) override LOCALONLY;
+    virtual kern_return_t HandleChangeSampleRate(double rate) override LOCALONLY;
+    virtual kern_return_t PerformDeviceConfigurationChange(uint64_t action, OSObject* info) override LOCALONLY;
+    virtual kern_return_t AbortDeviceConfigurationChange(uint64_t action, OSObject* info) override LOCALONLY;
+    virtual kern_return_t RequestFormat(ConfigurationProbeStream* stream,
+        const IOUserAudioStreamBasicDescription* format) LOCALONLY;
+    virtual void Tick(OSAction* action, uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
+};
+#endif

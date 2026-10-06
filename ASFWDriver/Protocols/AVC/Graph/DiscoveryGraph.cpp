@@ -28,10 +28,15 @@ std::optional<StreamGraph> Geometry(const E::PlugContents* p, bool input) {
     stream->supportedSampleRates.clear();
     for (const auto& f : p->formations) {
         auto candidate = BuildUnitStreamGeometry(f, input);
+        if (candidate) stream->formations.push_back({candidate->currentSampleRate,
+            candidate->channelCount, candidate->dataBlockSize, candidate->midiStreamCount,
+            candidate->slotMap, false});
         if (candidate && candidate->channelCount == stream->channelCount && candidate->dataBlockSize == stream->dataBlockSize &&
             std::find(stream->supportedSampleRates.begin(), stream->supportedSampleRates.end(), candidate->currentSampleRate) == stream->supportedSampleRates.end())
             stream->supportedSampleRates.push_back(candidate->currentSampleRate);
     }
+    if (stream->formations.empty()) stream->formations.push_back({stream->currentSampleRate,
+        stream->channelCount, stream->dataBlockSize, stream->midiStreamCount, stream->slotMap, false});
     if (stream->supportedSampleRates.empty()) stream->supportedSampleRates = {stream->currentSampleRate};
     return stream;
 }
@@ -50,10 +55,15 @@ std::optional<StreamGraph> ExtensionGeometry(const E::ExtensionPlug& facts, bool
     format.compound.entries[1] = {static_cast<uint8_t>(found->midiChannels), A::Cmd::Am824Format::kMidiConformant};
     auto stream = BuildUnitStreamGeometry(format, input); if (!stream) return {};
     stream->supportedSampleRates.clear();
-    for (const auto& f : facts.formations)
+    for (const auto& f : facts.formations) {
+        if (f.pcmChannels && f.pcmChannels <= Common::kMaxPcmSlots &&
+            f.midiChannels <= kMaxMidiDataChannels && A::StreamFormatRateFromHz(f.rateHz))
+            stream->formations.push_back({f.rateHz, f.pcmChannels,
+                f.pcmChannels + f.midiChannels, f.midiChannels, {}, false});
         if (f.pcmChannels == found->pcmChannels && f.midiChannels == found->midiChannels && A::StreamFormatRateFromHz(f.rateHz))
             if (std::find(stream->supportedSampleRates.begin(), stream->supportedSampleRates.end(), f.rateHz) == stream->supportedSampleRates.end())
                 stream->supportedSampleRates.push_back(f.rateHz);
+    }
     return stream;
 }
 bool ValidMap(const Common::PcmSlotMap& map, const StreamGraph& stream) {
@@ -173,6 +183,13 @@ DeviceGraph BuildDiscoveryGraph(const E::DiscoverySnapshot& snapshot, std::strin
                 stream.usingFallbackMap = descriptorValid ? false : geometry->usingFallbackMap;
                 stream.dataBlockSize = geometry->dataBlockSize; stream.currentSampleRate = geometry->currentSampleRate;
                 stream.supportedSampleRates = geometry->supportedSampleRates; stream.midiStreamCount = geometry->midiStreamCount;
+                stream.formations = geometry->formations;
+                for (auto& formation : stream.formations) {
+                    if (formation.pcmChannels == stream.channelCount && formation.dataBlockSize == stream.dataBlockSize) {
+                        formation.pcmSlots = stream.slotMap;
+                        formation.descriptorMapValidated = descriptorValid || !geometry->usingFallbackMap;
+                    }
+                }
                 continue;
             }
         }

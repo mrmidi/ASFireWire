@@ -1,5 +1,5 @@
 # ASFW IT DMA Debugging Script
-# Usage: sudo lldb -p $(pgrep -n 'net.mrmidi.ASFW.ASFWDriver') -s tools/debug/lldb_it.txt
+# Usage: sudo lldb -p $(pgrep -n 'net.asfw.driver') -s tools/debug/lldb_it.txt
 
 settings set stop-line-count-before 3
 settings set stop-line-count-after 3

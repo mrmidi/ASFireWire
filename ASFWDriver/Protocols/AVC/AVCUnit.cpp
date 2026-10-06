@@ -268,6 +268,18 @@ void AVCUnit::RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& rou
     auto updated = std::make_shared<Graph::DeviceGraph>(*previous);
     updated->playback.currentSampleRate = rateHz;
     updated->capture.currentSampleRate = rateHz;
+    const auto select = [rateHz](auto& stream) {
+        const auto found = std::ranges::find(stream.formations, rateHz, &Graph::StreamFormation::sampleRateHz);
+        if (found == stream.formations.end()) return;
+        if (stream.channelCount != found->pcmChannels) {
+            stream.channelNames.clear(); stream.channels.clear(); stream.clusters.clear();
+        }
+        stream.channelCount = found->pcmChannels;
+        stream.dataBlockSize = found->dataBlockSize;
+        stream.midiStreamCount = found->midiSlots;
+        stream.slotMap = found->pcmSlots;
+    };
+    select(updated->playback); select(updated->capture);
     discoveredGraph_ = std::move(updated);
 }
 

@@ -25,7 +25,7 @@ final class DuetControlViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var pendingMixerWrite: DispatchWorkItem?
     private var pendingInputGainWrite: DispatchWorkItem?
-    private let inputWriteQueue = DispatchQueue(label: "net.mrmidi.ASFW.Duet.input-write", qos: .userInitiated)
+    private let inputWriteQueue = DispatchQueue(label: "net.asfw.app.Duet.input-write", qos: .userInitiated)
     private var pendingMixerDestination: Int = 0
     private var pendingMixerSource: Int = 0
     private var pendingMixerValue: UInt16 = DuetMixerParams.gainMin

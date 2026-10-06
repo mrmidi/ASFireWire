@@ -52,6 +52,7 @@ struct ModernContentView: View {
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
         case audioTelemetry = "Audio Telemetry"
+        case audioGeometry = "Audio Geometry"
         case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
@@ -79,6 +80,7 @@ struct ModernContentView: View {
             case .topology: return "network"
             case .romExplorer: return "memorychip"
             case .audioTelemetry: return "waveform.path.ecg"
+            case .audioGeometry: return "slider.horizontal.3"
             case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
@@ -132,6 +134,8 @@ struct ModernContentView: View {
                     ROMExplorerView(viewModel: romExplorerVM)
                 case .audioTelemetry:
                     AudioTelemetryView(connector: debugVM.connector)
+                case .audioGeometry:
+                    AudioGeometryView(connector: debugVM.connector)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
                 case .busReset:

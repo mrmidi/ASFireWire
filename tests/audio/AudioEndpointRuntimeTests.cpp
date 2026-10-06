@@ -213,3 +213,49 @@ TEST(AudioEndpointRuntime, RateChangeMovesActiveRingAndReusesMemory) {
         memory->release();
     }
 }
+
+TEST(AudioEndpointRuntime, AvcRateAndWidthChangesKeepMemoryObjectsAndResetEpoch) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    auto config = MakeDeviceConfig();
+    ASFW::Audio::Runtime::RateFormation low{};
+    low.sampleRateHz = 48000;
+    low.protocolSupported = true;
+    low.playback = {{4, 4, 0, {}}};
+    low.capture = {{6, 6, 0, {}}};
+    auto high = low;
+    high.sampleRateHz = 192000;
+    high.playback = {{2, 2, 0, {}}};
+    high.capture = high.playback;
+    config.rateFormationCandidates = {low, high};
+    runtime.UpdateConfig(config);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot prior{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(prior));
+    config.currentSampleRate = 192000;
+    config.inputChannelCount = config.outputChannelCount = 2;
+    runtime.UpdateConfig(config);
+    runtime.MarkStreaming(true);
+    EXPECT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnBusy);
+    runtime.MarkStreaming(false);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot highView{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(highView));
+    EXPECT_EQ(prior.outputBase, highView.outputBase);
+    EXPECT_EQ(prior.inputBase, highView.inputBase);
+    EXPECT_EQ(prior.control, highView.control);
+    EXPECT_GT(highView.generation, prior.generation);
+    EXPECT_EQ(highView.sampleRateHz, 192000U);
+    EXPECT_EQ(highView.outputFrames, 49152U);
+    EXPECT_EQ(highView.outputChannels, 2U);
+    config.currentSampleRate = 48000;
+    config.inputChannelCount = 6;
+    config.outputChannelCount = 4;
+    runtime.UpdateConfig(config);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot returned{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(returned));
+    EXPECT_EQ(returned.outputBase, prior.outputBase);
+    EXPECT_EQ(returned.inputBase, prior.inputBase);
+    EXPECT_EQ(returned.outputFrames, 12288U);
+    EXPECT_EQ(returned.outputChannels, 4U);
+}

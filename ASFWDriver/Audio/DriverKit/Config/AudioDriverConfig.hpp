@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "../../Model/AvcVolumeMapping.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../../Runtime/ResolvedAudioConfiguration.hpp"
 
 // Forward declarations to avoid pulling in DriverKit headers
 class OSArray;
@@ -57,6 +58,9 @@ struct ParsedWireStream {
 
 struct ParsedAudioDriverConfig {
     uint64_t guid{0};
+    uint64_t avcRouteIncarnation{0};
+    uint64_t avcRouteEpoch{0};
+    uint32_t avcBusGeneration{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, carried across the nub.
@@ -75,6 +79,7 @@ struct ParsedAudioDriverConfig {
     double currentSampleRate{kDefaultSampleRate};
 
     StreamMode streamMode{StreamMode::kNonBlocking};
+    std::vector<::ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
 
     // Resolved per-stream geometry from the publisher. A count of zero means
     // none was published and the profile's constants are the only description

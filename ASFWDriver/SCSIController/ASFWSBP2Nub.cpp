@@ -5,7 +5,7 @@
 // Per-discovered-unit provider nub. See ASFWSBP2Nub.iig.
 //
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWSBP2Nub.h>
+#include <net.asfw.driver/ASFWSBP2Nub.h>
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>

@@ -8,6 +8,7 @@
 
 #include "ASFWDriver/Audio/Protocols/BeBoB/BeBoBProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/GenericAvcProtocol.hpp"
+#include "ASFWDriver/Audio/Protocols/AVC/AvcDuplexClockObservation.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialProtocol.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/MAudioSpecialRouting.hpp"
 #include "ASFWDriver/Audio/Protocols/BeBoB/Phase88MixerData.hpp"
@@ -615,6 +616,57 @@ TEST_F(BeBoBProtocolTest, GenericAvcUsesObservedAsymmetricGeometryAndRejectsOthe
     EXPECT_EQ(status, kIOReturnUnsupported);
 }
 
+TEST_F(BeBoBProtocolTest, GenericAvcOwnsFormationInventoryWithoutUnlockingRates) {
+    ASFW::Audio::GenericAvcProtocol protocol(busOps_, bus_, route_, nullptr, &cmp_, &timer_);
+    ASFW::Audio::AudioStreamRuntimeCaps geometry{};
+    geometry.sampleRateHz = 48000;
+    geometry.hostInputPcmChannels = geometry.hostOutputPcmChannels = 2;
+    protocol.AdoptDiscoveredGeometry(geometry);
+    std::vector<ASFW::Audio::Runtime::RateFormation> catalog{
+        {.sampleRateHz = 48000, .playback = {{2, 2, 0, {}}}, .capture = {{2, 2, 0, {}}}, .protocolSupported = true},
+        {.sampleRateHz = 96000, .playback = {{2, 2, 0, {}}}, .capture = {{2, 2, 0, {}}}, .protocolSupported = true}};
+    protocol.AdoptDiscoveredFormations(catalog);
+    catalog.clear();
+    ASSERT_EQ(protocol.DiscoveredFormations().size(), 2U);
+    EXPECT_EQ(protocol.DiscoveredFormations()[1].sampleRateHz, 96000U);
+    EXPECT_FALSE(protocol.DiscoveredFormations()[1].hardwareValidated);
+    IOReturn status = kIOReturnSuccess;
+    protocol.ApplyClockConfig({.sampleRateHz = 96000}, [&status](IOReturn result, const auto&) { status = result; });
+    EXPECT_EQ(status, kIOReturnUnsupported);
+    EXPECT_EQ(protocol.RuntimeCaps()->sampleRateHz, 48000U);
+}
+
+TEST(GenericAvcFormationTests, IdleClockChangeSelectsRateSpecificDuplexGeometry) {
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    ASFW::Audio::GenericAvcProtocol protocol(rig.Bus(), rig.Bus(), rig.Route(), nullptr, nullptr, &rig.Timers());
+    protocol.UpdateRuntimeContext(rig.Route(), rig.Transport());
+    ASFW::Audio::AudioStreamRuntimeCaps geometry{};
+    geometry.sampleRateHz = 48000;
+    geometry.hostInputPcmChannels = geometry.hostOutputPcmChannels = 16;
+    protocol.AdoptDiscoveredGeometry(geometry);
+    const std::array<uint32_t, 2> rates{48000, 96000};
+    protocol.AdoptDiscoveredRates(rates);
+    const std::array<ASFW::Audio::Runtime::RateFormation, 2> catalog{{
+        {.sampleRateHz = 48000, .playback = {{16,17,1,{}}}, .capture = {{16,17,1,{}}}, .protocolSupported = true},
+        {.sampleRateHz = 96000, .playback = {{8,9,1,{}}}, .capture = {{12,13,1,{}}}, .protocolSupported = true}}};
+    protocol.AdoptDiscoveredFormations(catalog);
+    IOReturn status = kIOReturnBusy;
+    protocol.ApplyClockConfig({.sampleRateHz = 96000}, [&](IOReturn result, auto) { status = result; });
+    for (uint32_t i = 0; i < 8 && status == kIOReturnBusy; ++i) {
+        (void)rig.Drain(); rig.Timers().Advance(1'000'000'000ULL);
+    }
+    ASSERT_EQ(status, kIOReturnSuccess);
+    const auto caps = protocol.RuntimeCaps();
+    ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->sampleRateHz, 96000U);
+    EXPECT_EQ(caps->hostInputPcmChannels, 12U);
+    EXPECT_EQ(caps->hostOutputPcmChannels, 8U);
+    EXPECT_EQ(caps->deviceToHostAm824Slots, 13U);
+    EXPECT_EQ(caps->hostToDeviceAm824Slots, 9U);
+    EXPECT_FALSE(protocol.DiscoveredFormations()[1].hardwareValidated);
+}
+
 TEST(Phase88OnGenericAvcTests, StartAppliesTheRateThenTheWholeStartupMixerInOrder) {
     // The PHASE 88 row is the generic protocol plus its startup mixer map. Its
     // start sends both signal-format CONTROLs, then every selector, mute and
@@ -686,4 +738,58 @@ TEST_F(BeBoBProtocolTest, StopReportsCmpFailureAndAllowsLaterCleanup) {
     bus_.pcrByNode_[kNode] = 0x81050000U;
     EXPECT_EQ(proto.Stop(), kIOReturnSuccess);
     EXPECT_EQ(bus_.pcrByNode_[kNode], 0x80050000U);
+}
+
+TEST(AvcDuplexClockObservationTests, ReadsBothRealAnswersInReferenceOrderAndKeepsMismatch) {
+    ASFW::Testing::AvcTestRig rig;
+    ASSERT_TRUE(rig.IsReady());
+    rig.Target().Script(ASFW::Testing::AvcReply::ImplementedStable().WithOperands(
+        std::array<uint8_t, 5>{0, 0x90, 2, 0xff, 0xff}));
+    rig.Target().Script(ASFW::Testing::AvcReply::ImplementedStable().WithOperands(
+        std::array<uint8_t, 5>{0, 0x90, 0, 0xff, 0xff}));
+    auto active = std::make_shared<std::atomic<bool>>(true);
+    IOReturn status = kIOReturnBusy;
+    ASFW::Audio::AvcDuplexClockObservation observed{};
+    ASFW::Audio::AvcDuplexClockRead::Start(rig.Transport(), rig.Route(), 0, 0, active,
+        [&](IOReturn result, auto value) { status = result; observed = value; });
+    rig.Drain();
+    ASSERT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(observed.outputRateHz, 48000U);
+    EXPECT_EQ(observed.inputRateHz, 32000U);
+    ASSERT_EQ(rig.Target().Commands().size(), 2U);
+    for (size_t i = 0; i < 2; ++i) {
+        const auto& command = rig.Target().Commands()[i].data;
+        const std::array<uint8_t, 8> expected{1, 0xff, static_cast<uint8_t>(i ? 0x19 : 0x18), 0, 0x90, 0xff, 0xff, 0xff};
+        EXPECT_TRUE(std::equal(expected.begin(), expected.end(), command.begin()));
+    }
+}
+
+TEST(AvcDuplexClockObservationTests, TransitionRetriesAreBoundedAndCannotConfirmCachedRate) {
+    ASFW::Testing::AvcTestRig rig;
+    for (size_t i = 0; i < 3; ++i)
+        rig.Target().Script(ASFW::Testing::AvcReply::ImplementedStable().WithPatch(0, 0x0b));
+    IOReturn status = kIOReturnBusy;
+    unsigned calls = 0;
+    ASFW::Audio::AvcDuplexClockRead::Start(rig.Transport(), rig.Route(), 0, 0,
+        std::make_shared<std::atomic<bool>>(true), [&](IOReturn result, auto value) {
+            status = result; ++calls; EXPECT_EQ(value.outputRateHz, 0U);
+        });
+    rig.Drain();
+    EXPECT_EQ(status, kIOReturnNotReady);
+    EXPECT_EQ(calls, 1U);
+    EXPECT_EQ(rig.Target().Commands().size(), 3U);
+}
+
+TEST(AvcDuplexClockObservationTests, CancellationPreventsTheNextPlugQuery) {
+    ASFW::Testing::AvcTestRig rig;
+    auto active = std::make_shared<std::atomic<bool>>(true);
+    rig.Target().Script(ASFW::Testing::AvcReply::ImplementedStable().WithOperands(
+        std::array<uint8_t, 5>{0, 0x90, 2, 0xff, 0xff}));
+    IOReturn status = kIOReturnBusy;
+    ASFW::Audio::AvcDuplexClockRead::Start(rig.Transport(), rig.Route(), 0, 0, active,
+        [&](IOReturn result, auto) { status = result; });
+    active->store(false);
+    rig.Drain();
+    EXPECT_EQ(status, kIOReturnAborted);
+    EXPECT_EQ(rig.Target().Commands().size(), 1U);
 }

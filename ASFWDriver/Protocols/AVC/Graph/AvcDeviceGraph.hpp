@@ -51,6 +51,18 @@ enum class StreamSelectionEvidence : uint8_t {
     kUnitPlugFormat,
 };
 
+// Complete per-rate wire formations, including modes with different widths.
+// supportedSampleRates below remains the legacy same-shape projection until
+// transactional publication consumes this inventory.
+struct StreamFormation {
+    uint32_t sampleRateHz{0};
+    uint32_t pcmChannels{0};
+    uint32_t dataBlockSize{0};
+    uint32_t midiSlots{0};
+    Common::PcmSlotMap pcmSlots{};
+    bool descriptorMapValidated{false};
+};
+
 struct StreamGraph {
     uint8_t subunitPlugId{0};
     StreamSelectionEvidence selectionEvidence{StreamSelectionEvidence::kUnresolved};
@@ -58,6 +70,7 @@ struct StreamGraph {
     uint32_t dataBlockSize{0};
     uint32_t currentSampleRate{0};
     std::vector<uint32_t> supportedSampleRates;
+    std::vector<StreamFormation> formations;
     uint32_t channelCount{0};       ///< Total PCM audio channels
     uint32_t midiStreamCount{0};    ///< MIDI port/stream count
     ASFW::Common::PcmSlotMap slotMap; ///< Mapped AM824 slots for PCM channels

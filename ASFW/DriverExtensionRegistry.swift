@@ -86,7 +86,7 @@ enum DriverInstallSettings {
 
 enum DriverExtensionRegistryInspector {
     private static let driverServiceName = "ASFWDriver"
-    private static let driverServerName = "net.mrmidi.ASFW.ASFWDriver"
+    private static let driverServerName = "net.asfw.driver"
     private static let pciMatch = "0x590111c1"
 
     static func snapshot() -> DriverExtensionRegistrySnapshot {

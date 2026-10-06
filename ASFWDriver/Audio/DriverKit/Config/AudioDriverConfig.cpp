@@ -248,6 +248,50 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     ParseIdentityProperties(properties, inOutConfig);
     ParseDevicePresentationProperties(properties, inOutConfig);
     ParseSampleRates(properties, inOutConfig);
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcRouteIncarnation)))
+        inOutConfig.avcRouteIncarnation = value->unsigned64BitValue();
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcRouteEpoch)))
+        inOutConfig.avcRouteEpoch = value->unsigned64BitValue();
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kAvcBusGeneration)))
+        inOutConfig.avcBusGeneration = value->unsigned32BitValue();
+    inOutConfig.rateFormationCandidates.clear();
+    if (auto* catalog = OSDynamicCast(OSArray, properties->getObject(Keys::kRateFormations))) {
+        std::vector<::ASFW::Audio::Runtime::RateFormation> parsed;
+        bool valid = catalog->getCount() <= 7;
+        for (uint32_t i = 0; valid && i < catalog->getCount(); ++i) {
+            auto* entry = OSDynamicCast(OSDictionary, catalog->getObject(i));
+            if (!entry) { valid = false; break; }
+            auto* rate = OSDynamicCast(OSNumber, entry->getObject(Keys::kCurrentSampleRate));
+            auto* mode = OSDynamicCast(OSNumber, entry->getObject(Keys::kStreamMode));
+            auto* protocol = OSDynamicCast(OSNumber, entry->getObject(Keys::kFormationProtocolSupported));
+            auto* validated = OSDynamicCast(OSNumber, entry->getObject(Keys::kFormationHardwareValidated));
+            if (rate == nullptr || mode == nullptr || protocol == nullptr || validated == nullptr || mode->unsigned32BitValue() > 1 ||
+                !::ASFW::Encoding::AmdtpRateGeometryForSampleRate(rate->unsigned32BitValue()) ||
+                std::ranges::any_of(parsed, [&](const auto& f) { return f.sampleRateHz == rate->unsigned32BitValue(); })) {
+                valid = false; break;
+            }
+            ParsedWireStream playback[kMaxConfiguredStreams]{}, capture[kMaxConfiguredStreams]{};
+            uint32_t playbackCount = 0, captureCount = 0;
+            ParseWireStreams(entry, Keys::kPlaybackStreams, playback, playbackCount);
+            ParseWireStreams(entry, Keys::kCaptureStreams, capture, captureCount);
+            if (!playbackCount || !captureCount) { valid = false; break; }
+            ::ASFW::Audio::Runtime::RateFormation formation{};
+            formation.sampleRateHz = rate->unsigned32BitValue();
+            formation.mode = mode->unsigned32BitValue() == 1
+                ? ::ASFW::Encoding::StreamMode::kBlocking : ::ASFW::Encoding::StreamMode::kNonBlocking;
+            formation.protocolSupported = protocol->unsigned32BitValue() != 0;
+            formation.hardwareValidated = validated->unsigned32BitValue() != 0;
+            for (uint32_t j = 0; j < playbackCount; ++j)
+                formation.playback.push_back({playback[j].pcmChannels, playback[j].am824Slots,
+                    playback[j].midiPorts, playback[j].pcmSlotMap});
+            for (uint32_t j = 0; j < captureCount; ++j)
+                formation.capture.push_back({capture[j].pcmChannels, capture[j].am824Slots,
+                    capture[j].midiPorts, capture[j].pcmSlotMap});
+            parsed.push_back(std::move(formation));
+        }
+        if (valid) inOutConfig.rateFormationCandidates = std::move(parsed);
+        else ASFW_LOG(Audio, "AudioDriverConfig: rejected incomplete/ambiguous rate formation catalog");
+    }
     ParsePlugNames(properties, inOutConfig);
     ParseChannelNames(properties, inOutConfig);
     ParseWireStreams(properties, Keys::kPlaybackStreams,

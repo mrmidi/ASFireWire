@@ -1,3 +1,4 @@
+#include "../Model/DiscoveredRuntimeCaps.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -66,6 +67,9 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
 [[nodiscard]] AudioClockConfig EffectiveStartClock(
     const Discovery::DeviceRecord& record, const AudioClockConfig& requested,
     const std::optional<Model::ASFWAudioDevice>& discoveredConfig) noexcept {
+    if (discoveredConfig && !discoveredConfig->rateFormationCandidates.empty() &&
+        std::ranges::find(discoveredConfig->sampleRates, requested.sampleRateHz) != discoveredConfig->sampleRates.end())
+        return requested;
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
     if (policy != nullptr && policy->plan.streamTraits.start.startRatePinHz != 0) {
         return AudioClockConfig{.sampleRateHz = policy->plan.streamTraits.start.startRatePinHz};
@@ -78,28 +82,6 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
 }
 
 // The discovered single-stream geometry, in the form a family serves as caps.
-[[nodiscard]] std::optional<AudioStreamRuntimeCaps> DiscoveredCaps(
-    const Model::ASFWAudioDevice& config) noexcept {
-    if (config.playbackStreams.size() != 1 || config.captureStreams.size() != 1 ||
-        config.currentSampleRate == 0) {
-        return std::nullopt;
-    }
-    const auto& playback = config.playbackStreams.front();
-    const auto& capture = config.captureStreams.front();
-    AudioStreamRuntimeCaps caps{};
-    caps.sampleRateHz = config.currentSampleRate;
-    caps.hostInputPcmChannels = capture.pcmChannels;
-    caps.hostOutputPcmChannels = playback.pcmChannels;
-    caps.deviceToHostAm824Slots = capture.am824Slots;
-    caps.hostToDeviceAm824Slots = playback.am824Slots;
-    caps.deviceToHostStreamCount = caps.hostToDeviceStreamCount = 1;
-    caps.deviceToHostStreams[0] = {.pcmChannels = static_cast<uint16_t>(capture.pcmChannels),
-                                   .am824Slots = static_cast<uint16_t>(capture.am824Slots)};
-    caps.hostToDeviceStreams[0] = {.pcmChannels = static_cast<uint16_t>(playback.pcmChannels),
-                                   .am824Slots = static_cast<uint16_t>(playback.am824Slots)};
-    return caps;
-}
-
 [[nodiscard]] uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
     return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
 }
@@ -201,6 +183,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // and the graph check below still requires the two to agree.
     if (request.discoveredConfig) {
         family.AdoptDiscoveredRates(request.discoveredConfig->sampleRates);
+        family.AdoptDiscoveredFormations(request.discoveredConfig->rateFormationCandidates);
         if (const auto discovered = DiscoveredCaps(*request.discoveredConfig)) {
             family.AdoptDiscoveredGeometry(*discovered);
         }
@@ -390,7 +373,10 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         const auto& capture = config.captureStreams.front();
         if (!capture.pcmSlotMap.FitsWithin(capture.pcmChannels, capture.am824Slots))
             return rollback(kIOReturnUnsupported, "GraphSlotMap");
-        static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) = capture.pcmSlotMap;
+        // Profile-owned special firmware keeps its vendor permutation and
+        // input-delay policy; it never supplied a discovery slot map.
+        if (config.graphResolved)
+            static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) = capture.pcmSlotMap;
         profile.playbackChannelMap = config.playbackStreams.front().pcmSlotMap;
         ASFW_LOG(Audio, "[AvcGraphBind] guid=%llx rate=%u playbackPcm=%u capturePcm=%u captureMapSlots=%u",
             guid, clock.sampleRateHz, config.outputChannelCount, config.inputChannelCount,

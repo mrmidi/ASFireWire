@@ -22,6 +22,7 @@
 #include <span>
 
 #include "DuplexControlTypes.hpp"
+#include "../../Runtime/ResolvedAudioConfiguration.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -55,6 +56,9 @@ public:
     // Geometry discovery derived from descriptors or plug formats, offered
     // before LoadGeometry. A family that reads its own geometry ignores it.
     virtual void AdoptDiscoveredRates(std::span<const uint32_t>) {}
+    // Complete candidates are separate from advertised/validated rates. The
+    // session offers them without granting permission to program a new rate.
+    virtual void AdoptDiscoveredFormations(std::span<const Runtime::RateFormation>) {}
     virtual void AdoptDiscoveredGeometry(const AudioStreamRuntimeCaps& caps) noexcept { (void)caps; }
     // Read the device's stream geometry so channel planning sees every stream.
     [[nodiscard]] virtual IOReturn LoadGeometry() = 0;

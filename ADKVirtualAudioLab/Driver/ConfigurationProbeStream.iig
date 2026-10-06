@@ -1,0 +1,15 @@
+#ifndef ConfigurationProbeStream_h
+#define ConfigurationProbeStream_h
+#include <AudioDriverKit/IOUserAudioStream.iig>
+using namespace AudioDriverKit;
+class ConfigurationProbeDevice;
+class ConfigurationProbeStream : public IOUserAudioStream {
+public:
+    virtual bool init(IOUserAudioDriver* driver, IOUserAudioStreamDirection direction,
+                      IOMemoryDescriptor* memory) override LOCALONLY;
+    virtual void free() override LOCALONLY;
+    virtual void Bind(ConfigurationProbeDevice* owner) LOCALONLY;
+    virtual kern_return_t HandleChangeCurrentStreamFormat(
+        const IOUserAudioStreamBasicDescription* format) override LOCALONLY;
+};
+#endif

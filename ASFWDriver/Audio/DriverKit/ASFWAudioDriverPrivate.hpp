@@ -36,6 +36,9 @@ class ASFWAudioDevice;
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
+    uint64_t avcRouteIncarnation{0};
+    uint64_t avcRouteEpoch{0};
+    uint32_t avcBusGeneration{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, carried across the nub.
@@ -53,6 +56,7 @@ struct AudioDriverDeviceState {
     // PerformDeviceConfigurationChange commits it inside the host's window.
     std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
+    std::vector<ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
     uint32_t avcControlCount{0};
     ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};
@@ -236,6 +240,7 @@ struct AudioDriverRuntimeState {
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.
     uint64_t txFilledFrameEnd{0};
+    std::atomic<uint64_t> txFillMaxDurationTicks{0};
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.
     uint64_t txMissedFinalityAtStart{0};

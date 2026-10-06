@@ -200,8 +200,8 @@ bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
 
     const uint32_t activeFrames = ivars.device.timing.frameRingFrames;
     if (activeFrames == 0 ||
-        activeFrames > FrameCapacityFromSegment(inputSegment, graph.memory.inputChannels) ||
-        activeFrames > FrameCapacityFromSegment(outputSegment, graph.memory.outputChannels)) {
+        activeFrames > FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount) ||
+        activeFrames > FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount)) {
         ASFW_LOG(DirectAudio,
                  "ADK FATAL BIND geometry update ring=%u exceeds mapping rate=%u",
                  activeFrames, ivars.device.timing.sampleRateHz);
@@ -209,6 +209,8 @@ bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
     }
     // IO is stopped inside the configuration-change window, so no RT reader
     // observes the capacity change mid-cycle.
+    graph.memory.inputChannels = ivars.device.inputChannelCount;
+    graph.memory.outputChannels = ivars.device.outputChannelCount;
     graph.memory.inputFrameCapacity = activeFrames;
     graph.memory.outputFrameCapacity = activeFrames;
     graph.sampleRateHz = ivars.device.timing.sampleRateHz;

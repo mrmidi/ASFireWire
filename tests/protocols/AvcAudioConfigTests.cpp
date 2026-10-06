@@ -1,3 +1,5 @@
+#include "Audio/Model/AvcRateConfiguration.hpp"
+#include "Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -62,6 +64,60 @@ TEST(AvcAudioConfig, GraphOffersOnlyTheRateItStartsAt) {
     ASSERT_TRUE(pinned);
     EXPECT_EQ(pinned->sampleRates, std::vector<uint32_t>{96000});
     EXPECT_EQ(pinned->currentSampleRate, 96000U);
+}
+
+TEST(AvcAudioConfig, RetainsCompleteRateCandidatesWithoutUnlockingAdvertisement) {
+    DeviceGraph graph;
+    graph.playback = Stream(16, 17, {48000}, 48000);
+    graph.capture = Stream(16, 17, {48000}, 48000);
+    graph.supportsBlockingTransmit = true;
+    graph.playback.formations = {{48000, 16, 17, 1, {}, false}, {96000, 12, 13, 1, {}, false},
+        {192000, 8, 9, 1, {}, false}};
+    graph.capture.formations = graph.playback.formations;
+    StaticAudioEndpointPlan plan;
+    const auto config = BuildGraphAudioConfig({.guid = 1}, plan, graph);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config->sampleRates, std::vector<uint32_t>{48000});
+    ASSERT_EQ(config->rateFormationCandidates.size(), 3);
+    const auto& high = config->rateFormationCandidates[1];
+    EXPECT_EQ(high.sampleRateHz, 96000);
+    EXPECT_EQ(high.capture[0].pcmChannels, 12);
+    EXPECT_EQ(high.playback[0].dataBlockSize, 13);
+    EXPECT_EQ(high.mode, ASFW::Encoding::StreamMode::kBlocking);
+    EXPECT_TRUE(high.protocolSupported);
+    EXPECT_FALSE(high.hardwareValidated);
+    EXPECT_EQ(config->inputChannelCount, 16);
+}
+
+TEST(AvcAudioConfig, StartupRateSelectsItsFormationAfterDiscoveryInAnotherTier) {
+    DeviceGraph graph;
+    graph.playback = Stream(12, 13, {96000}, 96000);
+    graph.capture = Stream(12, 13, {96000}, 96000);
+    graph.supportsBlockingTransmit = true;
+    graph.playback.channelNames = {"narrow ADAT layout"};
+    graph.playback.formations = {{48000, 16, 17, 1, {}, false}, {96000, 12, 13, 1, {}, false}};
+    graph.capture.formations = graph.playback.formations;
+    const auto config = BuildGraphAudioConfig({.guid = 1}, StaticAudioEndpointPlan{}, graph);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config->currentSampleRate, 48000U);
+    EXPECT_EQ(config->inputChannelCount, 16U);
+    EXPECT_EQ(config->outputChannelCount, 16U);
+    EXPECT_EQ(config->playbackStreams[0].am824Slots, 17U);
+    EXPECT_TRUE(config->outputChannelNames.empty());
+}
+
+TEST(AvcAudioConfig, CandidateIntersectionRejectsAmbiguityAndUnknownWireRates) {
+    DeviceGraph graph;
+    graph.playback = Stream(2, 2, {48000}, 48000);
+    graph.capture = Stream(2, 2, {48000}, 48000);
+    graph.playback.formations = {{48000, 2, 2, 0, {}, false}, {96000, 2, 2, 0, {}, false},
+        {96000, 4, 4, 0, {}, false}, {12345, 2, 2, 0, {}, false}, {88200, 2, 2, 0, {}, false}};
+    graph.capture.formations = {{48000, 2, 2, 0, {}, false}, {96000, 2, 2, 0, {}, false},
+        {12345, 2, 2, 0, {}, false}};
+    const auto config = BuildGraphAudioConfig({.guid = 1}, {}, graph);
+    ASSERT_TRUE(config);
+    ASSERT_EQ(config->rateFormationCandidates.size(), 1);
+    EXPECT_EQ(config->rateFormationCandidates[0].sampleRateHz, 48000);
 }
 
 TEST(AvcAudioConfig, AvcDevicesPublishOnlyStartupRateUntilTransactionalMultiRate) {
@@ -157,6 +213,34 @@ TEST(AvcAudioConfig, ProfileOwnedEndpointCarriesTheProfilesGeometry) {
     EXPECT_TRUE(config->resolvedGeometryRequired);
     EXPECT_FALSE(config->graphResolved);
     EXPECT_EQ(config->streamMode, ASFW::Audio::Model::StreamMode::kBlocking);
+}
+
+TEST(AvcAudioConfig, SpecialFirmwareRetainsVendorRateTablesWithoutGenericDiscovery) {
+    StaticAudioEndpointPlan plan{};
+    plan.profileBuilder = ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814;
+    plan.streamTraits.wire.forcedStreamMode = ForcedStreamMode::Blocking;
+    plan.streamTraits.start.startRatePinHz = 48000;
+    const auto config = BuildProfileOwnedAudioConfig({.guid = 7}, plan, FixedProfile{});
+    ASSERT_TRUE(config);
+    ASSERT_EQ(config->rateFormationCandidates.size(), 6U);
+    EXPECT_EQ(config->sampleRates, std::vector<uint32_t>{48000});
+    EXPECT_FALSE(config->graphResolved);
+    for (const auto& candidate : config->rateFormationCandidates) {
+        EXPECT_FALSE(candidate.hardwareValidated);
+        const auto formation = ASFW::Audio::BeBoB::MAudioFormationFor(
+            ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF,
+            ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF, candidate.sampleRateHz);
+        ASSERT_TRUE(formation);
+        const auto next = ASFW::Audio::Model::WithAvcRateFormation(*config, candidate.sampleRateHz);
+        ASSERT_TRUE(next);
+        EXPECT_EQ(next->inputChannelCount, formation->capturePcmChannels);
+        EXPECT_EQ(next->outputChannelCount, formation->playbackPcmChannels);
+        EXPECT_FALSE(next->graphResolved);
+    }
+    plan.profileBuilder = ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix;
+    const auto projectMix = BuildProfileOwnedAudioConfig({.guid = 8}, plan, FixedProfile{});
+    ASSERT_TRUE(projectMix);
+    EXPECT_EQ(projectMix->rateFormationCandidates.size(), 4U);
 }
 
 TEST(AvcAudioConfig, ProfileOwnedEndpointStartsAt48kWhenOffered) {

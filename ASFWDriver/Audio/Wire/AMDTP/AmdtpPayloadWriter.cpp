@@ -83,11 +83,24 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t missedFinality = 0;
     int64_t minMarginPackets = INT64_MAX;
 
+    // Sequential frames share a packet. Avoid a full timeline scan for each
+    // sample on the HAL IO thread (16 identical scans per packet at 96 kHz).
+    // Revalidate generation/state before reuse; a retired or re-armed slot
+    // goes through the normal lookup and miss classification.
+    PacketSlotSnapshot snap{};
+    bool haveSnapshot = false;
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
 
-        PacketSlotSnapshot snap{};
-        if (!timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap)) {
+        const bool reuseSnapshot = haveSnapshot &&
+            absoluteFrame >= snap.firstAudioFrame &&
+            absoluteFrame - snap.firstAudioFrame < snap.framesInPacket &&
+            snap.slot->generation.load(std::memory_order_acquire) == snap.generation &&
+            snap.slot->state.load(std::memory_order_acquire) == PacketSlotState::ExposedForAudio;
+        if (!reuseSnapshot) {
+            haveSnapshot = timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap);
+        }
+        if (!haveSnapshot) {
             if (absoluteFrame >= timeline_->ExposedFrameEnd()) {
                 ++withoutPacket;
             } else {

@@ -10,6 +10,7 @@
 #include "AudioPropertyKeys.hpp"
 #include "AvcVolumeMapping.hpp"
 #include "../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../Runtime/ResolvedAudioConfiguration.hpp"
 
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
@@ -47,6 +48,9 @@ struct ASFWAudioWireStream {
 
 struct ASFWAudioDevice {
     uint64_t guid{0};
+    uint64_t avcRouteIncarnation{0};
+    uint64_t avcRouteEpoch{0};
+    uint32_t avcBusGeneration{0};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, as a raw uint32 so this
@@ -73,6 +77,9 @@ struct ASFWAudioDevice {
     // and is wrong for any device whose streams are not all the same width.
     std::vector<ASFWAudioWireStream> playbackStreams{};  // host -> device (DICE RX)
     std::vector<ASFWAudioWireStream> captureStreams{};   // device -> host (DICE TX)
+    // Complete capability candidates, separate from HAL advertisement. A
+    // discovery observation never grants hardware validation by itself.
+    std::vector<Runtime::RateFormation> rateFormationCandidates;
 
     /// The audio side must use the resolved geometry above and must NOT fall
     /// back to profile constants. Set by families that always resolve before
@@ -172,6 +179,48 @@ struct ASFWAudioDevice {
         if (!PublishWireStreams(properties, PropertyKeys::kPlaybackStreams, playbackStreams) ||
             !PublishWireStreams(properties, PropertyKeys::kCaptureStreams, captureStreams)) {
             return false;
+        }
+        if (!rateFormationCandidates.empty()) {
+            for (const auto& [key, value] : std::array<std::pair<const char*, uint64_t>, 3>{{
+                {PropertyKeys::kAvcRouteIncarnation, avcRouteIncarnation},
+                {PropertyKeys::kAvcRouteEpoch, avcRouteEpoch},
+                {PropertyKeys::kAvcBusGeneration, avcBusGeneration}}}) {
+                auto number = OSSharedPtr(OSNumber::withNumber(value, 64), OSNoRetain);
+                if (!number) return false;
+                properties->setObject(key, number.get());
+            }
+            auto catalog = OSSharedPtr(OSArray::withCapacity(
+                static_cast<uint32_t>(rateFormationCandidates.size())), OSNoRetain);
+            if (!catalog) return false;
+            for (const auto& formation : rateFormationCandidates) {
+                auto entry = OSSharedPtr(OSDictionary::withCapacity(6), OSNoRetain);
+                if (!entry) return false;
+                const auto add = [&](const char* key, uint32_t value) {
+                    auto number = OSSharedPtr(OSNumber::withNumber(value, 32), OSNoRetain);
+                    if (!number) return false;
+                    entry->setObject(key, number.get());
+                    return true;
+                };
+                const auto streams = [](const auto& direction) {
+                    std::vector<ASFWAudioWireStream> result;
+                    uint32_t offset = 0;
+                    for (const auto& stream : direction) {
+                        result.push_back({stream.pcmChannels, stream.dataBlockSize,
+                            stream.midiSlots, offset, stream.pcmSlots});
+                        offset += stream.pcmChannels;
+                    }
+                    return result;
+                };
+                if (!add(PropertyKeys::kCurrentSampleRate, formation.sampleRateHz) ||
+                    !add(PropertyKeys::kStreamMode,
+                         formation.mode == Encoding::StreamMode::kBlocking ? 1U : 0U) ||
+                    !add(PropertyKeys::kFormationProtocolSupported, formation.protocolSupported) ||
+                    !add(PropertyKeys::kFormationHardwareValidated, formation.hardwareValidated) ||
+                    !PublishWireStreams(entry.get(), PropertyKeys::kPlaybackStreams, streams(formation.playback)) ||
+                    !PublishWireStreams(entry.get(), PropertyKeys::kCaptureStreams, streams(formation.capture))) return false;
+                catalog->setObject(entry.get());
+            }
+            properties->setObject(PropertyKeys::kRateFormations, catalog.get());
         }
         if (resolvedGeometryRequired) {
             auto required = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);

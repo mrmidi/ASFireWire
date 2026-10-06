@@ -92,7 +92,7 @@ public:
             IOLockLock(lock_);
         }
         config_.currentSampleRate = sampleRateHz;
-        const uint32_t activeFrames = ActiveRingFramesForRate(sampleRateHz);
+        const uint32_t activeFrames = ActiveRingFramesForRate(sampleRateHz, directAllocatedFrames_);
         if (directSampleRateHz_ != 0 && directSampleRateHz_ != sampleRateHz &&
             activeFrames != 0) {
             directSampleRateHz_ = sampleRateHz;
@@ -551,8 +551,15 @@ private:
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
         // Allocate the maximum once; publish the active ring for this rate.
-        const uint32_t allocatedFrames = Isoch::Config::kAudioRingBufferFrames;
-        const uint32_t outputFrames = ActiveRingFramesForRate(sampleRateHz);
+        Runtime::ConfigurationAllocation allocation{Isoch::Config::kAudioRingBufferFrames,
+            outputChannels, inputChannels, 0};
+        if (!config_.rateFormationCandidates.empty()) {
+            const auto maximum = Runtime::MaximumFormationAllocation(config_.rateFormationCandidates, allocation);
+            if (!maximum) return kIOReturnUnsupported;
+            allocation = *maximum;
+        }
+        const uint32_t allocatedFrames = allocation.frameCapacity;
+        const uint32_t outputFrames = ActiveRingFramesForRate(sampleRateHz, allocatedFrames);
         const uint32_t inputFrames = outputFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0 ||
@@ -585,10 +592,26 @@ private:
             return kIOReturnSuccess;
         }
 
+        if (!config_.rateFormationCandidates.empty() && HasCompleteDirectAudioMemoryLocked()) {
+            // Both directions are stopped by the configuration coordinator.
+            // Keep the memory object identity: only its dense active view moves.
+            if (streaming_.load(std::memory_order_acquire)) return kIOReturnBusy;
+            if (uint64_t(outputFrames) * outputChannels * 4 > directOutputMap_->GetLength() ||
+                uint64_t(inputFrames) * inputChannels * 4 > directInputMap_->GetLength())
+                return kIOReturnNoResources;
+            directOutputCapacityFrames_ = outputFrames;
+            directInputCapacityFrames_ = inputFrames;
+            directOutputChannels_ = outputChannels;
+            directInputChannels_ = inputChannels;
+            directSampleRateHz_ = sampleRateHz;
+            directControl_->ResetForStart();
+            PublishDirectAudioBindingFromMappedMemoryLocked();
+            return kIOReturnSuccess;
+        }
         ReleaseDirectAudioMemoryLocked();
 
-        const uint64_t outputBytes = static_cast<uint64_t>(allocatedFrames) * outputChannels * sizeof(float);
-        const uint64_t inputBytes = static_cast<uint64_t>(allocatedFrames) * inputChannels * sizeof(int32_t);
+        const uint64_t outputBytes = static_cast<uint64_t>(allocatedFrames) * allocation.playbackChannelCapacity * sizeof(float);
+        const uint64_t inputBytes = static_cast<uint64_t>(allocatedFrames) * allocation.captureChannelCapacity * sizeof(int32_t);
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
         ASFW_LOG(DirectAudio,
@@ -625,6 +648,7 @@ private:
             return kr;
         }
 
+        directAllocatedFrames_ = allocatedFrames;
         directOutputCapacityFrames_ = outputFrames;
         directOutputChannels_ = outputChannels;
         directInputCapacityFrames_ = inputFrames;
@@ -648,10 +672,11 @@ private:
 
     // Active ring at a rate: the HAL profile's ring when it fits the fixed
     // allocation, else 0 (the rate is not supported by this allocation).
-    [[nodiscard]] static constexpr uint32_t ActiveRingFramesForRate(uint32_t sampleRateHz) noexcept {
+    [[nodiscard]] static constexpr uint32_t ActiveRingFramesForRate(uint32_t sampleRateHz,
+        uint32_t allocationFrames = Isoch::Config::kAudioRingBufferFrames) noexcept {
         const auto hal = IsochTransport::HalBufferProfileForRate(sampleRateHz);
         return IsochTransport::IsValidAudioHalBufferProfile(hal) &&
-                       IsochTransport::ProfileFitsAllocation(hal)
+                       hal.frameRingFrames <= allocationFrames
                    ? hal.frameRingFrames
                    : 0;
     }
@@ -663,6 +688,7 @@ private:
     std::atomic<bool> streaming_{false};
 
     uint64_t directGeneration_{0};
+    uint32_t directAllocatedFrames_{Isoch::Config::kAudioRingBufferFrames};
     IOBufferMemoryDescriptor* directOutputMemory_{nullptr};
     IOBufferMemoryDescriptor* directInputMemory_{nullptr};
     IOBufferMemoryDescriptor* directControlMemory_{nullptr};

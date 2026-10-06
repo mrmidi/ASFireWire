@@ -47,8 +47,28 @@ bool GenericAvcProfile::BuildDefaultRxStreamConfig(AudioStreamConfig& outConfig)
 // (host callback latency spiked to ~922 us against a 64-frame TX safety
 // offset). The wider values trade ~3 ms of reported latency for jitter
 // headroom, and apply to every AV/C device on this path.
-uint32_t GenericAvcProfile::TxSafetyOffsetFrames(double) const noexcept { return 192; }
-uint32_t GenericAvcProfile::RxSafetyOffsetFrames(double) const noexcept { return 256; }
+// Preserve the validated 48 kHz scheduling budget in time at higher rates.
+// A fixed 192-frame TX lead shrinks from 4 ms to 2 ms at 96 kHz and 1 ms
+// at 192 kHz, although the host scheduling delays do not shrink with it.
+// Keep the existing low-rate floors and presentation-latency declarations;
+// scheduling safety is independent of converter/stream latency.
+namespace {
+uint32_t SchedulingFrames(uint32_t baselineFrames, double rate) noexcept {
+    if (rate <= 48000.0) {
+        return baselineFrames;
+    }
+    const auto hz = static_cast<uint32_t>(rate);
+    return static_cast<uint32_t>((static_cast<uint64_t>(baselineFrames) * hz + 47999U) /
+                                 48000U);
+}
+} // namespace
+
+uint32_t GenericAvcProfile::TxSafetyOffsetFrames(double rate) const noexcept {
+    return SchedulingFrames(192, rate);
+}
+uint32_t GenericAvcProfile::RxSafetyOffsetFrames(double rate) const noexcept {
+    return SchedulingFrames(256, rate);
+}
 uint32_t GenericAvcProfile::TxReportedLatencyFrames(double) const noexcept { return 256; }
 uint32_t GenericAvcProfile::RxReportedLatencyFrames(double) const noexcept { return 256; }
 

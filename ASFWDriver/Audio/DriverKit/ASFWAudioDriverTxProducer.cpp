@@ -492,10 +492,12 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     const auto txSyt = static_cast<uint16_t>(timing.nextDataSyt);
                     ASFW_LOG(TxSyt,
                              "obsCyc=%u rxSyt=0x%04x sytOffDelayFree=%u +txDelay=%u outCyc=%u "
-                             "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu",
+                             "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu rate=%u rxDbc=%u rxBlocks=%u",
                              sourceCycle, observedRxSyt, replay.sytOffset, txDelay, outCycle,
                              txSyt, (static_cast<uint32_t>(txSyt) >> 12) & 0x0fu,
-                             static_cast<uint32_t>(txSyt) & 0x0fffu, nextPacketToPrepare);
+                             static_cast<uint32_t>(txSyt) & 0x0fffu, nextPacketToPrepare,
+                             ivars.runtime.txStreamEngine.StreamConfig().sampleRate,
+                             replay.dbc, replay.dataBlocks);
                 }
 
                 if (!headerlessReplay) {
@@ -1332,7 +1334,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 DirectAudio,
                 "[TxPrep] forcedNoData=%llu missedFinality=%llu sOutMinPk=%lld "
                 "sInMinFr=%lld sInStarve=%llu sInStart=%llu margin=%u min=%u latUs=%llu/%llu/%llu "
-                "late1500=%llu wakes=%llu%{public}s",
+                "late1500=%llu wakes=%llu fillUs=%llu%{public}s",
                 directControl->txReplayForcedNoData.load(std::memory_order_relaxed),
                 missedNow >= ivars->runtime.txMissedFinalityAtStart
                     ? missedNow - ivars->runtime.txMissedFinalityAtStart
@@ -1350,6 +1352,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 directControl->txPreparationAtLeast1500Us.load(
                     std::memory_order_relaxed),
                 wakeSamples,
+                ASFW::Timing::hostTicksToNanos(
+                    ivars->runtime.txFillMaxDurationTicks.exchange(
+                        0, std::memory_order_relaxed)) / 1000,
                 boundedMargin <= kCommittedMarginDangerPackets ? " DANGER" : "");
         }
 

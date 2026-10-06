@@ -1,3 +1,4 @@
+#include "ASFWAvcAudioStream.h"
 //
 // ASFWAudioDriverGraph.cpp
 // ASFWDriver
@@ -32,6 +33,9 @@ namespace {
 void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverConfig& parsedConfig,
                                    AudioDriverDeviceState& device) noexcept {
     device.guid = parsedConfig.guid;
+    device.avcRouteIncarnation = parsedConfig.avcRouteIncarnation;
+    device.avcRouteEpoch = parsedConfig.avcRouteEpoch;
+    device.avcBusGeneration = parsedConfig.avcBusGeneration;
     device.vendorId = parsedConfig.vendorId;
     device.modelId = parsedConfig.modelId;
     device.profileBuilderId = parsedConfig.profileBuilderId;
@@ -44,6 +48,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.sampleRateCount = parsedConfig.sampleRateCount;
     device.currentSampleRate = parsedConfig.currentSampleRate;
     device.streamModeRaw = std::to_underlying(parsedConfig.streamMode);
+    device.rateFormationCandidates = parsedConfig.rateFormationCandidates;
     device.avcControlCount = parsedConfig.avcControlCount;
     std::copy_n(parsedConfig.avcControls, device.avcControlCount, device.avcControls);
     device.boolControlCount = parsedConfig.boolControlCount;
@@ -260,9 +265,19 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // rate (documentation/TIMING_GEOMETRY_OWNERSHIP.md). Everything below --
     // the ZTS period, latency and safety declarations -- is read from it.
     {
-        const auto resolved = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
-            *profile, static_cast<uint32_t>(ivars.device.currentSampleRate),
-            ivars.device.streamModeRaw);
+        uint32_t allocationFrames = ASFW::IsochTransport::kAllocatedFrameRingFrames;
+        if (!ivars.device.rateFormationCandidates.empty()) {
+            const auto capacity = Runtime::MaximumFormationAllocation(ivars.device.rateFormationCandidates,
+                {allocationFrames, ivars.device.outputChannelCount, ivars.device.inputChannelCount, 0});
+            if (!capacity) return kIOReturnUnsupported;
+            allocationFrames = capacity->frameCapacity;
+        }
+        const auto resolveTiming = [&](uint32_t rate) {
+            return Runtime::ResolveTimingGeometry(rate, WireStreamModeFromRaw(ivars.device.streamModeRaw),
+                TimingPolicyFromProfile(*profile, rate), allocationFrames);
+        };
+        const auto resolved = resolveTiming(
+            static_cast<uint32_t>(ivars.device.currentSampleRate));
         if (!resolved) {
             ASFW_LOG(Audio,
                      "[Timing] resolve failed rate=%.0f error=%{public}s",
@@ -279,8 +294,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         uint32_t kept = 0;
         for (uint32_t i = 0; i < ivars.device.sampleRateCount; ++i) {
             const double rate = ivars.device.sampleRates[i];
-            const auto candidate = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
-                *profile, static_cast<uint32_t>(rate), ivars.device.streamModeRaw);
+            const auto candidate = resolveTiming(static_cast<uint32_t>(rate));
             if (!candidate) {
                 ASFW_LOG(Audio, "[Timing] rate %.0f not advertised: %{public}s", rate,
                          ASFW::Audio::Runtime::TimingGeometryErrorName(candidate.error()));
@@ -435,11 +449,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const bool hasOutputStream = ivars.device.outputChannelCount != 0;
     uint32_t currentFormatIndex = 0;
     for (uint32_t i = 0; i < formatCount; i++) {
+        uint32_t inputChannels = ivars.device.inputChannelCount, outputChannels = ivars.device.outputChannelCount;
+        if (!ivars.device.rateFormationCandidates.empty()) {
+            const auto found = std::ranges::find(ivars.device.rateFormationCandidates,
+                static_cast<uint32_t>(ivars.device.sampleRates[i]), &Runtime::RateFormation::sampleRateHz);
+            if (found == ivars.device.rateFormationCandidates.end()) return kIOReturnUnsupported;
+            inputChannels = outputChannels = 0;
+            for (const auto& stream : found->capture) inputChannels += stream.pcmChannels;
+            for (const auto& stream : found->playback) outputChannels += stream.pcmChannels;
+        }
+
         if (hasInputStream) {
-            FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
+            FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], inputChannels);
         }
         if (hasOutputStream) {
-            FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
+            FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], outputChannels);
         }
         if (ivars.device.sampleRates[i] == ivars.device.currentSampleRate) {
             currentFormatIndex = i;
@@ -569,9 +593,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              directSampleRateHz);
 
     if (hasInputStream) {
-        ivars.inputStream = IOUserAudioStream::Create(&driver,
-                                                      IOUserAudioStreamDirection::Input,
-                                                      ivars.inputBuffer.get());
+        if (ivars.device.rateFormationCandidates.empty()) {
+            ivars.inputStream = IOUserAudioStream::Create(&driver, IOUserAudioStreamDirection::Input, ivars.inputBuffer.get());
+        } else {
+            auto stream = OSSharedPtr(OSTypeAlloc(ASFWAvcAudioStream), OSNoRetain);
+            if (!stream || !stream->init(&driver, IOUserAudioStreamDirection::Input, ivars.inputBuffer.get()))
+                return kIOReturnNoMemory;
+            ivars.inputStream = stream;
+        }
         if (!ivars.inputStream) {
             ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create input stream");
             return kIOReturnNoMemory;
@@ -606,9 +635,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     if (hasOutputStream) {
-        ivars.outputStream = IOUserAudioStream::Create(&driver,
-                                                       IOUserAudioStreamDirection::Output,
-                                                       ivars.outputBuffer.get());
+        if (ivars.device.rateFormationCandidates.empty()) {
+            ivars.outputStream = IOUserAudioStream::Create(&driver, IOUserAudioStreamDirection::Output, ivars.outputBuffer.get());
+        } else {
+            auto stream = OSSharedPtr(OSTypeAlloc(ASFWAvcAudioStream), OSNoRetain);
+            if (!stream || !stream->init(&driver, IOUserAudioStreamDirection::Output, ivars.outputBuffer.get()))
+                return kIOReturnNoMemory;
+            ivars.outputStream = stream;
+        }
         if (!ivars.outputStream) {
             ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output stream");
             return kIOReturnNoMemory;
@@ -686,6 +720,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
         state.outputStreamAdded = true;
     }
+
+    if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.inputStream.get())) stream->Bind(ivars.audioDevice.get());
+    if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.outputStream.get())) stream->Bind(ivars.audioDevice.get());
 
     // Install the RT handler only after every exposed stream is fully
     // configured and attached. The direct transport buffers remain duplex even

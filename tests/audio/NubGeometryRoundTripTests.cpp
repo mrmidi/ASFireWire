@@ -264,3 +264,46 @@ TEST(NubGeometryRoundTrip, DescriptorPcmPermutationSurvivesBothDirections) {
     EXPECT_EQ(parsed.playbackStreams[0].pcmSlotMap.SlotFor(0), 2);
     EXPECT_EQ(parsed.captureStreams[0].pcmSlotMap.SlotFor(1), 0);
 }
+
+TEST(NubGeometryRoundTrip, RateCatalogPreservesDifferentWidthsMapsAndValidationGate) {
+    auto device = MakeVeniceF24();
+    ASFW::Audio::Runtime::RateFormation base{};
+    base.sampleRateHz = 48000;
+    base.protocolSupported = true;
+    base.playback = {{2, 3, 1, {}}};
+    ASSERT_TRUE(base.playback[0].pcmSlots.SetSlots(std::array<uint8_t, 2>{2, 0}));
+    base.capture = base.playback;
+    auto high = base;
+    high.sampleRateHz = 96000;
+    high.playback = {{1, 1, 0, {}}};
+    high.capture = high.playback;
+    device.rateFormationCandidates = {base, high};
+    device.avcRouteIncarnation = 12; device.avcRouteEpoch = 34; device.avcBusGeneration = 56;
+    bool published = false;
+    auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
+    EXPECT_EQ(parsed.avcRouteIncarnation, 12U);
+    EXPECT_EQ(parsed.avcRouteEpoch, 34U);
+    EXPECT_EQ(parsed.avcBusGeneration, 56U);
+    EXPECT_EQ(parsed.sampleRateCount, 2U); // original advertisement, not catalog
+    EXPECT_EQ(parsed.sampleRates[1], 48000);
+    device.rateFormationCandidates.clear(); // parsed owns a value copy
+    EXPECT_EQ(parsed.rateFormationCandidates.size(), 2U);
+}
+
+TEST(NubGeometryRoundTrip, AmbiguousOrIncompleteCatalogIsRejectedAsAWhole) {
+    auto device = MakeVeniceF24();
+    ASFW::Audio::Runtime::RateFormation base{};
+    base.sampleRateHz = 48000;
+    base.protocolSupported = true;
+    base.playback = {{2, 2, 0, {}}};
+    base.capture = base.playback;
+    device.rateFormationCandidates = {base, base};
+    bool published = false;
+    EXPECT_TRUE(RoundTrip(device, published).rateFormationCandidates.empty());
+    ASSERT_TRUE(published);
+    base.capture.clear();
+    device.rateFormationCandidates = {base};
+    EXPECT_TRUE(RoundTrip(device, published).rateFormationCandidates.empty());
+}

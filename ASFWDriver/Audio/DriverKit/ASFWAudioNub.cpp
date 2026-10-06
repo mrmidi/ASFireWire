@@ -1,3 +1,4 @@
+#include "../Runtime/AvcRateValidation.hpp"
 //
 // ASFWAudioNub.cpp
 // ASFWDriver
@@ -26,6 +27,8 @@
 #include "../../Protocols/AVC/AVCUnit.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Model/AvcVolumeMapping.hpp"
+#include "../Model/AvcRateConfiguration.hpp"
+#include "../Protocols/AVC/AvcDuplexClockObservation.hpp"
 #include "../Protocols/AVC/AvcFeatureControl.hpp"
 #include "../Protocols/Backends/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
@@ -763,7 +766,16 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     };
     // The duplex coordinator applies the device-policy gate, including the
     // FW-255 48 kHz limit for special M-Audio profiles.
-    if (!ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
+    bool avcRateAllowed = false;
+    if (const auto endpoint = FindEndpointRuntime(ivars)) {
+        ASFW::Audio::Model::ASFWAudioDevice config;
+        if (endpoint->CopyConfig(config))
+            for (const auto& formation : config.rateFormationCandidates)
+                if (formation.sampleRateHz == sampleRateHz &&
+                    ASFW::Audio::Runtime::AvcRateEnabled(formation, config.currentSampleRate))
+                    avcRateAllowed = true;
+    }
+    if (!avcRateAllowed && !ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
         !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desired)) {
         ASFW_LOG(Audio,
                  "ASFWAudioNub: RequestSampleRateChange %u Hz refused - announced by the device "
@@ -775,12 +787,137 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     ASFW_LOG(Audio,
              "ASFWAudioNub: RequestSampleRateChange %u Hz guid=0x%016llx",
              sampleRateHz, ivars->guid);
+    ivars->avcObservationValid = false;
     const kern_return_t kr = coordinator->RequestClockConfig(
         ivars->guid, desired, ASFW::Audio::DuplexRestartReason::kSampleRateChange);
     if (kr == kIOReturnSuccess) {
         ivars->currentSampleRateHz = sampleRateHz;
     }
     return kr;
+}
+
+// The nub waits on its control queue; queries and their callbacks run on the
+// controller queue. No IO callback or transport completion queue waits here.
+kern_return_t IMPL(ASFWAudioNub, ReadAvcClockState) {
+    if (!outIncarnation || !outRouteEpoch || !outBusGeneration || !outOutputRateHz || !outInputRateHz)
+        return kIOReturnBadArgument;
+    if (!ivars) return kIOReturnNotReady;
+    ivars->avcObservationValid = false;
+    *outIncarnation = *outRouteEpoch = 0;
+    *outBusGeneration = *outOutputRateHz = *outInputRateHz = 0;
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!context || !context->workQueue || !context->deps.avcDiscovery) return kIOReturnNotReady;
+    struct Observation { ASFW::Discovery::DeviceRouteToken route; ASFW::Audio::AvcDuplexClockObservation clock; };
+    const auto discovery = context->deps.avcDiscovery;
+    const auto queue = context->workQueue;
+    const uint64_t guid = ivars->guid;
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) != kIOReturnSuccess || !binding.device)
+        return kIOReturnNotReady;
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*binding.device);
+    const bool special = policy &&
+        (policy->plan.profileBuilder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
+         policy->plan.profileBuilder == ASFW::DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix);
+    const auto active = std::make_shared<std::atomic<bool>>(true);
+    const auto result = ASFW::Audio::WaitForAsyncResult<Observation>([=](auto done) {
+        queue->DispatchAsync(^{
+            const auto unit = discovery->Unit(guid);
+            const auto route = unit ? unit->CurrentRoute() : std::nullopt;
+            if (!route) { done(kIOReturnNotReady, {}); return; }
+            // M-Audio special_get_rate reads INPUT only. Do not extend its
+            // firmware's probe allowlist (Linux bebob_maudio.c:301-314).
+            ASFW::Audio::AvcDuplexClockRead::Start(unit, *route, 0, 0, active,
+                [done, unit, route = *route](IOReturn status, auto clock) {
+                    if (status == kIOReturnSuccess && clock.inputRateHz != 0 &&
+                        (clock.outputRateHz == clock.inputRateHz || clock.outputRateHz == 0))
+                        unit->RememberConfirmedDuplexRate(route, clock.inputRateHz);
+                    done(status, Observation{route, clock});
+                }, special);
+        });
+    }, 5000, kIOReturnTimeout);
+    active->store(false, std::memory_order_release);
+    if (result.status != kIOReturnSuccess) return result.status;
+    *outIncarnation = result.value.route.deviceIncarnation;
+    *outRouteEpoch = result.value.route.routeEpoch;
+    *outBusGeneration = result.value.route.generation.value;
+    *outOutputRateHz = result.value.clock.outputRateHz;
+    *outInputRateHz = result.value.clock.inputRateHz;
+    ivars->avcObservedIncarnation = *outIncarnation;
+    ivars->avcObservedRouteEpoch = *outRouteEpoch;
+    ivars->avcObservedGeneration = *outBusGeneration;
+    ivars->avcObservedOutputRate = *outOutputRateHz;
+    ivars->avcObservedInputRate = *outInputRateHz;
+    ivars->avcObservationValid = true;
+    ASFW_LOG(Audio, "[RateTxn] phase=observe guid=%016llx gen=%u epoch=%llu output=%u input=%u",
+        guid, *outBusGeneration, *outRouteEpoch, *outOutputRateHz, *outInputRateHz);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IMPL(ASFWAudioNub, ApplyAvcRate) {
+    if (!ivars) return kIOReturnNotReady;
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) != kIOReturnSuccess || !binding.device || !binding.registry)
+        return kIOReturnNotReady;
+    const ASFW::Discovery::DeviceRouteToken route{ivars->guid, expectedIncarnation,
+        expectedRouteEpoch, ASFW::FW::Generation{expectedBusGeneration}, binding.device->nodeId};
+    if (!binding.registry->IsCurrent(route)) return kIOReturnAborted;
+    const auto endpoint = FindEndpointRuntime(ivars);
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    if (!endpoint || endpoint->IsStreaming() || !endpoint->CopyConfig(config)) return kIOReturnNotReady;
+    const auto found = std::ranges::find(config.rateFormationCandidates, sampleRateHz,
+        &ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+    if (found == config.rateFormationCandidates.end() ||
+        !ASFW::Audio::Runtime::AvcRateEnabled(*found, config.currentSampleRate)) return kIOReturnUnsupported;
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) return kIOReturnNotReady;
+    // The first idle rate request can precede StartAudioStreaming, which used
+    // to be the only path supplying the protocol's live AV/C unit. Observation
+    // can succeed through discovery while BeBoB ApplyClockConfig sees no unit.
+    // Bind the same generation-checked context here before programming clocks.
+    auto avcUnit = binding.avcDiscovery
+        ? binding.avcDiscovery->LiveUnit(binding.device->guid) : nullptr;
+    if (!ASFW::Audio::HasReadyAVCStartRoute(binding.device->nodeId, avcUnit != nullptr)) {
+        ASFW_LOG(Audio, "[RateTxn] phase=bind result=not-ready guid=%016llx gen=%u epoch=%llu",
+                 ivars->guid, expectedBusGeneration, expectedRouteEpoch);
+        return kIOReturnNotReady;
+    }
+    binding.protocol->UpdateRuntimeContext(route, std::move(avcUnit));
+    ASFW_LOG(Audio, "[RateTxn] phase=bind result=ready guid=%016llx gen=%u epoch=%llu",
+             ivars->guid, expectedBusGeneration, expectedRouteEpoch);
+    ivars->avcObservationValid = false;
+    return coordinator->RequestClockConfig(ivars->guid, {.sampleRateHz = sampleRateHz},
+        ASFW::Audio::DuplexRestartReason::kSampleRateChange);
+}
+
+kern_return_t IMPL(ASFWAudioNub, InstallAvcRateFormation) {
+    if (!ivars || !ivars->avcObservationValid ||
+        ivars->avcObservedIncarnation != expectedIncarnation ||
+        ivars->avcObservedRouteEpoch != expectedRouteEpoch ||
+        ivars->avcObservedGeneration != expectedBusGeneration ||
+        ivars->avcObservedInputRate != sampleRateHz ||
+        (ivars->avcObservedOutputRate != 0 && ivars->avcObservedOutputRate != sampleRateHz))
+        return kIOReturnNotReady;
+    const auto endpoint = FindEndpointRuntime(ivars);
+    if (!endpoint || endpoint->IsStreaming()) return kIOReturnNotReady;
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) != kIOReturnSuccess || !binding.device || !binding.registry)
+        return kIOReturnNotReady;
+    const ASFW::Discovery::DeviceRouteToken route{ivars->guid, expectedIncarnation,
+        expectedRouteEpoch, ASFW::FW::Generation{expectedBusGeneration}, binding.device->nodeId};
+    if (!binding.registry->IsCurrent(route)) return kIOReturnAborted;
+    ASFW::Audio::Model::ASFWAudioDevice prior{};
+    if (!endpoint->CopyConfig(prior)) return kIOReturnNotReady;
+    const auto next = ASFW::Audio::Model::WithAvcRateFormation(prior, sampleRateHz);
+    if (!next) return kIOReturnUnsupported;
+    endpoint->UpdateConfig(*next);
+    const auto status = endpoint->EnsureDirectAudioMemory();
+    if (status != kIOReturnSuccess) { endpoint->UpdateConfig(prior); return status; }
+    ivars->currentSampleRateHz = sampleRateHz;
+    ivars->inputChannelCount = next->inputChannelCount;
+    ivars->outputChannelCount = next->outputChannelCount;
+    ivars->channelCount = next->channelCount;
+    return kIOReturnSuccess;
 }
 
 void ASFWAudioNub::SetChannelCount(uint32_t channels)

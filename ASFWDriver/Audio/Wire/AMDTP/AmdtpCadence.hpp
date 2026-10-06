@@ -109,8 +109,11 @@ private:
 // Transitional alias: existing callers default-construct this for 48 kHz.
 using Blocking48kCadence = BlockingCadence;
 
-class NonBlocking48kCadence final : public IAmdtpCadence {
+// Exact ceil-of-cumulative-frames schedule. Rounded-up packets occur first,
+// matching Linux firewire/amdtp-stream.c:383-422; no per-rate pattern tables.
+class NonBlockingCadence final : public IAmdtpCadence {
 public:
+    [[nodiscard]] bool Configure(uint32_t sampleRateHz) noexcept;
     void Reset() noexcept override;
 
     bool CurrentCycleIsData() const noexcept override;
@@ -120,7 +123,11 @@ public:
     void AdvanceCycle() noexcept override;
 
 private:
+    uint32_t sampleRateHz_{48000};
+    uint32_t remainder_{7999};
     uint64_t totalCycles_{0};
 };
+
+using NonBlocking48kCadence = NonBlockingCadence;
 
 } // namespace ASFW::Protocols::Audio::AMDTP

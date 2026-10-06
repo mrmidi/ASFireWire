@@ -117,6 +117,13 @@ only the DriverKit objects explicitly required for a safe resume. Finish in
 
 ### Provider revocation
 
+Terminal `IOService::Stop` also takes this path. It can arrive before the
+provider's Terminated notification on the same service queue; it must revoke
+BAR access at entry rather than perform the planned runtime cleanup. The
+2026-10-05 panic symbolicated to `SelfIDCapture::Disarm` from terminal Stop
+(SelfIDBuffer write followed by HCControl flush). Planned runtime quiesce and
+suspend remain distinct while the provider is known to be alive.
+
 1. Enter `Revoked` from `Running`.
 2. Close producers.
 3. Revoke and drain local MMIO immediately.

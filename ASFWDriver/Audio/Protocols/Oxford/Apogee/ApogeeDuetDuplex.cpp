@@ -150,7 +150,11 @@ void ApogeeDuetDuplex::PrepareDuplex(const AudioDuplexChannels& channels,
         callback(kIOReturnNotReady, {});
         return;
     }
-    if (!IsSupportedAudioClockConfig(desiredClock)) {
+    // The shared resolver validates the discovered rate-specific formation.
+    // This adapter rejects unencodable rates, not the old 1x-only build limit.
+    // OXFW programs the selected formation input then output at any supported
+    // rate (Linux oxfw-stream.c:41-54).
+    if (!AVC::CipSfcFromHz(desiredClock.sampleRateHz).has_value()) {
         ASFW_LOG_ERROR(Oxfw, "PrepareDuplex: unsupported clock %u Hz", desiredClock.sampleRateHz);
         callback(kIOReturnUnsupported, {});
         return;
@@ -206,7 +210,7 @@ void ApogeeDuetDuplex::ApplyClockConfig(const AudioClockConfig& desiredClock,
         callback(kIOReturnNotReady, {});
         return;
     }
-    if (!IsSupportedAudioClockConfig(desiredClock)) {
+    if (!AVC::CipSfcFromHz(desiredClock.sampleRateHz).has_value()) {
         callback(kIOReturnUnsupported, {});
         return;
     }

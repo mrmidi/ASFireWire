@@ -6,7 +6,7 @@
 // Runs the driver's real TX producer -- StartIO's arm step, the prefill, and the
 // TxPreparationReady action handler from ASFWAudioDriverZts.cpp -- against an
 // emulated IT transport. The IIG-generated classes are host shims
-// (tests/mocks/net.mrmidi.ASFW.ASFWDriver), so the handler bodies compile
+// (tests/mocks/net.asfw.driver), so the handler bodies compile
 // unchanged.
 //
 // The emulator follows the consumer side of IsochTxDmaRing::Refill: each

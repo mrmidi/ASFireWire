@@ -1,3 +1,4 @@
+#include "ASFWAvcAudioStream.h"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -177,3 +178,20 @@ TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
 }
 
 } // namespace
+
+TEST(AudioDriverTeardownTests, AvcStreamsDropOwnerBeforeGraphRemoval) {
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    OSSharedPtr<ASFWAudioDevice> device{new ASFWAudioDevice(), OSNoRetain};
+    OSSharedPtr<ASFWAvcAudioStream> input{new ASFWAvcAudioStream(), OSNoRetain};
+    OSSharedPtr<ASFWAvcAudioStream> output{new ASFWAvcAudioStream(), OSNoRetain};
+    input->Bind(device.get()); output->Bind(device.get());
+    ivars->audioDevice = device;
+    ivars->inputStream = OSSharedPtr<IOUserAudioStream>(input.get(), OSRetain);
+    ivars->outputStream = OSSharedPtr<IOUserAudioStream>(output.get(), OSRetain);
+    ivars->graphState = {.inputStreamAdded = true, .outputStreamAdded = true, .audioDeviceAdded = true};
+    EXPECT_EQ(device->GetRetainCount(), 4);
+    TearDownAudioGraph(*driver, *ivars);
+    EXPECT_FALSE(input->owner); EXPECT_FALSE(output->owner);
+    EXPECT_EQ(device->GetRetainCount(), 1);
+}

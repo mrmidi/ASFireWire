@@ -180,7 +180,13 @@ void DiscoveryCoordinator::PublishProfile(const Discovery::FWDevice& device) {
 void DiscoveryCoordinator::Publish(uint64_t guid, const Model::ASFWAudioDevice& config) {
     if (stopped_ || !Policy(registry_, guid)) { Fail(guid, "publication-route-invalid"); return; }
     if (!listener_) { Fail(guid, "missing-audio-consumer"); return; }
-    listener_->OnAVCAudioConfigurationReady(guid, config);
+    const auto route = registry_.CurrentRoute(guid);
+    if (!route) { Fail(guid, "publication-route-invalid"); return; }
+    auto boundConfig = config;
+    boundConfig.avcRouteIncarnation = route->deviceIncarnation;
+    boundConfig.avcRouteEpoch = route->routeEpoch;
+    boundConfig.avcBusGeneration = route->generation.value;
+    listener_->OnAVCAudioConfigurationReady(guid, boundConfig);
     publication_[guid] = Ready{};
     ASFW_LOG(Audio, "[AvcPublish] guid=%llx ready rate=%u in=%u out=%u", guid,
         config.currentSampleRate, config.inputChannelCount, config.outputChannelCount);

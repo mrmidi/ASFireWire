@@ -8,8 +8,8 @@
   <true/>
   <key>com.apple.developer.driverkit.userclient-access</key>
   <array>
-    <string>net.mrmidi.ASFW.ASFWDriver</string>
-    <string>net.mrmidi.ASFW.ASFWDriver:ASFWDriverUserClient</string>
+    <string>net.asfw.driver</string>
+    <string>net.asfw.driver:ASFWDriverUserClient</string>
   </array>
 </dict>
 </plist>
