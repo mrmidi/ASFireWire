@@ -1,4 +1,5 @@
-#include "Audio/Model/AvcRateConfiguration.hpp"
+#include "Audio/Model/RateConfiguration.hpp"
+#include "Audio/Model/DiscoveredRuntimeCaps.hpp"
 #include "Audio/Runtime/ResolvedAudioConfiguration.hpp"
 #include <gtest/gtest.h>
 
@@ -104,14 +105,14 @@ TEST(ResolvedAudioConfigurationTests, ModelProjectionUsesIndependentDuplexShapes
     prior.outputChannelNames = {"old ADAT label"};
     prior.captureStreams = {{.pcmChannels = 16, .am824Slots = 17}};
     prior.playbackStreams = prior.captureStreams;
-    const auto next = ASFW::Audio::Model::WithAvcRateFormation(prior, 96000);
+    const auto next = ASFW::Audio::Model::WithRateFormation(prior, 96000);
     ASSERT_TRUE(next);
     EXPECT_EQ(next->outputChannelCount, 8U);
     EXPECT_EQ(next->inputChannelCount, 12U);
     EXPECT_EQ(next->captureStreams[0].am824Slots, 13U);
     EXPECT_TRUE(next->outputChannelNames.empty());
     EXPECT_EQ(prior.currentSampleRate, 48000U);
-    EXPECT_FALSE(ASFW::Audio::Model::WithAvcRateFormation(prior, 88200));
+    EXPECT_FALSE(ASFW::Audio::Model::WithRateFormation(prior, 88200));
 }
 
 TEST(ResolvedAudioConfigurationTests, StreamCountCannotOverflowFixedProductionArrays) {
@@ -122,4 +123,28 @@ TEST(ResolvedAudioConfigurationTests, StreamCountCannotOverflowFixedProductionAr
     const auto result = ResolveAudioConfiguration(48000, {&formation, 1}, policy, allocation, 0);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error(), ConfigurationError::InvalidFormation);
+}
+
+TEST(ResolvedAudioConfigurationTests, DiceReadbackChecksEveryStreamRatherThanAggregateTotals) {
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    config.currentSampleRate = 96000;
+    config.inputChannelCount = config.outputChannelCount = 16;
+    config.playbackStreams = config.captureStreams = {{8, 9, 1, 0, {}}, {8, 8, 0, 8, {}}};
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    caps.sampleRateHz = 96000;
+    caps.hostInputPcmChannels = caps.hostOutputPcmChannels = 16;
+    caps.hostToDeviceStreamCount = caps.deviceToHostStreamCount = 2;
+    caps.hostToDeviceStreams[0] = caps.deviceToHostStreams[0] = {.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1};
+    caps.hostToDeviceStreams[1] = caps.deviceToHostStreams[1] = {.pcmChannels = 8, .am824Slots = 8};
+    EXPECT_TRUE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
+    caps.deviceToHostStreams[0].midiPorts = 2;
+    EXPECT_FALSE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
+    caps.deviceToHostStreams[0].midiPorts = 1;
+    caps.deviceToHostStreams[0].pcmChannels = 9;
+    caps.deviceToHostStreams[1].pcmChannels = 7;
+    EXPECT_FALSE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
+    std::copy(std::begin(caps.hostToDeviceStreams), std::end(caps.hostToDeviceStreams),
+        std::begin(caps.deviceToHostStreams));
+    caps.sampleRateHz = 48000;
+    EXPECT_FALSE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
 }

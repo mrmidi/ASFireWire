@@ -48,9 +48,10 @@ struct ASFWAudioWireStream {
 
 struct ASFWAudioDevice {
     uint64_t guid{0};
-    uint64_t avcRouteIncarnation{0};
-    uint64_t avcRouteEpoch{0};
-    uint32_t avcBusGeneration{0};
+    uint64_t rateRouteIncarnation{0};
+    uint64_t rateRouteEpoch{0};
+    uint32_t rateBusGeneration{0};
+    bool diceRateFormations{false};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, as a raw uint32 so this
@@ -181,10 +182,11 @@ struct ASFWAudioDevice {
             return false;
         }
         if (!rateFormationCandidates.empty()) {
-            for (const auto& [key, value] : std::array<std::pair<const char*, uint64_t>, 3>{{
-                {PropertyKeys::kAvcRouteIncarnation, avcRouteIncarnation},
-                {PropertyKeys::kAvcRouteEpoch, avcRouteEpoch},
-                {PropertyKeys::kAvcBusGeneration, avcBusGeneration}}}) {
+            for (const auto& [key, value] : std::array<std::pair<const char*, uint64_t>, 4>{{
+                {PropertyKeys::kRateRouteIncarnation, rateRouteIncarnation},
+                {PropertyKeys::kRateRouteEpoch, rateRouteEpoch},
+                {PropertyKeys::kRateBusGeneration, rateBusGeneration},
+                {PropertyKeys::kDiceRateFormations, diceRateFormations ? 1U : 0U}}}) {
                 auto number = OSSharedPtr(OSNumber::withNumber(value, 64), OSNoRetain);
                 if (!number) return false;
                 properties->setObject(key, number.get());
@@ -206,7 +208,7 @@ struct ASFWAudioDevice {
                     uint32_t offset = 0;
                     for (const auto& stream : direction) {
                         result.push_back({stream.pcmChannels, stream.dataBlockSize,
-                            stream.midiSlots, offset, stream.pcmSlots});
+                            stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots});
                         offset += stream.pcmChannels;
                     }
                     return result;

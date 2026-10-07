@@ -422,3 +422,6 @@ add_audio_test(ResolvedAudioConfigurationTests ResolvedAudioConfigurationTests.c
 add_audio_test(DeviceConfigurationStateMachineTests
     DeviceConfigurationStateMachineTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Runtime/Configuration/DeviceConfigurationStateMachine.cpp")
+
+add_audio_test(DiceMultirateValidationTests DiceMultirateValidationTests.cpp)
+target_compile_definitions(DiceMultirateValidationTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)

@@ -205,9 +205,15 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     record = *refreshed;
 
-    const auto applyGraph = [&](AudioStreamRuntimeCaps& geometry) {
+    const auto applyGraph = [&](AudioStreamRuntimeCaps& geometry, bool beforeConfigure = false) {
         if (!request.discoveredConfig) return true;
         const auto& config = *request.discoveredConfig;
+        if (config.diceRateFormations) {
+            // Before Configure, the device may still be at its old mode.
+            // Once at the target, compare every stream before host DMA starts.
+            return (beforeConfigure && geometry.sampleRateHz != clock.sampleRateHz) ||
+                RuntimeCapsMatchConfiguration(config, geometry);
+        }
         if (config.playbackStreams.size() != 1 || config.captureStreams.size() != 1 ||
             std::find(config.sampleRates.begin(), config.sampleRates.end(), clock.sampleRateHz) == config.sampleRates.end()) return false;
         const auto& playback = config.playbackStreams.front();
@@ -225,7 +231,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         return true;
     };
     auto initialCaps = family.RuntimeCaps().value_or(AudioStreamRuntimeCaps{});
-    if (!applyGraph(initialCaps)) {
+    if (!applyGraph(initialCaps, true)) {
         ASFW_LOG_ERROR(Audio, "[AvcGraphBind] guid=%llx refused reason=device-geometry-or-rate", guid);
         return refused(kIOReturnUnsupported, "GraphGeometry");
     }
@@ -266,7 +272,15 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     caps = prepared->runtimeCaps;
     if (!applyGraph(caps)) return rollback(kIOReturnUnsupported, "GraphGeometry");
-    profile = DuplexStreamProfileResolver::Resolve(record, caps, channels);
+    if (request.discoveredConfig && request.discoveredConfig->diceRateFormations) {
+        // No IRM resources have been assigned yet. A DICE mode may change the
+        // number of streams as well as their widths; rebuild its channel plan
+        // from confirmed target geometry before reserving/programming streams.
+        profile = DuplexStreamProfileResolver::Resolve(record, caps);
+        channels = profile.channels;
+    } else {
+        profile = DuplexStreamProfileResolver::Resolve(record, caps, channels);
+    }
     if (!profile.policyResolved) {
         return superseded("Configure");
     }
@@ -368,7 +382,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
              caps.hostToDeviceAm824Slots, static_cast<uint32_t>(profile.captureWireFormat),
              static_cast<uint32_t>(profile.playbackWireFormat));
 
-    if (request.discoveredConfig) {
+    if (request.discoveredConfig && !request.discoveredConfig->diceRateFormations) {
         const auto& config = *request.discoveredConfig;
         const auto& capture = config.captureStreams.front();
         if (!capture.pcmSlotMap.FitsWithin(capture.pcmChannels, capture.am824Slots))

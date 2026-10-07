@@ -4,6 +4,7 @@
 // IDeviceProtocol.hpp - Interface for device-specific protocol handlers
 
 #pragma once
+#include "../Runtime/ResolvedAudioConfiguration.hpp"
 
 #include "AudioTypes.hpp"
 #include "../../Discovery/DeviceRouteToken.hpp"
@@ -60,6 +61,15 @@ public:
     virtual bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
         (void)outCaps;
         return false;
+    }
+
+    // Immutable protocol-discovered formation snapshot, distinct from the
+    // current stream observation and from hardware qualification evidence.
+    virtual std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const {
+        return {};
+    }
+    virtual void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) {
+        callback(kIOReturnUnsupported, {});
     }
 
     /// Read the device's stream geometry into the cache GetRuntimeAudioStreamCaps

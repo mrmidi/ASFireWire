@@ -1,5 +1,5 @@
 #include "../Model/DiscoveredRuntimeCaps.hpp"
-#include "../Runtime/AvcRateValidation.hpp"
+#include "../Runtime/RateValidation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
@@ -8,6 +8,7 @@
 #include "SessionClock.hpp"
 
 #include "../Protocols/IDeviceProtocol.hpp"
+#include "../Protocols/DeviceProtocolChoice.hpp"
 
 #include "../Core/AudioRuntimeRegistry.hpp"
 #include "../Core/AudioEndpointRuntime.hpp"
@@ -24,6 +25,9 @@ namespace {
 [[nodiscard]] bool IsSupportedClockForRecord(const Discovery::DeviceRecord& record,
                                              const AudioClockConfig& clock) noexcept {
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (Runtime::kDiceHardwareBatch && policy &&
+        ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice)
+        return Encoding::AmdtpRateGeometryForSampleRate(clock.sampleRateHz).has_value();
     if (policy != nullptr &&
         (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
          policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {

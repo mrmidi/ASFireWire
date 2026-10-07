@@ -3,6 +3,8 @@
 
 #include "DiceAudioBackend.hpp"
 #include "DiceRuntimeDeviceConfig.hpp"
+#include "../../Model/RateConfiguration.hpp"
+#include "../../Runtime/RateValidation.hpp"
 
 #include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
@@ -10,6 +12,7 @@
 #include "../../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../DICE/Core/DiceNotificationRouter.hpp"
 #include "../DICE/Core/DICETypes.hpp"
+#include "../DICE/Core/DiceRateFormats.hpp"
 
 #include <algorithm>
 #include "../Duplex/FamilyDriver.hpp"
@@ -317,75 +320,6 @@ void DiceAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
              "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
              guid);
     HandleRecoveryEvent(guid, DuplexRestartReason::kBusResetRebind);
-}
-
-// Rebuild the audio endpoint for a stream layout that changed under it.
-//
-// NOT IMPLEMENTED: high sample rates are parked. Returns false, so the endpoint
-// stays blocked (AudioNubPublisher refuses the changed geometry and the session
-// start guard refuses to start it) until it is recreated. Today this is reached
-// only when a device changes its layout on its own, or when a device found
-// running above kDiceMaxStreamingRateHz is moved to a streamable rate by the
-// first start (EnsureNubForGuid warns about that case at publication).
-//
-// TODO(high rates): implement this the way the TCAT kexts do. Reference:
-// Saffire.kext 4.3.0, FOCUSRITE/3.9/Saffire.i64 (decompiles in tmp/dicere).
-//
-//  What the kext does. One restart path serves a host rate change
-//  (performFormatChange @0x5028 / SetNewSamplingRate @0x93b8) and a device
-//  "config changed" notification alike: both call RequestStreamingRestart, and
-//  RestartStreaming @0xdb02 then
-//    1. writes the clock and re-reads GLOBAL/TX/RX (PopulateDeviceStruct
-//       @0xc5b4) -- the only source of the new layout; no per-model table, no
-//       probing of other rate modes at attach;
-//    2. re-arms isoch (AllocateStreams @0xe8ca, StartStreams @0xface);
-//    3. rebuilds the audio streams in place (CreateStreams @0x3b54): reuses up
-//       to 8 IOAudioStreams per direction, grows each buffer to the new channel
-//       count, resets formats and starting channel, disables streams the new
-//       mode lacks, republishes the channel names for the current mode.
-//  Rates are announced up front from CLOCK_CAPABILITIES, each labelled with the
-//  CURRENT mode's channel count (createNewAudioStream @0x47ee); the true count
-//  for another mode is only known after switching to it. We already do steps 1
-//  and 2 (FinishPrepare / CompleteClockApply -> RefreshRuntimeCaps) and the
-//  announcement (DicePublishedRates). This function is step 3.
-//
-//  The AudioDriverKit counterpart of step 3. A layout change "affects IO or its
-//  structure", so it must go through the host (IOUserAudioDriver.iig:63-68,
-//  IOUserAudioClockDevice.iig:218-226):
-//    a. carry the new geometry to the audio side. SetProperties on the live nub
-//       is NOT enough: the audio graph reads the nub once
-//       (Model/NubGeometryRefresh.hpp). Add a nub -> driver action, like
-//       RegisterDeviceClockChangedAction, carrying "geometry changed";
-//    b. the audio device calls RequestDeviceConfigurationChange with a new
-//       action, alongside kConfigChangeActionExternalRateResync in
-//       ASFWAudioDevice.cpp, which is the working template for the round trip;
-//    c. in PerformDeviceConfigurationChange (IO already stopped): new
-//       SetAvailableStreamFormats / SetCurrentStreamFormat per stream, new IO
-//       buffers via SetIOMemoryDescriptor (legal only there), channel names,
-//       safety offset and latency, and a rebuilt direct-binding view onto the
-//       shared control block. Drop every cross-service view before freeing the
-//       old mappings (FW-60);
-//    d. clear the publisher's blocked state and accept the new snapshot, then
-//       let the host restart IO.
-//  Prove (c) in ADKVirtualAudioLab first: a live channel-count change with a
-//  client attached has never been exercised.
-//
-//  Also required before raising kDiceMaxStreamingRateHz and the neutral gate
-//  (IsSupportedAudioClockConfig): the 2x/4x wire -- 16/32 frames per packet,
-//  SYT interval, DBC step, bandwidth (SAMPLE_RATE_EXPANSION.md Phase 3).
-//
-//  Hardware test when unparked: Saffire Pro 24 DSP announces 88.2/96 kHz and
-//  its capture drops from 16 to 12 channels there (fixtures/DICE/spro24dsp.txt
-//  current_config). 48 -> 96 -> 48 kHz with a client open, both directions.
-bool DiceAudioBackend::RebuildEndpointForNewGeometry(uint64_t guid,
-                                                     const Model::ASFWAudioDevice& newConfig) noexcept {
-    ASFW_LOG_WARNING(Audio,
-                     "DiceAudioBackend: GUID=0x%016llx stream layout changed (now in=%u out=%u "
-                     "at %u Hz); endpoint rebuild not implemented -- endpoint stays blocked "
-                     "until recreated",
-                     guid, newConfig.inputChannelCount, newConfig.outputChannelCount,
-                     newConfig.currentSampleRate);
-    return false;
 }
 
 void DiceAudioBackend::OnStreamsRestarted(uint64_t guid) noexcept {
@@ -842,6 +776,13 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                      guid);
             return;
         }
+        // A live catalog endpoint changes only inside its host configuration
+        // window. Publication retries must not reset its committed formation.
+        if (publisher_.GetNub(guid)) {
+            const auto endpoint = runtime_.FindEndpointRuntime(guid);
+            Model::ASFWAudioDevice committed;
+            if (endpoint && endpoint->CopyConfig(committed) && committed.diceRateFormations) return;
+        }
 #ifdef ASFW_HOST_TEST
         if (beforePublishHookForTesting_) {
             beforePublishHookForTesting_();
@@ -973,7 +914,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // (CLOCK_CAPABILITIES & 0x7F). Rates above kDiceMaxStreamingRateHz
             // are listed but refused when picked. A device announcing no rate
             // this build can stream cannot run at all: refuse it.
-            const uint32_t initialRate = DICE::DiceInitialRate(caps.deviceRateMask);
+            uint32_t initialRate = DICE::DiceInitialRate(caps.deviceRateMask);
+            if (!initialRate && Runtime::kDiceHardwareBatch && dev.inputChannelCount != 0) {
+                const auto formations = protocol->RateFormations();
+                if (formations && !formations->empty()) initialRate = formations->front().sampleRateHz;
+            }
             if (initialRate == 0) {
                 ASFW_LOG_ERROR(Audio,
                                "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
@@ -984,13 +929,32 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
             dev.deviceSampleRates = true;
             dev.currentSampleRate = initialRate;
-            if (!DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
-                // The geometry just read describes the device's current rate
-                // mode, which this build cannot stream. The first start moves
-                // the device to initialRate and its layout may change with the
-                // mode; until RebuildEndpointForNewGeometry exists, a changed
-                // layout leaves the endpoint blocked. Named here so that
-                // failure is attributable at publication.
+            if (const auto formations = protocol->RateFormations();
+                formations && !formations->empty() && dev.inputChannelCount != 0) {
+                dev.rateFormationCandidates = *formations;
+                dev.diceRateFormations = true;
+                dev.rateRouteIncarnation = route.deviceIncarnation;
+                dev.rateRouteEpoch = route.routeEpoch;
+                dev.rateBusGeneration = route.generation.value;
+                dev.sampleRates.clear();
+                for (const auto& formation : *formations)
+                    if (Runtime::RateEnabled(formation, initialRate, true))
+                        dev.sampleRates.push_back(formation.sampleRateHz);
+                // Generic non-EAP hardware can have only its observed mode
+                // known. Publish a coherent known formation, never another
+                // mode's geometry under a convenient scalar clock.
+                if (std::ranges::find(dev.sampleRates, initialRate) == dev.sampleRates.end()) {
+                    if (dev.sampleRates.empty()) return;
+                    dev.currentSampleRate = std::ranges::find(dev.sampleRates, caps.sampleRateHz) != dev.sampleRates.end()
+                        ? caps.sampleRateHz : dev.sampleRates.front();
+                }
+                const auto selected = Model::WithRateFormation(dev, dev.currentSampleRate);
+                if (!selected) return;
+                dev = *selected;
+            }
+            if (!dev.diceRateFormations && !DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
+                // Legacy endpoints without a complete catalog cannot project
+                // another rate mode safely; retain the existing refusal.
                 ASFW_LOG_WARNING(Audio,
                                  "DiceAudioBackend::EnsureNubForGuid: GUID=0x%016llx is running at "
                                  "%u Hz, above the %u Hz streaming ceiling; published geometry is that "
@@ -1016,21 +980,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                 return;
             }
 
-            // Bandwidth reservation, capture layout and playback framing all
-            // derive from the SAME protocol caps: DuplexStreamProfile::Build
-            // reads them directly, and the geometry published here is those
-            // caps after validation against the profile. They therefore agree
-            // by construction rather than by coincidence.
-            //
-            // What is NOT implemented is refresh. AudioNubPublisher::EnsureNub
-            // is create-once, so a later resolution does not reach a live nub.
-            // That is safe only because DICETcatProtocol::ResetRuntimeCaps is
-            // reachable only from Shutdown, so the geometry cannot change while
-            // a nub exists. The two decisions are coupled: whichever change
-            // makes caps re-readable (a rate change crossing a rate mode --
-            // documentation/DICE_TCAT_ARCHITECTURE.md sec 4.2 step D) must also
-            // make the nub refreshable, or the audio side keeps framing from a
-            // description the device has stopped honouring.
+            // Initial wire facts come from protocol discovery. Catalog endpoints
+            // subsequently change only through the confirmed host configuration
+            // transaction, which updates both the HAL graph and endpoint binding.
 
             for (size_t i = 0; i < dev.playbackStreams.size(); ++i) {
                 ASFW_LOG(Audio,
@@ -1061,7 +1013,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
 
             std::vector<std::string> inNames;
             std::vector<std::string> outNames;
-            if (protocol->GetChannelLabels(inNames, outNames)) {
+            if ((!dev.diceRateFormations ||
+                 DICE::DiceRateMode(caps.sampleRateHz) == DICE::DiceRateMode(dev.currentSampleRate)) &&
+                protocol->GetChannelLabels(inNames, outNames)) {
                 if (!inNames.empty()) {
                     dev.inputChannelNames = std::move(inNames);
                 }
@@ -1077,7 +1031,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         // must not reach transport while the audio graph retains the old one.
         if (publisher_.GetNub(guid) != nullptr) {
             if (!publisher_.RefreshNubProperties(guid, dev, "DICE")) {
-                (void)RebuildEndpointForNewGeometry(guid, dev);
+                ASFW_LOG_ERROR(Audio, "DICE non-catalog geometry changed; endpoint requires rediscovery GUID=%llx", guid);
             }
             return;
         }

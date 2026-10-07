@@ -8,7 +8,7 @@
 #include <cmath>
 #include <new>
 #include "../Runtime/Configuration/DeviceConfigurationStateMachine.hpp"
-#include "../Runtime/AvcRateValidation.hpp"
+#include "../Runtime/RateValidation.hpp"
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
@@ -787,14 +787,14 @@ constexpr uint64_t kAvcRateActionPrefix = 0xA54C000000000000ULL;
 constexpr uint64_t kAvcRateTokenMask = 0x0000FFFFFFFFFFFFULL;
 
 [[nodiscard]] std::expected<ASFW::Configuration::DeviceConfiguration, kern_return_t>
-ResolveAvcRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
+ResolveRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
                bool baseline = false) {
     using namespace ASFW::Audio::Runtime;
     if (!driver.device.profile || !driver.device.audioNub) return std::unexpected(kIOReturnNotReady);
     const auto& formations = driver.device.rateFormationCandidates;
     const auto offered = std::ranges::find(formations, rate, &RateFormation::sampleRateHz);
-    if (offered == formations.end() || (!baseline && !AvcRateEnabled(*offered,
-        static_cast<uint32_t>(driver.device.currentSampleRate)))) return std::unexpected(kIOReturnUnsupported);
+    if (offered == formations.end() || (!baseline && !RateEnabled(*offered,
+        static_cast<uint32_t>(driver.device.currentSampleRate), driver.device.diceRateFormations))) return std::unexpected(kIOReturnUnsupported);
     const auto capacity = MaximumFormationAllocation(formations,
         {ASFW::IsochTransport::kAllocatedFrameRingFrames, driver.device.outputChannelCount, driver.device.inputChannelCount, 0});
     if (!capacity) return std::unexpected(kIOReturnUnsupported);
@@ -807,7 +807,7 @@ ResolveAvcRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
         .resolved = std::make_shared<const ResolvedAudioConfiguration>(*resolved)};
 }
 
-void InstallAvcDriverFormation(ASFWAudioDriver_IVars& driver,
+void InstallDriverFormation(ASFWAudioDriver_IVars& driver,
                               const ASFW::Audio::Runtime::ResolvedAudioConfiguration& resolved) {
     auto& state = driver.device;
     if (state.inputChannelCount != resolved.captureChannels)
@@ -826,7 +826,7 @@ void InstallAvcDriverFormation(ASFWAudioDriver_IVars& driver,
         uint32_t offset = 0;
         for (uint32_t i = 0; i < count; ++i) {
             destination[i] = {.pcmChannels = streams[i].pcmChannels,
-                .am824Slots = streams[i].dataBlockSize, .midiPorts = streams[i].midiSlots,
+                .am824Slots = streams[i].dataBlockSize, .midiPorts = streams[i].midiPortCount ? streams[i].midiPortCount : streams[i].midiSlots,
                 .channelOffset = offset, .pcmSlotMap = streams[i].pcmSlots, .hasPcmSlotMap = true};
             offset += streams[i].pcmChannels;
         }
@@ -853,12 +853,8 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
         ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused - not advertised", origin, rateHz);
         return std::unexpected(kIOReturnUnsupported);
     }
-    // Advertised is not streamable: DICE announces every CLOCK_CAPABILITIES
-    // rate, as the TCAT kexts do, while this build streams 1x only. Refuse a
-    // parked rate here, before a configuration-change window is opened, rather
-    // than letting CommitSampleRate fail inside it (the nub applies the same
-    // gate in RequestSampleRateChange). See DiceAudioBackend::
-    // RebuildEndpointForNewGeometry for what enabling high rates needs.
+    // Legacy endpoints use scalar clock policy. Catalog endpoints take the
+    // resolved-formation transaction path before reaching this helper.
     const ASFW::Audio::AudioClockConfig requested{.sampleRateHz = rateHz};
     if (!ASFW::Audio::IsSupportedAudioClockConfig(requested) &&
         !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(requested)) {
@@ -1007,7 +1003,7 @@ kern_return_t ASFWAudioDevice::RequestAvcStreamFormat(IOUserAudioStream* stream,
     if (stream != driver.inputStream.get() && stream != driver.outputStream.get()) return kIOReturnBadArgument;
     if (!std::isfinite(format->mSampleRate) || format->mSampleRate <= 0 || format->mSampleRate > 192000 ||
         static_cast<uint32_t>(format->mSampleRate) != format->mSampleRate) return kIOReturnUnsupported;
-    const auto resolved = ResolveAvcRate(driver, static_cast<uint32_t>(format->mSampleRate), 0);
+    const auto resolved = ResolveRate(driver, static_cast<uint32_t>(format->mSampleRate), 0);
     if (!resolved) return resolved.error();
     IOUserAudioStreamBasicDescription expected{};
     ASFW::Audio::DriverKit::FillFloat32Format(expected, format->mSampleRate,
@@ -1056,16 +1052,16 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     if (!ivars.device.rateFormationCandidates.empty()) {
         using namespace ASFW::Configuration;
         auto& local = *this->ivars;
-        const auto candidate = ResolveAvcRate(ivars, rateHz, 0);
+        const auto candidate = ResolveRate(ivars, rateHz, 0);
         if (!candidate) return candidate.error();
         IOLockLock(local.rateLock);
         if (std::holds_alternative<Uninitialized>(local.rateMachine.state)) {
-            const auto prior = ResolveAvcRate(ivars, static_cast<uint32_t>(ivars.device.currentSampleRate), 0, true);
+            const auto prior = ResolveRate(ivars, static_cast<uint32_t>(ivars.device.currentSampleRate), 0, true);
             if (!prior) { IOLockUnlock(local.rateLock); return prior.error(); }
-            local.rateMachine.state = Idle{{ivars.device.guid, ivars.device.avcBusGeneration, 0, *prior}};
+            local.rateMachine.state = Idle{{ivars.device.guid, ivars.device.rateBusGeneration, 0, *prior}};
         }
         auto staged = Reduce(local.rateMachine, CoreAudioRateIntent{
-            ivars.device.guid, ivars.device.avcBusGeneration, rateHz});
+            ivars.device.guid, ivars.device.rateBusGeneration, rateHz});
         if (!staged) { IOLockUnlock(local.rateLock); return kIOReturnBusy; }
         if (staged->disposition == TransitionDisposition::NoOp) {
             IOLockUnlock(local.rateLock); return kIOReturnSuccess;
@@ -1085,7 +1081,7 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
         local.rateMachine = std::move(accepted->next);
         IOLockUnlock(local.rateLock);
         ASFW_LOG(Audio, "[RateTxn] phase=stage origin=%{public}s guid=%016llx token=%llu gen=%u old=%u requested=%u",
-            hardwareObservation ? "HardwareObservation" : "CoreAudio", ivars.device.guid, identity.token, ivars.device.avcBusGeneration,
+            hardwareObservation ? "HardwareObservation" : "CoreAudio", ivars.device.guid, identity.token, ivars.device.rateBusGeneration,
             static_cast<uint32_t>(ivars.device.currentSampleRate), rateHz);
         const auto status = RequestDeviceConfigurationChange(kAvcRateActionPrefix | identity.token, nullptr);
         if (status != kIOReturnSuccess) {
@@ -1207,10 +1203,10 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         uint64_t incarnation = 0, epoch = 0;
         uint32_t generation = 0, output = 0, input = 0;
         const auto observe = [&]() {
-            const auto status = driver.device.audioNub->ReadAvcClockState(
+            const auto status = driver.device.audioNub->ReadRateClockState(
                 &incarnation, &epoch, &generation, &output, &input);
             if (status != kIOReturnSuccess) return status;
-            if (incarnation != driver.device.avcRouteIncarnation || epoch != driver.device.avcRouteEpoch ||
+            if (incarnation != driver.device.rateRouteIncarnation || epoch != driver.device.rateRouteEpoch ||
                 generation != transaction.identity.routeGeneration) return kIOReturnAborted;
             return kIOReturnSuccess;
         };
@@ -1228,7 +1224,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             transaction.identity.token, generation, transaction.prior.configuration.sampleRate,
             transaction.candidate.sampleRate, output, input);
         if (!confirmed(transaction.candidate.sampleRate))
-            status = driver.device.audioNub->ApplyAvcRate(transaction.candidate.sampleRate, incarnation, epoch, generation);
+            status = driver.device.audioNub->ApplyRate(transaction.candidate.sampleRate, incarnation, epoch, generation);
         // Even a rejected write can have partially changed duplex hardware.
         const auto readback = observe();
         // These classifications use the actual STATUS bytes, never session
@@ -1245,7 +1241,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         const bool requestedConfirmed = readback == kIOReturnSuccess && confirmed(transaction.candidate.sampleRate);
         bool otherConfirmed = false;
         if (!requestedConfirmed && readback == kIOReturnSuccess && input && (output == input || output == 0)) {
-            const auto actual = ResolveAvcRate(driver, input, transaction.prior.revision + 1);
+            const auto actual = ResolveRate(driver, input, transaction.prior.revision + 1);
             if (actual) { commitConfiguration = *actual; otherConfirmed = true; }
         }
         ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=%{public}s token=%llu gen=%u requested=%u out=%u in=%u kr=0x%x",
@@ -1259,10 +1255,10 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             ASFW_LOG(Audio, "[RateTxn] phase=project token=%llu rate=%u in=%u out=%u revision=%llu",
                 transaction.identity.token, commitConfiguration.sampleRate, commitConfiguration.resolved->captureChannels,
                 commitConfiguration.resolved->playbackChannels, transaction.prior.revision + 1);
-            status = driver.device.audioNub->InstallAvcRateFormation(commitConfiguration.sampleRate,
+            status = driver.device.audioNub->InstallRateFormation(commitConfiguration.sampleRate,
                 incarnation, epoch, generation);
             if (status == kIOReturnSuccess) {
-                InstallAvcDriverFormation(driver, *commitConfiguration.resolved);
+                InstallDriverFormation(driver, *commitConfiguration.resolved);
                 local.projectingRate.store(true, std::memory_order_release);
                 status = CommitSampleRate(*this, driver, commitConfiguration.resolved->timing, false);
                 local.projectingRate.store(false, std::memory_order_release);
@@ -1287,12 +1283,12 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         const auto failure = status;
         const auto& prior = transaction.prior.configuration;
         auto restored = readback == kIOReturnAborted ? kIOReturnAborted
-            : driver.device.audioNub->ApplyAvcRate(prior.sampleRate, incarnation, epoch, generation);
+            : driver.device.audioNub->ApplyRate(prior.sampleRate, incarnation, epoch, generation);
         const auto priorRead = restored == kIOReturnSuccess ? observe() : restored;
         if (priorRead == kIOReturnSuccess && confirmed(prior.sampleRate)) {
-            restored = driver.device.audioNub->InstallAvcRateFormation(prior.sampleRate, incarnation, epoch, generation);
+            restored = driver.device.audioNub->InstallRateFormation(prior.sampleRate, incarnation, epoch, generation);
             if (restored == kIOReturnSuccess) {
-                InstallAvcDriverFormation(driver, *prior.resolved);
+                InstallDriverFormation(driver, *prior.resolved);
                 memcpy(driver.device.inputChannelNames, priorInputNames.data(), priorInputNames.size());
                 memcpy(driver.device.outputChannelNames, priorOutputNames.data(), priorOutputNames.size());
                 local.projectingRate.store(true, std::memory_order_release);
@@ -1349,7 +1345,7 @@ kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
         using namespace ASFW::Configuration;
         IOLockLock(ivars->rateLock);
         const auto identity = ConfigurationIdentity{ivars->driverIvars->device.guid,
-            change_action & kAvcRateTokenMask, ivars->driverIvars->device.avcBusGeneration};
+            change_action & kAvcRateTokenMask, ivars->driverIvars->device.rateBusGeneration};
         auto aborted = Reduce(ivars->rateMachine, ADKAborted{identity});
         if (aborted) ivars->rateMachine = std::move(aborted->next);
         IOLockUnlock(ivars->rateLock);

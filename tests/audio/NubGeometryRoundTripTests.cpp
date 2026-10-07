@@ -278,14 +278,14 @@ TEST(NubGeometryRoundTrip, RateCatalogPreservesDifferentWidthsMapsAndValidationG
     high.playback = {{1, 1, 0, {}}};
     high.capture = high.playback;
     device.rateFormationCandidates = {base, high};
-    device.avcRouteIncarnation = 12; device.avcRouteEpoch = 34; device.avcBusGeneration = 56;
+    device.rateRouteIncarnation = 12; device.rateRouteEpoch = 34; device.rateBusGeneration = 56;
     bool published = false;
     auto parsed = RoundTrip(device, published);
     ASSERT_TRUE(published);
     EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
-    EXPECT_EQ(parsed.avcRouteIncarnation, 12U);
-    EXPECT_EQ(parsed.avcRouteEpoch, 34U);
-    EXPECT_EQ(parsed.avcBusGeneration, 56U);
+    EXPECT_EQ(parsed.rateRouteIncarnation, 12U);
+    EXPECT_EQ(parsed.rateRouteEpoch, 34U);
+    EXPECT_EQ(parsed.rateBusGeneration, 56U);
     EXPECT_EQ(parsed.sampleRateCount, 2U); // original advertisement, not catalog
     EXPECT_EQ(parsed.sampleRates[1], 48000);
     device.rateFormationCandidates.clear(); // parsed owns a value copy
@@ -306,4 +306,18 @@ TEST(NubGeometryRoundTrip, AmbiguousOrIncompleteCatalogIsRejectedAsAWhole) {
     base.capture.clear();
     device.rateFormationCandidates = {base};
     EXPECT_TRUE(RoundTrip(device, published).rateFormationCandidates.empty());
+}
+
+TEST(NubGeometryRoundTrip, DiceCatalogPreservesPhysicalMidiPortsAndWireSlots) {
+    auto device = MakeVeniceF24();
+    device.diceRateFormations = true;
+    device.rateFormationCandidates = {{96000, ASFW::Encoding::StreamMode::kBlocking,
+        {{8, 9, 1, {}, 8}}, {{12, 13, 1, {}, 4}}, true, false}};
+    bool published = false;
+    const auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    ASSERT_TRUE(parsed.diceRateFormations);
+    ASSERT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
+    EXPECT_EQ(parsed.rateFormationCandidates[0].playback[0].midiSlots, 1);
+    EXPECT_EQ(parsed.rateFormationCandidates[0].playback[0].midiPortCount, 8);
 }

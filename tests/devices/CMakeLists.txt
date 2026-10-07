@@ -392,3 +392,12 @@ add_device_test(DiceIdentityTests
     DiceIdentityTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
 )
+
+add_device_test(DiceMultirateClockTests
+    DiceMultirateClockTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp")
+target_compile_definitions(DiceMultirateClockTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)

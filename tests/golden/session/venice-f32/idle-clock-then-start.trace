@@ -16,6 +16,14 @@ R ffff.e00005c8 512 @s400
 R ffff.e00007c8 104 @s400
 ## -> 0x00000000 streaming=0
 ## StartStreaming
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000190 512 @s400
+R ffff.e0000390 56 @s400
+R ffff.e00003c8 512 @s400
+R ffff.e00005c8 512 @s400
+R ffff.e00007c8 104 @s400
+R ffff.e0200000 72 @s400
 H begin
 R ffff.e0000000 40 @s400
 R ffff.e0000028 360 @s400
@@ -49,7 +57,6 @@ H prepare rx ch=2 fmt=0 slots=16 pcm=16
 H prepare rx[1] ch=3 off=16 fmt=0 slots=16 pcm=16
 H prepare tx ch=0 sid=0 @s400
 H prepare tx[1] ch=1 sid=0 @s400
-R ffff.e0000000 40 @s400
 R ffff.e0000028 104 @s400
 R ffff.e0000028 104 @s400
 R ffff.e0000028 104 @s400

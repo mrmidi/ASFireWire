@@ -77,6 +77,12 @@ public:
     bool HasDsp() const override { return true; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override {
+        return tcat_.RateFormations();
+    }
+    void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override {
+        tcat_.ReadRateObservation(std::move(callback));
+    }
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
         tcat_.EnsureRuntimeStreamGeometry(std::move(callback));
     }

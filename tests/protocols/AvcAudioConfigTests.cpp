@@ -1,4 +1,4 @@
-#include "Audio/Model/AvcRateConfiguration.hpp"
+#include "Audio/Model/RateConfiguration.hpp"
 #include "Audio/Protocols/BeBoB/MAudioSpecialFormation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
@@ -231,7 +231,7 @@ TEST(AvcAudioConfig, SpecialFirmwareRetainsVendorRateTablesWithoutGenericDiscove
             ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF,
             ASFW::Audio::BeBoB::MAudioDigitalFormat::SPDIF, candidate.sampleRateHz);
         ASSERT_TRUE(formation);
-        const auto next = ASFW::Audio::Model::WithAvcRateFormation(*config, candidate.sampleRateHz);
+        const auto next = ASFW::Audio::Model::WithRateFormation(*config, candidate.sampleRateHz);
         ASSERT_TRUE(next);
         EXPECT_EQ(next->inputChannelCount, formation->capturePcmChannels);
         EXPECT_EQ(next->outputChannelCount, formation->playbackPcmChannels);

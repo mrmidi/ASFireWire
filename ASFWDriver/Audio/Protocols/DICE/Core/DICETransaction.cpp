@@ -228,6 +228,105 @@ void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, Extensi
               });
 }
 
+namespace {
+struct RateFormatRead {
+    Protocols::Ports::ProtocolRegisterIO& io;
+    uint32_t mask;
+    Section section;
+    DiceRateFormats formats{};
+    uint32_t mode{0};
+    uint32_t captureCount{0};
+    uint32_t playbackCount{0};
+    uint32_t entry{0};
+    std::function<void(IOReturn, DiceRateFormats)> done;
+};
+
+void ReadRateMode(const std::shared_ptr<RateFormatRead>& state);
+
+void ReadRateEntry(const std::shared_ptr<RateFormatRead>& state) {
+    if (state->entry == state->captureCount + state->playbackCount) {
+        ++state->mode;
+        ReadRateMode(state);
+        return;
+    }
+    const uint32_t offset = 0x1000 + 0x2000 * state->mode + 8 +
+        state->entry * kDiceEapStreamEntryBytes;
+    (void)state->io.ReadBlock(MakeDICEAddress(ExtensionAbsoluteOffset(state->section, offset)), 8,
+        [state](Async::AsyncStatus status, std::span<const uint8_t> bytes) {
+            if (status != Async::AsyncStatus::kSuccess) {
+                state->done(MapReadStatus(status), {});
+                return;
+            }
+            const auto stream = ParseDiceEapStream(bytes);
+            if (!stream) { state->done(stream.error(), {}); return; }
+            auto& format = *state->formats[state->mode];
+            auto& direction = state->entry < state->captureCount ? format.capture : format.playback;
+            direction.push_back(*stream);
+            ++state->entry;
+            ReadRateEntry(state);
+        });
+}
+
+void ReadRateMode(const std::shared_ptr<RateFormatRead>& state) {
+    constexpr uint32_t masks[]{0x07, 0x18, 0x60};
+    while (state->mode < 3 && !(state->mask & masks[state->mode])) ++state->mode;
+    if (state->mode == 3) { state->done(kIOReturnSuccess, std::move(state->formats)); return; }
+    const uint32_t offset = 0x1000 + 0x2000 * state->mode;
+    if (offset > state->section.size || state->section.size - offset < 8) {
+        state->done(kIOReturnBadArgument, {}); return;
+    }
+    (void)state->io.ReadBlock(MakeDICEAddress(ExtensionAbsoluteOffset(state->section, offset)), 8,
+        [state, offset](Async::AsyncStatus status, std::span<const uint8_t> bytes) {
+            if (status != Async::AsyncStatus::kSuccess) {
+                state->done(MapReadStatus(status), {}); return;
+            }
+            if (bytes.size() != 8) { state->done(kIOReturnBadArgument, {}); return; }
+            state->captureCount = ReadBE32(bytes.data());
+            state->playbackCount = ReadBE32(bytes.data() + 4);
+            if (state->captureCount > kMaxAudioStreamsPerDirection ||
+                state->playbackCount > kMaxAudioStreamsPerDirection) {
+                state->done(kIOReturnUnsupported, {}); return;
+            }
+            const uint64_t end = uint64_t{offset} + 8 +
+                uint64_t{state->captureCount + state->playbackCount} * kDiceEapStreamEntryBytes;
+            if (end > state->section.size) { state->done(kIOReturnBadArgument, {}); return; }
+            state->formats[state->mode].emplace();
+            state->entry = 0;
+            ReadRateEntry(state);
+        });
+}
+} // namespace
+
+void DICETransaction::ReadRateFormats(uint32_t mask,
+    std::function<void(IOReturn, DiceRateFormats)> callback) {
+    // Read raw pointers before multiplying quadlets, so malformed values
+    // cannot wrap the 32-bit byte offsets used by ExtensionSections.
+    // Duplicate section offsets mean no EAP (Linux
+    // dice-extension.c:142-171), not an empty all-rate catalog.
+    (void)io_.ReadBlock(MakeDICEAddress(kDICEExtensionOffset), ExtensionSections::kWireSize,
+        [this, mask, callback = std::move(callback)](Async::AsyncStatus status,
+                                                    std::span<const uint8_t> bytes) mutable {
+            if (status != Async::AsyncStatus::kSuccess) { callback(MapReadStatus(status), {}); return; }
+            if (bytes.size() != ExtensionSections::kWireSize) { callback(kIOReturnBadArgument, {}); return; }
+            for (size_t i = 0; i < 9; ++i) {
+                const uint64_t offset = uint64_t{ReadBE32(bytes.data() + i * 8)} * 4;
+                const uint64_t size = uint64_t{ReadBE32(bytes.data() + i * 8 + 4)} * 4;
+                if (offset < ExtensionSections::kWireSize || offset + size > UINT32_MAX - kDICEExtensionOffset) {
+                    callback(kIOReturnUnsupported, {}); return;
+                }
+                for (size_t j = 0; j < i; ++j)
+                    if (ReadBE32(bytes.data() + j * 8) == ReadBE32(bytes.data() + i * 8)) {
+                        callback(kIOReturnUnsupported, {}); return;
+                    }
+            }
+            const auto sections = ExtensionSections::Deserialize(bytes.data());
+            auto state = std::make_shared<RateFormatRead>(RateFormatRead{
+                .io = io_, .mask = mask, .section = sections.currentConfig,
+                .done = std::move(callback)});
+            ReadRateMode(state);
+        });
+}
+
 // ============================================================================
 // Capability Discovery
 // ============================================================================

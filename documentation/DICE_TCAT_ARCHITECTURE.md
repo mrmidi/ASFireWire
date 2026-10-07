@@ -520,24 +520,39 @@ can be deleted.
   `assertedPlaybackStreams` until 2026-09-27, §2.9); latency from `AudioGeometryPolicy`. Capture
   visibility needed no scalar: the Weiss protocol already publishes
   `hostInputPcmChannels = 0`. Declared deltas are listed in §4.4.
-- **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
-  read all modes once; register-only devices re-read after the switch, as
-  `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.
-  **Deferred (2026-09-25)** to the ceiling raise. It cannot trigger below
-  2x rates, and verifying it needs 2x/4x hardware.
-  **Template landed (2026-09-25), following the TCAT kext, not Linux.**
-  Every `CLOCK_CAPABILITIES` rate is now announced (`DicePublishedRates`), as
-  `createNewAudioStream` does; picking one above `kDiceMaxStreamingRateHz`
-  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`:
-  in `ValidateSampleRate` (`ASFWAudioDevice.cpp`), before a configuration-change
-  window opens, and again in `ASFWAudioNub::RequestSampleRateChange`. CoreAudio
-  keeps its rate.
-  Devices start at `DiceInitialRate` (48 kHz when announced). The kext's
-  `CreateStreams` step is `DiceAudioBackend::RebuildEndpointForNewGeometry`, a
-  no-op called where a changed layout used to be refused silently; its TODO is
-  the design (kext call chain with addresses, the AudioDriverKit
-  configuration-change mapping, prerequisites, hardware test). Enabling high
-  rates = implement that function + the 2x wire, then raise the ceiling.
+- **D — immutable rate formations and confirmed configuration transactions.**
+  Implemented on `feature/dice-multirate` (2026-10-07), adapted to the current
+  shared configuration reducer rather than the former geometry-rebuild stub.
+  EAP CURRENT_CONFIG supplies low/middle/high stream formations without clock
+  probing. Register-only devices retain only their observed mode; unknown modes
+  are never inferred by scaling channels. Complete duplex catalog endpoints
+  publish only selectable rates, and use the neutral `ReadRateClockState`,
+  `ApplyRate`, and `InstallRateFormation` seam inside the host configuration
+  window. Readback confirms the clock, route incarnation/epoch/generation and
+  every stream's PCM/AM824 width before projecting the HAL graph. Failure follows
+  the existing configuration reducer's rollback/retained-state policy.
+
+  High rates remain gated by `ASFW_DICE_MULTIRATE_VALIDATION=1` for hardware
+  qualification. This flag does not set `hardwareValidated` on a formation.
+  Devices with more than two playback streams, more than four capture streams,
+  or more than eight MIDI ports per stream are unsupported. Physical MIDI port
+  counts remain separate from their single multiplexed AM824 wire slot.
+  Playback-only endpoints that hide a physical capture stream (Weiss) retain
+  their legacy path: the shared formation contract still needs an independent
+  capture-visibility field before they can migrate safely.
+
+  The only default wire delta is an EAP pointer-table read during catalog
+  discovery; rebuilding an absent catalog after an idle clock change also
+  rereads the live stream registers. Reviewed golden traces record these reads.
+
+  Batch verification: build with
+  `./build.sh --no-bump --set ASFW_DICE_MULTIRATE_VALIDATION=1`, then exercise every advertised known rate
+  in both directions, including 48→96→192→48 where supported, idle and running
+  changes, external clock changes, refusal/rollback, unplug and bus-reset
+  cancellation. Confirm mode-specific channel counts, MIDI ports, TX/RX packet
+  geometry and stable clocks. Use `/usr/bin/log show --last 20m --info --debug
+  --style compact --predicate 'eventMessage CONTAINS "[RateTxn]"'` for the
+  bounded transaction/readback trace. Hardware qualification remains pending.
 
 Doing C first is the tempting error: without A, deleting profile geometry only
 moves the constants, because `StartIO` still needs numbers from the host side.

@@ -554,7 +554,6 @@
 		033FC6B5D7694F3B8B667F86 /* AVCDiscoveryDocument.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCDiscoveryDocument.hpp; sourceTree = "<group>"; };
 		03627F2DBAE568BDFB6E1E7F /* IRMCSRConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMCSRConstants.hpp; sourceTree = "<group>"; };
 		037576E0DAB3B87F0D80A8B3 /* BusResetPacketDiagram.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusResetPacketDiagram.swift; sourceTree = "<group>"; };
-		03DE6373DC6E8581E700290D /* AvcRateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcRateValidation.hpp; sourceTree = "<group>"; };
 		040B840880B496BDE24BB98F /* AudioAnalysisEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalysisEngineTests.swift; sourceTree = "<group>"; };
 		040E3246E90734BBE6ED2380 /* MCPConsoleLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPConsoleLogTests.swift; sourceTree = "<group>"; };
 		0417EE4C83805D8B15818D95 /* ASFWMCPCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPCore.swift; sourceTree = "<group>"; };
@@ -722,7 +721,6 @@
 		2D823DC9B2F9574EB59634E0 /* MAudioSpecialProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MAudioSpecialProtocol.cpp; sourceTree = "<group>"; };
 		2D90710CEC026067D8B5A3A0 /* SPro24DspRouting.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SPro24DspRouting.hpp; sourceTree = "<group>"; };
 		2DB8D24526FA39D9363A15E3 /* DiscoveryLog.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryLog.cpp; sourceTree = "<group>"; };
-		2DC753C061A74332ADD70DA9 /* AvcRateConfiguration.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcRateConfiguration.hpp; sourceTree = "<group>"; };
 		2DF4D7B9FE6E8787E0E58D06 /* IRMFallbackCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IRMFallbackCoordinator.cpp; sourceTree = "<group>"; };
 		2E4B81BA5CC13B1A56B9CBD4 /* DeviceDiscoveryHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeviceDiscoveryHandler.cpp; sourceTree = "<group>"; };
 		2E4CE43339E4E0EB92A85D1D /* AudioAnalysisKernelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioAnalysisKernelTests.swift; sourceTree = "<group>"; };
@@ -862,10 +860,12 @@
 		4EC8698592218CE869026E8E /* IRMTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMTypes.hpp; sourceTree = "<group>"; };
 		4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverTeardown.cpp; sourceTree = "<group>"; };
 		4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ATTrace.cpp; sourceTree = "<group>"; };
+		4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateValidation.hpp; sourceTree = "<group>"; };
 		500873644296662233E0FA3C /* AvcDeviceGraph.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcDeviceGraph.hpp; sourceTree = "<group>"; };
 		500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalAnalyzerPlotView.swift; sourceTree = "<group>"; };
 		5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceFamilyDriver.hpp; sourceTree = "<group>"; };
 		50A11F405110ACE28D722447 /* LoginSession.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LoginSession.cpp; sourceTree = "<group>"; };
+		511B35A93EFF4C464266CCE4 /* DiceRateFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceRateFormats.hpp; sourceTree = "<group>"; };
 		51682B346416A87D9E51F78F /* AudioControlBits.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioControlBits.hpp; sourceTree = "<group>"; };
 		51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetViewModelLogicTests.swift; sourceTree = "<group>"; };
 		51BFBE312068D7734307D80E /* StreamFormatCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StreamFormatCommand.cpp; sourceTree = "<group>"; };
@@ -1095,6 +1095,7 @@
 		886AF37D272E8E7512931EEA /* IsochDuplexHostTransport.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochDuplexHostTransport.cpp; sourceTree = "<group>"; };
 		88B1EB3DEB1B651905016B01 /* Alesis.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Alesis.hpp; sourceTree = "<group>"; };
 		88D6BD97ADB99F287CA2A904 /* ResolvedTimingGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ResolvedTimingGeometry.hpp; sourceTree = "<group>"; };
+		89A39300ABC3AC47C63BBA08 /* RateConfiguration.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateConfiguration.hpp; sourceTree = "<group>"; };
 		89C4672ADDDDFD4C7C4F9640 /* SpeedPolicy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SpeedPolicy.cpp; sourceTree = "<group>"; };
 		89CD3C200511F275D3181597 /* EfcResponseMailbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = EfcResponseMailbox.hpp; sourceTree = "<group>"; };
 		89E6B4338C915043A50A0C8A /* DirectInputWriter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectInputWriter.hpp; sourceTree = "<group>"; };
@@ -2393,6 +2394,7 @@
 				D0D02F4FA98530583232F0C5 /* DiceNotificationMailbox.hpp */,
 				44F97EA86727E28505F4C03C /* DiceNotificationRouter.cpp */,
 				33B240476E6D888462326806 /* DiceNotificationRouter.hpp */,
+				511B35A93EFF4C464266CCE4 /* DiceRateFormats.hpp */,
 				46130AD5DDDF8E8B28EFF996 /* DICETransaction.cpp */,
 				9D63937D5D5E665DA45C4D17 /* DICETransaction.hpp */,
 				4680163C12F9EF9BB0089638 /* DICETypes.hpp */,
@@ -2571,10 +2573,10 @@
 			children = (
 				6017803114CDFE54802701D0 /* ASFWAudioDevice.hpp */,
 				4664D9D7CFDFCE96A7EB8CA4 /* AudioPropertyKeys.hpp */,
-				2DC753C061A74332ADD70DA9 /* AvcRateConfiguration.hpp */,
 				F4C73B389D74CD6123802566 /* AvcVolumeMapping.hpp */,
 				8CD2500B44AFABE214F2F9A9 /* DiscoveredRuntimeCaps.hpp */,
 				3058CDC71654C2D161E038D6 /* NubGeometryRefresh.hpp */,
+				89A39300ABC3AC47C63BBA08 /* RateConfiguration.hpp */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -3671,10 +3673,10 @@
 			isa = PBXGroup;
 			children = (
 				326043212A80E707588E0136 /* AudioTelemetrySnapshot.hpp */,
-				03DE6373DC6E8581E700290D /* AvcRateValidation.hpp */,
 				02144B4C4EA2BAF93390486A /* HardwareSampleTimeline.hpp */,
 				1557290E6845737616D01C79 /* HostClockAnchor.hpp */,
 				E80D888C09A54D7E579A60E1 /* PlaybackRingRange.hpp */,
+				4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */,
 				4E4A6CA6172FE6548D83C3B9 /* ResolvedAudioConfiguration.hpp */,
 				88D6BD97ADB99F287CA2A904 /* ResolvedTimingGeometry.hpp */,
 				FBE4833B65F8742236FCCE28 /* Seqlock.hpp */,
@@ -4474,6 +4476,7 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ARCHS = "x86_64 arm64e";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
+				ASFW_DICE_MULTIRATE_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
@@ -4491,6 +4494,7 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
+					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -4559,6 +4563,7 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ARCHS = "x86_64 arm64e";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
+				ASFW_DICE_MULTIRATE_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
@@ -4576,6 +4581,7 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
+					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (

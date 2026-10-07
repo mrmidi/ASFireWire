@@ -77,7 +77,7 @@ BuildResolvedTxStreamConfig(const IAudioStreamProfile& profile,
     outConfig.pcmSlotMap = wire.pcmSlotMap;
     outConfig.hasPcmSlotMap = wire.hasPcmSlotMap;
     outConfig.pcmChannels = static_cast<uint8_t>(wire.pcmChannels);
-    outConfig.midiSlots = static_cast<uint8_t>(wire.midiPorts);
+    outConfig.midiSlots = static_cast<uint8_t>(wire.midiPorts ? wire.am824Slots - wire.pcmChannels : 0);
     outConfig.dbs = static_cast<uint8_t>(wire.am824Slots);
     // The publisher computed this as the running sum of preceding stream
     // widths. It is NOT index * width-of-stream-0: those agree only while every

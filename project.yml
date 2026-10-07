@@ -131,9 +131,11 @@ targets:
           - "$(SRCROOT)/ASFWDriver/Audio/Model"
         # Expose complete AV/C rate formations in ordinary Xcode builds. DICE is unaffected.
         ASFW_AVC_MULTIRATE_VALIDATION: "1"
+        ASFW_DICE_MULTIRATE_VALIDATION: "0"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"
+          - "ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.asfw.driver

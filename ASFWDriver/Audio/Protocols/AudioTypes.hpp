@@ -65,6 +65,11 @@ struct AudioStreamRuntimeCaps {
     AudioStreamWireInfo hostToDeviceStreams[kMaxAudioStreamsPerDirection]{};
 };
 
+struct RateHardwareObservation {
+    AudioStreamRuntimeCaps caps{};
+    bool clockConfirmed{false};
+};
+
 struct AudioDuplexChannels {
     // Legacy single-channel accessors == stream[0] of each direction. Kept so
     // the single-stream host path (and existing call sites) compile unchanged.

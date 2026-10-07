@@ -33,9 +33,10 @@ namespace {
 void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverConfig& parsedConfig,
                                    AudioDriverDeviceState& device) noexcept {
     device.guid = parsedConfig.guid;
-    device.avcRouteIncarnation = parsedConfig.avcRouteIncarnation;
-    device.avcRouteEpoch = parsedConfig.avcRouteEpoch;
-    device.avcBusGeneration = parsedConfig.avcBusGeneration;
+    device.rateRouteIncarnation = parsedConfig.rateRouteIncarnation;
+    device.rateRouteEpoch = parsedConfig.rateRouteEpoch;
+    device.rateBusGeneration = parsedConfig.rateBusGeneration;
+    device.diceRateFormations = parsedConfig.diceRateFormations;
     device.vendorId = parsedConfig.vendorId;
     device.modelId = parsedConfig.modelId;
     device.profileBuilderId = parsedConfig.profileBuilderId;

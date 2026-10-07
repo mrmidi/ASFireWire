@@ -16,6 +16,7 @@
 #include "../../IDeviceProtocol.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
+#include <DriverKit/IOLib.h>
 #include <atomic>
 #include <functional>
 #include <optional>
@@ -85,6 +86,14 @@ public:
     Audio::FamilyDriver* AsFamilyDriver() noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override {
+        if (!rateFormatsLock_) return {};
+        IOLockLock(rateFormatsLock_);
+        auto snapshot = rateFormations_;
+        IOLockUnlock(rateFormatsLock_);
+        return snapshot;
+    }
+    void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
@@ -202,6 +211,14 @@ private:
     char outputChannelLabels_[kMaxChannelLabels][64]{};
 
     std::atomic<bool> runtimeCapsValid_{false};
+    void PublishRateFormations(std::shared_ptr<const std::vector<Runtime::RateFormation>> snapshot) {
+        if (!rateFormatsLock_) return;
+        IOLockLock(rateFormatsLock_);
+        rateFormations_.swap(snapshot);
+        IOLockUnlock(rateFormatsLock_);
+    }
+    IOLock* rateFormatsLock_{IOLockAlloc()};
+    std::shared_ptr<const std::vector<Runtime::RateFormation>> rateFormations_{};
 };
 
 } // namespace ASFW::Audio::DICE::TCAT

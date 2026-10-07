@@ -45,10 +45,12 @@ inline constexpr const char* kStreamMode = "ASFWStreamMode";
 inline constexpr const char* kPlaybackStreams = "ASFWPlaybackStreams";
 inline constexpr const char* kCaptureStreams = "ASFWCaptureStreams";
 // Candidate inventory only: it does not expand HAL advertisement.
-inline constexpr const char* kAvcRouteIncarnation = "ASFWAvcRouteIncarnation";
-inline constexpr const char* kAvcRouteEpoch = "ASFWAvcRouteEpoch";
-inline constexpr const char* kAvcBusGeneration = "ASFWAvcBusGeneration";
+// Preserve the serialized keys used by existing nubs across the neutral API rename.
+inline constexpr const char* kRateRouteIncarnation = "ASFWAvcRouteIncarnation";
+inline constexpr const char* kRateRouteEpoch = "ASFWAvcRouteEpoch";
+inline constexpr const char* kRateBusGeneration = "ASFWAvcBusGeneration";
 inline constexpr const char* kRateFormations = "ASFWRateFormations";
+inline constexpr const char* kDiceRateFormations = "ASFWDiceRateFormations";
 inline constexpr const char* kFormationProtocolSupported = "ProtocolSupported";
 inline constexpr const char* kFormationHardwareValidated = "HardwareValidated";
 

@@ -17,6 +17,8 @@ struct RateWireStream final {
     uint32_t dataBlockSize{0};
     uint32_t midiSlots{0};
     Wire::PcmSlotMap pcmSlots{};
+    // DICE multiplexes up to eight physical ports into one AM824 slot.
+    uint32_t midiPortCount{0};
     friend bool operator==(const RateWireStream&, const RateWireStream&) = default;
 };
 
