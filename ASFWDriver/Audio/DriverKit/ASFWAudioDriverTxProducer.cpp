@@ -771,7 +771,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     }
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
     const auto txPolicy = profile.TxStreamPolicy();
-    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
         ivars.runtime.motuPayloadWriter.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
                 .pcmChunks = txConfig.pcmChannels,
@@ -789,7 +789,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
                 currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
             return true;
         });
-        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
+        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs, txConfig.sampleRate);
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);

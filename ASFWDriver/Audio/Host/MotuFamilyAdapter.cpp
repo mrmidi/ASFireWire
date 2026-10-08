@@ -7,8 +7,9 @@
 
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
-#include "../Protocols/MOTU/MotuV2Registers.hpp"
+#include "../Protocols/MOTU/MotuRegisters.hpp"
 #include "../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../Model/RateConfiguration.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -40,8 +41,7 @@ Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::Device
                          : protocol.GetName();
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-    dev.sampleRates.assign(std::begin(Motu::kPublishedSampleRatesHz),
-                           std::end(Motu::kPublishedSampleRatesHz));
+    dev.sampleRates = {44100, 48000}; // first-read failure fallback only
     dev.currentSampleRate = 48000u;
 
     // Geometry: the counts the protocol read from the optical config, or its
@@ -58,6 +58,26 @@ Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::Device
         dev.outputChannelCount = fixedChunks;
     }
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
+    // Even the read-failure fallback must advertise its actual current mode.
+    // Starting still re-reads the register and refuses mismatching geometry.
+    if (const auto index = Encoding::Motu::RateToIndex(dev.currentSampleRate); index >= 0) {
+        const auto first = static_cast<uint32_t>(index) & ~1U;
+        dev.sampleRates = {Encoding::Motu::kClockRates[first], Encoding::Motu::kClockRates[first + 1]};
+    }
+    if (const auto formations = protocol.RateFormations(); formations && !formations->empty()) {
+        dev.rateFormationCandidates = *formations;
+        dev.rateRouteIncarnation = record.deviceIncarnation;
+        dev.rateRouteEpoch = record.routeEpoch;
+        dev.rateBusGeneration = record.gen.value;
+        dev.usesRateFormations = true;
+        dev.deviceSampleRates = true;
+        dev.sampleRates.clear();
+        for (const auto& formation : *formations)
+            if (formation.protocolSupported) dev.sampleRates.push_back(formation.sampleRateHz);
+        const auto selected = Model::WithRateFormation(dev, dev.currentSampleRate);
+        if (selected) dev = *selected;
+        else dev.sampleRates.clear();
+    }
 
     // Port names in host channel order, which is not wire order: the encoder and
     // decoder apply the same model table, so these line up with what each channel
@@ -92,10 +112,15 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
     protocol->EnsureRuntimeStreamGeometry(
         [record = in.record, protocol, nubIsLive, done = std::move(done)](IOReturn geometryStatus) {
             if (geometryStatus == kIOReturnSuccess) {
-                done(BuildNubConfig(record, *protocol));
+                auto config = BuildNubConfig(record, *protocol);
+                if (config.sampleRates.empty()) {
+                    done(DescribeRefusal{kIOReturnUnsupported, "unusable-motu-formation"});
+                    return;
+                }
+                done(std::move(config));
                 return;
             }
-            if (nubIsLive) {
+            if (nubIsLive || record.unitSwVersion.value_or(0) == 0x15) {
                 // The live nub's counts came from an earlier read. Building from the
                 // fixed table now would differ from them and latch "geometry changed"
                 // on what may be one lost transaction; refuse, and the next trigger

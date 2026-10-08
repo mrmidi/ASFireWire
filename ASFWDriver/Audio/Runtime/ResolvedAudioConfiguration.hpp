@@ -29,6 +29,7 @@ struct RateFormation final {
     std::vector<RateWireStream> capture;
     bool protocolSupported{false};
     bool hardwareValidated{false};
+    bool packedPcm{false}; // MOTU: 3-byte chunks, not PCM quadlet slots.
     friend bool operator==(const RateFormation&, const RateFormation&) = default;
 };
 
@@ -100,11 +101,14 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
             if (!stream.pcmChannels || stream.pcmChannels > Encoding::kMaxPcmChannels ||
                 stream.dataBlockSize > Encoding::kMaxAmdtpDbs ||
                 stream.midiSlots > stream.dataBlockSize ||
-                stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
-                !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))
+                (selected->packedPcm
+                    ? (stream.midiSlots != 0 || !stream.pcmSlots.IsIdentity() ||
+                       stream.dataBlockSize != 1 + ((2 + stream.pcmChannels) * 3 + 3) / 4)
+                    : (stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
+                       !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))))
                 return std::unexpected(ConfigurationError::InvalidFormation);
             uint32_t used = 0;
-            for (uint32_t channel = 0; channel < stream.pcmChannels; ++channel) {
+            for (uint32_t channel = 0; !selected->packedPcm && channel < stream.pcmChannels; ++channel) {
                 const uint32_t bit = uint32_t{1} << stream.pcmSlots.SlotFor(channel);
                 if (used & bit) return std::unexpected(ConfigurationError::InvalidFormation);
                 used |= bit;

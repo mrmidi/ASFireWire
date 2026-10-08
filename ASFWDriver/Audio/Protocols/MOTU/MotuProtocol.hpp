@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuV2Protocol.hpp - Device protocol for MOTU protocol-v2 register devices.
+// MotuProtocol.hpp - Device protocol for MOTU protocol-v2 register devices.
 //
 // Thin adapter: all wire encoding/decoding lives in the pure codecs of
-// MotuV2Registers.hpp; this class owns only transport (async register IO against
+// MotuRegisters.hpp; this class owns only transport (async register IO against
 // kAddrBase + offset) and the cached device state those reads produce.
 //
 // Device-side streaming bring-up IS implemented here, through FamilyDriver.
@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "MotuV2Registers.hpp"
+#include "MotuRegisters.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -33,17 +33,17 @@ struct ClockStatus {
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
-/// MOTU protocol-v2 register device.
+/// Shared MOTU register adapter: V2 and experimental 828mk3 V3 at 48 kHz.
 ///
 /// Also serves as its own FamilyDriver: the audio session reaches every protocol
 /// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
 /// implement to be driven at all.
-class MotuV2Protocol final : public IDeviceProtocol, public FamilyDriver {
+class MotuProtocol final : public IDeviceProtocol, public FamilyDriver {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
 
-    MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
+    MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
                    Protocols::Ports::FireWireBusInfo& busInfo,
                    Discovery::DeviceRegistry& routeRegistry,
                    const Discovery::DeviceRouteToken& route,
@@ -58,7 +58,7 @@ public:
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
     /// Read the optical config (0x0c04) and cache the PCM chunk counts the endpoint is
-    /// published with (kPublishedSampleRatesHz), then call back. Asynchronous, so it
+    /// published in per-rate formations, then call back. Asynchronous, so it
     /// is safe on the Default queue. Linux reads the same register at PCM open
     /// (motu-pcm.c:143), so reading it ahead of publication is not a deadlock: it
     /// needs only the async bus, not a started stream. A failed read clears the
@@ -71,6 +71,8 @@ public:
     /// While a duplex is prepared at a rate outside the published rate mode, it is the
     /// prepared geometry.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override;
+    void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override;
 
     /// Port names in host channel order (MotuPortLayout.hpp). They come from the model's
     /// static table, so unlike DICE they are available before PrepareDuplex. Optical
@@ -172,6 +174,10 @@ private:
     /// Write the address-hi/address-lo pair as one logical operation. Both halves must
     /// land: the device only acts on a complete address, so a failed second write leaves
     /// it holding a half-updated value and the caller sees the failure.
+    [[nodiscard]] bool IsV3() const noexcept;
+    [[nodiscard]] Reg OpticalRegister() const noexcept { return IsV3() ? Reg::OpticalBanksV3 : Reg::InOutConfV2; }
+    void ReadOpticalGeometry(CompletionCallback callback);
+    void ReadDuplexConfirmation(ConfirmCallback callback);
     void WriteAsyncAddrPair(AsyncAddrValues values,
                             bool registered,
                             CompletionCallback callback);
@@ -213,12 +219,10 @@ private:
     std::atomic<uint32_t> rxPcmChunks_{0};
     std::atomic<uint32_t> preparedRateHz_{0};
 
-    // PCM chunk counts for the published rate mode, derived from the last
-    // successful optical config read (EnsureRuntimeStreamGeometry): capture in the
-    // high half, playback in the low half. Zero means "not read, or the read failed".
-    // One word, so a reader never sees one direction from one read and the other
-    // from the next.
-    std::atomic<uint32_t> publishedChunks_{0};
+    // One atomic snapshot: low 32 bits are the optical register, bit 32
+    // proves a completed read. A reader cannot mix validity from one refresh
+    // with a raw register from the next refresh.
+    std::atomic<uint64_t> opticalSnapshot_{0};
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;

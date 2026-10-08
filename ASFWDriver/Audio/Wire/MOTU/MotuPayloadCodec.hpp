@@ -19,13 +19,22 @@ public:
     MotuRxPayloadCodec() noexcept = default;
 
     explicit MotuRxPayloadCodec(uint32_t pcmChunks,
-                                ::ASFW::Encoding::Motu::MotuPortMap ports = {}) noexcept
-        : pcmChunks_(pcmChunks), ports_(ports) {}
+                                ::ASFW::Encoding::Motu::MotuPortMap ports = {}, bool v3 = false) noexcept
+        : pcmChunks_(pcmChunks), ports_(ports), v3_(v3) {}
 
     void Configure(uint32_t pcmChunks,
                    ::ASFW::Encoding::Motu::MotuPortMap ports = {}) noexcept {
         pcmChunks_ = pcmChunks;
         ports_ = ports;
+    }
+
+    [[nodiscard]] std::optional<Isoch::CIPHeader> DecodeHeader(uint32_t q0BE, uint32_t q1BE) const noexcept override {
+        if (const auto strict = IRxPayloadCodec::DecodeHeader(q0BE, q1BE)) return strict;
+        // 828mk3 capture: PR #172 documentation/MOTU_828MK3.md:46-56.
+        // EOH1 is clear and 0x22ffffff is a vendor word, not FMT/FDF/SYT.
+        if (!v3_ || OSSwapBigToHostInt32(q1BE) != 0x22ffffff ||
+            !(OSSwapBigToHostInt32(q0BE) & 0x400)) return std::nullopt;
+        return Isoch::CIPHeader::Decode(q0BE, OSSwapHostToBigInt32(0x8222ffff));
     }
 
     [[nodiscard]] uint32_t StrideQuadlets(uint8_t cipDbs) const noexcept override {
@@ -74,6 +83,7 @@ public:
     }
 
 private:
+    bool v3_{false};
     uint32_t pcmChunks_{0};
     ::ASFW::Encoding::Motu::MotuPortMap ports_{};
 };

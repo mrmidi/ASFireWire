@@ -94,6 +94,7 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
         .am824Slots = stream.am824Slots,
         .streamChannels = stream.pcmChannels,
         .trustConfiguredStride = profile.captureTrustConfiguredStride,
+        .motuV3 = profile.captureMotuV3,
         .motuPcmChunks = profile.captureMotuPcmChunks,
         .motuPorts = profile.captureMotuPorts,
         .captureChannelMap = profile.captureChannelMap,
@@ -208,7 +209,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     const auto applyGraph = [&](AudioStreamRuntimeCaps& geometry, bool beforeConfigure = false) {
         if (!request.discoveredConfig) return true;
         const auto& config = *request.discoveredConfig;
-        if (config.diceRateFormations) {
+        if (config.usesRateFormations) {
             // Before Configure, the device may still be at its old mode.
             // Once at the target, compare every stream before host DMA starts.
             return (beforeConfigure && geometry.sampleRateHz != clock.sampleRateHz) ||
@@ -272,7 +273,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
     caps = prepared->runtimeCaps;
     if (!applyGraph(caps)) return rollback(kIOReturnUnsupported, "GraphGeometry");
-    if (request.discoveredConfig && request.discoveredConfig->diceRateFormations) {
+    if (request.discoveredConfig && request.discoveredConfig->usesRateFormations) {
         // No IRM resources have been assigned yet. A DICE mode may change the
         // number of streams as well as their widths; rebuild its channel plan
         // from confirmed target geometry before reserving/programming streams.
@@ -382,7 +383,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
              caps.hostToDeviceAm824Slots, static_cast<uint32_t>(profile.captureWireFormat),
              static_cast<uint32_t>(profile.playbackWireFormat));
 
-    if (request.discoveredConfig && !request.discoveredConfig->diceRateFormations) {
+    if (request.discoveredConfig && !request.discoveredConfig->usesRateFormations) {
         const auto& config = *request.discoveredConfig;
         const auto& capture = config.captureStreams.front();
         if (!capture.pcmSlotMap.FitsWithin(capture.pcmChannels, capture.am824Slots))

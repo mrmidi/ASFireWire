@@ -5,7 +5,7 @@
 // (motu-protocol-v2.c, motu-stream.c, motu-transaction.c, motu.c).
 
 #include <gtest/gtest.h>
-#include "Audio/Protocols/MOTU/MotuV2Registers.hpp"
+#include "Audio/Protocols/MOTU/MotuRegisters.hpp"
 
 using namespace ASFW::Audio::Motu;
 
@@ -137,15 +137,12 @@ TEST(MotuV2PcmChunksTests, UnmappedRateModeHasNoChunks) {
     EXPECT_EQ(chunks.rx, 0u);
 }
 
-TEST(MotuV2PcmChunksTests, PublishedRatesAreAllOneRateMode) {
-    // One channel count per direction is only right while this holds.
-    EXPECT_TRUE(AllPublishedRatesShareOneMode());
-    EXPECT_EQ(PublishedRateMode(), 0u);
+TEST(MotuV2PcmChunksTests, ModelRatesSpanTwoModesWithoutAStaticPublicationClamp) {
+    const auto* model = ASFW::Encoding::Motu::FindModel(3);
+    ASSERT_NE(model, nullptr);
+    EXPECT_TRUE(ASFW::Encoding::Motu::SupportsRate(*model, 96000));
+    EXPECT_FALSE(ASFW::Encoding::Motu::SupportsRate(*model, 192000));
 }
-
-//==============================================================================
-// Iso comm control (motu-stream.c:12-21,62-107)
-//==============================================================================
 
 TEST(MotuV2IsoCommTests, StartActivatesBothDirectionsWithChannels) {
     // rx channel 5, tx channel 9; low 16 bits of current value preserved.

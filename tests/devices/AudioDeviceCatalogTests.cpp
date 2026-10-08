@@ -125,7 +125,7 @@ TEST(AudioDeviceCatalog, RejectsProtocolThatDisagreesWithFamily) {
         return definition.id == DeviceDefinitionId::FocusriteSPro14;
     });
     ASSERT_NE(it, definitions.end());
-    it->protocolImplementation = ProtocolImplementationId::MotuV2;
+    it->protocolImplementation = ProtocolImplementationId::MotuRegister;
 
     const auto issues = AudioDeviceCatalog::ValidateDefinitions(definitions);
     EXPECT_TRUE(std::ranges::any_of(issues, [](const auto& issue) {
@@ -379,7 +379,7 @@ TEST(AudioDeviceCatalog, RmeRealHardwareMatchesFromUnitDirectoryModelId) {
     }
 }
 
-TEST(AudioDeviceCatalog, AnUnverifiedMotuSiblingIsNamedButNotPlayable) {
+TEST(AudioDeviceCatalog, TableBackedEightPreGetsItsOwnAllocatorProfile) {
     const auto device = MakeDevice(0x0001F2'0400000000ULL, kMotuVendorId,
                                    /*modelId=*/0U,
                                    {{.offset = 5,
@@ -387,8 +387,8 @@ TEST(AudioDeviceCatalog, AnUnverifiedMotuSiblingIsNamedButNotPlayable) {
                                      .version = kMotu8preSwVersion}});
     const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
     ASSERT_TRUE(plan.has_value());
-    EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
-    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu8pre);
     EXPECT_EQ(plan->modelName, kMotu8preModelName);
 }
 

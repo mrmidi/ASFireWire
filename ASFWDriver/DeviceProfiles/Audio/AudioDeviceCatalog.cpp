@@ -52,7 +52,7 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kAvidDefinitions
 );
 
-static_assert(kDefinitions.size() == 43U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 55U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //

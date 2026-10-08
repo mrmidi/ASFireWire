@@ -310,14 +310,29 @@ TEST(NubGeometryRoundTrip, AmbiguousOrIncompleteCatalogIsRejectedAsAWhole) {
 
 TEST(NubGeometryRoundTrip, DiceCatalogPreservesPhysicalMidiPortsAndWireSlots) {
     auto device = MakeVeniceF24();
-    device.diceRateFormations = true;
+    device.usesRateFormations = true;
     device.rateFormationCandidates = {{96000, ASFW::Encoding::StreamMode::kBlocking,
         {{8, 9, 1, {}, 8}}, {{12, 13, 1, {}, 4}}, true, false}};
     bool published = false;
     const auto parsed = RoundTrip(device, published);
     ASSERT_TRUE(published);
-    ASSERT_TRUE(parsed.diceRateFormations);
+    ASSERT_TRUE(parsed.usesRateFormations);
     ASSERT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
     EXPECT_EQ(parsed.rateFormationCandidates[0].playback[0].midiSlots, 1);
     EXPECT_EQ(parsed.rateFormationCandidates[0].playback[0].midiPortCount, 8);
+}
+
+TEST(NubGeometryRoundTrip, MotuPackedFormationPreservesSmallerThanPcmDbs) {
+    auto dev = MakeVeniceF24();
+    dev.usesRateFormations = true;
+    ASFW::Audio::Runtime::RateFormation f{};
+    f.sampleRateHz = 48000; f.protocolSupported = true; f.packedPcm = true;
+    f.playback = {{14,13}}; f.capture = {{18,16}};
+    dev.rateFormationCandidates = {f};
+    bool published = false;
+    const auto parsed = RoundTrip(dev, published);
+    ASSERT_TRUE(published);
+    ASSERT_EQ(parsed.rateFormationCandidates.size(), 1U);
+    EXPECT_EQ(parsed.rateFormationCandidates.front(), f);
+    EXPECT_FALSE(parsed.rateFormationCandidates.front().hardwareValidated);
 }

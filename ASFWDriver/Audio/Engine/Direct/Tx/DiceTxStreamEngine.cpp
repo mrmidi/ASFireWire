@@ -16,6 +16,7 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.pcmChannels = streamConfig.pcmChannels;
     config.midiSlots = streamConfig.midiSlots;
     config.fmt = streamConfig.fmt;
+    config.cipSph = streamConfig.cipSph;
     config.fdf = streamConfig.fdf;
     config.framesPerDataPacket = streamConfig.framesPerDataPacket;
     config.sourceChannelOffset = streamConfig.sourceChannelOffset;
@@ -136,7 +137,9 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
     plan.disposition = isData ? AMDTP::AmdtpPacketDisposition::Data : AMDTP::AmdtpPacketDisposition::NoData;
 
     AMDTP::PreparedTxPacket packet{};
-    if (!packetizer_.PrepareNextPacket(slot, timing, plan, packet)) {
+    auto contentTiming = timing;
+    if (IsSytUnaware()) contentTiming.txClockValid = false;
+    if (!packetizer_.PrepareNextPacket(slot, contentTiming, plan, packet)) {
         return TxSlotPrepareResult::kPacketizerRejected;
     }
 

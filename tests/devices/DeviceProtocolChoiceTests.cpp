@@ -217,14 +217,14 @@ TEST(DeviceProtocolChoice, AnOuiSiblingGetsItsOwnRowsProtocol) {
     }
 }
 
-TEST(DeviceProtocolChoice, AnUnverifiedMotuSiblingGetsNoProtocol) {
+TEST(DeviceProtocolChoice, TableBackedV2SiblingsUseTheCommonProtocol) {
     for (const uint32_t version :
          {kMotu896hdSwVersion, kMotuTravelerSwVersion, kMotu8preSwVersion}) {
         const auto device = MakeDevice(kMotuVendorId, 0U,
                                        {{.offset = 5,
                                          .specifierId = kMotuVendorId,
                                          .version = version}});
-        EXPECT_FALSE(ChoiceFor(device).has_value())
+        EXPECT_TRUE(ChoiceFor(device).has_value())
             << "version 0x" << std::hex << version;
     }
 }
@@ -376,14 +376,14 @@ TEST(DeviceProtocolChoice, BackendRoutingMatchesWhatTheProfileRegistrySays) {
 
 // A recognised-but-unplayable DICE device is rejected by ChooseAudioBackend
 // (returning nullopt), matching ChooseDeviceProtocol().
-TEST(DeviceProtocolChoice, AnUnverifiedMotuSiblingReturnsNullopt) {
+TEST(DeviceProtocolChoice, TableBackedV2SiblingsRouteToMotu) {
     for (const uint32_t version :
          {kMotu896hdSwVersion, kMotuTravelerSwVersion, kMotu8preSwVersion}) {
         const auto device = MakeDevice(kMotuVendorId, 0U,
                                        {{.offset = 5,
                                          .specifierId = kMotuVendorId,
                                          .version = version}});
-        EXPECT_EQ(BackendFor(device), std::nullopt)
+        EXPECT_EQ(BackendFor(device), ASFW::Audio::AudioBackendKind::MotuRegister)
             << "MOTU version 0x" << std::hex << version;
     }
 }

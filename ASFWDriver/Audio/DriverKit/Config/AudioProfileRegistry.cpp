@@ -5,7 +5,7 @@
 // Global profile registry dispatcher.
 
 #include "AudioProfileRegistry.hpp"
-#include "MOTU/MotuV2Profile.hpp"
+#include "MOTU/MotuProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
@@ -104,9 +104,13 @@ AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
-MOTU::Profiles::MotuV2Profile gMotuUltraliteProfile{
+MOTU::Profiles::MotuProfile gMotu828mk3Profile{21};
+MOTU::Profiles::MotuProfile gMotu896hdProfile{5};
+MOTU::Profiles::MotuProfile gMotuTravelerProfile{9};
+MOTU::Profiles::MotuProfile gMotu8preProfile{15};
+MOTU::Profiles::MotuProfile gMotuUltraliteProfile{
     DeviceProfiles::Audio::kMotuUltraliteSwVersion};
-MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
+MOTU::Profiles::MotuProfile gMotu828mk2Profile{
     DeviceProfiles::Audio::kMotu828mk2SwVersion};
 
 /// The DICE half, kept separate so DICE callers get the DICE profile without a
@@ -148,6 +152,10 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::MackieOnyx400F:
         case Builder::Motu828mk2:
         case Builder::MotuUltralite:
+        case Builder::Motu896hd:
+        case Builder::MotuTraveler:
+        case Builder::Motu8pre:
+        case Builder::Motu828mk3:
         case Builder::GenericAvc:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
@@ -193,6 +201,10 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gMotu828mk2Profile;
         case Builder::MotuUltralite:
             return &gMotuUltraliteProfile;
+        case Builder::Motu896hd: return &gMotu896hdProfile;
+        case Builder::MotuTraveler: return &gMotuTravelerProfile;
+        case Builder::Motu8pre: return &gMotu8preProfile;
+        case Builder::Motu828mk3: return &gMotu828mk3Profile;
         case Builder::RmeFireface400:
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:

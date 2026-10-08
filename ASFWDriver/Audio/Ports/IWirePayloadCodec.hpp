@@ -6,6 +6,7 @@
 #include "../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include <span>
+#include "../Wire/CIP/CIPHeader.hpp"
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
@@ -18,6 +19,11 @@ namespace ASFW::Audio {
 class IRxPayloadCodec {
 public:
     virtual ~IRxPayloadCodec() = default;
+    // Framing belongs to the content codec. Strict IEC decoding stays the
+    // default; a proprietary codec may interpret its own packet prefix.
+    [[nodiscard]] virtual std::optional<Isoch::CIPHeader> DecodeHeader(uint32_t q0BE, uint32_t q1BE) const noexcept {
+        return Isoch::CIPHeader::Decode(q0BE, q1BE);
+    }
 
     /// Compute stride in quadlets for one data block given the wire CIP DBS.
     [[nodiscard]] virtual uint32_t StrideQuadlets(uint8_t cipDbs) const noexcept = 0;

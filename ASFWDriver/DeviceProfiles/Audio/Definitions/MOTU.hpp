@@ -10,34 +10,41 @@
 namespace ASFW::DeviceProfiles::Audio::Definitions {
 
 inline constexpr std::array kMotuDefinitions{
-    // Only the 828mkII is hardware-verified (Config ROM captured 2026-07-26).
-    // The UltraLite shares its chunk layout exactly (motu-protocol-v2.c:274-282
-    // vs :302-310) and differs only in a fetching-mode write the protocol
-    // already handles, so it rides along. The other three resolve an identity
-    // so they are named in diagnostics, and stop there until their chunk
-    // layouts are confirmed against real hardware.
+    // Best-effort V2 support; 828mk3 activation is experimental at 48 kHz.
     MotuDefinition(DeviceDefinitionId::Motu828mk2, kMotu828mk2SwVersion,
                    ProfileBuilderId::Motu828mk2,
-                   ProtocolImplementationId::MotuV2,
+                   ProtocolImplementationId::MotuRegister,
                    SupportDisposition::Supported,
                    kMotu828mk2ModelName),
     MotuDefinition(DeviceDefinitionId::MotuUltralite, kMotuUltraliteSwVersion,
                    ProfileBuilderId::MotuUltralite,
-                   ProtocolImplementationId::MotuV2,
+                   ProtocolImplementationId::MotuRegister,
                    SupportDisposition::Supported,
                    kMotuUltraliteModelName),
     MotuDefinition(DeviceDefinitionId::Motu896hd, kMotu896hdSwVersion,
-                   ProfileBuilderId::None,
-                   ProtocolImplementationId::None,
-                   SupportDisposition::RecognizedUnsupported, kMotu896hdModelName),
+                   ProfileBuilderId::Motu896hd,
+                   ProtocolImplementationId::MotuRegister,
+                   SupportDisposition::Supported, kMotu896hdModelName),
     MotuDefinition(DeviceDefinitionId::MotuTraveler, kMotuTravelerSwVersion,
-                   ProfileBuilderId::None,
-                   ProtocolImplementationId::None,
-                   SupportDisposition::RecognizedUnsupported, kMotuTravelerModelName),
+                   ProfileBuilderId::MotuTraveler,
+                   ProtocolImplementationId::MotuRegister,
+                   SupportDisposition::Supported, kMotuTravelerModelName),
     MotuDefinition(DeviceDefinitionId::Motu8pre, kMotu8preSwVersion,
-                   ProfileBuilderId::None,
-                   ProtocolImplementationId::None,
-                   SupportDisposition::RecognizedUnsupported, kMotu8preModelName),
+                   ProfileBuilderId::Motu8pre,
+                   ProtocolImplementationId::MotuRegister,
+                   SupportDisposition::Supported, kMotu8preModelName),
+    MotuDefinition(DeviceDefinitionId::Motu828, 1, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "828"),
+    MotuDefinition(DeviceDefinitionId::Motu896, 2, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "896"),
+    MotuDefinition(DeviceDefinitionId::Motu828mk3, 21, ProfileBuilderId::Motu828mk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "828mk3"),
+    MotuDefinition(DeviceDefinitionId::Motu896mk3, 23, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "896mk3"),
+    MotuDefinition(DeviceDefinitionId::MotuUltraliteMk3, 25, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "UltraLite mk3"),
+    MotuDefinition(DeviceDefinitionId::MotuTravelerMk3, 27, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Traveler mk3"),
+    MotuDefinition(DeviceDefinitionId::MotuUltraliteMk3Hybrid, 48, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "UltraLite mk3 Hybrid"),
+    MotuDefinition(DeviceDefinitionId::MotuAudioExpress, 51, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Audio Express"),
+    MotuDefinition(DeviceDefinitionId::Motu828mk3Hybrid, 53, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "828mk3 Hybrid"),
+    MotuDefinition(DeviceDefinitionId::Motu896mk3Hybrid, 55, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "896mk3 Hybrid"),
+    MotuDefinition(DeviceDefinitionId::MotuTrack16, 57, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Track16"),
+    MotuDefinition(DeviceDefinitionId::Motu4pre, 69, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "4pre"),
 };
 
 [[nodiscard]] constexpr const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept {

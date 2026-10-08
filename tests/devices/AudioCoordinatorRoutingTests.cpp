@@ -14,7 +14,7 @@
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/Host/AudioDeviceHost.hpp"
-#include "Audio/Protocols/MOTU/MotuV2Protocol.hpp"
+#include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Discovery/FWDevice.hpp"
@@ -160,7 +160,7 @@ ASFW::Audio::Model::ASFWAudioDevice MakeDiscoveredConfig(uint64_t guid) {
 }
 
 // Answers quadlet reads from a table; everything else is accepted. Lets the real
-// MotuV2Protocol run under the coordinator.
+// MotuProtocol run under the coordinator.
 class MotuRecordingBus final : public ASFW::Async::IFireWireBusOps,
                                public ASFW::Async::IFireWireBusInfo {
 public:
@@ -239,7 +239,7 @@ struct CoordinatorHarness {
         bus.readValues[kInOutConfLow] = opticalWord;
         const auto route = registry.CurrentRoute(kMotuGuid);
         ASSERT_TRUE(route.has_value());
-        runtime.Insert(kMotuGuid, std::make_shared<ASFW::Audio::Motu::MotuV2Protocol>(
+        runtime.Insert(kMotuGuid, std::make_shared<ASFW::Audio::Motu::MotuProtocol>(
                                       bus, bus, registry, *route,
                                       ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion));
     }
@@ -588,7 +588,7 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     ASSERT_TRUE(endpoint->CopyConfig(committed));
     EXPECT_EQ(committed.inputChannelCount, 22U);   // ADAT input: 14 + 8
     EXPECT_EQ(committed.outputChannelCount, 14U);  // S/PDIF output: fixed
-    EXPECT_EQ(committed.sampleRates, (std::vector<uint32_t>{44100U, 48000U}));
+    EXPECT_EQ(committed.sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
 }
 
 TEST(AudioCoordinatorRoutingTests, MotuFailedRegisterReadStillPublishesTheFixedGeometry) {

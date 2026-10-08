@@ -17,7 +17,7 @@ inline constexpr bool kDiceHardwareBatch = ASFW_DICE_MULTIRATE_VALIDATION != 0;
 [[nodiscard]] inline bool RateEnabled(const RateFormation& formation, uint32_t baseline,
                                         bool dice = false) noexcept {
     return formation.protocolSupported &&
-        (formation.hardwareValidated || formation.sampleRateHz == baseline ||
+        (formation.hardwareValidated || formation.packedPcm || formation.sampleRateHz == baseline ||
          (dice ? formation.sampleRateHz <= 48000 || kDiceHardwareBatch : kAvcHardwareBatch));
 }
 }

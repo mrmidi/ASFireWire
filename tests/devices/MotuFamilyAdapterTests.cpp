@@ -3,7 +3,7 @@
 //
 // MotuFamilyAdapterTests.cpp
 // The MOTU adapter on the audio device host (documentation/AUDIO_DEVICE_HOST.md
-// §4.2, §6 E3/E3a). The adapter runs against the real MotuV2Protocol over a
+// §4.2, §6 E3/E3a). The adapter runs against the real MotuProtocol over a
 // recording bus, so Describe's register read, the channel counts it publishes
 // and the wire traffic it causes are all the production ones.
 // Policies come from a real DeviceRegistry seeded with a ConfigROM, so the
@@ -13,7 +13,7 @@
 
 #include "Audio/Host/MotuFamilyAdapter.hpp"
 #include "Audio/Model/NubGeometryRefresh.hpp"
-#include "Audio/Protocols/MOTU/MotuV2Protocol.hpp"
+#include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -50,7 +50,7 @@ using ASFW::Audio::Host::MotuFamilyAdapter;
 using ASFW::Audio::Model::ASFWAudioDevice;
 using ASFW::Audio::Model::ClassifyGeometryRefresh;
 using ASFW::Audio::Model::GeometryRefreshDecision;
-using ASFW::Audio::Motu::MotuV2Protocol;
+using ASFW::Audio::Motu::MotuProtocol;
 using ASFW::Audio::Motu::Reg;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
@@ -182,7 +182,7 @@ struct MotuRig {
         record = SeedMotu(registry);
         const auto route = registry.CurrentRoute(kMotuGuid);
         EXPECT_TRUE(route.has_value());
-        protocol = std::make_shared<MotuV2Protocol>(bus, bus, registry, *route,
+        protocol = std::make_shared<MotuProtocol>(bus, bus, registry, *route,
                                                     Ids::kMotu828mk2SwVersion);
     }
 
@@ -197,7 +197,7 @@ struct MotuRig {
     RecordingBus bus;
     DeviceRegistry registry;
     DeviceRecord record;
-    std::shared_ptr<MotuV2Protocol> protocol;
+    std::shared_ptr<MotuProtocol> protocol;
 };
 
 struct DescribeOutcome {
@@ -343,7 +343,7 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesIdentityNamesAndPublishedRates) {
     EXPECT_EQ(dev->deviceName, "MOTU 828mkII");
     EXPECT_EQ(dev->inputPlugName, "Input");
     EXPECT_EQ(dev->outputPlugName, "Output");
-    EXPECT_EQ(dev->sampleRates, (std::vector<uint32_t>{44100U, 48000U}));
+    EXPECT_EQ(dev->sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
     EXPECT_EQ(dev->currentSampleRate, 48000U);
     // The port names follow the model table, in host channel order.
     EXPECT_FALSE(dev->inputChannelNames.empty());

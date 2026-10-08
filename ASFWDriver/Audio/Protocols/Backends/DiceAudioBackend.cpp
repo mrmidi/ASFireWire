@@ -777,7 +777,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         if (publisher_.GetNub(guid)) {
             const auto endpoint = runtime_.FindEndpointRuntime(guid);
             Model::ASFWAudioDevice committed;
-            if (endpoint && endpoint->CopyConfig(committed) && committed.diceRateFormations) return;
+            if (endpoint && endpoint->CopyConfig(committed) && committed.usesRateFormations) return;
         }
 #ifdef ASFW_HOST_TEST
         if (beforePublishHookForTesting_) {
@@ -928,7 +928,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             if (const auto formations = protocol->RateFormations();
                 formations && !formations->empty() && dev.inputChannelCount != 0) {
                 dev.rateFormationCandidates = *formations;
-                dev.diceRateFormations = true;
+                dev.usesRateFormations = true;
                 dev.rateRouteIncarnation = route.deviceIncarnation;
                 dev.rateRouteEpoch = route.routeEpoch;
                 dev.rateBusGeneration = route.generation.value;
@@ -948,7 +948,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
                 if (!selected) return;
                 dev = *selected;
             }
-            if (!dev.diceRateFormations && !DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
+            if (!dev.usesRateFormations && !DICE::DiceRateIsStreamable(caps.sampleRateHz)) {
                 // Legacy endpoints without a complete catalog cannot project
                 // another rate mode safely; retain the existing refusal.
                 ASFW_LOG_WARNING(Audio,
@@ -1009,7 +1009,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
 
             std::vector<std::string> inNames;
             std::vector<std::string> outNames;
-            if ((!dev.diceRateFormations ||
+            if ((!dev.usesRateFormations ||
                  DICE::DiceRateMode(caps.sampleRateHz) == DICE::DiceRateMode(dev.currentSampleRate)) &&
                 protocol->GetChannelLabels(inNames, outNames)) {
                 if (!inNames.empty()) {

@@ -50,7 +50,7 @@ inline constexpr const char* kRateRouteIncarnation = "ASFWAvcRouteIncarnation";
 inline constexpr const char* kRateRouteEpoch = "ASFWAvcRouteEpoch";
 inline constexpr const char* kRateBusGeneration = "ASFWAvcBusGeneration";
 inline constexpr const char* kRateFormations = "ASFWRateFormations";
-inline constexpr const char* kDiceRateFormations = "ASFWDiceRateFormations";
+inline constexpr const char* kUsesRateFormations = "ASFWDiceRateFormations";
 inline constexpr const char* kFormationProtocolSupported = "ProtocolSupported";
 inline constexpr const char* kFormationHardwareValidated = "HardwareValidated";
 

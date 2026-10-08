@@ -36,7 +36,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.rateRouteIncarnation = parsedConfig.rateRouteIncarnation;
     device.rateRouteEpoch = parsedConfig.rateRouteEpoch;
     device.rateBusGeneration = parsedConfig.rateBusGeneration;
-    device.diceRateFormations = parsedConfig.diceRateFormations;
+    device.usesRateFormations = parsedConfig.usesRateFormations;
     device.vendorId = parsedConfig.vendorId;
     device.modelId = parsedConfig.modelId;
     device.profileBuilderId = parsedConfig.profileBuilderId;

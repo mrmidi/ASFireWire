@@ -287,7 +287,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     if (!rate) return false;
                     out.sampleRate = rate->sampleRateHz;
                     out.streamMode = ASFW::Audio::DriverKit::WireStreamModeFromRaw(ivars.device.streamModeRaw);
-                    out.fdf = rate->fdf;
+                    if (out.fmt == 0x10) out.fdf = rate->fdf;
                     out.framesPerDataPacket = out.streamMode == ASFW::Encoding::StreamMode::kBlocking
                         ? rate->sytIntervalFrames : rate->nominalFramesPerCycle;
                 }
@@ -794,7 +794,7 @@ ResolveRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
     const auto& formations = driver.device.rateFormationCandidates;
     const auto offered = std::ranges::find(formations, rate, &RateFormation::sampleRateHz);
     if (offered == formations.end() || (!baseline && !RateEnabled(*offered,
-        static_cast<uint32_t>(driver.device.currentSampleRate), driver.device.diceRateFormations))) return std::unexpected(kIOReturnUnsupported);
+        static_cast<uint32_t>(driver.device.currentSampleRate), driver.device.usesRateFormations))) return std::unexpected(kIOReturnUnsupported);
     const auto capacity = MaximumFormationAllocation(formations,
         {ASFW::IsochTransport::kAllocatedFrameRingFrames, driver.device.outputChannelCount, driver.device.inputChannelCount, 0});
     if (!capacity) return std::unexpected(kIOReturnUnsupported);

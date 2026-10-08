@@ -29,6 +29,7 @@ struct AudioStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+    bool cipSph{false};
     uint8_t sourceChannelOffset{0};
     Encoding::AudioPacketFraming packetFraming{Encoding::AudioPacketFraming::kCip};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};

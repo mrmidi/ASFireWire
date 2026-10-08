@@ -101,6 +101,7 @@ targets:
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.
+      # Includes the common MOTU register/profile, model table and SPH synthesizer.
       - path: ASFWDriver
         excludes:
           - "Info.plist"

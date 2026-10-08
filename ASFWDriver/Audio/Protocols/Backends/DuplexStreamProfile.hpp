@@ -15,7 +15,8 @@
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
-#include "../../DriverKit/Config/MOTU/MotuV2Profile.hpp"
+#include "../../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../../DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
@@ -114,6 +115,7 @@ struct DuplexStreamProfile {
     // MOTU only: PCM chunks per data block, per direction. Its samples are 3-byte chunks
     // rather than quadlet slots, so the am824Slots geometry above does not describe them
     // and the receive path needs this instead. Zero for every other family.
+    bool captureMotuV3{false};
     uint32_t captureMotuPcmChunks{0};
     uint32_t playbackMotuPcmChunks{0};
     // MOTU only: which chunk each host input channel reads. The playback map rides the
@@ -305,17 +307,25 @@ class DuplexStreamProfileResolver final {
         if (policy != nullptr && policy->plan.family ==
                                      DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
             // MOTU is chunk-framed in both directions. The chunk counts come from the
-            // device's own registers via PrepareDuplex, which MotuV2Protocol reports as
+            // device's own registers via PrepareDuplex, which MotuProtocol reports as
             // runtime caps -- there is no profile table to read them from, since model_id
             // is 0.
-            profile.captureWireFormat = Encoding::AudioWireFormat::kMotuV2;
-            profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuV2;
+            profile.captureMotuV3 = policy->plan.unitVersion == 0x15;
+            profile.captureWireFormat = Encoding::AudioWireFormat::kMotuPacked;
+            profile.playbackWireFormat = Encoding::AudioWireFormat::kMotuPacked;
+            profile.startOrder.requiresPreStreamClockLock = false;
             profile.captureMotuPcmChunks = caps.deviceToHostPcmChunks != 0
                                                ? caps.deviceToHostPcmChunks
                                                : caps.hostInputPcmChannels;
             profile.playbackMotuPcmChunks = caps.hostToDevicePcmChunks != 0
                                                 ? caps.hostToDevicePcmChunks
                                                 : caps.hostOutputPcmChannels;
+            // MOTU packs three-byte chunks: AM824 slot counts cannot size IRM
+            // reservations. Linux motu-stream.c:135-169 sizes the full wire block.
+            profile.captureStreams[0].packetBandwidthUnits = AmdtpPacketBandwidthUnits(
+                Encoding::Motu::DataBlockQuadlets(profile.captureMotuPcmChunks), caps.sampleRateHz, profile.linkSpeed);
+            profile.playbackStreams[0].packetBandwidthUnits = AmdtpPacketBandwidthUnits(
+                Encoding::Motu::DataBlockQuadlets(profile.playbackMotuPcmChunks), caps.sampleRateHz, profile.linkSpeed);
             // The version of the unit the catalog actually matched, not the
             // flat shim, which takes the first non-zero value across every unit
             // directory and so can name a version no single unit published.

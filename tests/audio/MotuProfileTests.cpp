@@ -61,12 +61,12 @@ TEST(MotuProfileTests, Enables828mk2AudioIntegration) {
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk2);
 }
 
-TEST(MotuProfileTests, NamesUnverifiedSiblingsWithoutEnablingThem) {
+TEST(MotuProfileTests, NamesTableBackedSiblings) {
     const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(kMotu896hdSwVersion));
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->modelName, "896HD");
-    EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
-    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu896hd);
 }
 
 TEST(MotuProfileTests, RejectsMotuWithoutMatchingUnit) {
@@ -90,13 +90,13 @@ TEST(MotuProfileTests, UltraLiteIsAudioEnabledAndNamed) {
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::MotuUltralite);
 }
 
-TEST(MotuProfileTests, SiblingsWithUnconfirmedLayoutsStayAudioDisabled) {
+TEST(MotuProfileTests, TableBackedV2SiblingsAreEnabled) {
     for (const uint32_t version : {0x000005u, 0x000009u, 0x00000fu}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version));
         ASSERT_TRUE(plan.has_value()) << "version " << version;
-        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported)
+        EXPECT_EQ(plan->support, SupportDisposition::Supported)
             << "version " << version;
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None)
+        EXPECT_NE(plan->profileBuilder, ProfileBuilderId::None)
             << "version " << version;
     }
 }

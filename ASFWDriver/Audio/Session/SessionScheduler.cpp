@@ -4,6 +4,7 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "SessionScheduler.hpp"
+#include "../Wire/MOTU/MotuModel.hpp"
 
 #include "SessionClock.hpp"
 
@@ -25,6 +26,11 @@ namespace {
 [[nodiscard]] bool IsSupportedClockForRecord(const Discovery::DeviceRecord& record,
                                              const AudioClockConfig& clock) noexcept {
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (policy && policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
+        const auto* model = Encoding::Motu::FindModel(policy->plan.unitVersion);
+        return model && Encoding::Motu::SupportsRate(*model, clock.sampleRateHz) &&
+            (model->protocol == Encoding::Motu::ProtocolVersion::V2 || clock.sampleRateHz == 48000);
+    }
     if (Runtime::kDiceHardwareBatch && policy &&
         ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice)
         return Encoding::AmdtpRateGeometryForSampleRate(clock.sampleRateHz).has_value();

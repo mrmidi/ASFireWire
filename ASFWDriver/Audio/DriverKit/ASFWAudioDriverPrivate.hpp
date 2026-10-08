@@ -39,7 +39,7 @@ struct AudioDriverDeviceState {
     uint64_t rateRouteIncarnation{0};
     uint64_t rateRouteEpoch{0};
     uint32_t rateBusGeneration{0};
-    bool diceRateFormations{false};
+    bool usesRateFormations{false};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, carried across the nub.

@@ -6,6 +6,7 @@
 #include "../../Ports/IWirePayloadCodec.hpp"
 #include "MotuEventOffsetCache.hpp"
 #include "MotuTxTiming.hpp"
+#include "MotuSphSynthesizer.hpp"
 #include "../../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../../DriverKit/Runtime/AudioTransportControlBlock.hpp"
 
@@ -118,14 +119,16 @@ public:
     explicit MotuTxTimingStamper(
         ::ASFW::Encoding::Motu::MotuEventOffsetCache* cache,
         uint32_t dbs = 0) noexcept
-        : cache_(cache), dbs_(dbs) {}
+        : cache_(cache), dbs_(dbs) { synthesizer_.Configure(48000); }
 
     void BindCache(::ASFW::Encoding::Motu::MotuEventOffsetCache* cache) noexcept {
+        if (cache != cache_) synthesizer_.Reset();
         cache_ = cache;
     }
 
-    void Configure(uint32_t dbs) noexcept {
+    void Configure(uint32_t dbs, uint32_t rateHz = 48000) noexcept {
         dbs_ = dbs;
+        synthesizer_.Configure(rateHz);
     }
 
     ::ASFW::Audio::TxTimingStampResult StampPacket(
@@ -149,9 +152,15 @@ public:
         uint32_t offsets[kMaxBlocksPerPacket]{};
         const uint32_t boundedBlocks = (blocks < kMaxBlocksPerPacket) ? blocks : kMaxBlocksPerPacket;
         if (cache_->Take(std::span<uint32_t>(offsets, boundedBlocks))) {
-            (void)::ASFW::Encoding::Motu::WritePacketSph(
-                payload, dbs_, boundedBlocks, timing.transmitCycle,
-                std::span<const uint32_t>(offsets, boundedBlocks), /*cipHeaderBytes=*/8U);
+            const auto firstTick = (::ASFW::Encoding::Motu::BaseTickForCycle(timing.transmitCycle) + offsets[0]) %
+                ::ASFW::Encoding::Motu::kTicksPerSecond;
+            if (boundedBlocks != blocks || payload.size() < 8ULL + uint64_t{dbs_} * 4 * blocks ||
+                !synthesizer_.Observe(firstTick)) {
+                (void)::ASFW::Encoding::Motu::WritePacketSphZero(payload, dbs_, blocks);
+                return ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable;
+            }
+            for (uint32_t block = 0; block < blocks; ++block)
+                ::ASFW::Encoding::Motu::WriteSph(payload.subspan(8U + block * dbs_ * 4U, 4), synthesizer_.NextSph());
             return ::ASFW::Audio::TxTimingStampResult::kOk;
         } else {
             (void)::ASFW::Encoding::Motu::WritePacketSphZero(
@@ -167,6 +176,7 @@ public:
 private:
     ::ASFW::Encoding::Motu::MotuEventOffsetCache* cache_{nullptr};
     uint32_t dbs_{0};
+    ::ASFW::Encoding::Motu::SphSynthesizer synthesizer_;
 };
 
 } // namespace ASFW::Audio::Wire

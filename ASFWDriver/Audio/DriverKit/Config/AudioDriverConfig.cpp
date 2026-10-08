@@ -254,8 +254,8 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
         inOutConfig.rateRouteEpoch = value->unsigned64BitValue();
     if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kRateBusGeneration)))
         inOutConfig.rateBusGeneration = value->unsigned32BitValue();
-    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kDiceRateFormations)))
-        inOutConfig.diceRateFormations = value->unsigned32BitValue() != 0;
+    if (auto* value = OSDynamicCast(OSNumber, properties->getObject(Keys::kUsesRateFormations)))
+        inOutConfig.usesRateFormations = value->unsigned32BitValue() != 0;
     inOutConfig.rateFormationCandidates.clear();
     if (auto* catalog = OSDynamicCast(OSArray, properties->getObject(Keys::kRateFormations))) {
         std::vector<::ASFW::Audio::Runtime::RateFormation> parsed;
@@ -283,14 +283,16 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
                 ? ::ASFW::Encoding::StreamMode::kBlocking : ::ASFW::Encoding::StreamMode::kNonBlocking;
             formation.protocolSupported = protocol->unsigned32BitValue() != 0;
             formation.hardwareValidated = validated->unsigned32BitValue() != 0;
+            if (auto* packed = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPackedPcm")))
+                formation.packedPcm = packed->unsigned32BitValue() != 0;
             for (uint32_t j = 0; j < playbackCount; ++j)
                 formation.playback.push_back({playback[j].pcmChannels, playback[j].am824Slots,
-                    inOutConfig.diceRateFormations ? (playback[j].midiPorts ? 1U : 0U) : playback[j].midiPorts,
-                    playback[j].pcmSlotMap, inOutConfig.diceRateFormations ? playback[j].midiPorts : 0U});
+                    inOutConfig.usesRateFormations ? (playback[j].midiPorts ? 1U : 0U) : playback[j].midiPorts,
+                    playback[j].pcmSlotMap, inOutConfig.usesRateFormations ? playback[j].midiPorts : 0U});
             for (uint32_t j = 0; j < captureCount; ++j)
                 formation.capture.push_back({capture[j].pcmChannels, capture[j].am824Slots,
-                    inOutConfig.diceRateFormations ? (capture[j].midiPorts ? 1U : 0U) : capture[j].midiPorts,
-                    capture[j].pcmSlotMap, inOutConfig.diceRateFormations ? capture[j].midiPorts : 0U});
+                    inOutConfig.usesRateFormations ? (capture[j].midiPorts ? 1U : 0U) : capture[j].midiPorts,
+                    capture[j].pcmSlotMap, inOutConfig.usesRateFormations ? capture[j].midiPorts : 0U});
             parsed.push_back(std::move(formation));
         }
         if (valid) inOutConfig.rateFormationCandidates = std::move(parsed);

@@ -10,6 +10,7 @@
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 
 #include <gtest/gtest.h>
 
@@ -310,6 +311,51 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
 
     // Counter must reflect the revert
     EXPECT_EQ(engine.Counters().timingUnavailableReverts.load(), 1U);
+}
+
+TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
+    using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
+    using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
+    ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{3};
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    DiceTxStreamEngine engine{};
+    ASSERT_TRUE(engine.Configure(profile, config));
+    TestTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+
+    MotuEventOffsetCache cache{};
+    std::vector<uint8_t> capture(16 + 8 * config.dbs * 4, 0);
+    for (uint32_t frame = 0; frame < 8; ++frame)
+        StoreBigEndian(capture.data() + 16 + frame * config.dbs * 4,
+            SphFromTick(BaseTickForCycle(100) + 200 + frame * 512));
+    for (uint32_t packet = 0; packet < 8; ++packet)
+        cache.Capture(capture, config.dbs, 8, 100, 16);
+    ASSERT_TRUE(cache.IsEstablished());
+    MotuTxTimingStamper stamper{&cache, config.dbs};
+    engine.BindTimingStamper(&stamper);
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.nextDataSyt = 0x1234;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.transmitCycleValid = true;
+    timing.transmitCycle = 100;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+    ASSERT_TRUE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.bytes[2] & 0x04, 0x04); // SPH bit, on the wire.
+    EXPECT_EQ(provider.bytes[3], 8);           // End-event DBC.
+    EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
+              (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
+
+    timing.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(1, timing), TxSlotPrepareResult::kPrepared);
+    EXPECT_FALSE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.publishedPacket.byteCount, 8U);
+    EXPECT_EQ(provider.bytes[3], 8);
+    EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
+              (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
 }
 
 TEST(MotuPayloadCodecTests, MotuRxDiagnosticCaptureRecordsStartupAndSteadyState) {

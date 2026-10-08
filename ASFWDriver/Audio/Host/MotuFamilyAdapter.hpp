@@ -19,7 +19,7 @@
 // health read, so every fault restarts.
 //
 // Device events: MOTU raises none today. The notification address
-// (MotuV2Protocol::RegisterAsyncMessageAddress) is never registered, so the
+// (MotuProtocol::RegisterAsyncMessageAddress) is never registered, so the
 // device has no way to tell us anything; E7c wires it.
 
 #pragma once
@@ -51,7 +51,7 @@ public:
 
     void SetEventSink(DeviceEventSink* sink) noexcept override {
         // MOTU raises no device events: no notification address is registered
-        // (MotuV2Protocol::RegisterAsyncMessageAddress has no caller), so the
+        // (MotuProtocol::RegisterAsyncMessageAddress has no caller), so the
         // device never posts one. Nothing to store (§4.1 rule 6).
         (void)sink;
     }
