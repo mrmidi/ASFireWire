@@ -24,6 +24,7 @@ TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
     ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     EXPECT_FALSE(runtime.CopyDirectAudioBinding(snapshot));
     EXPECT_FALSE(snapshot.valid);
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
 }
 
 TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
@@ -116,6 +117,11 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     EXPECT_EQ(snapshot.inputChannels, inputChannels);
     EXPECT_EQ(snapshot.sampleRateHz, sampleRateHz);
     EXPECT_EQ(snapshot.generation, generation);
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
+    snapshot.control->transmitTimingReady.store(1, std::memory_order_release);
+    EXPECT_TRUE(runtime.IsTransmitTimingReady());
+    snapshot.control->ResetForStart();
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
 
     outputMemory->release();
     inputMemory->release();

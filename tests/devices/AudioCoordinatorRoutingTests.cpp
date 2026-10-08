@@ -237,6 +237,8 @@ struct CoordinatorHarness {
     // factory would, with the optical config word the device reports.
     void AttachMotuProtocol(MotuRecordingBus& bus, uint32_t opticalWord) {
         bus.readValues[kInOutConfLow] = opticalWord;
+        bus.readValues[static_cast<uint32_t>(ASFW::Audio::Motu::kAddrBase) +
+                       static_cast<uint32_t>(ASFW::Audio::Motu::Reg::ClockStatusV2)] = 8U;
         const auto route = registry.CurrentRoute(kMotuGuid);
         ASSERT_TRUE(route.has_value());
         runtime.Insert(kMotuGuid, std::make_shared<ASFW::Audio::Motu::MotuProtocol>(
@@ -575,13 +577,13 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
 
     h.coordinator.OnDeviceAdded(device);
 
-    // One decision, after exactly one register read. The test publisher has no
+    // One decision, after reading current clock and optical configuration. The test publisher has no
     // driver, so the nub cannot be created (PublishFailed) -- but the endpoint
     // config carries the description the host built.
     EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
     EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
-    ASSERT_EQ(bus.reads.size(), 1U);
-    EXPECT_EQ(bus.reads[0], kInOutConfLow);
+    ASSERT_EQ(bus.reads.size(), 2U);
+    EXPECT_EQ(bus.reads[1], kInOutConfLow);
     const auto endpoint = h.runtime.FindEndpointRuntime(kMotuGuid);
     ASSERT_NE(endpoint, nullptr);
     ASFW::Audio::Model::ASFWAudioDevice committed{};
@@ -591,27 +593,18 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     EXPECT_EQ(committed.sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
 }
 
-TEST(AudioCoordinatorRoutingTests, MotuFailedRegisterReadStillPublishesTheFixedGeometry) {
+TEST(AudioCoordinatorRoutingTests, MotuFailedRegisterReadRefusesPublication) {
     CoordinatorHarness h;
     auto device = h.Seed(MakeMotuRom());
     ASSERT_NE(device, nullptr);
     MotuRecordingBus bus;
     h.AttachMotuProtocol(bus, OpticalWord(1U, 1U));
     bus.readStatus = ASFW::Async::AsyncStatus::kTimeout;
-
     h.coordinator.OnDeviceAdded(device);
-
-    // The device must still appear: published (here: PublishFailed for want of a
-    // driver), never refused, with the model's fixed 14 x 14.
     EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
-    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
-    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 0U);
-    const auto endpoint = h.runtime.FindEndpointRuntime(kMotuGuid);
-    ASSERT_NE(endpoint, nullptr);
-    ASFW::Audio::Model::ASFWAudioDevice committed{};
-    ASSERT_TRUE(endpoint->CopyConfig(committed));
-    EXPECT_EQ(committed.inputChannelCount, 14U);
-    EXPECT_EQ(committed.outputChannelCount, 14U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 0U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
+    EXPECT_EQ(h.runtime.FindEndpointRuntime(kMotuGuid), nullptr);
 }
 
 TEST(AudioCoordinatorRoutingTests, MotuResumedWhileIdleIsRefreshedOnceWithoutRebind) {

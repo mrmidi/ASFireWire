@@ -6,13 +6,14 @@ Transport receives opaque packets. Model identity is Unit_Sw_Version, not root m
 
 ## Scope and model checklist
 
-The implementation on `feature/motu-stack` enables these FireWire-only identities.
+The implementation on `feature/motu-stack` supplies these FireWire-only identities.
+V1 activation requires `ASFW_MOTU_V1_VALIDATION=1` (default 0).
 A checked row means implemented and host-tested, **not hardware-validated**.
 
 | Implemented | Device | Protocol | Offered rates (kHz) |
 |---|---|---|---|
-| [x] | Original 828 | V1 | 44.1, 48 |
-| [x] | Original 896 | V1 | 44.1, 48, 88.2, 96 |
+| [x] opt-in | Original 828 | V1 | 44.1, 48 |
+| [x] opt-in | Original 896 | V1 | 44.1, 48; 2x withheld |
 | [x] | 828mk2 | V2 | 44.1, 48, 88.2, 96 |
 | [x] | 896HD | V2 | 44.1, 48, 88.2, 96, 176.4, 192 |
 | [x] | Traveler | V2 | 44.1, 48, 88.2, 96, 176.4, 192 |
@@ -41,7 +42,7 @@ All paths below are local behavioral references, not code copied into the driver
 - `motu-protocol-v2.c:168-225,246-320`: fetching and mode/chunk tables.
 - `motu-protocol-v3.c:62-113,185-239,274-320`: clock notification, optical banks and widths.
 - `motu-transaction.c:37-67,95-133`: notification region and registration.
-- `motu-stream.c:62-105,135-225,376-420`: activation, stop, bandwidth and packet format.
+- `motu-stream.c:62-105,135-225,227-307`: activation, stop, bandwidth and packet format.
 - Archived PRs: `tmp/motu-pr-evidence/README.md`, pinned sources and discussions.
 - Vendor analysis: `tmp/motu-research/vendor-four-gaps.md`,
   `vendor-controller-followup.md`, and `tmp/motu-controller/gap-0x3f080.txt`.
@@ -63,8 +64,9 @@ V1 PCM begins immediately after SPH at byte 4. Original 828 capture has two trai
 status chunks; playback has none. Original 896 has neither. Their clock and fetching
 registers differ from V2/V3. Original 828 waits 100 ms on Session after host streaming
 starts, before fetching; original 896 stop preserves its irreversible output-on bits.
-The original 896 reserves 18 chunks in both directions at 1x and 2x like Linux;
-the vendor's optical-at-1x policy still needs hardware reconciliation.
+The original 896 reserves 18 chunks in both directions at 1x. Its 2x modes are
+withheld because Linux and vendor optical behavior disagree. V1 is recognized
+but not offered to users in default builds; the build flag enables validation only.
 
 V2 keeps asymmetric 8pre formations and Traveler fetching flags. Fetch-enable errors
 participate in start confirmation. Stop awaits mute and deactivation; failed stop
@@ -73,12 +75,13 @@ DATA SYT stays NO_INFO.
 
 V3 uses both optical banks and every model-supported rate. Each protocol owns a
 lifetime-held notification mailbox and an aligned host quadlet. Registration is
-refreshed before geometry/rate work after a route change. Clock switching clears
+refreshed explicitly by discovery after a route change, including idle devices.
+Geometry/rate work also verifies registration before proceeding. Clock switching clears
 fetch, writes the rate, awaits both write ACK and matching CLK_CHANGED, then verifies
 clock readback. Missing notifications time out after four seconds. Route changes,
 foreign source nodes, stale generations and shutdown cannot complete the wrong wait.
 Shutdown's two address-release writes own their IO state through completion, even
-if the protocol object has been destroyed. V1/V3 publication refuses a failed
+if the protocol object has been destroyed. All MOTU publication refuses a failed
 geometry read instead of presenting fixed counts that may omit optical channels.
 The receiver handles notifications for requested clock changes; unsolicited front-panel
 clock/optical changes do not yet drive graph rebuilding.
@@ -90,13 +93,29 @@ models/rates use the reference register sequence, preserving unrelated low bits.
 The captured vendor prepare script's hard-coded pseudo-addresses are not replayed.
 This is best-effort activation, not a claim of equivalence to PR #172's full bring-up.
 
-The TX-owned Q32 SPH synthesizer observes the first replay-rebased SPH per DATA
+Default builds preserve the per-block observed-offset replay policy for every
+model. Each model selects timing and activation policy in `MotuModel.hpp`; there
+is no MOTU rate-admission branch in Session. Admission consumes offered formations.
+V3 synthesis is an explicit per-model experiment enabled only by
+`ASFW_MOTU_SYNTH_VALIDATION=1` (default 0). This flag does not claim equivalence
+to PR #172 or vendor hardware behavior.
+
+The experimental TX-owned Q32 SPH synthesizer observes the first replay-rebased SPH per DATA
 packet, updates after at least 512 elapsed frames, uses full acquisition/quarter
-locked gain, clamps to +/-2000 ppm and latches discontinuities for session recovery.
+locked gain and clamps to +/-2000 ppm. Valid phase discontinuities re-anchor
+the presentation controller inside the stream, keeping packet cadence and audio
+frame accounting. Lock is reacquired before timing readiness is restored; sustained
+unusable/missing timing still uses session recovery. Epoch changes reset acquisition.
 It retains RX packet cadence. Initial presentation lead comes from the existing
 duplex replay seam; PR #172's absolute-phase conditioning and measured 510-tick
 setpoint are not ported. It is vendor-inspired, not a bit-exact vendor clone.
 Simulator phase error against a synthetic clock is not measured DAC jitter.
+
+The generic Session readiness gate waits after both host contexts start and before
+fetch/unmute confirmation. Replay readiness requires a successfully stamped packet;
+experimental synthesis requires phase lock. The TX producer runs on its independent
+preparation queue while StartIO waits. Timeout and teardown unwind startup before
+fetch is enabled. Original 828 also retains its 100 ms host-packet settling interval.
 
 ## Remaining validation and work
 
@@ -107,15 +126,31 @@ Simulator phase error against a synthetic clock is not measured DAC jitter.
 - Original 828 status interpretation beyond reserving the documented tail bytes.
 - Reconcile original 896 optical behavior and complete the vendor SPH phase bridge.
 
-## Verification
+## Verification (2026-10-08 review fixes)
 
-- Full host CTest: 3,095 tests enumerated, zero failures, six existing skips.
-- ASan + UBSan: 126 tests pass across protocol, payload, synthesis, buffer,
-  nub serialization and family-adapter suites. Includes delayed shutdown completions
-  after destroying the protocol object and the 34-channel rate-change regression.
-- TSan: 10 tests pass for V1/V3 control, notification concurrency and shutdown ownership.
+- Full host CTest: 3,105 tests enumerated, zero failures, six existing skips.
+- ASan + UBSan: 173 tests pass across eight protocol, payload, synthesis,
+  buffer, nub serialization, family-adapter and session suites.
+- TSan: 112 tests pass across control, notifications, timing and session suites.
+- Opt-in build (`ASFW_MOTU_V1_VALIDATION=1`, `ASFW_MOTU_SYNTH_VALIDATION=1`):
+  35 profile, policy, timing and payload tests pass.
 - Python timing/probe tools: all 20 tests pass.
 - `./build.sh --no-bump`: app/dext build succeeds with x86_64 and arm64e slices.
   The script disables code signing; this output requires signing before installation.
+  Existing analyzer warnings in SCSI, bus timing and AV/C are outside this change.
+
+Regression coverage includes uneven per-block SPH replay, phase reacquisition while
+DATA continues, epoch reset, producer timing readiness before confirmation, timeout
+rollback and teardown cancellation, generic formation admission, idle discovery
+re-registration, stale registration completions, and failed-read publication refusal.
+
+The build flags can be passed with `./build.sh --no-bump --set
+ASFW_MOTU_V1_VALIDATION=1 --set ASFW_MOTU_SYNTH_VALIDATION=1` for validation.
+Default builds leave both flags at zero.
+
+For hardware tracing, use `/usr/bin/log stream --level debug --predicate
+'eventMessage CONTAINS "[SessionTiming]" OR eventMessage CONTAINS "[MotuGeometry]"
+OR eventMessage CONTAINS "MotuProtocol"'`. The readiness line is emitted once per
+start; a timeout identifies `TransmitTimingReady` in the session rollback log.
 
 These checks validate host logic and compilation, not hardware interoperability.

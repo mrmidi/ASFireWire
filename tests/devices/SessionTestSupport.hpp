@@ -121,6 +121,12 @@ public:
 
 class FakeBindingSource final : public ::ASFW::Audio::Runtime::IDirectAudioBindingSource {
 public:
+    std::atomic<bool> timingReady{false};
+    std::atomic<uint32_t> readinessChecks{0};
+    bool IsTransmitTimingReady() noexcept override {
+        readinessChecks.fetch_add(1, std::memory_order_release);
+        return timingReady.load(std::memory_order_acquire);
+    }
     bool CopyDirectAudioBinding(::ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.generation = 1;
         out.valid = true;
@@ -315,6 +321,7 @@ public:
     std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override { return caps_; }
     ResourcePolicy GetResourcePolicy() const noexcept override { return resourcePolicy; }
     StopPolicy GetStopPolicy() const noexcept override { return stopPolicy; }
+    StartReadinessPolicy GetStartReadinessPolicy() const noexcept override { return readinessPolicy; }
     std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return postEnableDelay; }
 
     std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
@@ -403,6 +410,9 @@ public:
     std::vector<bool> healthLocked;
     ResourcePolicy resourcePolicy{};
     StopPolicy stopPolicy{};
+    StartReadinessPolicy readinessPolicy{};
+    std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> formations;
+    std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> RateFormations() const override { return formations; }
     std::optional<uint32_t> postEnableDelay{};
 
 private:

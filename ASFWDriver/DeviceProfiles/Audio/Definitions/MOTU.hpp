@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CatalogHelpers.hpp"
+#include "../../../Audio/Wire/MOTU/MotuModel.hpp"
 
 #include <array>
 
@@ -33,8 +34,8 @@ inline constexpr std::array kMotuDefinitions{
                    ProfileBuilderId::Motu8pre,
                    ProtocolImplementationId::MotuRegister,
                    SupportDisposition::Supported, kMotu8preModelName),
-    MotuDefinition(DeviceDefinitionId::Motu828, 1, ProfileBuilderId::Motu828, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "828"),
-    MotuDefinition(DeviceDefinitionId::Motu896, 2, ProfileBuilderId::Motu896, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "896"),
+    MotuDefinition(DeviceDefinitionId::Motu828, 1, (Encoding::Motu::kV1HardwareBatch ? ProfileBuilderId::Motu828 : ProfileBuilderId::None), (Encoding::Motu::kV1HardwareBatch ? ProtocolImplementationId::MotuRegister : ProtocolImplementationId::None), (Encoding::Motu::kV1HardwareBatch ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported), "828"),
+    MotuDefinition(DeviceDefinitionId::Motu896, 2, (Encoding::Motu::kV1HardwareBatch ? ProfileBuilderId::Motu896 : ProfileBuilderId::None), (Encoding::Motu::kV1HardwareBatch ? ProtocolImplementationId::MotuRegister : ProtocolImplementationId::None), (Encoding::Motu::kV1HardwareBatch ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported), "896"),
     MotuDefinition(DeviceDefinitionId::Motu828mk3, 21, ProfileBuilderId::Motu828mk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "828mk3"),
     MotuDefinition(DeviceDefinitionId::Motu896mk3, 23, ProfileBuilderId::Motu896mk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "896mk3"),
     MotuDefinition(DeviceDefinitionId::MotuUltraliteMk3, 25, ProfileBuilderId::MotuUltraliteMk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "UltraLite mk3"),

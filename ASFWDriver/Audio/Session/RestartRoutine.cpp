@@ -574,6 +574,24 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         }
     }
 
+    // The producer runs on its own preparation queue while StartIO waits on
+    // the work queue. Acquire presentation timing before the family unmutes.
+    const auto readiness = family.GetStartReadinessPolicy();
+    const auto readyStartMs = UptimeMilliseconds();
+    for (;;) {
+        if (TeardownRequested()) return aborted("TransmitTimingReady");
+        if (!stillWanted()) return superseded("TransmitTimingReady");
+        const auto elapsed = UptimeMilliseconds() - readyStartMs;
+        if (elapsed >= readiness.minimumHostRunMs &&
+            (!readiness.requireTransmitTiming || request.binding->IsTransmitTimingReady())) break;
+        if (elapsed >= readiness.timeoutMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
+        IOSleep(1);
+    }
+
+    if (readiness.requireTransmitTiming || readiness.minimumHostRunMs)
+        ASFW_LOG(Audio, "[SessionTiming] playback presentation acquired GUID=%llx elapsedMs=%llu",
+                 request.guid, UptimeMilliseconds() - readyStartMs);
+
     // 8. Confirm the device runs what was armed.
     if (TeardownRequested()) {
         return aborted("Confirm");

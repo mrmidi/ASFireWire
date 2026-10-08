@@ -144,6 +144,13 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     // Idempotent: an existing instance short-circuits (e.g. re-scan on resume).
     if (auto existing = FindShared(guid)) {
         existing->UpdateRuntimeContext(*route, nullptr);
+        // Discovery visits idle and streaming devices after every reset. Keep
+        // the protocol alive across async registration, independently of a nub.
+        existing->RebindNotifications([existing, guid](IOReturn status) {
+            if (status != kIOReturnSuccess)
+                ASFW_LOG(Audio, "AudioRuntimeRegistry: notification rebind failed guid=0x%016llx kr=0x%x (%{public}s)",
+                         guid, status, Logging::IOReturnName(status));
+        });
         return existing;
     }
 

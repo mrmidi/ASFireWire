@@ -192,6 +192,8 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
     constexpr uint32_t kDbs = 4;
     MotuTxTimingStamper stamper(&cache, kDbs);
 
+    std::atomic<uint32_t> readiness{0};
+    stamper.BindCache(&cache, &readiness);
     EXPECT_TRUE(stamper.IsSytUnaware());
 
     // Allocate buffer for 1 slot: 8 bytes CIP + 2 blocks * 16 bytes = 40 bytes.
@@ -256,9 +258,43 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
            (static_cast<uint32_t>(slotBytes[26]) << 8) |
            static_cast<uint32_t>(slotBytes[27]);
 
-    // Both SPH words must be non-zero and stamped with cycle 20 base
-    EXPECT_NE(sph0, 0U);
-    EXPECT_NE(sph1, 0U);
+    // Replay preserves the device's uneven per-frame presentation sequence.
+    EXPECT_EQ(sph0, (20U << 12) | 200U);
+    EXPECT_EQ(sph1, (20U << 12) | 1200U);
+    EXPECT_EQ(readiness.load(), 1U);
+    cache.Reset();
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    EXPECT_EQ(readiness.load(), 0U);
+}
+
+TEST(MotuPayloadCodecTests, SynthesizedPhaseResyncKeepsDataAndReacquiresAfterEpochReset) {
+    MotuEventOffsetCache cache;
+    MotuTxTimingStamper stamper(&cache, 4, TimingPolicy::SynthesizedExperimental);
+    std::atomic<uint32_t> readiness{0};
+    stamper.BindCache(&cache, &readiness);
+    std::array<uint8_t, 136> payload{};
+    TxPacketSlotView slot{.bytes = payload.data(), .capacityBytes = payload.size()};
+    PreparedTxPacket packet{.byteCount = payload.size(), .isData = true, .framesInPacket = 8, .dbs = 4};
+    auto stamp = [&](uint32_t tick, uint32_t cycle) {
+        for (uint32_t i = 0; i < 8; ++i) StoreBigEndian(payload.data() + 8 + i * 16, SphFromTick(tick + i * 512));
+        EXPECT_EQ(cache.Capture(payload, 4, 8, cycle), 8U);
+        AmdtpTimingState timing{.transmitCycle = cycle, .transmitCycleValid = true};
+        return stamper.StampPacket(slot, packet, timing);
+    };
+    for (uint32_t frame = 0; frame < 1024; frame += 8)
+        ASSERT_EQ(stamp(20000 + frame * 512, frame / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    ASSERT_EQ(readiness.load(), 1U);
+    const auto anchor = 20000 + 1024 * 512 + 5 * kTicksPerCycle;
+    ASSERT_EQ(stamp(anchor, 1024 / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(anchor));
+    EXPECT_EQ(readiness.load(), 0U);
+    for (uint32_t frame = 8; frame <= 512; frame += 8)
+        ASSERT_EQ(stamp(anchor + frame * 512, (1024 + frame) / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(readiness.load(), 1U);
+    cache.Reset();
+    ASSERT_EQ(stamp(1000000, 0), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(1000000));
+    EXPECT_EQ(readiness.load(), 0U);
 }
 
 TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {

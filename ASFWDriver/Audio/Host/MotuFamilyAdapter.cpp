@@ -23,9 +23,8 @@ namespace ASFW::Audio::Host {
 
 Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::DeviceRecord& record,
                                                          const IDeviceProtocol& protocol) {
-    // MOTU has no profile registry to consult. The device's geometry comes from its
-    // own registers, so the nub is built from the hardware's answer rather than a
-    // table keyed on model_id (which MOTU publishes as 0 anyway).
+    // Geometry combines the model table with completed clock/optical reads.
+    // Model identity comes from Unit_Sw_Version; root model_id is generally 0.
     Model::ASFWAudioDevice dev{};
     dev.guid = record.guid;
     dev.vendorId = record.vendorId;
@@ -41,29 +40,12 @@ Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::Device
                          : protocol.GetName();
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-    dev.sampleRates = {44100, 48000}; // first-read failure fallback only
-    dev.currentSampleRate = 48000u;
-
-    // Geometry: the counts the protocol read from the optical config, or its
-    // fixed table when that read failed (14 PCM chunks per direction at
-    // 44.1/48 kHz, motu-protocol-v2.c:274-282).
     AudioStreamRuntimeCaps caps{};
-    if (protocol.GetRuntimeAudioStreamCaps(caps) && caps.sampleRateHz != 0) {
-        dev.inputChannelCount = caps.hostInputPcmChannels;
-        dev.outputChannelCount = caps.hostOutputPcmChannels;
-        dev.currentSampleRate = caps.sampleRateHz;
-    } else {
-        const uint32_t fixedChunks = ::ASFW::Encoding::Motu::k828mk2FixedPcmChunks[0];
-        dev.inputChannelCount = fixedChunks;
-        dev.outputChannelCount = fixedChunks;
-    }
+    if (!protocol.GetRuntimeAudioStreamCaps(caps) || caps.sampleRateHz == 0) return dev;
+    dev.inputChannelCount = caps.hostInputPcmChannels;
+    dev.outputChannelCount = caps.hostOutputPcmChannels;
+    dev.currentSampleRate = caps.sampleRateHz;
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
-    // Even the read-failure fallback must advertise its actual current mode.
-    // Starting still re-reads the register and refuses mismatching geometry.
-    if (const auto index = Encoding::Motu::RateToIndex(dev.currentSampleRate); index >= 0) {
-        const auto first = static_cast<uint32_t>(index) & ~1U;
-        dev.sampleRates = {Encoding::Motu::kClockRates[first], Encoding::Motu::kClockRates[first + 1]};
-    }
     if (const auto formations = protocol.RateFormations(); formations && !formations->empty()) {
         dev.rateFormationCandidates = *formations;
         dev.rateRouteIncarnation = record.deviceIncarnation;
@@ -107,10 +89,9 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
 
     // Read the optical config first (asynchronous, as DICE loads its caps). The
     // lambda keeps the protocol alive until the read completes.
-    const bool nubIsLive = in.committed.has_value();
     auto protocol = in.protocol;
     protocol->EnsureRuntimeStreamGeometry(
-        [record = in.record, protocol, nubIsLive, done = std::move(done)](IOReturn geometryStatus) {
+        [record = in.record, protocol, done = std::move(done)](IOReturn geometryStatus) {
             if (geometryStatus == kIOReturnSuccess) {
                 auto config = BuildNubConfig(record, *protocol);
                 if (config.sampleRates.empty()) {
@@ -120,18 +101,9 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
                 done(std::move(config));
                 return;
             }
-            const auto* model = Encoding::Motu::FindModel(record.unitSwVersion.value_or(0));
-            if (nubIsLive || !model || model->protocol != Encoding::Motu::ProtocolVersion::V2) {
-                // The live nub's counts came from an earlier read. Building from the
-                // fixed table now would differ from them and latch "geometry changed"
-                // on what may be one lost transaction; refuse, and the next trigger
-                // reads again.
-                done(DescribeRefusal{geometryStatus, kReadFailedReason});
-                return;
-            }
-            // First publication: the device must appear, so fall back to the model's
-            // fixed geometry, and say so in the host's line.
-            done(DescribedWithNote{BuildNubConfig(record, *protocol), kFixedGeometryNote});
+            // Failed reads never authorize guessed geometry, including first
+            // publication. Discovery can retry when the route is usable again.
+            done(DescribeRefusal{geometryStatus, kReadFailedReason});
         });
 }
 

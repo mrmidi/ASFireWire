@@ -61,19 +61,13 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
-    /// Read the model's optical config and cache the PCM chunk counts the endpoint is
-    /// published in per-rate formations, then call back. Asynchronous, so it
-    /// is safe on the Default queue. Linux reads the same register at PCM open
-    /// (motu-pcm.c:143), so reading it ahead of publication is not a deadlock: it
-    /// needs only the async bus, not a started stream. A failed read clears the
-    /// cache, so GetRuntimeAudioStreamCaps answers from the fixed table again.
+    void RebindNotifications(VoidCallback callback) override;
+
+    /// Read current clock and optical registers, then publish complete model
+    /// formations. Failed/reserved reads invalidate geometry; no fixed fallback.
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override;
 
-    /// Report the device's stream geometry. Once EnsureRuntimeStreamGeometry has read
-    /// the optical config this is the counts it derived; otherwise (never read, or the
-    /// read failed) it answers from the model's fixed chunk table rather than failing.
-    /// While a duplex is prepared at a rate outside the published rate mode, it is the
-    /// prepared geometry.
+    /// Authoritative geometry only after a completed read at a supported rate.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override;
     void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override;
@@ -89,14 +83,14 @@ public:
     //
     // MOTU v2 activates both directions in a single write to the iso-comm
     // control register, so the device-side choreography is only two registers:
-    // packet format first, then iso-comm (motu-stream.c:376-401,
+    // packet format first, then iso-comm (motu-stream.c:227-307,
     // snd_motu_stream_start_duplex). The host owns iso channel allocation and
     // hands the assignments in via AudioDuplexChannels.
     //
     // These hooks are only the register half. MOTU is duplex-always and recovers its
     // media clock from the host replaying the device's own cadence -- both the
     // data-blocks-per-packet sequence and the per-block SPH presentation times
-    // (motu-stream.c:205-207). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
+    // (motu-stream.c:289-291). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
     // captures the offsets on receive, MotuTxTiming stamps them back on transmit.
     //==========================================================================
 
@@ -121,6 +115,7 @@ public:
     // Each step starts the callback chain above and waits for it
     // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] StartReadinessPolicy GetStartReadinessPolicy() const noexcept override;
     [[nodiscard]] IOReturn LoadGeometry() override;
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
@@ -216,6 +211,7 @@ private:
     std::atomic<uint32_t> cachedSampleRateHz_{0};
     std::atomic<bool> asyncAddressRegistered_{false};
     bool initialized_{false};
+    std::atomic<bool> shuttingDown_{false};
 
     // Iso channels the host assigned, latched by PrepareDuplex and consumed by
     // ProgramTxAndEnableDuplex. Device-relative naming: RX is host->device

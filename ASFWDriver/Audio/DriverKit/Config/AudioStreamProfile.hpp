@@ -4,6 +4,7 @@
 // AudioStreamProfile.hpp - Protocol-neutral ADK stream geometry contract.
 
 #pragma once
+#include "../../Wire/MOTU/MotuModel.hpp"
 
 #include "IAudioDeviceProfile.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
@@ -52,6 +53,7 @@ struct AudioStreamTxPolicy final {
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
+    Encoding::Motu::TimingPolicy motuTiming{Encoding::Motu::TimingPolicy::ReplayObserved};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 
 };

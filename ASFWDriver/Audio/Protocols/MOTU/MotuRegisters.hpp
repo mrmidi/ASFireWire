@@ -227,7 +227,7 @@ struct V2PcmChunks {
 }
 [[nodiscard]] constexpr V2PcmChunks ResolvePcmChunks(uint32_t raw, uint32_t mode, uint32_t version) noexcept {
     const auto* model = Encoding::Motu::FindModel(version);
-    if (!model || mode >= 3) return {};
+    if (!model || mode >= 3 || (model->unresolvedModes & (1U << mode))) return {};
     if (model->protocol == Encoding::Motu::ProtocolVersion::V1) {
         V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};
         if (!chunks.tx || !chunks.rx) return {};
@@ -236,7 +236,7 @@ struct V2PcmChunks {
             if (!(raw & 0x4000)) chunks.rx += 8;
         } else {
             // 896 has no optical mode register: reserve eight ADAT chunks at
-            // both rates, as Linux detect_packet_formats_896 does.
+            // 1x. The unresolved vendor/Linux 2x divergence is withheld by the model.
             chunks.tx += 8; chunks.rx += 8;
         }
         chunks.txOnlyFixedChunks = chunks.tx == model->captureChunks[mode];

@@ -1,3 +1,4 @@
+#include "Audio/Core/AudioRuntimeRegistry.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -81,16 +82,18 @@ class RecordingBus final : public ASFW::Async::IFireWireBusOps,
 public:
     std::vector<uint32_t> reads;
     std::vector<uint32_t> writes;
-    std::map<uint32_t, uint32_t> readValues;
+    std::map<uint32_t, uint32_t> readValues{{LowOf(Reg::ClockStatusV2), 8U}};
     AsyncStatus readStatus{AsyncStatus::kSuccess};
     // Hold read completions until CompletePending().
     bool deferReads{false};
     std::vector<std::function<void()>> pending;
 
     void CompletePending() {
-        auto work = std::move(pending);
-        pending.clear();
-        for (auto& fn : work) fn();
+        while (!pending.empty()) {
+            auto work = std::move(pending);
+            pending.clear();
+            for (auto& fn : work) fn();
+        }
     }
 
     AsyncHandle ReadBlock(ASFW::FW::Generation, ASFW::FW::NodeId, FWAddress address, uint32_t,
@@ -141,11 +144,11 @@ public:
 };
 
 DeviceRecord SeedDevice(DeviceRegistry& registry, uint64_t guid, uint32_t vendorId,
-                        uint32_t modelId, uint32_t unitSpecId, uint32_t unitSwVersion) {
+                        uint32_t modelId, uint32_t unitSpecId, uint32_t unitSwVersion, Generation generation = Generation{1}) {
     ConfigROM rom{};
-    rom.gen = Generation{1};
-    rom.firstSeen = Generation{1};
-    rom.lastValidated = Generation{1};
+    rom.gen = generation;
+    rom.firstSeen = generation;
+    rom.lastValidated = generation;
     rom.nodeId = 1;
     rom.bib.guid = guid;
     rom.bib.maxRec = 8;
@@ -350,16 +353,17 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesIdentityNamesAndPublishedRates) {
     EXPECT_FALSE(dev->outputChannelNames.empty());
 }
 
-TEST(MotuFamilyAdapterTests, DescribeIsOneQuadletReadAndNoWrite) {
+TEST(MotuFamilyAdapterTests, DescribeReadsCurrentClockAndOpticalStateWithoutWriting) {
     MotuRig rig;
     rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
     MotuFamilyAdapter adapter;
 
     (void)RunDescribe(adapter, rig.Input());
 
-    // The one extra transaction publication gained (AUDIO_DEVICE_HOST.md section 5, Δ7).
-    ASSERT_EQ(rig.bus.reads.size(), 1U);
-    EXPECT_EQ(rig.bus.reads[0], LowOf(Reg::InOutConfV2));
+    // Description needs current rate and optical state, not a default 48k guess.
+    ASSERT_EQ(rig.bus.reads.size(), 2U);
+    EXPECT_EQ(rig.bus.reads[0], LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(rig.bus.reads[1], LowOf(Reg::InOutConfV2));
     EXPECT_TRUE(rig.bus.writes.empty());
 }
 
@@ -397,7 +401,7 @@ TEST(MotuFamilyAdapterTests, ADescribeAfterAnOpticalModeChangeFollowsTheRegister
 
     ASSERT_NE(AsDescription(after), nullptr);
     EXPECT_EQ(AsDescription(after)->inputChannelCount, 22U);
-    EXPECT_EQ(rig.bus.reads.size(), 2U);
+    EXPECT_EQ(rig.bus.reads.size(), 4U);
 }
 
 // What the nub was published with must equal what the first start prepares,
@@ -438,22 +442,16 @@ TEST(MotuFamilyAdapterTests, PublishedGeometryMatchesWhatPrepareDuplexResolves) 
 // A failed register read
 // ---------------------------------------------------------------------------
 
-TEST(MotuFamilyAdapterTests, FailedReadBeforeAnyNubPublishesTheFixedGeometryWithANote) {
+TEST(MotuFamilyAdapterTests, FailedReadBeforeAnyNubRefusesGuessedGeometry) {
     MotuRig rig;
     rig.bus.readStatus = AsyncStatus::kTimeout;
     MotuFamilyAdapter adapter;
-
     const auto outcome = RunDescribe(adapter, rig.Input());
-
     EXPECT_EQ(outcome.doneCalls, 1);
     ASSERT_TRUE(outcome.result.has_value());
-    const auto* described = std::get_if<DescribedWithNote>(&*outcome.result);
-    ASSERT_NE(described, nullptr) << "the device must still appear";
-    EXPECT_STREQ(described->note, MotuFamilyAdapter::kFixedGeometryNote);
-    EXPECT_EQ(described->device.inputChannelCount, 14U);
-    EXPECT_EQ(described->device.outputChannelCount, 14U);
-    EXPECT_EQ(described->device.channelCount, 14U);
-    EXPECT_EQ(described->device.sampleRates, (std::vector<uint32_t>{44100U, 48000U}));
+    const auto* refusal = std::get_if<DescribeRefusal>(&*outcome.result);
+    ASSERT_NE(refusal, nullptr);
+    EXPECT_EQ(refusal->status, kIOReturnTimeout);
 }
 
 TEST(MotuFamilyAdapterTests, FailedReadAgainstALiveNubIsARefusalNotAFixedFallback) {
@@ -477,17 +475,15 @@ TEST(MotuFamilyAdapterTests, FailedReadAgainstALiveNubIsARefusalNotAFixedFallbac
     EXPECT_STREQ(refusal->reason, MotuFamilyAdapter::kReadFailedReason);
 }
 
-TEST(MotuFamilyAdapterTests, ReservedOpticalEncodingPublishesTheFixedCounts) {
+TEST(MotuFamilyAdapterTests, ReservedOpticalEncodingRefusesPublication) {
     MotuRig rig;
     rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
     MotuFamilyAdapter adapter;
-
     const auto outcome = RunDescribe(adapter, rig.Input());
-
-    const ASFWAudioDevice* dev = AsDescription(outcome);
-    ASSERT_NE(dev, nullptr) << "the read succeeded; it is not a fallback";
-    EXPECT_EQ(dev->inputChannelCount, 14U);
-    EXPECT_EQ(dev->outputChannelCount, 14U);
+    ASSERT_TRUE(outcome.result);
+    const auto* refusal = std::get_if<DescribeRefusal>(&*outcome.result);
+    ASSERT_NE(refusal, nullptr);
+    EXPECT_EQ(refusal->status, kIOReturnUnsupported);
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +528,25 @@ TEST(MotuFamilyAdapterTests, V1AndV3ReadFailureRefusesGuessedInitialGeometry) {
         ASSERT_TRUE(outcome.result.has_value());
         EXPECT_NE(std::get_if<DescribeRefusal>(&*outcome.result),nullptr);
     }
+}
+
+TEST(MotuFamilyAdapterTests, DiscoveryRebindsIdleV3NotificationsAfterReset) {
+    RecordingBus bus;
+    DeviceRegistry registry;
+    auto record = SeedDevice(registry, kMotuGuid, Ids::kMotuVendorId, 0,
+                             Ids::kMotuVendorId, 0x19);
+    ASFW::Audio::AudioRuntimeRegistry runtime;
+    auto protocol = std::make_shared<MotuProtocol>(bus, bus, registry, *registry.CurrentRoute(kMotuGuid), 0x19);
+    runtime.Insert(kMotuGuid, protocol);
+    ASSERT_EQ(runtime.EnsureForDevice(record, &bus, &bus, registry, nullptr), protocol);
+    ASSERT_TRUE(protocol->HasRegisteredAsyncAddress());
+    bus.writes.clear(); bus.reads.clear();
+    record = SeedDevice(registry, kMotuGuid, Ids::kMotuVendorId, 0,
+                        Ids::kMotuVendorId, 0x19, Generation{2});
+    ASSERT_EQ(runtime.EnsureForDevice(record, &bus, &bus, registry, nullptr), protocol);
+    EXPECT_EQ(bus.writes, (std::vector<uint32_t>{LowOf(Reg::AsyncAddrHi), LowOf(Reg::AsyncAddrLo)}));
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_TRUE(protocol->HasRegisteredAsyncAddress());
 }
 
 }  // namespace

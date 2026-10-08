@@ -475,6 +475,7 @@ add_device_test(MotuFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
 )
 
 # AV/C adapter on the audio device host (AUDIO_DEVICE_HOST.md §6 E4).

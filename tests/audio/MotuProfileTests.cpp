@@ -1,3 +1,4 @@
+#include "Audio/Wire/MOTU/MotuModel.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // MOTU device-profile and catalog-resolution tests.
@@ -112,11 +113,12 @@ TEST(MotuProfileTests, ResolvesKnownMotuSwVersionsToNames) {
 
 } // namespace
 
-TEST(MotuProfileTests, FireWireOnlyScopeEnablesAllElevenModelsAndKeepsUsbModelsRecognized) {
+TEST(MotuProfileTests, FireWireScopeKeepsV1BehindValidationAndUsbModelsRecognized) {
     for (uint32_t version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
-        EXPECT_EQ(plan->support,SupportDisposition::Supported);
-        EXPECT_NE(plan->profileBuilder,ProfileBuilderId::None);
+        const bool enabled = version > 2 || ASFW::Encoding::Motu::kV1HardwareBatch;
+        EXPECT_EQ(plan->support, enabled ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported);
+        EXPECT_EQ(plan->profileBuilder == ProfileBuilderId::None, !enabled);
     }
     for (uint32_t version : {48U,51U,53U,55U,57U,69U}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);

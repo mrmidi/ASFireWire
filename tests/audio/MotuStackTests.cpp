@@ -91,22 +91,50 @@ TEST(MotuSynthesis, AcquiresDeviceDriftWithoutReplayingIntraPacketNoise) {
     EXPECT_TRUE(synth.Current().locked);
     EXPECT_LT(synth.Current().stepQ32, (int64_t{512} << 32));
 }
-TEST(MotuSynthesis, FourCycleDiscontinuityRequestsRecoveryInsteadOfAStampJump) {
+TEST(MotuSynthesis, PhaseDiscontinuityReanchorsAndReacquiresWithoutStopping) {
     SphSynthesizer synth; synth.Configure(48000);
     ASSERT_TRUE(synth.Observe(10000));
     for (int i = 0; i < 8; ++i) (void)synth.NextSph();
-    EXPECT_FALSE(synth.Observe(10000 + 4096 + 4 * 3072 + 1));
-    EXPECT_TRUE(synth.Current().discontinuity);
-    EXPECT_FALSE(synth.Current().ready);
-    synth.Reset();
+    const uint32_t anchor = 10000 + 4096 + 4 * 3072 + 1;
+    ASSERT_TRUE(synth.Observe(anchor));
+    EXPECT_TRUE(synth.Current().ready);
+    EXPECT_FALSE(synth.Current().locked);
+    EXPECT_EQ(synth.Current().resyncCount, 1U);
+    EXPECT_EQ(synth.NextSph(), SphFromTick(anchor));
+    for (int i = 1; i < 512; ++i) (void)synth.NextSph();
+    ASSERT_TRUE(synth.Observe(anchor + 512 * 512));
+    EXPECT_TRUE(synth.Current().locked);
     EXPECT_FALSE(synth.Current().discontinuity);
-    EXPECT_TRUE(synth.Observe(100));
+    EXPECT_EQ(synth.NextSph(), SphFromTick(anchor + 512 * 512));
+}
+TEST(MotuSynthesis, MalformedAndBackwardObservationsDoNotPermanentlyLatch) {
+    SphSynthesizer synth; synth.Configure(48000);
+    ASSERT_TRUE(synth.Observe(10000));
+    for (int i = 0; i < 8; ++i) (void)synth.NextSph();
+    EXPECT_FALSE(synth.Observe(kTicksPerSecond));
+    EXPECT_FALSE(synth.Observe(9000));
+    EXPECT_TRUE(synth.Observe(14096));
+    EXPECT_TRUE(synth.Current().ready);
+    EXPECT_EQ(synth.NextSph(), SphFromTick(14096));
+}
+TEST(MotuStack, TimingAndActivationPoliciesAreChosenPerModel) {
+    for (auto version : {1U,2U,3U,5U,9U,13U,15U})
+        EXPECT_EQ(FindModel(version)->runtime.timing, TimingPolicy::ReplayObserved);
+    for (auto version : {21U,23U,25U,27U}) {
+        EXPECT_EQ(FindModel(version)->runtime.timing, kExperimentalTiming);
+        EXPECT_TRUE(FindModel(version)->runtime.requireTimingBeforeFetch);
+        EXPECT_EQ(FindModel(version)->runtime.deactivateBeforeStart, version == 21U);
+        EXPECT_EQ(FindModel(version)->runtime.clearIsoCommLowBits, version == 21U);
+        EXPECT_EQ(FindModel(version)->runtime.write48kStreamConfig, version == 21U);
+    }
+    EXPECT_FALSE(SupportsRate(*FindModel(2), 96000));
+    EXPECT_FALSE(ResolvePcmChunks(0, 1, 2).opticalDecoded);
 }
 
 TEST(MotuStack, OriginalLayoutsAndFireWire896Mk3Geometry) {
     EXPECT_EQ(ResolvePcmChunks(0, 0, 1).tx, 18U);
     EXPECT_EQ(ResolvePcmChunks(0xc000, 0, 1).rx, 10U);
-    EXPECT_EQ(ResolvePcmChunks(0, 1, 2).tx, 18U);
+    EXPECT_EQ(ResolvePcmChunks(0, 1, 2).tx, 0U);
     EXPECT_EQ(ResolvePcmChunks(0, 0, 0x17).rx, 18U); // provider "1394"
     EXPECT_EQ(DataBlockQuadlets(18, MessageChunks(1, true)), 16U);
     EXPECT_EQ(DataBlockQuadlets(18, MessageChunks(1, false)), 15U);

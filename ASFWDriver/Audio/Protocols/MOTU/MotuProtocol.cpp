@@ -86,6 +86,7 @@ IOReturn MotuProtocol::Initialize() {
 
 IOReturn MotuProtocol::Shutdown() {
     initialized_ = false;
+    shuttingDown_.store(true, std::memory_order_release);
     if (notifications_ && notifications_->Valid()) notifications_->Cancel();
     cachedSampleRateHz_.store(0, std::memory_order_release);
 
@@ -121,6 +122,8 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
     if (notifications_ && notifications_->Valid()) notifications_->UpdateRoute(route);
     asyncAddressRegistered_.store(false, std::memory_order_release);
     opticalSnapshot_.store(0, std::memory_order_release);
+    cachedSampleRateHz_.store(0, std::memory_order_release);
+    preparedRateHz_.store(0, std::memory_order_release);
 }
 
 void MotuProtocol::ReadClockStatus(ClockStatusCallback callback) {
@@ -198,6 +201,12 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
     });
 }
 
+void MotuProtocol::RebindNotifications(VoidCallback callback) {
+    if (shuttingDown_.load(std::memory_order_acquire)) { if (callback) callback(kIOReturnAborted); return; }
+    if (IsV3()) EnsureAsyncAddress(std::move(callback));
+    else if (callback) callback(kIOReturnSuccess);
+}
+
 void MotuProtocol::EnsureAsyncAddress(CompletionCallback callback) {
     if (HasRegisteredAsyncAddress()) { if (callback) callback(kIOReturnSuccess); return; }
     const auto node = busInfo_.GetLocalNodeID();
@@ -246,9 +255,11 @@ void MotuProtocol::WriteAsyncAddrPair(AsyncAddrValues values,
     (void)io_.WriteQuadBE(
         AddressOf(Reg::AsyncAddrHi),
         values.hi,
-        [this, values, registered, callback = std::move(callback)](
+        [this, operationRoute = route_, values, registered, callback = std::move(callback)](
             Async::AsyncStatus hiStatus) mutable {
             const IOReturn hiResult = Protocols::Ports::MapAsyncStatusToIOReturn(hiStatus);
+            if (shuttingDown_.load(std::memory_order_acquire)) { if (callback) callback(kIOReturnAborted); return; }
+            if (operationRoute != route_) { if (callback) callback(kIOReturnOffline); return; }
             if (hiResult != kIOReturnSuccess) {
                 if (callback) {
                     callback(hiResult);
@@ -259,10 +270,10 @@ void MotuProtocol::WriteAsyncAddrPair(AsyncAddrValues values,
             (void)io_.WriteQuadBE(
                 AddressOf(Reg::AsyncAddrLo),
                 values.lo,
-                [this, registered, callback = std::move(callback)](
+                [this, operationRoute, registered, callback = std::move(callback)](
                     Async::AsyncStatus loStatus) mutable {
-                    const IOReturn loResult =
-                        Protocols::Ports::MapAsyncStatusToIOReturn(loStatus);
+                    const IOReturn loResult = shuttingDown_.load(std::memory_order_acquire) ? kIOReturnAborted : operationRoute == route_ ?
+                        Protocols::Ports::MapAsyncStatusToIOReturn(loStatus) : kIOReturnOffline;
                     if (loResult == kIOReturnSuccess) {
                         asyncAddressRegistered_.store(registered, std::memory_order_release);
                     }
@@ -276,6 +287,7 @@ void MotuProtocol::WriteAsyncAddrPair(AsyncAddrValues values,
 void MotuProtocol::RegisterAsyncMessageAddress(uint16_t hostNodeId,
                                                  uint64_t hostAddress,
                                                  CompletionCallback callback) {
+    if (shuttingDown_.load(std::memory_order_acquire)) { if (callback) callback(kIOReturnAborted); return; }
     if (hostAddress < kAsyncMessageRegionStart || hostAddress > kAsyncMessageRegionEnd) {
         ASFW_LOG(Audio,
                  "MotuProtocol: async address 0x%012llx outside the device's accepted region",
@@ -323,8 +335,8 @@ void MotuProtocol::ModifyRegister(Reg reg,
 }
 
 void MotuProtocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
-    if (!IsV3()) { ReadOpticalGeometry(std::move(callback)); return; }
-    EnsureAsyncAddress([this, callback = std::move(callback)](IOReturn status) mutable {
+    opticalSnapshot_.store(0, std::memory_order_release);
+    auto read = [this, callback = std::move(callback)](IOReturn status) mutable {
         if (status != kIOReturnSuccess) { if (callback) callback(status); return; }
         ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus clock) mutable {
             const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
@@ -334,12 +346,14 @@ void MotuProtocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> cal
             }
             ReadOpticalGeometry(std::move(callback));
         });
-    });
+    };
+    if (IsV3()) EnsureAsyncAddress(std::move(read));
+    else read(kIOReturnSuccess);
 }
 
 void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
     // A stale answer must not outlive a failed read: until a read succeeds the caps
-    // are the fixed table's.
+    // are unavailable.
     opticalSnapshot_.store(0U, std::memory_order_release);
 
     (void)io_.ReadQuadBE(
@@ -361,8 +375,12 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
             const auto index = Encoding::Motu::RateToIndex(CachedSampleRateHz());
             const auto mode = index >= 0 ? Encoding::Motu::IndexToMode(static_cast<uint32_t>(index)) : 0U;
             const V2PcmChunks chunks = ResolvePcmChunks(optRaw, mode, unitSwVersion_);
+            if (!chunks.opticalDecoded || !chunks.tx || !chunks.rx) {
+                if (callback) callback(kIOReturnUnsupported);
+                return;
+            }
             opticalSnapshot_.store((uint64_t{1} << 32) | optRaw, std::memory_order_release);
-            // Optical modes: 0 off, 1 ADAT, 2 S/PDIF. A reserved encoding counts as off.
+            // Optical modes: 0 off, 1 ADAT, 2 S/PDIF. Reserved encodings refuse publication.
             ASFW_LOG(Audio,
                      "[MotuGeometry] optical config opt=0x%08x in=%u out=%u decoded=%u -> "
                      "published txChunks=%u rxChunks=%u (rate mode %u)",
@@ -376,15 +394,16 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
 }
 
 bool MotuProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
-    outCaps = MakeRuntimeCaps();
-    if (outCaps.sampleRateHz != 0) return true;
+    outCaps = {};
+    const auto snapshot = opticalSnapshot_.load(std::memory_order_acquire);
+    if (!(snapshot >> 32)) return false;
     const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
     if (!model) return false;
-    const uint32_t cached = cachedSampleRateHz_.load(std::memory_order_acquire);
-    outCaps.sampleRateHz = cached ? cached : 48000U;
+    outCaps.sampleRateHz = cachedSampleRateHz_.load(std::memory_order_acquire);
     if (!Encoding::Motu::SupportsRate(*model, outCaps.sampleRateHz)) return false;
     const auto mode = Encoding::Motu::IndexToMode(static_cast<uint32_t>(Encoding::Motu::RateToIndex(outCaps.sampleRateHz)));
-    const auto chunks = ResolvePcmChunks(static_cast<uint32_t>(opticalSnapshot_.load(std::memory_order_acquire)), mode, unitSwVersion_);
+    const auto chunks = ResolvePcmChunks(static_cast<uint32_t>(snapshot), mode, unitSwVersion_);
+    if (!chunks.opticalDecoded || !chunks.tx || !chunks.rx) return false;
     outCaps.hostInputPcmChannels = outCaps.deviceToHostPcmChunks = chunks.tx;
     outCaps.hostOutputPcmChannels = outCaps.hostToDevicePcmChunks = chunks.rx;
     return true;
@@ -617,9 +636,8 @@ void MotuProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
 void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
                                                CompletionCallback callback) {
     // 828mk2 and 896HD need no fetching-mode write; the UltraLite and 8pre implement a
-    // Xilinx Spartan XC3S200 and do (motu-protocol-v2.c:190-225). Fire-and-forget by
-    // design: this rides alongside bring-up, and a device that has gone away cannot be
-    // configured anyway.
+    // Xilinx Spartan XC3S200 and do (motu-protocol-v2.c:190-225).
+    // Completion is awaited by the session; failed writes abort bring-up.
     if (IsV1()) {
         ModifyRegister(ClockRegister(), [enable, version = unitSwVersion_](uint32_t current) {
             return EncodeFetchingV1(current, enable, version);
@@ -632,8 +650,9 @@ void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
         }
         return;
     }
-    const bool spartan = unitSwVersion_ == 0xd || unitSwVersion_ == 0xf;
-    const bool traveler = unitSwVersion_ == 9;
+    const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
+    const bool spartan = model && model->fetch == Encoding::Motu::FetchRule::Spartan;
+    const bool traveler = model && model->fetch == Encoding::Motu::FetchRule::Traveler;
     ModifyRegister(
         Reg::ClockStatusV2,
         [enable, spartan, traveler, v3 = IsV3()](uint32_t current) {
@@ -681,7 +700,7 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
 
     ModifyRegister(
         Reg::IsocCommControl,
-        [rxChannel, txChannel, clearLow = unitSwVersion_ == 0x15](uint32_t current) {
+        [rxChannel, txChannel, clearLow = Encoding::Motu::FindModel(unitSwVersion_)->runtime.clearIsoCommLowBits](uint32_t current) {
             // Zeroing is observed on the 828mk3 in PR #172. Other models
             // preserve unrelated low bits like Linux motu-stream.c:62-84.
             return EncodeIsoCommStart(clearLow ? 0U : current, rxChannel, txChannel);
@@ -701,7 +720,7 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
             result.channels.deviceToHostIsoChannel = static_cast<uint8_t>(txChannel);
             result.runtimeCaps = MakeRuntimeCaps();
             if (callback) {
-                if (unitSwVersion_ == 0x15 && preparedRateHz_.load(std::memory_order_acquire) == 48000) {
+                if (Encoding::Motu::FindModel(unitSwVersion_)->runtime.write48kStreamConfig && preparedRateHz_.load(std::memory_order_acquire) == 48000) {
                     (void)io_.WriteQuadBE(AddressOf(Reg::StreamConfigV3), 0x00120000,
                         [result, callback = std::move(callback)](Async::AsyncStatus status) mutable {
                             callback(Protocols::Ports::MapAsyncStatusToIOReturn(status), result);
@@ -712,7 +731,8 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
 }
 
 void MotuProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
-    // Linux motu-stream.c:376-420: start host contexts before enabling fetch.
+    // Session has started both contexts and passed the model readiness gate.
+    // Linux motu-stream.c:289-307 waits for the domain before enabling fetch.
     ApplyFetchingModeIfNeeded(true, [this, callback = std::move(callback)](IOReturn status) mutable {
         if (status != kIOReturnSuccess) {
             if (callback) callback(status, {});
@@ -882,7 +902,7 @@ std::expected<DuplexHealthResult, IOReturn> MotuProtocol::ReadHealth(uint32_t ti
 }
 
 std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceRx() {
-    if (unitSwVersion_ == 0x15) {
+    if (const auto* model = Encoding::Motu::FindModel(unitSwVersion_); model && model->runtime.deactivateBeforeStart) {
         const auto status = AwaitStageStatus([this](auto callback) {
             ModifyRegister(Reg::IsocCommControl, [](uint32_t) { return kChangeRxState | kChangeTxState; }, std::move(callback));
         }, teardownCancel_);
@@ -899,15 +919,13 @@ std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceTxAndEnable() 
         [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); }, teardownCancel_);
 }
 
+FamilyDriver::StartReadinessPolicy MotuProtocol::GetStartReadinessPolicy() const noexcept {
+    const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
+    return model ? StartReadinessPolicy{.requireTransmitTiming = model->runtime.requireTimingBeforeFetch,
+        .minimumHostRunMs = model->runtime.minimumHostRunMs} : StartReadinessPolicy{};
+}
+
 std::expected<DuplexConfirmResult, IOReturn> MotuProtocol::Confirm() {
-    if (unitSwVersion_ == 1) {
-        // Linux motu-protocol-v1.c:346-355: 828 may mute until it has
-        // received a batch of host packets. Sleep on Session, never Default.
-        for (uint32_t elapsed = 0; elapsed < 100; elapsed += 10) {
-            if (teardownCancel_ && teardownCancel_->load(std::memory_order_acquire)) return std::unexpected(kIOReturnAborted);
-            IOSleep(10);
-        }
-    }
     return AwaitStage<DuplexConfirmResult>(
         [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
 }

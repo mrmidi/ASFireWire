@@ -4,7 +4,6 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "SessionScheduler.hpp"
-#include "../Wire/MOTU/MotuModel.hpp"
 
 #include "SessionClock.hpp"
 
@@ -18,18 +17,24 @@
 #include "../../Logging/Logging.hpp"
 
 #include <utility>
+#include <algorithm>
 
 namespace ASFW::Audio::Session {
 
 namespace {
 
 [[nodiscard]] bool IsSupportedClockForRecord(const Discovery::DeviceRecord& record,
-                                             const AudioClockConfig& clock) noexcept {
+                                             const AudioClockConfig& clock, const IDeviceProtocol* protocol) noexcept {
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
-    if (policy && policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
-        const auto* model = Encoding::Motu::FindModel(policy->plan.unitVersion);
-        return model && Encoding::Motu::SupportsRate(*model, clock.sampleRateHz) &&
-            Encoding::Motu::FireWireOnly(model->unitVersion);
+    if (protocol) {
+        if (const auto formations = protocol->RateFormations(); formations && !formations->empty()) {
+            AudioStreamRuntimeCaps current{};
+            (void)protocol->GetRuntimeAudioStreamCaps(current);
+            const bool dice = policy && ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice;
+            return std::any_of(formations->begin(), formations->end(), [&](const auto& formation) {
+                return Runtime::RateEnabled(formation, current.sampleRateHz, dice) && formation.sampleRateHz == clock.sampleRateHz;
+            });
+        }
     }
     if (Runtime::kDiceHardwareBatch && policy &&
         ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice)
@@ -150,7 +155,7 @@ IOReturn SessionScheduler::Attach(AudioClockConfig clock) noexcept {
     CancelPendingRestart();
     if (clock.sampleRateHz != 0) {
         const auto record = deps_.registry.SnapshotByGuid(guid_);
-        if (!record || !IsSupportedClockForRecord(*record, clock)) return kIOReturnUnsupported;
+        if (!record || !IsSupportedClockForRecord(*record, clock, deps_.runtime.FindShared(guid_).get())) return kIOReturnUnsupported;
     }
     return Submit([clock](Wanted& wanted, Actual& actual) {
         if (clock.sampleRateHz != 0) {
@@ -187,7 +192,7 @@ IOReturn SessionScheduler::ChangeClock(const AudioClockConfig& clock, DuplexRest
     if (!record) {
         return kIOReturnNotReady;
     }
-    if (!IsSupportedClockForRecord(*record, clock)) {
+    if (!IsSupportedClockForRecord(*record, clock, deps_.runtime.FindShared(guid_).get())) {
         return kIOReturnUnsupported;
     }
     if (IsRetired()) {
@@ -723,9 +728,9 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     Actual actual = LoadActual();
 
     AudioClockConfig clock{.sampleRateHz = DefaultStartRate(record)};
-    if (IsSupportedClockForRecord(record, wanted.clock)) {
+    if (IsSupportedClockForRecord(record, wanted.clock, protocol.get())) {
         clock = wanted.clock;
-    } else if (IsSupportedClockForRecord(record, actual.appliedClock)) {
+    } else if (IsSupportedClockForRecord(record, actual.appliedClock, protocol.get())) {
         clock = actual.appliedClock;
     }
     ASFW_LOG(Audio,

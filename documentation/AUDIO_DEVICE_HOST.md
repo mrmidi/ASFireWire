@@ -773,11 +773,17 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
 - **U7. MOTU after E3 (2026-10-08), implementation update.** The common stack
   now supplies V2 model/rate formations, correct packed-payload bandwidth,
   post-host-start fetching, completed mute/stop writes, vendor-inspired SPH
-  synthesis and a scoped V3 header decoder. All five V2 models are table-backed;
-  all four FireWire-only V3 models and the original V1 828/896 now have
-  best-effort activation and their model-supported rates. V3 clock switching
+  synthesis and a scoped V3 header decoder. Timing/activation policies are selected
+  per model; default builds preserve observed-offset SPH replay. V3 synthesis is
+  opt-in via `ASFW_MOTU_SYNTH_VALIDATION`. All five V2 and four FireWire-only V3
+  models are table-backed. V1 828/896 activation is opt-in via
+  `ASFW_MOTU_V1_VALIDATION`; the original 896's unresolved 2x modes are withheld.
+  Session waits for producer timing readiness before fetch/unmute; valid synthesized
+  phase discontinuities re-anchor in-stream, while sustained timing loss recovers.
+  Failed register reads refuse publication instead of guessing geometry. V3 clock switching
   owns a registered notification mailbox, waits for CLK_CHANGED with a four-second
-  timeout, and verifies readback. USB/hybrid models are excluded by request.
+  timeout, and verifies readback. Discovery explicitly re-registers notification
+  addresses after reset, including idle devices. USB/hybrid models are excluded by request.
   None of the newly enabled models is hardware-validated.
   See [MOTU_STACK.md](MOTU_STACK.md) for the checklist and current limits.
 

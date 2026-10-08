@@ -295,6 +295,15 @@ public:
         return complete;
     }
 
+    [[nodiscard]] bool IsTransmitTimingReady() noexcept override {
+        if (!lock_) return false;
+        IOLockLock(lock_);
+        const bool ready = HasCompleteDirectAudioMemoryLocked() &&
+            directControl_->transmitTimingReady.load(std::memory_order_acquire) != 0;
+        IOLockUnlock(lock_);
+        return ready;
+    }
+
     [[nodiscard]] bool CopyDirectAudioBinding(Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out = {};
         if (!lock_) {

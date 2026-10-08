@@ -11,12 +11,13 @@ namespace ASFW::Encoding::Motu {
 // driven; sample presentation stamps are synthesized with a Q32 accumulator.
 // Algorithm informed by PR #172 (858f0758), MotuSphClockServo.hpp:325-483:
 // elapsed-frame feed-forward + phase error / elapsed frames (acquisition),
-// then quarter gain after lock; strict >4-cycle discontinuity rejection.
+// then quarter gain after lock. Valid phase discontinuities re-anchor in-stream
+// (vendor-controller-followup.md / v2-v3-evidence.md HardResyncInputBuffer).
 // This is a fresh implementation, not a bit-exact vendor controller. The
 // +/-2000 ppm clamp is an explicit ASFW policy, not a measured device limit.
 class SphSynthesizer final {
 public:
-    struct State { bool ready{false}; bool locked{false}; bool discontinuity{false}; int64_t stepQ32{0}; int64_t errorTicks{0}; };
+    struct State { bool ready{false}; bool locked{false}; bool discontinuity{false}; int64_t stepQ32{0}; int64_t errorTicks{0}; uint32_t resyncCount{0}; };
     void Configure(uint32_t sampleRateHz) noexcept {
         rate_ = sampleRateHz;
         nominal_ = rate_ ? static_cast<int64_t>((uint64_t{kTicksPerSecond} << 32) / rate_) : 0;
@@ -32,7 +33,7 @@ public:
     // Called once for each DATA packet, never for NO-DATA. The first timestamp
     // is a per-frame presentation time, not host arrival time.
     [[nodiscard]] bool Observe(uint32_t wrappedTick) noexcept {
-        if (!nominal_ || wrappedTick >= kTicksPerSecond || state_.discontinuity) return false;
+        if (!nominal_ || wrappedTick >= kTicksPerSecond) return false;
         if (!state_.ready) {
             observedTick_ = referenceTick_ = wrappedTick;
             lastWrappedTick_ = wrappedTick;
@@ -43,7 +44,7 @@ public:
         }
         const uint32_t delta = (wrappedTick + kTicksPerSecond - lastWrappedTick_) % kTicksPerSecond;
         // A backward stamp would otherwise masquerade as nearly a second.
-        if (delta >= kTicksPerSecond / 2) return Reject();
+        if (delta >= kTicksPerSecond / 2) { state_.locked = false; return false; }
         observedTick_ += delta;
         lastWrappedTick_ = wrappedTick;
         int64_t errorQ32 = (static_cast<int64_t>(wrappedTick) << 32) - static_cast<int64_t>(phaseQ32_);
@@ -52,17 +53,18 @@ public:
         if (errorQ32 < -periodQ32 / 2) errorQ32 += periodQ32;
         state_.errorTicks = errorQ32 / (int64_t{1} << 32);
         if (errorQ32 > (int64_t{4 * kTicksPerCycle} << 32) ||
-            errorQ32 < -(int64_t{4 * kTicksPerCycle} << 32)) return Reject();
+            errorQ32 < -(int64_t{4 * kTicksPerCycle} << 32)) return Reanchor(wrappedTick);
         const uint64_t elapsed = frames_ - referenceFrames_;
         if (elapsed < 512) return true;
         const uint64_t ticks = observedTick_ - referenceTick_;
         const int64_t measured = static_cast<int64_t>((ticks << 32) / elapsed);
         const int64_t tolerance = nominal_ / 500; // 2000 ppm
-        if (measured < nominal_ - tolerance || measured > nominal_ + tolerance) return Reject();
+        if (measured < nominal_ - tolerance || measured > nominal_ + tolerance) return Reanchor(wrappedTick);
         const int64_t gain = state_.locked ? 4 : 1;
         state_.stepQ32 = std::clamp(measured + errorQ32 / static_cast<int64_t>(elapsed) / gain,
             nominal_ - tolerance, nominal_ + tolerance);
         // 2.5us lock threshold, matching PR #172; evaluate full precision.
+        state_.discontinuity = false;
         state_.locked = errorQ32 < (int64_t{6144} << 32) / 100 &&
                         errorQ32 > -(int64_t{6144} << 32) / 100;
         referenceFrames_ = frames_;
@@ -76,7 +78,19 @@ public:
         return result;
     }
 private:
-    [[nodiscard]] bool Reject() noexcept { state_.ready = false; state_.discontinuity = true; return false; }
+    [[nodiscard]] bool Reanchor(uint32_t tick) noexcept {
+        // Keep packet cadence and the TX frame cursor. Only the presentation
+        // clock is reacquired; unusable/missing observations use session recovery.
+        phaseQ32_ = uint64_t{tick} << 32;
+        observedTick_ = referenceTick_ = tick;
+        lastWrappedTick_ = tick;
+        referenceFrames_ = frames_;
+        state_.stepQ32 = nominal_;
+        state_.locked = false;
+        state_.discontinuity = true;
+        ++state_.resyncCount;
+        return true;
+    }
     uint32_t rate_{0};
     int64_t nominal_{0};
     State state_{};
