@@ -80,7 +80,7 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
     sessions_.Present(guid);
     if (lock_) {
         IOLockLock(lock_);
-        remoteLostGuids_.erase(guid);
+        remoteLostStopResults_.erase(guid);
         IOLockUnlock(lock_);
     }
     if (auto* backend = BackendForGuid(guid)) {
@@ -94,7 +94,7 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     sessions_.Present(guid);
     if (lock_) {
         IOLockLock(lock_);
-        remoteLostGuids_.erase(guid);
+        remoteLostStopResults_.erase(guid);
         IOLockUnlock(lock_);
     }
     auto* backend = BackendForGuid(guid);
@@ -159,7 +159,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     bool firstRemoval = true;
     if (lock_) {
         IOLockLock(lock_);
-        firstRemoval = remoteLostGuids_.insert(guid).second;
+        firstRemoval = remoteLostStopResults_.try_emplace(guid, kIOReturnNotReady).second;
         wasActive = (activeGuid_ == guid);
         if (wasActive) {
             activeGuid_ = 0;
@@ -198,8 +198,14 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // Drop cross-seam transport views before unpublishing CoreAudio. Runtime
     // shared_ptr copies keep an already executing control operation alive, but
     // the terminal latch prevents it from starting a new duplex session.
+    if (lock_) {
+        IOLockLock(lock_);
+        if (auto it = remoteLostStopResults_.find(guid); it != remoteLostStopResults_.end())
+            it->second = hostStatus;
+        IOLockUnlock(lock_);
+    }
     runtime_.Remove(guid);
-    publisher_.TerminateNub(guid, "remote-device-lost");
+    publisher_.TerminateNub(guid, "remote-device-lost", hostStatus);
     sessions_.Erase(guid);
     ASFW_LOG(Audio,
              "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
@@ -269,7 +275,7 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
     bool setActive = false;
     if (lock_) {
         IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
+        if (remoteLostStopResults_.contains(guid)) {
             IOLockUnlock(lock_);
             return kIOReturnNoDevice;
         }
@@ -322,9 +328,10 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        if (remoteLostGuids_.contains(guid)) {
+        if (auto it = remoteLostStopResults_.find(guid); it != remoteLostStopResults_.end()) {
+            const auto status = it->second;
             IOLockUnlock(lock_);
-            return kIOReturnSuccess;
+            return status;
         }
         if (activeGuid_ != 0 && activeGuid_ != guid) {
             const uint64_t active = activeGuid_;
@@ -513,7 +520,7 @@ bool AudioCoordinator::RequestMotuTimingRecovery(uint64_t guid) noexcept {
 void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
     if (lock_) {
         IOLockLock(lock_);
-        const bool remoteLost = remoteLostGuids_.contains(guid);
+        const bool remoteLost = remoteLostStopResults_.contains(guid);
         IOLockUnlock(lock_);
         if (remoteLost) {
             return;

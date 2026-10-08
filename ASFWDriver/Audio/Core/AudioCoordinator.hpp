@@ -24,7 +24,7 @@
 #include <atomic>
 #include <cstdint>
 #include <optional>
-#include <unordered_set>
+#include <unordered_map>
 
 class IOService;
 
@@ -116,7 +116,7 @@ private:
     uint64_t activeGuid_{0};
     // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
     // that callback from re-entering a backend that now has no remote device.
-    std::unordered_set<uint64_t> remoteLostGuids_{};
+    std::unordered_map<uint64_t, IOReturn> remoteLostStopResults_{};
 };
 
 } // namespace ASFW::Audio

@@ -6,6 +6,7 @@
 // publication-vs-teardown race conditions.
 
 #include <gtest/gtest.h>
+#include <net.asfw.driver/ASFWAudioNub.h>
 
 #include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 
@@ -360,4 +361,33 @@ TEST(BackendLifecycleRaceTests, MotuConcurrentTeardownWaitsForQueueAndRejectsRec
     EXPECT_EQ(first.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(second.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     motu.SetTeardownHooksForTesting({}, {});
+}
+
+TEST(BackendLifecycleRaceTests, NubTerminationPreservesRemoteTransportResult) {
+    class PublishedNub final : public ASFWAudioNub {
+    public:
+        kern_return_t CopyProperties(OSDictionary** out) override {
+            *out = OSDictionary::withCapacity(8);
+            return *out ? kIOReturnSuccess : kIOReturnNoMemory;
+        }
+    };
+    class Provider final : public IOService {
+    public:
+        PublishedNub* nub = new PublishedNub();
+        ~Provider() override { nub->release(); }
+        kern_return_t Create(IOService*, const char*, IOService** out) override {
+            nub->retain(); // Creation reference; provider owns the service lifetime.
+            *out = nub;
+            return kIOReturnSuccess;
+        }
+    } provider;
+    AudioNubPublisher publisher{&provider};
+    constexpr uint64_t guid = 0x00130e0402004713ULL;
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    config.guid = guid;
+    ASSERT_TRUE(publisher.EnsureNub(guid, config, "late-stop-test"));
+    ASSERT_EQ(publisher.GetNub(guid), provider.nub);
+    publisher.TerminateNub(guid, "remote-device-lost", kIOReturnTimeout);
+    EXPECT_EQ(publisher.GetNub(guid), nullptr);
+    EXPECT_EQ(provider.nub->StopAudioStreaming(), kIOReturnTimeout);
 }

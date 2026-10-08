@@ -615,6 +615,7 @@
 		101924D7C5B775F76850D254 /* AVCDefs.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCDefs.hpp; sourceTree = "<group>"; };
 		106E7C8699F775595453F7CA /* FirefaceProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceProfile.hpp; sourceTree = "<group>"; };
 		1082B80BAF83A5E04A1E295F /* BeBoBMixerMap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BeBoBMixerMap.hpp; sourceTree = "<group>"; };
+		112E711A852B3CB16AB9A58B /* RemoteDeviceStopResult.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RemoteDeviceStopResult.hpp; sourceTree = "<group>"; };
 		122154C65AE2D0946250A1E5 /* DeviceProtocolChoice.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceProtocolChoice.hpp; sourceTree = "<group>"; };
 		123127A3860DDDF70FB823A5 /* BeBoBBootloaderPreparation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BeBoBBootloaderPreparation.hpp; sourceTree = "<group>"; };
 		123C5E162AF714F2B8A2D4AD /* IsochTxDescriptorSlab.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochTxDescriptorSlab.hpp; sourceTree = "<group>"; };
@@ -3677,6 +3678,7 @@
 				1557290E6845737616D01C79 /* HostClockAnchor.hpp */,
 				E80D888C09A54D7E579A60E1 /* PlaybackRingRange.hpp */,
 				4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */,
+				112E711A852B3CB16AB9A58B /* RemoteDeviceStopResult.hpp */,
 				4E4A6CA6172FE6548D83C3B9 /* ResolvedAudioConfiguration.hpp */,
 				88D6BD97ADB99F287CA2A904 /* ResolvedTimingGeometry.hpp */,
 				FBE4833B65F8742236FCCE28 /* Seqlock.hpp */,

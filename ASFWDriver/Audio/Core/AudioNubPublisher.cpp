@@ -205,7 +205,8 @@ std::optional<uint64_t> AudioNubPublisher::GetSingleGuid() const noexcept {
     return result;
 }
 
-void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag) noexcept {
+void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag,
+                                    std::optional<IOReturn> remoteStopResult) noexcept {
     if (!lock_ || guid == 0) return;
 
     ASFWAudioNub* nub = nullptr;
@@ -223,6 +224,7 @@ void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag) noexc
                  "AudioNubPublisher[%{public}s]: Terminating ASFWAudioNub for GUID=%llx",
                  reasonTag ? reasonTag : "unknown",
                  guid);
+        if (remoteStopResult) nub->RecordRemoteDeviceStopResult(*remoteStopResult);
         nub->Terminate(0);
     }
 }

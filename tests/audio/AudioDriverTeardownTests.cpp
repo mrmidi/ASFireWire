@@ -195,3 +195,26 @@ TEST(AudioDriverTeardownTests, AvcStreamsDropOwnerBeforeGraphRemoval) {
     EXPECT_FALSE(input->owner); EXPECT_FALSE(output->owner);
     EXPECT_EQ(device->GetRetainCount(), 1);
 }
+
+TEST(RemoteDeviceStopResultTests, UnpublishedResultDoesNotAuthorizeLateStop) {
+    std::atomic<uint64_t> slot{0};
+    EXPECT_FALSE(ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(slot));
+}
+
+TEST(RemoteDeviceStopResultTests, ResultSurvivesDetachmentAndRepeatedStops) {
+    ASFWAudioNub nub;
+    nub.RecordRemoteDeviceStopResult(kIOReturnSuccess);
+    EXPECT_EQ(nub.StopAudioStreaming(), kIOReturnSuccess);
+    EXPECT_EQ(nub.StopAudioStreaming(), kIOReturnSuccess);
+    ASFWAudioNub replacement;
+    EXPECT_FALSE(ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(replacement.remoteStopResult));
+}
+
+TEST(RemoteDeviceStopResultTests, FailedQuiescenceRemainsAFailureForLateStops) {
+    ASFWAudioNub nub;
+    for (const auto status : {kIOReturnTimeout, kIOReturnNotReady, kIOReturnDMAError}) {
+        nub.RecordRemoteDeviceStopResult(status);
+        EXPECT_EQ(nub.StopAudioStreaming(), status);
+        EXPECT_EQ(nub.StopAudioStreaming(), status);
+    }
+}

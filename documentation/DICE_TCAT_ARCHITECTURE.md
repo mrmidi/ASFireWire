@@ -648,3 +648,11 @@ DMA, real DriverKit dispatch scheduling, or firmware clock changes. Hardware
 acceptance still requires 48↔44.1, advertised higher rates, streaming hot-unplug,
 and replug with OHCI attached. The previous realtime fail-safe remains a symptom,
 not proof of a process crash or proof that its root cause has been eliminated.
+
+Late stop after remote removal: the coordinator records the actual host-stop
+result, and publication stores it atomically on the specific nub before
+termination. `StopAudioStreaming` reads this result before resolving the parent,
+so clearing `parentDriver` in nub `Stop` no longer produces `NotReady` after
+successful cleanup. Failed quiescence remains an error; an unpublished result
+never authorizes success. A replacement nub starts with an unpublished slot.
+`[StopTrace] owner=nub phase=late-remote-stop` records the terminal result.

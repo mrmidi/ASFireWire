@@ -120,6 +120,7 @@ public:
 
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
+    void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
 
     // Fire the registered DeviceClockChanged action (called by the DICE
     // backend when a health probe sees a healthy device at a foreign rate).
@@ -192,6 +193,7 @@ public:
 };
 
 struct ASFWAudioNub_IVars {
+    std::atomic<uint64_t> remoteStopResult{0};
     IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
 
     // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)

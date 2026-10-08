@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <optional>
+#include "../Runtime/RemoteDeviceStopResult.hpp"
 
 static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
 {
@@ -647,12 +648,22 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     return kr;
 }
 
+void ASFWAudioNub::RecordRemoteDeviceStopResult(kern_return_t status) {
+    if (ivars) ASFW::Audio::Runtime::RemoteDeviceStopResult::Publish(ivars->remoteStopResult, status);
+}
+
 kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 {
     if (!ivars || ivars->guid == 0) {
         return kIOReturnNotReady;
     }
 
+    // Remote-loss cleanup precedes nub termination. Its result survives
+    // Stop() clearing parentDriver and is specific to this old nub instance.
+    if (const auto terminal = ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(ivars->remoteStopResult)) {
+        ASFW_LOG(Audio, "[StopTrace] owner=nub guid=%016llx phase=late-remote-stop kr=0x%x", ivars->guid, *terminal);
+        return *terminal;
+    }
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) {
         return kIOReturnNotReady;
@@ -662,8 +673,8 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
     }
-    if (auto endpoint = FindEndpointRuntime(ivars)) {
-        endpoint->MarkStreaming(false);
+    if (kr == kIOReturnSuccess) {
+        if (auto endpoint = FindEndpointRuntime(ivars)) endpoint->MarkStreaming(false);
     }
     return kr;
 }

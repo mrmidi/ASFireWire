@@ -49,7 +49,8 @@ public:
     [[nodiscard]] std::optional<uint64_t> GetSingleGuid() const noexcept;
 
     /// Terminate and forget a nub if present.
-    void TerminateNub(uint64_t guid, const char* reasonTag) noexcept;
+    void TerminateNub(uint64_t guid, const char* reasonTag,
+                      std::optional<IOReturn> remoteStopResult = std::nullopt) noexcept;
 
 private:
     [[nodiscard]] bool ReserveGuidLocked(uint64_t guid) noexcept;
