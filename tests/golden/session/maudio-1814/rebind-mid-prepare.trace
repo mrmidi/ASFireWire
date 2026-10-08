@@ -4,5 +4,5 @@ D geometry
 # device: bus reset
 H begin
 D prepare rate=48000 cap=1[1] play=1[0]
-H stop all
+H stop all after reset
 ## -> 0xe00002eb streaming=0

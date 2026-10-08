@@ -37,5 +37,5 @@ R ffff.e00003a4 56 @s400
 R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
-H stop all
+H stop all after reset
 ## -> 0xe00002eb streaming=0

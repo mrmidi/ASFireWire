@@ -521,6 +521,8 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
     if (reconciling_) {
         // Another caller is reconciling; it loops until it has seen this edit.
         const uint64_t deadline = UptimeMilliseconds() + kWaitTimeoutMs;
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu completed=%llu phase=wait-reconcile",
+                 guid_, ticket, completed_);
         while (completed_ < ticket) {
             IOLockUnlock(lock_);
             if (TeardownRequested()) {
@@ -553,7 +555,13 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         wanted_.restartIsFault = false;
         IOLockUnlock(lock_);
 
+        const uint64_t reconcileBegin = UptimeMilliseconds();
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-begin attached=%u restart=%u clockDirty=%u",
+                 guid_, covering, snapshot.halAttached ? 1U : 0U,
+                 snapshot.restart ? 1U : 0U, snapshot.clockDirty ? 1U : 0U);
         const IOReturn status = Reconcile(snapshot);
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-end kr=0x%x elapsedMs=%llu",
+                 guid_, covering, status, UptimeMilliseconds() - reconcileBegin);
 
         IOLockLock(lock_);
         // A rejected clock request must not survive as a future start target.

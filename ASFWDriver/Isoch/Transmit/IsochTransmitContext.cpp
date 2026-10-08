@@ -377,16 +377,28 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 }
 
 kern_return_t IsochTransmitContext::Stop() noexcept {
+    unsigned waits = 0;
+    while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        if (waits++ == 100) {
+            ASFW_LOG_ERROR(Isoch,
+                "[StopTrace] stage=tx-refill-gate context=%u timeout action=retain-bindings",
+                contextIndex_);
+            return kIOReturnTimeout;
+        }
+        // Yield to the dispatched refill instead of starving its owner.
+        IOSleep(1);
+    }
+
+    struct GateScope final {
+        std::atomic_flag& gate;
+        ~GateScope() { gate.clear(std::memory_order_release); }
+    } gateScope{refillInProgress_};
     // A faulted context takes the same path: its RUN is already clear, but it
     // is not quiesced until ACTIVE is (Linux ohci.c context_stop).
     if (NeedsQuiesce() && hardware_) {
         // This gate also covers watchdog Poll().  Acquire it before clearing
         // RUN so an already-dispatched refill cannot retain a direct-audio
         // mapping past the point this function reports quiesced.
-        while (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
-            IODelay(5);
-        }
-
         Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
         const Register32 ctrlSetReg =
             static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex_));
@@ -402,10 +414,8 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
                 ASFW_LOG(Isoch,
                          "[Lifecycle] IT stop context=%u hardware-gone action=release-dma-bindings",
                          contextIndex_);
-                refillInProgress_.clear(std::memory_order_release);
                 return kIOReturnSuccess;
             }
-            refillInProgress_.clear(std::memory_order_release);
             return kIOReturnNotReady;
         }
         access.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
@@ -448,7 +458,6 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
             ASFW_LOG_ERROR(Isoch,
                            "IT: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining DMA bindings",
                            contextIndex_, control, failure);
-            refillInProgress_.clear(std::memory_order_release);
             return failure;
         }
 
@@ -457,7 +466,6 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
         }
 
         state_ = State::Stopped;
-        refillInProgress_.clear(std::memory_order_release);
         const auto& ringCounters = ring_.RTCounters();
         ASFW_LOG(Isoch,
                  "IT: Stopped. Stats: %llu pkts IRQs=%llu minGap=%u criticalGaps=%llu "
@@ -472,7 +480,6 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
 
     if (state_ == State::Configured) {
         state_ = State::Stopped;
-        refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped from configured state before hardware run");
     }
     return kIOReturnSuccess;

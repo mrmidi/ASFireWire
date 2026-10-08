@@ -265,6 +265,10 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
             const uint64_t epoch = control->hardwareTimeline.BeginEpoch(
                 ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
                 ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, rateHz, 0);
+            if (epoch == 0) {
+                ASFW_LOG_ERROR(DirectAudio, "[StopTrace] stage=start-epoch rate=%u action=refuse-busy-or-invalid-timeline", rateHz);
+                return false;
+            }
             ASFW_LOG(DirectAudio, "[Zts] epoch=%llu source=receive reason=start-io rate=%u",
                      epoch, rateHz);
         }

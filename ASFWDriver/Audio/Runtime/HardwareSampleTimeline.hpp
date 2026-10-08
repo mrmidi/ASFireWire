@@ -63,9 +63,9 @@ struct TxPresentationRange final {
 };
 
 // Hardware timeline owned by the AudioDriverKit stream session. BeginEpoch is
-// called while stream state is quiesced. During an epoch only the selected
-// observation source may update hardware correlation. TX observations are
-// single-writer on the serialized preparation queue.
+// normally called while stream state is quiesced. Epoch transitions and
+// observations use a nonblocking writer gate: overlapping callbacks refuse
+// work rather than spinning at realtime priority. Reset still requires quiescence.
 class HardwareSampleTimeline final {
 public:
     // The ZTS period follows the epoch's rate through the same
@@ -139,10 +139,8 @@ public:
             return 0;
         }
         const uint32_t nominalTicks = NominalBusTicksPerFrame(sampleRateHz);
-        epochTransitionSequence_.fetch_add(1, std::memory_order_acq_rel);
-        while (activeObservers_.load(std::memory_order_acquire) != 0) {
-            std::atomic_signal_fence(std::memory_order_seq_cst);
-        }
+        if (writerBusy_.test_and_set(std::memory_order_acquire)) return 0;
+        WriterScope writer{writerBusy_};
         const auto previousSource = source_.load(std::memory_order_relaxed);
         const uint64_t nextEpoch = epoch_.load(std::memory_order_relaxed) + 1;
         sequence_.fetch_add(1, std::memory_order_acq_rel);
@@ -166,7 +164,6 @@ public:
                                    std::memory_order_relaxed);
         epoch_.store(nextEpoch, std::memory_order_relaxed);
         sequence_.fetch_add(1, std::memory_order_release);
-        epochTransitionSequence_.fetch_add(1, std::memory_order_release);
         epochTransitions_.fetch_add(1, std::memory_order_relaxed);
         if (previousSource != HardwareTimelineSource::None &&
             previousSource != source) {
@@ -177,8 +174,7 @@ public:
 
     void Reset() noexcept {
         sequence_.store(0, std::memory_order_relaxed);
-        epochTransitionSequence_.store(0, std::memory_order_relaxed);
-        activeObservers_.store(0, std::memory_order_relaxed);
+        writerBusy_.clear(std::memory_order_relaxed);
         epoch_.store(0, std::memory_order_relaxed);
         source_.store(HardwareTimelineSource::None, std::memory_order_relaxed);
         discontinuity_.store(HardwareTimelineDiscontinuity::StartIO,
@@ -300,24 +296,11 @@ public:
     [[nodiscard]] HardwareObservationResult Observe(
         const HardwarePresentationObservation& observation,
         HardwareZeroTimestamp* outBoundary = nullptr) noexcept {
-        const uint64_t transitionBefore =
-            epochTransitionSequence_.load(std::memory_order_acquire);
-        if ((transitionBefore & 1U) != 0U) {
+        if (writerBusy_.test_and_set(std::memory_order_acquire)) {
             rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
             return HardwareObservationResult::StaleEpoch;
         }
-        activeObservers_.fetch_add(1, std::memory_order_acq_rel);
-        struct ObserverScope final {
-            std::atomic<uint32_t>& active;
-            ~ObserverScope() {
-                active.fetch_sub(1, std::memory_order_release);
-            }
-        } observerScope{activeObservers_};
-        if (epochTransitionSequence_.load(std::memory_order_acquire) !=
-            transitionBefore) {
-            rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
-            return HardwareObservationResult::StaleEpoch;
-        }
+        WriterScope writer{writerBusy_};
         const uint64_t activeEpoch = epoch_.load(std::memory_order_acquire);
         if (observation.epoch == 0 || observation.epoch != activeEpoch) {
             rejectedObservations_.fetch_add(1, std::memory_order_relaxed);
@@ -484,10 +467,22 @@ public:
     std::atomic<uint64_t> sourceChanges_{0};
     std::atomic<uint64_t> epochTransitions_{0};
 
+#ifdef ASFW_HOST_TEST
+    bool AcquireWriterForTesting() noexcept {
+        return !writerBusy_.test_and_set(std::memory_order_acquire);
+    }
+    void ReleaseWriterForTesting() noexcept {
+        writerBusy_.clear(std::memory_order_release);
+    }
+#endif
+
 private:
     std::atomic<uint64_t> sequence_{0};
-    std::atomic<uint64_t> epochTransitionSequence_{0};
-    std::atomic<uint32_t> activeObservers_{0};
+    struct WriterScope final {
+        std::atomic_flag& gate;
+        ~WriterScope() { gate.clear(std::memory_order_release); }
+    };
+    std::atomic_flag writerBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<uint64_t> epoch_{0};
     std::atomic<HardwareTimelineSource> source_{HardwareTimelineSource::None};
     std::atomic<HardwareTimelineDiscontinuity> discontinuity_{

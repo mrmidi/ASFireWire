@@ -68,6 +68,8 @@ public:
         return sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
     }
     void HandleCycleInconsistent() noexcept;
+    // After async generation work has been aborted, before ROM discovery.
+    void HandleBusReset() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;

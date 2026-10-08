@@ -86,6 +86,10 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
   public:
     explicit IsochDuplexHostTransport(Driver::IsochService& isoch) noexcept : isoch_(isoch) {}
 
+    // Reset interrupt callback: quiesce contexts only. Session reconciliation
+    // owns consumer destruction and the reservation ledger on its own queue.
+    [[nodiscard]] kern_return_t QuiesceForBusReset() noexcept;
+
     [[nodiscard]] Wire::MotuRxDiagnosticCapture* DiagnosticCapture(uint32_t stream) noexcept {
         return stream < Driver::IsochService::kMaxStreamsPerDirection
                    ? &motuRxDiagnosticCaptures_[stream] : nullptr;

@@ -68,7 +68,8 @@ R ffff.e00007dc 104 @s400
 ## RecoverStreaming timing-loss 3
 ## -> 0x00000000 streaming=1
 ## QuietPeriod
-H stop all
+H stop rx
+H stop tx
 W ffff.e0000078 00000000 @s400
 R ffff.e00001a8 4 @s400
 W ffff.e00001ac ffffffff @s400
@@ -76,6 +77,7 @@ W ffff.e00001b8 00000002 @s400
 R ffff.e00003e0 4 @s400
 W ffff.e00003e4 ffffffff @s400
 W ffff.e00003e8 00000000 @s400
+H stop all
 H begin
 R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400

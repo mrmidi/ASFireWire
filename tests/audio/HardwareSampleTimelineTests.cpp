@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -401,3 +403,52 @@ TEST(HardwareSampleTimelineTests, NominalTicksOnlyWhereIntegral) {
 }
 
 } // namespace
+
+TEST(HardwareSampleTimelineTests, BusyWriterRefusesEpochAndObservationWithoutChangingState) {
+    HardwareSampleTimeline timeline;
+    const auto epoch = timeline.BeginEpoch(HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+    ASSERT_NE(epoch, 0U);
+    ASSERT_TRUE(timeline.AcquireWriterForTesting());
+    EXPECT_EQ(timeline.BeginEpoch(HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::PresentationLoss, 44100, 100), 0U);
+    EXPECT_EQ(timeline.Epoch(), epoch);
+    EXPECT_EQ(timeline.SampleRateHz(), 48000U);
+    EXPECT_EQ(timeline.Observe({.epoch = epoch, .source = HardwareTimelineSource::Receive}),
+        HardwareObservationResult::StaleEpoch);
+    EXPECT_FALSE(timeline.AcquireWriterForTesting());
+    timeline.ReleaseWriterForTesting();
+    EXPECT_EQ(timeline.BeginEpoch(HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::PresentationLoss, 44100, 100), epoch + 1);
+    EXPECT_EQ(timeline.SampleRateHz(), 44100U);
+}
+
+TEST(HardwareSampleTimelineTests, ConcurrentEpochWritersAndObserverRemainSerialized) {
+    HardwareSampleTimeline timeline;
+    ASSERT_EQ(timeline.BeginEpoch(HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::StartIO, 48000, 0), 1U);
+    std::atomic<uint64_t> committed{0};
+    const auto transition = [&] {
+        for (unsigned i = 0; i < 2000; ++i) {
+            if (timeline.BeginEpoch(HardwareTimelineSource::Receive,
+                    HardwareTimelineDiscontinuity::PresentationLoss, 48000, i) != 0) {
+                committed.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    };
+    std::thread first(transition);
+    std::thread second(transition);
+    std::thread observer([&] {
+        for (unsigned i = 0; i < 2000; ++i) {
+            (void)timeline.Observe({.epoch = timeline.Epoch(),
+                .source = HardwareTimelineSource::Receive, .sampleFrame = i,
+                .frameCount = 6, .presentationBusTicks = 100000 + i * 3072ULL,
+                .correlationBusTicks = 100000 + i * 3072ULL,
+                .correlationHostTicks = 1000000 + i * 125000ULL});
+        }
+    });
+    first.join(); second.join(); observer.join();
+    EXPECT_EQ(timeline.Epoch(), committed.load() + 1);
+    EXPECT_EQ(timeline.BeginEpoch(HardwareTimelineSource::Receive,
+        HardwareTimelineDiscontinuity::StartIO, 44100, 0), committed.load() + 2);
+}

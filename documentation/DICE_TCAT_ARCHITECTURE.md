@@ -532,8 +532,9 @@ can be deleted.
   every stream's PCM/AM824 width before projecting the HAL graph. Failure follows
   the existing configuration reducer's rollback/retained-state policy.
 
-  High rates remain gated by `ASFW_DICE_MULTIRATE_VALIDATION=1` for hardware
-  qualification. This flag does not set `hardwareValidated` on a formation.
+  The production build enables `ASFW_DICE_MULTIRATE_VALIDATION=1`, removing
+  the 48 kHz admission ceiling for known catalog formations. This flag does
+  not set `hardwareValidated` on a formation; hardware qualification remains pending.
   Devices with more than two playback streams, more than four capture streams,
   or more than eight MIDI ports per stream are unsupported. Physical MIDI port
   counts remain separate from their single multiplexed AM824 wire slot.
@@ -541,8 +542,7 @@ can be deleted.
   their legacy path: the shared formation contract still needs an independent
   capture-visibility field before they can migrate safely.
 
-  The only default wire delta is an EAP pointer-table read during catalog
-  discovery; rebuilding an absent catalog after an idle clock change also
+  Catalog discovery reads the EAP pointer table; rebuilding an absent catalog after an idle clock change also
   rereads the live stream registers. Reviewed golden traces record these reads.
 
   Batch verification: build with
@@ -611,3 +611,40 @@ Names, TX policy, framing constants and clock source did not move, and
    recorded device exhibits one, so this stays a hypothesis.
 4. **Extended channel-name layout.** Needs a device with stream `SIZE >= 326` to
    confirm whether the standard block is still populated on such a device.
+
+### Stop/reset diagnostics (2026-10-08)
+
+The reset callback quiesces local RX/TX contexts after generation-pinned async
+requests are aborted, before ROM discovery completes. It retains consumer and
+reservation ownership for session reconciliation; it sends no device-stop or
+IRM-release transactions from the interrupt queue. Stale-route cleanup uses
+reset invalidation rather than releasing old-generation resources.
+
+DICE stop quiesces host contexts, disables/disarms the device, then releases
+host IRM reservations. An unresolved device stop retains reservations for retry.
+The ordering was checked against Linux `dice-stream.c:465-466,478-486,587-605`;
+OHCI ACTIVE-clear remains the release barrier (`ohci.c:1361-1378`). The reviewed
+session golden changes contain only host stop ordering, with unchanged device
+register traffic.
+
+`[StopTrace]` records reset ownership, session ticket/reconcile begin/end,
+per-stage status and elapsed milliseconds, and RX/TX gate timeouts. Gate waits
+yield and time out after 100 one-millisecond sleeps, retaining bindings.
+Timeline epoch/observation writers use a nonblocking gate: a busy epoch returns
+zero without mutation, a busy observation is rejected, and StartIO refuses a
+failed epoch. Presentation-loss recovery retains its existing restart callback.
+
+Capture lifecycle and rate traces with:
+
+```sh
+/usr/bin/log show --last 20m --info --debug --style compact \
+  --predicate 'eventMessage CONTAINS "[StopTrace]" OR eventMessage CONTAINS "[RateTxn]" OR eventMessage CONTAINS "[Lifecycle]"'
+```
+
+Host validation: 2,946 cases (six existing skips); 299 targeted cases each under
+ASan/UBSan and TSan, including concurrent epoch writers and backend queue teardown.
+Existing DriverKit mocks were sufficient. These tests do not validate physical
+DMA, real DriverKit dispatch scheduling, or firmware clock changes. Hardware
+acceptance still requires 48↔44.1, advertised higher rates, streaming hot-unplug,
+and replug with OHCI attached. The previous realtime fail-safe remains a symptom,
+not proof of a process crash or proof that its root cause has been eliminated.

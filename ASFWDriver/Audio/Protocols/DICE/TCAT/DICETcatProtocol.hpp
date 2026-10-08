@@ -122,6 +122,12 @@ public:
     [[nodiscard]] IOReturn DisconnectCapture() override;
     [[nodiscard]] IOReturn BreakConnections() override;
     [[nodiscard]] IOReturn Stop() override;
+    [[nodiscard]] StopPolicy GetStopPolicy() const noexcept override {
+        // Quiesce locally, then disable/disarm the device before releasing IRM
+        // resources. Linux dice-stream.c:465-466 uses this error-stop order;
+        // :478-486 likewise keeps resource release after finish_session.
+        return {.stopHostContextsBeforeDevice = true};
+    }
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;

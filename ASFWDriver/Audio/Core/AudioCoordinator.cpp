@@ -110,6 +110,25 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     backend->OnDeviceResumed(guid);
 }
 
+void AudioCoordinator::HandleBusReset() noexcept {
+    uint64_t guid = 0;
+    if (lock_) {
+        IOLockLock(lock_);
+        guid = activeGuid_;
+        IOLockUnlock(lock_);
+    }
+    if (!guid || teardownRequested_.load(std::memory_order_acquire)) return;
+    sessions_.CancelPendingRestart(guid);
+    // Linux dice-stream.c:587-605 stops the domain on reset because firmware
+    // loses stream synchronization. Never spend the ROM-scan interval running
+    // the old finite IT mapping. The generation invalidated its IRM leases;
+    // local cleanup must not issue remote release/device-stop transactions.
+    // Do not destroy consumers or mutate the session's reservation ledger on
+    // this interrupt queue while reconciliation may still own them.
+    const auto status = hostTransport_.QuiesceForBusReset();
+    ASFW_LOG(Audio, "[StopTrace] owner=reset guid=%016llx local=0x%x action=await-rebind", guid, status);
+}
+
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) {
         return;
@@ -395,7 +414,7 @@ IOReturn AudioCoordinator::RequestClockConfig(
         Model::ASFWAudioDevice config;
         // An AV/C CONTROL result does not commit an audio configuration. Its
         // host-window transaction installs rate, formations and epoch after
-        // STATUS confirmation. The existing DICE path remains unchanged.
+        // STATUS/readback confirmation for every catalog endpoint.
         if (!endpoint->CopyConfig(config) || config.rateFormationCandidates.empty())
             endpoint->SetCurrentSampleRate(desiredClock.sampleRateHz);
     }

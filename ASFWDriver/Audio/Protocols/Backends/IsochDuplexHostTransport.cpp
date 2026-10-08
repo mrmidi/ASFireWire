@@ -206,6 +206,14 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochDuplexHostTransport::QuiesceForBusReset() noexcept {
+    const auto receive = isoch_.StopReceive();
+    const auto transmit = isoch_.StopTransmit();
+    ASFW_LOG(Audio, "[StopTrace] owner=reset stage=local-contexts rx=0x%x tx=0x%x action=retain-session-ownership",
+             receive, transmit);
+    return receive != kIOReturnSuccess ? receive : transmit;
+}
+
 kern_return_t IsochDuplexHostTransport::StopAllAfterBusReset() noexcept {
     const kern_return_t status = isoch_.StopAll();
     if (status != kIOReturnSuccess) {

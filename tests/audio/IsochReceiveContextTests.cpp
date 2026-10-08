@@ -209,3 +209,21 @@ TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
     EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
     EXPECT_EQ(consumer.quiesceCount, 1u);
 }
+
+TEST_F(IsochReceiveContextTest, BusyPollRetainsBindingUntilStopCanAcquireOwnership) {
+    ASSERT_EQ(context_->Configure(3, 0), kIOReturnSuccess);
+    RecordingReceiveConsumer consumer;
+    context_->SetReceiveConsumer(&consumer);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+    ASSERT_TRUE(context_->AcquirePollGateForTesting());
+    EXPECT_EQ(context_->Stop(), kIOReturnTimeout);
+    EXPECT_EQ(consumer.quiesceCount, 0U);
+    EXPECT_FALSE(context_->AcquirePollGateForTesting());
+    context_->ReleasePollGateForTesting();
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.quiesceCount, 1U);
+    context_->SetReceiveConsumer(nullptr);
+}

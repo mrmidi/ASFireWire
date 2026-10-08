@@ -12,5 +12,7 @@ R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 8 @s400
 L ffff.e0000028 ffff000000000000 -> ffc0000100000000 @s400 !timeout
+H stop rx
+H stop tx
 H stop all
 ## -> 0xe00002d6 streaming=0

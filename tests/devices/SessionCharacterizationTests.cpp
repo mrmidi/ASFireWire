@@ -412,3 +412,18 @@ TEST(SessionFamilyResourcePolicy, StartAfterFailedStopMustCompleteCleanupBeforeR
     EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
     EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
 }
+
+TEST(SessionFamilyResourcePolicy, DiceDisablesDeviceBeforeReleasingHostChannels) {
+    SessionRig rig(kShapes[0].shape);
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    rig.bus.Trace().Clear();
+    ASSERT_EQ(rig.Stop(), kIOReturnSuccess);
+    const auto& lines = rig.bus.Trace().Lines();
+    const auto rx = std::find(lines.begin(), lines.end(), "H stop rx");
+    const auto tx = std::find(lines.begin(), lines.end(), "H stop tx");
+    const auto disable = std::find(lines.begin(), lines.end(), "W ffff.e0000078 00000000 @s400");
+    const auto cleanup = std::find(lines.begin(), lines.end(), "H stop all");
+    ASSERT_NE(rx, lines.end()); ASSERT_NE(tx, lines.end());
+    ASSERT_NE(disable, lines.end()); ASSERT_NE(cleanup, lines.end());
+    EXPECT_LT(rx, disable); EXPECT_LT(tx, disable); EXPECT_LT(disable, cleanup);
+}

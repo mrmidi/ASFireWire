@@ -65,6 +65,18 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
 // ============================================================================
 
 kern_return_t IsochReceiveContext::Start() {
+    unsigned waits = 0;
+    while (rxLock_.test_and_set(std::memory_order_acquire)) {
+        if (waits++ == 100) {
+            ASFW_LOG_ERROR(Isoch, "[StopTrace] stage=rx-start-gate context=%u timeout", contextIndex_);
+            return kIOReturnTimeout;
+        }
+        IOSleep(1);
+    }
+    struct GateScope final {
+        std::atomic_flag& gate;
+        ~GateScope() { gate.clear(std::memory_order_release); }
+    } gateScope{rxLock_};
     if (GetState() != IRPolicy::State::Stopped) {
         return kIOReturnInvalid;
     }
@@ -105,21 +117,26 @@ kern_return_t IsochReceiveContext::Start() {
     ASFW_LOG(Isoch, "IR: start ctx=%u ctrlBefore=0x%08x pendingEvents=0x%08x",
              contextIndex_, ctrlBefore, pendingEvents);
 
-    while (rxLock_.test_and_set(std::memory_order_acquire)) {
-    }
-
+    IOLockLock(lock_);
     Transition(IRPolicy::State::Running, 0, "Start");
+    IOLockUnlock(lock_);
     rxRing_.ResetForStart();
 
     if (receiveConsumer_) {
         receiveConsumer_->OnReceiveActivated();
     }
-    rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochReceiveContext::Stop() {
+    unsigned waits = 0;
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
+        if (waits++ == 100) {
+            ASFW_LOG_ERROR(Isoch,
+                "[StopTrace] stage=rx-poll-gate context=%u timeout action=retain-binding", contextIndex_);
+            return kIOReturnTimeout;
+        }
+        IOSleep(1);
     }
 
     if (GetState() == IRPolicy::State::Stopped) {
@@ -136,7 +153,9 @@ kern_return_t IsochReceiveContext::Stop() {
             // Provider revocation is proof that this controller cannot issue a
             // late DMA write. Retaining the direct binding in that case turns
             // a safe surprise-removal into a leak/UAF hazard.
+            IOLockLock(lock_);
             Transition(IRPolicy::State::Stopped, 0, "Stop/provider-gone");
+            IOLockUnlock(lock_);
             if (receiveConsumer_) {
                 receiveConsumer_->OnReceiveQuiesced();
             }
@@ -191,7 +210,9 @@ kern_return_t IsochReceiveContext::Stop() {
         return failure;
     }
 
+    IOLockLock(lock_);
     Transition(IRPolicy::State::Stopped, 0, "Stop");
+    IOLockUnlock(lock_);
 
     if (receiveConsumer_) {
         receiveConsumer_->OnReceiveQuiesced();
