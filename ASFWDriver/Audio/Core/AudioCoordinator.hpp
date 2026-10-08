@@ -9,12 +9,12 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
-#include "../Protocols/Backends/AVCAudioBackend.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/MotuAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Session/AudioSessions.hpp"
 #include "../Host/AudioDeviceHost.hpp"
+#include "../Host/AvcFamilyAdapter.hpp"
 #include "../Host/RmeFamilyAdapter.hpp"
 
 #include "../../Logging/Logging.hpp"
@@ -116,10 +116,10 @@ private:
     Session::AudioSessions sessions_;
     DiceAudioBackend dice_;
     MotuAudioBackend motu_;
-    AVCAudioBackend avc_;
     // Families moved onto the host (documentation/AUDIO_DEVICE_HOST.md §6).
     // Adapters are declared before the host so they outlive its teardown.
     Host::RmeFamilyAdapter rmeAdapter_;
+    Host::AvcFamilyAdapter avcAdapter_;
     Host::AudioDeviceHost host_;
 
     IOLock* lock_{nullptr};

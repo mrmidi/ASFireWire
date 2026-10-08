@@ -34,7 +34,6 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                 })
     , dice_(publisher_, registry_, runtime_, sessions_, diceNotifications)
     , motu_(publisher_, registry_, runtime_, sessions_)
-    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_)
     , host_(publisher_, registry_, runtime_, sessions_, hostTransport_) {
     lock_ = IOLockAlloc();
     if (!lock_) {
@@ -42,6 +41,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     }
 
     host_.Install(AudioBackendKind::RmeRegister, rmeAdapter_);
+    host_.Install(AudioBackendKind::Avc, avcAdapter_);
 
     sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
@@ -193,7 +193,6 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     dice_.CancelRemoteDeviceWork(guid);
     motu_.CancelRemoteDeviceWork(guid);
     host_.CancelRemoteDeviceWork(guid);
-    avc_.CancelRemoteDeviceWork(guid);
 
     kern_return_t hostStatus = kIOReturnSuccess;
     if (wasActive) {
@@ -228,10 +227,10 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
 
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
                                                    const Model::ASFWAudioDevice& config) noexcept {
-    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-        endpoint->UpdateConfig(config);
-    }
-    avc_.OnAudioConfigurationReady(guid, config);
+    // The host stores the description and publishes or refreshes through its one
+    // rule (§4.3). It no longer overwrites the endpoint config under a live nub
+    // (AUDIO_DEVICE_HOST.md §5 Δ8).
+    host_.OfferDiscoveredDescription(guid, config);
 }
 
 void AudioCoordinator::HandleCycleInconsistent() noexcept {
@@ -249,9 +248,9 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
         return;
     }
 
-    // Only backends forward it. RME never acted on cycle inconsistent; whether
-    // the host forwards it for every family is decided when DICE, the one
-    // family that acts on it, moves (AUDIO_DEVICE_HOST.md §6 E5).
+    // Only backends forward it. RME and AV/C never acted on cycle inconsistent;
+    // whether the host forwards it for every family is decided when DICE, the
+    // one family that acts on it, moves (AUDIO_DEVICE_HOST.md §6 E5).
     if (auto* backend = BackendForGuid(guid)) {
         backend->HandleCycleInconsistent(guid);
     }
@@ -279,14 +278,14 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
         case AudioBackendKind::Dice:
             return &dice_;
         case AudioBackendKind::Avc:
-            return &avc_;
+            return nullptr;  // served by the host
     }
     return nullptr;
 }
 
 bool AudioCoordinator::ServedByHost(uint64_t guid) const noexcept {
     const auto kind = host_.KindForGuid(guid);
-    return kind.has_value() && *kind == AudioBackendKind::RmeRegister;
+    return kind.has_value() && (*kind == AudioBackendKind::RmeRegister || *kind == AudioBackendKind::Avc);
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock) noexcept {
@@ -466,7 +465,6 @@ void AudioCoordinator::BeginTeardown() noexcept {
     dice_.BeginTeardown();
     motu_.BeginTeardown();
     host_.BeginTeardown();
-    avc_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,

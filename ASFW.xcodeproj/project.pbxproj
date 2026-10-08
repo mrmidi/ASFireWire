@@ -22,7 +22,6 @@
 		08226566207B350FA29DBC85 /* DebugViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D14370CF27984ADE19CE1FD8 /* DebugViewModel.swift */; };
 		08694BE1C51DD14DB11CAB80 /* RomSummarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9EFB67D49B05DCD5C9C661D /* RomSummarizer.swift */; };
 		0922C1AD3A23DAE2A7193BE6 /* AvcReportSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFF7EC43D5FBC20C4B89BD8 /* AvcReportSnapshot.swift */; };
-		0967826AD139F2ED9C7446A5 /* AVCAudioBackend.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 71B7F6E471C54E826CDFEF34 /* AVCAudioBackend.cpp */; };
 		0982EF3D75418E436E61F4FC /* CSRResponder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 60EEFC3AC7756D549E967D25 /* CSRResponder.cpp */; };
 		0A7065BDF7E4655E7EF50993 /* AudioGeometryObservers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72FA89D58C5F736BB4D4A8E4 /* AudioGeometryObservers.swift */; };
 		0AB0C833F3F66D9BAF12FEF4 /* DriverConnector+LogRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7C91E89F804C760390C3DA /* DriverConnector+LogRing.swift */; };
@@ -340,6 +339,7 @@
 		A2604013415B06AA09B72A10 /* BeBoBBootloaderPreparation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7826C0490B2B0BD154EAED9F /* BeBoBBootloaderPreparation.cpp */; };
 		A2A471B8389C4641B493A2F0 /* DbcCounter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 322ABB980F4E8B5D4EEEB718 /* DbcCounter.cpp */; };
 		A2B4DCD5067AB93CDDA24574 /* IRMClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5B620010564D5E5CB0CA32AD /* IRMClient.cpp */; };
+		A2E39D1BCF5BB0E463D4E1B3 /* AvcFamilyAdapter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 920EAD3582D3D65E34FDECA0 /* AvcFamilyAdapter.cpp */; };
 		A3CBF895FFB7285CA4D01CD1 /* RxPath.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0A65FCCD82A79958E2A64C55 /* RxPath.cpp */; };
 		A3FA3AB19550E36A7A30BB2F /* RomParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 027ACBE2BF90D7A3225D3DF2 /* RomParser.swift */; };
 		A401257E6941ABB9D4123AF4 /* SBP2TargetBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EAD8530722F06400F33A2495 /* SBP2TargetBridge.cpp */; };
@@ -682,6 +682,7 @@
 		242CB70CEC6DDB1011C7F770 /* RxSytCadence.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RxSytCadence.hpp; sourceTree = "<group>"; };
 		2456ECF39665F942E3B30768 /* AvcFrame.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcFrame.hpp; sourceTree = "<group>"; };
 		24A4F26F6F265BDF4773D1FC /* AudioClockPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioClockPublisher.cpp; sourceTree = "<group>"; };
+		24C51BF6EE330424420F145E /* AvcFamilyAdapter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcFamilyAdapter.hpp; sourceTree = "<group>"; };
 		24D862D68560EF93416643C2 /* MAudio.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MAudio.hpp; sourceTree = "<group>"; };
 		2517CB94A197EF0279E10F9A /* PowerLinkPolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PowerLinkPolicyCoordinator.hpp; sourceTree = "<group>"; };
 		256EA87824CECF3FF30445BB /* LockPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockPolicy.hpp; sourceTree = "<group>"; };
@@ -903,7 +904,6 @@
 		576FAD72D5FA2D0054BE8A16 /* Submitter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Submitter.hpp; sourceTree = "<group>"; };
 		57D7A8E30C4597BA7B21E645 /* AudioGeometrySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGeometrySnapshot.swift; sourceTree = "<group>"; };
 		57FC72D395A005E060D93FFE /* DirectRxPacketDecoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectRxPacketDecoder.hpp; sourceTree = "<group>"; };
-		580B119C1DCD53DE933BF675 /* AVCAudioBackend.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCAudioBackend.hpp; sourceTree = "<group>"; };
 		580FC32A146406752A02DFC6 /* SpectrumVisualization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumVisualization.swift; sourceTree = "<group>"; };
 		581B0959C626D7BB8C2B75CA /* ControllerStateMachine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerStateMachine.cpp; sourceTree = "<group>"; };
 		58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SaffireproCommon.cpp; sourceTree = "<group>"; };
@@ -1009,7 +1009,6 @@
 		70905838A5754565A839A4F9 /* MotuPayloadCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPayloadCodec.hpp; sourceTree = "<group>"; };
 		7155DB558AE058B12EE4EFE8 /* MAudioInternalTxTiming.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MAudioInternalTxTiming.cpp; sourceTree = "<group>"; };
 		7193EECF6193A154761C3877 /* DeviceManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeviceManager.cpp; sourceTree = "<group>"; };
-		71B7F6E471C54E826CDFEF34 /* AVCAudioBackend.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCAudioBackend.cpp; sourceTree = "<group>"; };
 		71D5D0D779E109C9C34E2411 /* ASFWMCPModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPModels.swift; sourceTree = "<group>"; };
 		71D6784D5EAE51E7FAFD0A6D /* MotuRxTiming.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxTiming.hpp; sourceTree = "<group>"; };
 		72430D632F4DD63789EC2EA5 /* DriverContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DriverContext.hpp; sourceTree = "<group>"; };
@@ -1134,6 +1133,7 @@
 		9177CAE5D0EE3907246E30CA /* RawPcm24In32Encoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RawPcm24In32Encoder.hpp; sourceTree = "<group>"; };
 		91910474750A4DA3E5252053 /* FamilyProtocolConstruction.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FamilyProtocolConstruction.hpp; sourceTree = "<group>"; };
 		91A241F62B4EDD4BD5ABE8C0 /* SelfIDCapture.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SelfIDCapture.cpp; sourceTree = "<group>"; };
+		920EAD3582D3D65E34FDECA0 /* AvcFamilyAdapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AvcFamilyAdapter.cpp; sourceTree = "<group>"; };
 		9226D5E4A667DC6666A68775 /* LocalRequestWiring.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LocalRequestWiring.hpp; sourceTree = "<group>"; };
 		9237D8E4E50101E35CA33676 /* DriverExtensionHealthPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverExtensionHealthPolicyTests.swift; sourceTree = "<group>"; };
 		92A978DB3BF673A591C2C119 /* ConfigROMStore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMStore.cpp; sourceTree = "<group>"; };
@@ -2024,6 +2024,8 @@
 			children = (
 				621A34A93F77E9ADA4BB7860 /* AudioDeviceHost.cpp */,
 				A66D3E14EA38C040872F7198 /* AudioDeviceHost.hpp */,
+				920EAD3582D3D65E34FDECA0 /* AvcFamilyAdapter.cpp */,
+				24C51BF6EE330424420F145E /* AvcFamilyAdapter.hpp */,
 				30E5EF7BF824AA7D4C85E48B /* FamilyAdapter.hpp */,
 				B32B834FEE2FC90484522FF1 /* RmeFamilyAdapter.cpp */,
 				C4D6CDCA70B2EA172578F5BF /* RmeFamilyAdapter.hpp */,
@@ -3247,8 +3249,6 @@
 		BB00DB33109268C96CE85D7E /* Backends */ = {
 			isa = PBXGroup;
 			children = (
-				71B7F6E471C54E826CDFEF34 /* AVCAudioBackend.cpp */,
-				580B119C1DCD53DE933BF675 /* AVCAudioBackend.hpp */,
 				ADD3863084A1DE181E9B049C /* DiceAudioBackend.cpp */,
 				5CB14D28CC568B6A31124598 /* DiceAudioBackend.hpp */,
 				67EA274FE08992171A4F029B /* DiceRuntimeDeviceConfig.hpp */,
@@ -3898,7 +3898,6 @@
 				53771C712318BB0A08B8724D /* ASFWSCSIController.iig in Sources */,
 				17C45BD159D713EF7947B119 /* ATContextBase.cpp in Sources */,
 				FE6CA54D91492CE7A3CD713F /* ATTrace.cpp in Sources */,
-				0967826AD139F2ED9C7446A5 /* AVCAudioBackend.cpp in Sources */,
 				7FDF0CBEF91429BDD8AC2348 /* AVCDiscovery.cpp in Sources */,
 				45D6E07B98FC08F0C16186C6 /* AVCDiscoveryDocument.cpp in Sources */,
 				607CB046703B7F8BE0B29ABD /* AVCHandler.cpp in Sources */,
@@ -3938,6 +3937,7 @@
 				7FA8C71D7992CE1E3C849353 /* AudioSubunitDescriptor.cpp in Sources */,
 				96BC6040823C3B33B925EC03 /* AvcAudioConfig.cpp in Sources */,
 				7038A7057E0683972B4980E6 /* AvcExtensionInventory.cpp in Sources */,
+				A2E39D1BCF5BB0E463D4E1B3 /* AvcFamilyAdapter.cpp in Sources */,
 				5EE74ECE1D5F2B9E6A77C230 /* AvcFrame.cpp in Sources */,
 				766FE41CF2D3116E2DB61E35 /* AvcGraphBuilder.cpp in Sources */,
 				5C3FCF846F16A0AD2E258D32 /* BarrierUtils.cpp in Sources */,
