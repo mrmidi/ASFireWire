@@ -260,7 +260,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             // packet gap), which invalidates the reader's epoch, and the reader
             // can momentarily outrun the producer. Killing TX here would leave the
             // stream permanently silent -- the timing-loss recovery is health-gated
-            // when the device clock is fine (see DiceAudioBackend), and even ungated
+            // when the device clock is fine (see DiceFamilyAdapter::JudgeRuntimeFault), and even ungated
             // a coordinator restart cannot re-prime TX. Persistent unavailability
             // degrades to silence, which is the correct "nothing to send yet"
             // state, not a stream death.

@@ -66,8 +66,8 @@ private:
 
     // ObservedSpeed() is reachable from every FireWireBusImpl::GetSpeed()
     // caller, which since the single-authority change includes protocol code
-    // that does not run on the discovery queue (DiceAudioBackend owns its own
-    // "com.asfw.audio.dice" queue). RecordTimeout/RecordSuccess insert, and an
+    // that does not run on the discovery queue (the audio device host owns its
+    // own "com.asfw.audio.host" queue). RecordTimeout/RecordSuccess insert, and an
     // insert can rehash the map underneath a concurrent find(). Serialize.
     mutable IOLock* lock_{nullptr};
     std::unordered_map<uint8_t, NodeSpeedState> nodeStates_;

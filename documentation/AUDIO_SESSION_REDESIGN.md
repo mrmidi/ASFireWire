@@ -540,8 +540,9 @@ No decision is taken here.
 | `DICEDuplexBringupController` (async chain) | `DiceFamilyDriver` (linear) |
 | `DICETransaction`, `DICETypes` | kept for parsing; I/O moves to `DiceDeviceIo` |
 | `DICENotificationMailbox` (global) | `DiceNotificationMailbox` per device + `DiceNotificationRouter` (S3) |
-| `DiceAudioBackend` recovery / health probe / `TryBeginRecovery` | deleted: notifications become requests |
-| `DiceAudioBackend::EnsureNubForGuid` | kept (publication; later endpoint-lifecycle work) |
+| `DiceAudioBackend` recovery / health probe / `TryBeginRecovery` | `AudioDeviceHost` (one recovery slot per GUID, one clock probe) + `DiceFamilyAdapter::JudgeRuntimeFault`; notifications become `DeviceEvent`s (AUDIO_DEVICE_HOST.md E5) |
+| `DiceAudioBackend::EnsureNubForGuid` | `DiceFamilyAdapter::Describe`; the host publishes or refreshes (AUDIO_DEVICE_HOST.md E5) |
+| `IAudioBackend` and the four backends (DICE, AV/C, MOTU, RME) | deleted: `AudioDeviceHost` + one `FamilyAdapter` per family (AUDIO_DEVICE_HOST.md E0-E6) |
 | `DuplexStreamProfile` | kept for host geometry; `playbackWireFormat` and the fixed-channel defaults deleted |
 | `SyncAsyncBridge` | kept for the families still built on callback chains, reached through `FamilyStageWait.hpp` (S5); DICE waits in `DiceDeviceIo` |
 | `IsochDuplexHostTransport`, `DuplexIRMReservations` | kept; IRM gains the "any channel" policy |

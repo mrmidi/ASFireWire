@@ -90,7 +90,7 @@ DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
                               .txEncoding = Encoding::AudioWireFormat::kAM824,
                               .preserveFdfInNoDataPackets = false}};
 // GenericDice's profile, and the registry's last resort for a nub whose
-// builder did not travel. DiceAudioBackend names the device from its identity,
+// builder did not travel. DiceFamilyAdapter names the device from its identity,
 // not from this profile.
 DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
                                  .txEncoding = Encoding::AudioWireFormat::kAM824,

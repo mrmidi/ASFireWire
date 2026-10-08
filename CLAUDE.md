@@ -107,6 +107,7 @@ CoreAudio / HAL
 | `Audio/Wire/` | Content framing: `IEC61883`, `CIP`, `AMDTP`, `AM824`, `RawPcm24In32`. Builds the CIP-headered stream handed to transport. CIP spans DV/MPEG/audio — **provisional home, not transport** |
 | `Audio/Runtime/` | Timing/buffer geometry: `HostClockAnchor`, `PlaybackRingRange` |
 | `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline` |
+| `Audio/Host/` | `AudioDeviceHost`: the one publication/recovery/teardown shell (queue `com.asfw.audio.host`, `[AudioHost]` log lines), plus one stateless `FamilyAdapter` per family (DICE, AV/C, MOTU, RME). See `documentation/AUDIO_DEVICE_HOST.md` |
 | `Audio/Engine/`, `Audio/Core/`, `Audio/Model/`, `Audio/Config/`, `Audio/Protocols/` | Engine wiring, runtime model, config |
 
 **Composition / cross-cutting:**
@@ -141,7 +142,7 @@ RX:  FireWire bus → OHCI IR DMA → IsochReceiveContext → directInputView_ w
 The **seam** is a `DirectBindingSource` / `directInputView_` view onto a shared
 `AudioTransportControlBlock` (in an `IOBufferMemoryDescriptor`), crossed through `Audio/Ports`
 interfaces. The two sides are **separate IOService objects on separate dispatch queues**
-(`ASFWDriver-Default`, `ASFWAudioNub-Default`, `com.asfw.audio.dice`). Lifetime across that
+(`ASFWDriver-Default`, `ASFWAudioNub-Default`, `com.asfw.audio.host`). Lifetime across that
 seam is delicate — see FW-60 (cross-service UAF/teardown crashes) for what goes wrong when
 the transport layer holds raw pointers into audio-owned memory.
 

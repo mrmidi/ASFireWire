@@ -23,7 +23,7 @@
 #pragma once
 
 #include "FamilyAdapter.hpp"
-#include "../Protocols/Backends/PublicationGate.hpp"
+#include "PublicationGate.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 
 #include <DriverKit/IODispatchQueue.h>

@@ -24,7 +24,7 @@ constexpr uint32_t kMaxNamedChannels = ::ASFW::Audio::Runtime::kMaxHostPcmChanne
 constexpr uint32_t kMaxBoolControls = 16;
 /// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
 /// Duplicated rather than included so this header stays on the AudioDriverKit
-/// side of the nub; DiceAudioBackend static_asserts the two agree.
+/// side of the nub; DiceFamilyAdapter static_asserts the two agree.
 constexpr uint32_t kMaxConfiguredStreams = 4;
 
 constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');

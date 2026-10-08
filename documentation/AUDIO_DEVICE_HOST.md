@@ -546,10 +546,23 @@ Below, *Haiku*, *Sonnet* and *Me* (Opus) mark each stage's author.
   `DiceAudioBackend` (`AUDIO_SESSION_REDESIGN.md` S3); after E5 they run the host plus the
   adapter, and must not change. Hardware: Pro 24 DSP cold start, reset burst while playing
   (the FW-218 check), and rate change.
+  **Done (E5, 2026-10-08).** `DiceFamilyAdapter`: `Describe` keeps every refusal, each now
+  named (`no-protocol`, `geometry-load-failed`, `runtime-caps-unavailable`,
+  `geometry-unusable`, `no-streamable-rate`, `no-enabled-formation`,
+  `formation-not-selectable`, `too-many-playback-streams`, `no-dice-profile`), and the
+  committed-formation guard returns `KeepCommitted`. The DICE detail log lines keep their
+  `DiceAudioBackend…` text. Cycle inconsistent: the coordinator now hands it to the host for
+  every family, and a new pure `FamilyAdapter::ActsOn(reason)`, asked before the recovery
+  slot, keeps AV/C, MOTU and RME declining it (`RuntimeFault/Declined reason=… not-acted-on`)
+  while DICE acts on it. Session goldens byte-identical. Not yet run on hardware.
 - **E6: delete `IAudioBackend` and the four backend files; update the docs.** *Haiku*.
   Includes `project.yml` + `xcodegen generate` (CI checks the generated project), the
   `CMakeLists` for tests, `CLAUDE.md`'s queue name (`com.asfw.audio.host`), and the "Fate
   of existing code" table in `AUDIO_SESSION_REDESIGN.md` §5.
+  **Done (E6, 2026-10-08, written by Opus to save a hand-off).** `IAudioBackend.hpp` and
+  `DiceAudioBackend.{hpp,cpp}` deleted (the other three went in E2–E4); `PublicationGate.hpp`
+  moved to `Audio/Host/`; `CLAUDE.md` names `com.asfw.audio.host` and lists `Audio/Host/`;
+  the fate table in `AUDIO_SESSION_REDESIGN.md` §5 updated.
 
 E7 (§4.7) starts after E6. Unlike E0–E6, it changes behaviour on purpose; each part
 declares its deltas in its commit.
