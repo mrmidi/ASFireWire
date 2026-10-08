@@ -154,3 +154,20 @@ OR eventMessage CONTAINS "MotuProtocol"'`. The readiness line is emitted once pe
 start; a timeout identifies `TransmitTimingReady` in the session rollback log.
 
 These checks validate host logic and compilation, not hardware interoperability.
+
+## Credits
+
+This stack builds on work and hardware evidence contributed through earlier
+pull requests (archived in `tmp/motu-pr-evidence/`):
+
+- **deweydb**, #114: MOTU UltraLite (protocol v2) support. Per-data-block SPH
+  replay, which remains the default timing policy here, the offset cache and the
+  channel maps; the only MOTU so far confirmed to play and record.
+- **Rafal Zalech** (rafalzalech), #116: the original UltraLite channel-by-channel
+  hardware report and the per-packet SPH association evidence.
+- **Jakub Ślipiec** (cube666999), #172: 828 Mk3 (protocol v3) bring-up, the
+  captured wire values behind the model-scoped quirks, and the SPH clock-servo
+  design the optional synthesizer follows.
+
+#114 in turn credits Jonathan Woodward / Dreambrother7 for the original MOTU
+content layer (commit `67332b9d`).
