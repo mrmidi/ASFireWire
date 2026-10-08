@@ -69,6 +69,81 @@ TEST(MotuV2OpticalTests, RejectsReservedModeValues) {
 }
 
 //==============================================================================
+// PCM chunk counts from the optical config: every combination of (off, ADAT,
+// S/PDIF) per direction at both rate modes. The expected numbers are written out,
+// not recomputed: 828mk2 is 14 fixed chunks, and an ADAT optical port adds 8 at
+// 1x (44.1/48 kHz) and 4 at 2x (88.2/96 kHz), per direction independently
+// (motu-protocol-v2.c:246-262; vendor Box828mk2::GetNumInputs agrees).
+//==============================================================================
+
+namespace {
+constexpr uint32_t Word(uint32_t inMode, uint32_t outMode) {
+    return (inMode << 8) | (outMode << 10);
+}
+struct ChunkCase {
+    uint32_t inMode;
+    uint32_t outMode;
+    uint32_t mode;
+    uint32_t tx;
+    uint32_t rx;
+    bool txOnlyFixed;
+    bool rxOnlyFixed;
+};
+}  // namespace
+
+TEST(MotuV2PcmChunksTests, EveryOpticalCombinationAtBothRateModes) {
+    // in/out: 0 off, 1 ADAT, 2 S/PDIF. Rate mode 0 = 1x, 1 = 2x.
+    const ChunkCase cases[] = {
+        // 1x
+        {0, 0, 0, 14, 14, true, true},   {0, 1, 0, 14, 22, true, false},
+        {0, 2, 0, 14, 14, true, true},   {1, 0, 0, 22, 14, false, true},
+        {1, 1, 0, 22, 22, false, false}, {1, 2, 0, 22, 14, false, true},
+        {2, 0, 0, 14, 14, true, true},   {2, 1, 0, 14, 22, true, false},
+        {2, 2, 0, 14, 14, true, true},
+        // 2x
+        {0, 0, 1, 14, 14, true, true},   {0, 1, 1, 14, 18, true, false},
+        {0, 2, 1, 14, 14, true, true},   {1, 0, 1, 18, 14, false, true},
+        {1, 1, 1, 18, 18, false, false}, {1, 2, 1, 18, 14, false, true},
+        {2, 0, 1, 14, 14, true, true},   {2, 1, 1, 14, 18, true, false},
+        {2, 2, 1, 14, 14, true, true},
+    };
+    for (const ChunkCase& c : cases) {
+        SCOPED_TRACE(testing::Message() << "in=" << c.inMode << " out=" << c.outMode
+                                        << " mode=" << c.mode);
+        const V2PcmChunks chunks = ResolveV2PcmChunks(Word(c.inMode, c.outMode), c.mode);
+        EXPECT_TRUE(chunks.opticalDecoded);
+        EXPECT_EQ(chunks.tx, c.tx);  // capture follows the optical INPUT
+        EXPECT_EQ(chunks.rx, c.rx);  // playback follows the optical OUTPUT
+        EXPECT_EQ(chunks.txOnlyFixedChunks, c.txOnlyFixed);
+        EXPECT_EQ(chunks.rxOnlyFixedChunks, c.rxOnlyFixed);
+    }
+}
+
+TEST(MotuV2PcmChunksTests, ReservedEncodingKeepsTheFixedCountsAndClearsBothExcludeBits) {
+    for (const uint32_t word : {Word(3, 0), Word(0, 3), Word(3, 3)}) {
+        const V2PcmChunks chunks = ResolveV2PcmChunks(word, 0);
+        EXPECT_FALSE(chunks.opticalDecoded);
+        EXPECT_EQ(chunks.tx, 14u);
+        EXPECT_EQ(chunks.rx, 14u);
+        EXPECT_FALSE(chunks.txOnlyFixedChunks);
+        EXPECT_FALSE(chunks.rxOnlyFixedChunks);
+    }
+}
+
+TEST(MotuV2PcmChunksTests, UnmappedRateModeHasNoChunks) {
+    // Mode 2 (176.4/192 kHz) is not implemented by the fixed-chunk models.
+    const V2PcmChunks chunks = ResolveV2PcmChunks(Word(1, 1), 2);
+    EXPECT_EQ(chunks.tx, 0u);
+    EXPECT_EQ(chunks.rx, 0u);
+}
+
+TEST(MotuV2PcmChunksTests, PublishedRatesAreAllOneRateMode) {
+    // One channel count per direction is only right while this holds.
+    EXPECT_TRUE(AllPublishedRatesShareOneMode());
+    EXPECT_EQ(PublishedRateMode(), 0u);
+}
+
+//==============================================================================
 // Iso comm control (motu-stream.c:12-21,62-107)
 //==============================================================================
 

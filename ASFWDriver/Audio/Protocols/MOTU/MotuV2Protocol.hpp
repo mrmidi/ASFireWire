@@ -57,10 +57,19 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
-    /// Report the device's stream geometry. Before PrepareDuplex has run this answers
-    /// from the model's fixed chunk table rather than failing, so the nub can be
-    /// published before streaming -- see MotuAudioBackend::EnsureNubForGuid for why that
-    /// ordering matters.
+    /// Read the optical config (0x0c04) and cache the PCM chunk counts the endpoint is
+    /// published with (kPublishedSampleRatesHz), then call back. Asynchronous, so it
+    /// is safe on the Default queue. Linux reads the same register at PCM open
+    /// (motu-pcm.c:143), so reading it ahead of publication is not a deadlock: it
+    /// needs only the async bus, not a started stream. A failed read clears the
+    /// cache, so GetRuntimeAudioStreamCaps answers from the fixed table again.
+    void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override;
+
+    /// Report the device's stream geometry. Once EnsureRuntimeStreamGeometry has read
+    /// the optical config this is the counts it derived; otherwise (never read, or the
+    /// read failed) it answers from the model's fixed chunk table rather than failing.
+    /// While a duplex is prepared at a rate outside the published rate mode, it is the
+    /// prepared geometry.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
 
     /// Port names in host channel order (MotuPortLayout.hpp). They come from the model's
@@ -203,6 +212,13 @@ private:
     std::atomic<uint32_t> txPcmChunks_{0};
     std::atomic<uint32_t> rxPcmChunks_{0};
     std::atomic<uint32_t> preparedRateHz_{0};
+
+    // PCM chunk counts for the published rate mode, derived from the last
+    // successful optical config read (EnsureRuntimeStreamGeometry): capture in the
+    // high half, playback in the low half. Zero means "not read, or the read failed".
+    // One word, so a reader never sees one direction from one read and the other
+    // from the next.
+    std::atomic<uint32_t> publishedChunks_{0};
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;

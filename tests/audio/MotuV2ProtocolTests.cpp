@@ -422,6 +422,199 @@ TEST(MotuV2DuplexTests, AdatOpticalAddsChunksToTheAffectedDirection) {
     EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 14U);
 }
 
+//==============================================================================
+// Published geometry (E3a): the optical config is read ahead of publication
+// and the endpoint's counts come from it.
+//==============================================================================
+
+namespace {
+
+struct GeometryCase {
+    uint32_t inMode;
+    uint32_t outMode;
+    uint32_t inputChannels;   // capture (device->host)
+    uint32_t outputChannels;  // playback (host->device)
+};
+
+// Published rates (44.1/48 kHz) are rate mode 0: ADAT adds 8 chunks.
+constexpr GeometryCase kGeometryCases[] = {
+    {kOptNone, kOptNone, 14, 14},   {kOptNone, kOptAdat, 14, 22},
+    {kOptNone, kOptSpdif, 14, 14},  {kOptAdat, kOptNone, 22, 14},
+    {kOptAdat, kOptAdat, 22, 22},   {kOptAdat, kOptSpdif, 22, 14},
+    {kOptSpdif, kOptNone, 14, 14},  {kOptSpdif, kOptAdat, 14, 22},
+    {kOptSpdif, kOptSpdif, 14, 14},
+};
+
+}  // namespace
+
+TEST(MotuV2GeometryTests, EveryOpticalCombinationIsPublishedFromTheRegister) {
+    for (const GeometryCase& c : kGeometryCases) {
+        SCOPED_TRACE(testing::Message() << "in=" << c.inMode << " out=" << c.outMode);
+        RecordingBus bus;
+        bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(c.inMode, c.outMode);
+        RouteState routes;
+        MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+        std::optional<IOReturn> status;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+        ASSERT_TRUE(status.has_value());
+        EXPECT_EQ(*status, kIOReturnSuccess);
+        ASFW::Audio::AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.hostInputPcmChannels, c.inputChannels);
+        EXPECT_EQ(caps.hostOutputPcmChannels, c.outputChannels);
+        EXPECT_EQ(caps.deviceToHostPcmChunks, c.inputChannels);
+        EXPECT_EQ(caps.hostToDevicePcmChunks, c.outputChannels);
+        EXPECT_EQ(caps.sampleRateHz, 48000U);
+    }
+}
+
+TEST(MotuV2GeometryTests, ReadingTheGeometryIsOneQuadletReadAndNoWrites) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    // The one extra transaction publication adds: the optical config, nothing else.
+    ASSERT_EQ(bus.reads.size(), 1U);
+    EXPECT_EQ(bus.reads[0], LowOf(Reg::InOutConfV2));
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(MotuV2GeometryTests, BeforeAnyReadTheCapsAreTheFixedTable) {
+    RecordingBus bus;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 14U);
+    EXPECT_TRUE(bus.reads.empty());
+}
+
+TEST(MotuV2GeometryTests, FailedReadReportsTheErrorAndFallsBackToTheFixedTable) {
+    RecordingBus bus;
+    bus.readStatus = AsyncStatus::kTimeout;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnTimeout);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 14U);
+}
+
+TEST(MotuV2GeometryTests, FailedReReadDoesNotKeepTheEarlierAnswer) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    ASSERT_EQ(caps.hostInputPcmChannels, 22U);
+
+    bus.readStatus = AsyncStatus::kTimeout;
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_NE(*status, kIOReturnSuccess);
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 14U);  // fixed table, not the stale 22
+}
+
+TEST(MotuV2GeometryTests, ReservedOpticalEncodingPublishesTheFixedCounts) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnSuccess);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 14U);
+}
+
+TEST(MotuV2GeometryTests, ARereadFollowsAnOpticalModeChange) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptSpdif);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 22U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 14U);
+}
+
+// Configure (PrepareDuplex) shares the arithmetic with the published description,
+// at every rate mode: at 2x (96 kHz) ADAT adds 4 chunks, not 8
+// (motu-protocol-v2.c:253-269), and the prepared geometry wins over the
+// published (1x) one while a duplex is prepared there.
+TEST(MotuV2GeometryTests, PrepareAtTwiceTheRateUsesTheFourChunkAdatExtra) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000018U;  // 96 kHz, internal
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    std::optional<DuplexPrepareResult> result;
+    protocol.PrepareDuplex(MakeChannels(), ASFW::Audio::AudioClockConfig{.sampleRateHz = 96000U},
+                           [&](IOReturn, DuplexPrepareResult r) { result = r; });
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, 18U);
+    EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 18U);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 18U);
+    EXPECT_EQ(caps.sampleRateHz, 96000U);
+}
+
+TEST(MotuV2GeometryTests, PrepareAtPublishedRatesAgreesWithThePublishedCounts) {
+    for (const GeometryCase& c : kGeometryCases) {
+        SCOPED_TRACE(testing::Message() << "in=" << c.inMode << " out=" << c.outMode);
+        RecordingBus bus;
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U;  // 48 kHz
+        bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(c.inMode, c.outMode);
+        bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+        RouteState routes;
+        MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+        protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+        ASFW::Audio::AudioStreamRuntimeCaps published{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(published));
+
+        std::optional<DuplexPrepareResult> result;
+        protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                               [&](IOReturn, DuplexPrepareResult r) { result = r; });
+
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, published.hostInputPcmChannels);
+        EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, published.hostOutputPcmChannels);
+    }
+}
+
 TEST(MotuV2DuplexTests, RejectsARateWithNoChunkLayoutWithoutTouchingTheDevice) {
     RecordingBus bus;
     RouteState routes;

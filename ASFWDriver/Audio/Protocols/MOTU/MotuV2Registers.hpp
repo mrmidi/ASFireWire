@@ -116,6 +116,84 @@ struct OptIfaceConfig {
 }
 
 //==============================================================================
+// PCM chunk counts from the optical config (one arithmetic, two callers).
+//
+// Both the published endpoint description (before the first start) and
+// PrepareDuplex (at every start) derive the stream's PCM chunk counts from the
+// same register word, so the arithmetic lives here once. Fixed chunks per mode
+// come from the model table; each optical direction in ADAT mode adds its own
+// extra chunks, independently of the other direction
+// (motu-protocol-v2.c:246-262, V2_IN_OUT_CONF read in
+// snd_motu_protocol_v2_cache_packet_formats; 828mk2 and the other
+// single-optical-port models). The input mode (bits 9:8) widens capture
+// (TX, device->host); the output mode (bits 11:10) widens playback
+// (RX, host->device).
+//==============================================================================
+
+struct V2PcmChunks {
+    uint32_t tx{0};            ///< Capture (device->host) PCM chunks.
+    uint32_t rx{0};            ///< Playback (host->device) PCM chunks.
+    /// Exclude-differed-chunks bit per direction (EncodePacketFormat): true only
+    /// when that direction provably carries just its fixed chunk count.
+    bool txOnlyFixedChunks{false};
+    bool rxOnlyFixedChunks{false};
+    /// False for a reserved optical encoding. Counts then fall back to the fixed
+    /// baseline and both exclude bits stay clear: claiming the fixed layout on
+    /// unproven evidence would truncate the stream, while the conservative
+    /// direction only costs the optimisation.
+    bool opticalDecoded{false};
+    OptIfaceMode inputMode{OptIfaceMode::None};
+    OptIfaceMode outputMode{OptIfaceMode::None};
+};
+
+[[nodiscard]] constexpr V2PcmChunks ResolveV2PcmChunks(uint32_t inOutConfRaw,
+                                                       uint32_t mode) noexcept {
+    V2PcmChunks chunks{};
+    const uint32_t fixed =
+        mode < Encoding::Motu::kModeCount ? Encoding::Motu::k828mk2FixedPcmChunks[mode] : 0U;
+    const auto optical = DecodeOptIfaceConfig(inOutConfRaw);
+    chunks.opticalDecoded = optical.has_value();
+    const bool inputIsAdat = optical.has_value() && optical->input == OptIfaceMode::Adat;
+    const bool outputIsAdat = optical.has_value() && optical->output == OptIfaceMode::Adat;
+    if (optical.has_value()) {
+        chunks.inputMode = optical->input;
+        chunks.outputMode = optical->output;
+    }
+    const uint32_t adatExtra = Encoding::Motu::AdatExtraChunks(mode);
+    chunks.tx = fixed + (inputIsAdat ? adatExtra : 0U);
+    chunks.rx = fixed + (outputIsAdat ? adatExtra : 0U);
+    chunks.txOnlyFixedChunks = optical.has_value() && !inputIsAdat;
+    chunks.rxOnlyFixedChunks = optical.has_value() && !outputIsAdat;
+    return chunks;
+}
+
+/// The sample rates a MOTU endpoint is published with. Every one of them is in
+/// the same rate mode, so one set of channel counts is right for all of them;
+/// that is what lets the description carry a single count per direction
+/// instead of per-rate formations. Publishing 88.2/96 kHz (mode 1, where ADAT
+/// adds 4 chunks instead of 8) needs per-rate formations first.
+inline constexpr uint32_t kPublishedSampleRatesHz[] = {44100u, 48000u};
+
+[[nodiscard]] constexpr uint32_t PublishedRateMode() noexcept {
+    return Encoding::Motu::IndexToMode(
+        static_cast<uint32_t>(Encoding::Motu::RateToIndex(kPublishedSampleRatesHz[0])));
+}
+
+[[nodiscard]] constexpr bool AllPublishedRatesShareOneMode() noexcept {
+    for (const uint32_t rate : kPublishedSampleRatesHz) {
+        const int32_t index = Encoding::Motu::RateToIndex(rate);
+        if (index < 0 ||
+            Encoding::Motu::IndexToMode(static_cast<uint32_t>(index)) != PublishedRateMode()) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(AllPublishedRatesShareOneMode(),
+              "published rates span rate modes: one channel count per direction is no longer "
+              "right; publish per-rate formations (see AUDIO_DEVICE_HOST.md, E3a)");
+
+//==============================================================================
 // Iso communication control (0x0b00): channel numbers + activation for both
 // directions in one write (motu-stream.c:12-21,62-107). Device-relative
 // naming: RX = host->device (playback), TX = device->host (capture).

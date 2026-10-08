@@ -18,6 +18,7 @@
 
 #include "IAudioBackend.hpp"
 #include "PublicationGate.hpp"
+#include "../../../Discovery/DiscoveryTypes.hpp"
 
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
@@ -37,6 +38,7 @@ class HardwareInterface;
 namespace ASFW::Audio {
 
 class AudioNubPublisher;
+class IDeviceProtocol;
 class AudioRuntimeRegistry;
 namespace Session {
 class AudioSessions;
@@ -78,6 +80,8 @@ private:
     std::function<void()> onSecondaryTeardown_{};
 #endif
     void EnsureNubForGuid(uint64_t guid) noexcept;
+    void PublishNub(uint64_t guid, const Discovery::DeviceRecord& record,
+                    IDeviceProtocol& protocol, IOReturn geometryStatus) noexcept;
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;

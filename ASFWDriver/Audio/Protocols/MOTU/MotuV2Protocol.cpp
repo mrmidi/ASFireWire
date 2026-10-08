@@ -240,18 +240,75 @@ void MotuV2Protocol::ModifyRegister(Reg reg,
         });
 }
 
+void MotuV2Protocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
+    // A stale answer must not outlive a failed read: until a read succeeds the caps
+    // are the fixed table's.
+    publishedChunks_.store(0U, std::memory_order_release);
+
+    (void)io_.ReadQuadBE(
+        AddressOf(Reg::InOutConfV2),
+        [this, callback = std::move(callback)](Async::AsyncStatus status,
+                                               uint32_t optRaw) mutable {
+            const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (result != kIOReturnSuccess) {
+                ASFW_LOG(Audio,
+                         "[MotuGeometry] optical config read failed kr=0x%08x (%{public}s); "
+                         "geometry not loaded, caps fall back to the fixed %u chunks",
+                         result, ASFW::Logging::IOReturnName(result),
+                         Encoding::Motu::k828mk2FixedPcmChunks[PublishedRateMode()]);
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            const V2PcmChunks chunks = ResolveV2PcmChunks(optRaw, PublishedRateMode());
+            publishedChunks_.store((chunks.tx << 16) | chunks.rx, std::memory_order_release);
+            // Optical modes: 0 off, 1 ADAT, 2 S/PDIF. A reserved encoding counts as off.
+            ASFW_LOG(Audio,
+                     "[MotuGeometry] optical config opt=0x%08x in=%u out=%u decoded=%u -> "
+                     "published txChunks=%u rxChunks=%u (rate mode %u)",
+                     optRaw, static_cast<unsigned>(chunks.inputMode),
+                     static_cast<unsigned>(chunks.outputMode), chunks.opticalDecoded ? 1U : 0U,
+                     chunks.tx, chunks.rx, PublishedRateMode());
+            if (callback) {
+                callback(kIOReturnSuccess);
+            }
+        });
+}
+
 bool MotuV2Protocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
     outCaps = MakeRuntimeCaps();
-    if (outCaps.sampleRateHz == 0) {
-        // Not prepared yet: answer from the model's fixed layout so the nub can be
-        // published. The v2 fixed-chunk models carry 14 PCM chunks per direction at
-        // 44.1/48 kHz (motu-protocol-v2.c:274-282). Prefer the rate the device last
-        // reported over assuming 48k.
-        const uint32_t cachedRate = cachedSampleRateHz_.load(std::memory_order_acquire);
-        outCaps.hostInputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[0];
-        outCaps.hostOutputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[0];
+    const uint32_t preparedRate = outCaps.sampleRateHz;
+    const uint32_t published = publishedChunks_.load(std::memory_order_acquire);
+
+    // A duplex prepared at a rate outside the published rate mode carries its own
+    // counts (the ADAT extra differs per mode); keep those.
+    const int32_t preparedIndex = Encoding::Motu::RateToIndex(preparedRate);
+    const bool preparedAtOtherMode =
+        preparedRate != 0U &&
+        (preparedIndex < 0 ||
+         Encoding::Motu::IndexToMode(static_cast<uint32_t>(preparedIndex)) != PublishedRateMode());
+
+    if (published != 0U && !preparedAtOtherMode) {
+        // The counts read from the device's optical config.
+        outCaps.hostInputPcmChannels = published >> 16;
+        outCaps.hostOutputPcmChannels = published & 0xffffU;
         outCaps.deviceToHostPcmChunks = outCaps.hostInputPcmChannels;
         outCaps.hostToDevicePcmChunks = outCaps.hostOutputPcmChannels;
+    } else if (preparedRate == 0U) {
+        // Not read and not prepared: answer from the model's fixed layout so a
+        // description can still be built. The v2 fixed-chunk models carry 14 PCM
+        // chunks per direction at 44.1/48 kHz (motu-protocol-v2.c:274-282); ADAT
+        // adds to that, which only a read of the optical config can tell.
+        outCaps.hostInputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[PublishedRateMode()];
+        outCaps.hostOutputPcmChannels = Encoding::Motu::k828mk2FixedPcmChunks[PublishedRateMode()];
+        outCaps.deviceToHostPcmChunks = outCaps.hostInputPcmChannels;
+        outCaps.hostToDevicePcmChunks = outCaps.hostOutputPcmChannels;
+    }
+    if (preparedRate == 0U) {
+        // Prefer the rate the device last reported over assuming 48k.
+        const uint32_t cachedRate = cachedSampleRateHz_.load(std::memory_order_acquire);
         outCaps.sampleRateHz = cachedRate != 0 ? cachedRate : 48000U;
     }
     return true;
@@ -351,7 +408,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
     // _TellHardwareToStart returning 0x77686174 ('what') with no failure logged by us.
     SetSampleRate(
         rateHz,
-        [this, speedCode, rateHz, mode, fixedChunks, callback = std::move(callback)](
+        [this, speedCode, rateHz, mode, callback = std::move(callback)](
             IOReturn rateStatus) mutable {
             if (rateStatus != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "MotuV2Protocol: set clock rate %u failed: 0x%x", rateHz,
@@ -365,7 +422,7 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
 
     (void)io_.ReadQuadBE(
         AddressOf(Reg::InOutConfV2),
-        [this, speedCode, rateHz, mode, fixedChunks, callback = std::move(callback)](
+        [this, speedCode, rateHz, mode, callback = std::move(callback)](
             Async::AsyncStatus status, uint32_t optRaw) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
@@ -376,21 +433,15 @@ void MotuV2Protocol::PrepareDuplex(const AudioDuplexChannels& channels,
                 return;
             }
 
-            // A reserved encoding means we cannot prove the chunk counts. Treat that as
-            // "differed chunks may be present" (clear both bits) rather than guessing the
-            // device is in the fixed layout: claiming fixed when it is not truncates the
-            // stream, while the conservative direction only costs the optimisation.
-            const auto optical = DecodeOptIfaceConfig(optRaw);
-            const bool inputIsAdat = optical.has_value() && optical->input == OptIfaceMode::Adat;
-            const bool outputIsAdat = optical.has_value() && optical->output == OptIfaceMode::Adat;
-            const bool txOnlyFixedChunks = optical.has_value() && !inputIsAdat;
-            const bool rxOnlyFixedChunks = optical.has_value() && !outputIsAdat;
-
-            const uint32_t adatExtra = Encoding::Motu::AdatExtraChunks(mode);
-            txPcmChunks_.store(fixedChunks + (inputIsAdat ? adatExtra : 0U),
-                               std::memory_order_release);
-            rxPcmChunks_.store(fixedChunks + (outputIsAdat ? adatExtra : 0U),
-                               std::memory_order_release);
+            // The same arithmetic the published description uses. A reserved encoding
+            // means we cannot prove the chunk counts; ResolveV2PcmChunks then clears both
+            // exclude bits ("differed chunks may be present") rather than guessing the
+            // device is in the fixed layout.
+            const V2PcmChunks chunks = ResolveV2PcmChunks(optRaw, mode);
+            const bool txOnlyFixedChunks = chunks.txOnlyFixedChunks;
+            const bool rxOnlyFixedChunks = chunks.rxOnlyFixedChunks;
+            txPcmChunks_.store(chunks.tx, std::memory_order_release);
+            rxPcmChunks_.store(chunks.rx, std::memory_order_release);
             preparedRateHz_.store(rateHz, std::memory_order_release);
 
             ASFW_LOG(Audio,

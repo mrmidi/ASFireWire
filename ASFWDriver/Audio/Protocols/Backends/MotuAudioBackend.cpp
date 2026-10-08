@@ -15,6 +15,7 @@
 #include "../../../Logging/Logging.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../MOTU/MotuV2Protocol.hpp"
+#include "../MOTU/MotuV2Registers.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 
@@ -106,42 +107,51 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 
     // MOTU has no profile registry to consult. The device's geometry comes from its own
-    // registers via PrepareDuplex, which MotuV2Protocol reports through runtime caps --
-    // so the nub is built from the hardware's answer rather than a table keyed on
-    // model_id (which MOTU publishes as 0 anyway).
+    // registers, so the nub is built from the hardware's answer rather than a table
+    // keyed on model_id (which MOTU publishes as 0 anyway).
+    //
+    // The optical config (0x0c04) is read first, asynchronously, as DICE loads its caps:
+    // ADAT adds PCM chunks to either direction, so the counts are not a model constant.
+    // Linux reads the same register at PCM open (motu-pcm.c:143); it needs only the
+    // async bus, not a started stream, so reading it before publication cannot deadlock
+    // CoreAudio against the nub.
+    protocol->EnsureRuntimeStreamGeometry(
+        [this, guid, record = *record, protocol](IOReturn geometryStatus) {
+            if (stopping_.load(std::memory_order_acquire)) {
+                return;
+            }
+            PublishNub(guid, record, *protocol, geometryStatus);
+        });
+}
+
+void MotuAudioBackend::PublishNub(uint64_t guid, const Discovery::DeviceRecord& record,
+                                  IDeviceProtocol& protocol, IOReturn geometryStatus) noexcept {
     Model::ASFWAudioDevice dev{};
-    dev.guid = record->guid;
-    dev.vendorId = record->vendorId;
-    dev.modelId = record->modelId;
+    dev.guid = record.guid;
+    dev.vendorId = record.vendorId;
+    dev.modelId = record.modelId;
     // CoreAudio shows this in the Sound panel, where MOTU's own driver named the device
     // "MOTU UltraLite". The model constants stay bare; only the display name
     // is qualified here.
     const char* const modelName =
         DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(
-            record->unitSwVersion.value_or(0U));
+            record.unitSwVersion.value_or(0U));
     dev.deviceName = modelName != nullptr
                          ? std::string(DeviceProfiles::Audio::kMotuVendorName) + " " + modelName
-                         : protocol->GetName();
+                         : protocol.GetName();
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
-    dev.sampleRates = {44100u, 48000u};
+    dev.sampleRates.assign(std::begin(Motu::kPublishedSampleRatesHz),
+                           std::end(Motu::kPublishedSampleRatesHz));
     dev.currentSampleRate = 48000u;
 
-    // Geometry: prefer the device's live answer, but fall back to the model's known
-    // chunk layout.
-    //
-    // The fallback is not an optimisation, it is required. Live caps only exist after
-    // PrepareDuplex, which runs during streaming; CoreAudio only streams to a device it
-    // can see; and it can only see a published nub. Waiting for caps before publishing
-    // deadlocks those two against each other and the device never appears at all.
-    //
-    // The v2 fixed-chunk models carry 14 PCM chunks per direction at 44.1/48 kHz
-    // (motu-protocol-v2.c:274-282), which is the geometry to publish with until the
-    // hardware says otherwise.
+    // Geometry: the counts read from the optical config. Only a failed read falls back
+    // to the model's fixed layout (14 PCM chunks per direction at 44.1/48 kHz,
+    // motu-protocol-v2.c:274-282); that is the same 14 x 14 the device carries unless an
+    // optical port is in ADAT mode.
     AudioStreamRuntimeCaps caps{};
-    const bool haveLiveCaps =
-        protocol->GetRuntimeAudioStreamCaps(caps) && caps.sampleRateHz != 0;
-    if (haveLiveCaps) {
+    const bool haveCaps = protocol.GetRuntimeAudioStreamCaps(caps) && caps.sampleRateHz != 0;
+    if (haveCaps) {
         dev.inputChannelCount = caps.hostInputPcmChannels;
         dev.outputChannelCount = caps.hostOutputPcmChannels;
         dev.currentSampleRate = caps.sampleRateHz;
@@ -150,10 +160,12 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         dev.inputChannelCount = fixedChunks;
         dev.outputChannelCount = fixedChunks;
         dev.currentSampleRate = 48000u;
+    }
+    if (geometryStatus != kIOReturnSuccess) {
         ASFW_LOG(Audio,
-                 "MotuAudioBackend::EnsureNubForGuid: no live caps yet for GUID=0x%016llx; "
-                 "publishing the model's fixed geometry (%u x %u @ 48k)",
-                 guid, fixedChunks, fixedChunks);
+                 "MotuAudioBackend::EnsureNubForGuid: optical config read failed kr=0x%08x "
+                 "for GUID=0x%016llx; publishing the model's fixed geometry (%u x %u)",
+                 geometryStatus, guid, dev.inputChannelCount, dev.outputChannelCount);
     }
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
 
@@ -161,7 +173,7 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     // apply the same model table, so these line up with what each channel carries.
     std::vector<std::string> inNames;
     std::vector<std::string> outNames;
-    if (protocol->GetChannelLabels(inNames, outNames)) {
+    if (protocol.GetChannelLabels(inNames, outNames)) {
         dev.inputChannelNames = std::move(inNames);
         dev.outputChannelNames = std::move(outNames);
     }
