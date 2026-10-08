@@ -281,7 +281,10 @@ public:
     virtual void SetEventSink(DeviceEventSink* sink) noexcept = 0;
 };
 
-using DescribeResult = std::variant<Model::ASFWAudioDevice, KeepCommitted, DescribeRefusal>;
+// DescribedWithNote{device, note}: a description built partly from a model constant
+// (E3a: MOTU after a failed register read); the host prints `note=` beside the outcome.
+using DescribeResult = std::variant<Model::ASFWAudioDevice, KeepCommitted, DescribeRefusal,
+                                    DescribedWithNote>;
 enum class FaultVerdict { kRestart, kSelfHealed, kDeviceLeft };
 ```
 
@@ -512,9 +515,23 @@ Below, *Haiku*, *Sonnet* and *Me* (Opus) mark each stage's author.
   `motu-protocol-v2.c:227-262`). The backend comment calling an early read a deadlock
   (`MotuAudioBackend.cpp:145-148`) is wrong and goes. The fixed 14-chunk fallback stays
   only for a failed read, recorded as `Publish/Published` with a reason.
+  **Done (E3a).** The arithmetic is `ResolveV2PcmChunks` (`MotuV2Registers.hpp`), called by
+  `PrepareDuplex` and by `MotuV2Protocol::EnsureRuntimeStreamGeometry` (the published
+  counts). The published rates (44.1/48 kHz) are one rate mode, so one count per direction is
+  right for all of them; a `static_assert` stops anyone adding 88.2/96 kHz without per-rate
+  formations (open question for that day: ADAT is 22 at 1x and 18 at 2x). Bit positions
+  (input 9:8, output 11:10) agree with Linux `motu-protocol-v2.c:25-32`.
 - **E3: MOTU onto the host** (Δ1, Δ2, Δ3, Δ6). *Sonnet*, after E2 and E3a. Without E3a,
   Δ2 would make an ADAT-mode MOTU latch "geometry changed" on its first restart. The
   capture-diagnostics path (`AudioCoordinator.cpp:475-518`) goes through the MOTU adapter.
+  **Done (E3).** `MotuFamilyAdapter` is stateless: Describe is the E3a read, every runtime fault
+  restarts, no device events. `MotuAudioBackend` is gone; `MotuCaptureCommand` asks the host
+  for the device's family (`KindForGuid`) instead of comparing against the backend. A failed
+  register read publishes the fixed 14 x 14 only before a nub exists, as `DescribedWithNote`
+  (the host prints `note=optical-read-failed-fixed-geometry` on the `Publish` line); against a
+  live nub it is a `RefusedDescribe` (`reason=optical-config-read-failed`), because a fixed
+  fallback there would latch "geometry changed" on one lost transaction. A reset while MOTU
+  streams now runs `Rebind/Queued` then `Rebind/RestartRequested` (Δ6).
 - **E4: AV/C onto the host** (Δ8). *Sonnet*. `DiscoveryCoordinator` pushes the config, so
   `AvcFamilyAdapter::Describe` returns what discovery last delivered or `kIOReturnNotReady`,
   and discovery's ready event calls `OfferDiscoveredDescription` (store, then

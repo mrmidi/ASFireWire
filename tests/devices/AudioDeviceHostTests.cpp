@@ -336,6 +336,29 @@ TEST(AudioDeviceHostTests, DescriptionIsWrittenToEndpointBeforeNubPublish) {
     EXPECT_EQ(written.channelCount, desc.channelCount);
 }
 
+// A family that fell back to a model constant says so with DescribedWithNote: the
+// publication is decided exactly as for a plain description (one outcome, the
+// endpoint config written), and the note rides on the same [AudioHost] line.
+TEST(AudioDeviceHostTests, DescriptionWithANoteIsPublishedLikeAPlainOne) {
+    HostFixture f;
+    f.SeedDiceDevice(kGuid);
+    const ASFWAudioDevice desc = MakeDescription("Fallback", 14, 14);
+    f.adapter.onDescribe = [&desc](const DescribeInput&, DescribeDone done) {
+        done(ASFW::Audio::Host::DescribedWithNote{desc, "register-read-failed"});
+    };
+    f.host.RefreshPublication(kGuid);
+
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 0U);
+    auto endpoint = f.runtime.FindEndpointRuntime(kGuid);
+    ASSERT_NE(endpoint, nullptr);
+    ASFWAudioDevice written{};
+    ASSERT_TRUE(endpoint->CopyConfig(written));
+    EXPECT_EQ(written.deviceName, desc.deviceName);
+    EXPECT_EQ(written.inputChannelCount, 14U);
+    EXPECT_EQ(written.outputChannelCount, 14U);
+}
+
 TEST(AudioDeviceHostTests, KeepCommittedLeavesEndpointAlone) {
     HostFixture f;
     f.SeedDiceDevice(kGuid);
