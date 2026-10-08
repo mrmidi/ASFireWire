@@ -51,8 +51,8 @@ MotuAudioBackend::~MotuAudioBackend() noexcept {
 }
 
 void MotuAudioBackend::BeginTeardown() noexcept {
-    // Latch first so an in-flight StartStreaming refuses rather than handing the
-    // coordinator a device whose bus is going away.
+    // Latch first so a publication or recovery that arrives now refuses rather
+    // than touching a device whose bus is going away.
     stopping_.store(true, std::memory_order_release);
     if (teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
 #ifdef ASFW_HOST_TEST

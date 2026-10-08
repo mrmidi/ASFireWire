@@ -572,7 +572,8 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
             // A mismatch here is only device-initiated if the host isn't the
             // one moving the clock. During a host-initiated rate change the
             // PLL relocks at the new rate while the nub's belief still holds
-            // the old one (it updates only after RequestClockConfig returns),
+            // the old one (it updates only after AudioCoordinator::RequestClockConfig
+            // returns),
             // and the device's lock-change notifications land exactly in that
             // window. Notifying then would inject a second, competing
             // config-change into the middle of the host's own change (HAL
