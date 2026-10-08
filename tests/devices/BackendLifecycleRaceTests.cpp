@@ -13,7 +13,6 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Audio/Protocols/Backends/AVCAudioBackend.hpp"
 #include "Audio/Protocols/Backends/MotuAudioBackend.hpp"
 #include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
 #include "Audio/Session/AudioSessions.hpp"
@@ -39,7 +38,6 @@ using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioNubPublisher;
 using ASFW::Audio::AudioRuntimeRegistry;
-using ASFW::Audio::AVCAudioBackend;
 using ASFW::Audio::DiceAudioBackend;
 using ASFW::Audio::IIsochDuplexHostTransport;
 using ASFW::Discovery::CfgKey;
@@ -125,7 +123,6 @@ struct TestFixture {
         }};
     AudioNubPublisher publisher{nullptr};
     ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
-    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions};
     DiceAudioBackend dice{publisher, registry, runtime, sessions, diceNotifications};
 
     void SeedDiceDevice(uint64_t guid) {
@@ -149,57 +146,6 @@ struct TestFixture {
         (void)registry.UpsertFromROM(rom, link);
     }
 };
-
-// Case 1: Concurrent teardown on AVCAudioBackend
-// Hold queued work open, start teardown A, invoke teardown B before releasing work.
-// Neither call must report completion before the drain finishes.
-TEST(BackendLifecycleRaceTests, AVCAudioBackendConcurrentTeardownWaitsForDrain) {
-    TestFixture f;
-    auto* queue = f.avc.WorkQueueForTesting();
-    ASSERT_NE(queue, nullptr);
-
-    std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
-
-    std::promise<void> drainStartedA;
-    std::promise<void> waitingB;
-
-    f.avc.SetOnTeardownDrainStartedHookForTesting([&] {
-        drainStartedA.set_value();
-    });
-    f.avc.SetOnSecondaryTeardownWaitingHookForTesting([&] {
-        waitingB.set_value();
-    });
-
-    auto futA = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown A has reached the work queue drain (and is blocked on queueLock)
-    drainStartedA.get_future().wait();
-
-    auto futB = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown B has entered the secondary wait loop
-    waitingB.get_future().wait();
-
-    // While queued work is held open, neither caller must have completed teardown
-    EXPECT_EQ(futA.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_EQ(futB.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_FALSE(f.avc.IsTeardownCompleteForTesting());
-
-    // Release queued work drain
-    queueLock.unlock();
-
-    // Both calls must now complete cleanly
-    EXPECT_EQ(futA.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(futB.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_TRUE(f.avc.IsTeardownCompleteForTesting());
-
-    f.avc.SetOnTeardownDrainStartedHookForTesting({});
-    f.avc.SetOnSecondaryTeardownWaitingHookForTesting({});
-}
 
 // Case 1 (DICE): Concurrent teardown on DiceAudioBackend
 TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain) {
@@ -243,56 +189,6 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain)
 
     f.dice.SetOnTeardownDrainStartedHookForTesting({});
     f.dice.SetOnSecondaryTeardownWaitingHookForTesting({});
-}
-
-// Case 4: Publication versus Teardown on AVCAudioBackend
-// Pause publication after its admission check, run teardown concurrently, then release publication.
-// Teardown waits or publication is cancelled; no publication occurs after teardown completes.
-TEST(BackendLifecycleRaceTests, AVCAudioBackendPublicationPausedAfterAdmissionAbortsOnTeardown) {
-    TestFixture f;
-    const uint64_t guid = 0x0011223344556677ULL;
-    ASFW::Audio::Model::ASFWAudioDevice config{};
-    config.guid = guid;
-
-    std::promise<void> admitted;
-    std::promise<void> allowResume;
-    std::promise<void> teardownGateClosed;
-
-    f.avc.SetBeforePublishHookForTesting([&] {
-        admitted.set_value();
-        allowResume.get_future().wait();
-    });
-
-    f.avc.SetOnTeardownGateClosedHookForTesting([&] {
-        teardownGateClosed.set_value();
-    });
-
-    auto pubFut = std::async(std::launch::async, [&] {
-        f.avc.OnAudioConfigurationReady(guid, config);
-    });
-
-    admitted.get_future().wait();
-
-    auto teardownFut = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown has reached CloseAndWait, atomically closed the gate, and is waiting
-    teardownGateClosed.get_future().wait();
-    EXPECT_EQ(teardownFut.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-
-    // Resume publication: it observes stopping_ is now true and aborts
-    allowResume.set_value();
-
-    pubFut.wait();
-    teardownFut.wait();
-
-    // Verification: no nub was published after teardown finished
-    EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
-    EXPECT_EQ(f.avc.PublicationRejectCountForTesting(), 1u);
-
-    f.avc.SetBeforePublishHookForTesting({});
-    f.avc.SetOnTeardownGateClosedHookForTesting({});
 }
 
 // Case 4 (DICE): Publication versus Teardown on DiceAudioBackend

@@ -329,7 +329,6 @@ add_device_test(DeviceStreamTraitsAgreementTests
 add_device_test(BackendLifecycleRaceTests
     BackendLifecycleRaceTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/MotuAudioBackend.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AVCAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
@@ -434,7 +433,17 @@ add_device_test(RmeFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
-# AudioCoordinator routing: RME to the audio device host, DICE to its backend
+# AV/C adapter on the audio device host (AUDIO_DEVICE_HOST.md §6 E4).
+add_device_test(AvcFamilyAdapterTests
+    AvcFamilyAdapterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Host/AvcFamilyAdapter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+)
+
+# AudioCoordinator routing: RME and AV/C to the audio device host, DICE to its backend
 # (AUDIO_DEVICE_HOST.md §6 E2). Links the coordinator and the host with the real
 # isoch transport; only the device manager is faked.
 add_device_test(AudioCoordinatorRoutingTests
@@ -444,13 +453,13 @@ add_device_test(AudioCoordinatorRoutingTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Host/AudioDeviceHost.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Host/RmeFamilyAdapter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Host/AvcFamilyAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/AVCAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/DiceAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/MotuAudioBackend.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Backends/IsochDuplexHostTransport.cpp"

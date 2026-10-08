@@ -517,8 +517,12 @@ Below, *Haiku*, *Sonnet* and *Me* (Opus) mark each stage's author.
   capture-diagnostics path (`AudioCoordinator.cpp:475-518`) goes through the MOTU adapter.
 - **E4: AV/C onto the host** (Δ8). *Sonnet*. `DiscoveryCoordinator` pushes the config, so
   `AvcFamilyAdapter::Describe` returns what discovery last delivered or `kIOReturnNotReady`,
-  and discovery's ready event calls `RefreshPublication`. The 256 ms settle moves into
-  `JudgeRuntimeFault`. Hardware: Phase 88 and Duet, timing loss and replug.
+  and discovery's ready event calls `OfferDiscoveredDescription` (store, then
+  `RefreshPublication`). The 256 ms settle moves into `JudgeRuntimeFault`. Hardware: Phase 88
+  and Duet, timing loss and replug.
+  **Done (E4, commit 29499da3).** Cycle-inconsistent stays unforwarded for AV/C, as before.
+  The restart observer now also runs `RefreshPublication` for AV/C, so every restart re-checks
+  the stored discovery description against the live nub (part of Δ8).
 - **E5: DICE onto the host** (Δ5). *Me*. `EnsureNubForGuid`'s body becomes `Describe`,
   with every refusal kept and its log line unchanged. Notifications become `DeviceEvent`s.
   The health probe moves to the host (§4.4). The session goldens already run the real

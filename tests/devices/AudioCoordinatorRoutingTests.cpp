@@ -2,14 +2,16 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioCoordinatorRoutingTests.cpp
-// Which family serves a device event: the RME Fireface goes to the audio device
-// host (documentation/AUDIO_DEVICE_HOST.md §6 E2), DICE stays on its backend.
+// Which family serves a device event: the RME Fireface (E2) and the AV/C
+// family (E4) go to the audio device host (documentation/AUDIO_DEVICE_HOST.md
+// §6), DICE stays on its backend.
 // The coordinator is built for real; only the device manager is a fake, and
 // the assertions read the host's per-outcome counters.
 
 #include <gtest/gtest.h>
 
 #include "Audio/Core/AudioCoordinator.hpp"
+#include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/Host/AudioDeviceHost.hpp"
 #include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
@@ -83,6 +85,9 @@ public:
 
 constexpr uint64_t kRmeGuid = 0x000a3501000000a1ULL;
 constexpr uint64_t kDiceGuid = 0x00130e0400000001ULL;
+constexpr uint64_t kAvcGuid = 0x000aac0300b1d1f7ULL;
+constexpr uint32_t kTa1394Specifier = 0x00A02D;
+constexpr uint32_t kAvcVersion = 0x010001;
 
 struct SeededDevice {
     ConfigROM rom{};
@@ -120,6 +125,26 @@ SeededDevice MakeDiceRom() {
     return MakeRom(kDiceGuid, ASFW::DeviceProfiles::Audio::kFocusriteVendorId,
                    ASFW::DeviceProfiles::Audio::kSPro24DspModelId,
                    ASFW::DeviceProfiles::Audio::kFocusriteVendorId, 0x000001);
+}
+
+// A TerraTec Phase 88: BeBoB, served by the AV/C adapter.
+SeededDevice MakeAvcRom() {
+    return MakeRom(kAvcGuid, ASFW::DeviceProfiles::Audio::kTerraTecVendorId,
+                   ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId, kTa1394Specifier,
+                   kAvcVersion);
+}
+
+// What AV/C discovery would push for the Phase 88.
+ASFW::Audio::Model::ASFWAudioDevice MakeDiscoveredConfig(uint64_t guid) {
+    ASFW::Audio::Model::ASFWAudioDevice config{};
+    config.guid = guid;
+    config.deviceName = "Discovered Phase 88";
+    config.inputChannelCount = 8;
+    config.outputChannelCount = 8;
+    config.channelCount = 8;
+    config.sampleRates = {44100U, 48000U};
+    config.currentSampleRate = 48000U;
+    return config;
 }
 
 // Everything the coordinator is built over. Declared in dependency order; the
@@ -289,6 +314,158 @@ TEST(AudioCoordinatorRoutingTests, BeginTeardownDrainsTheHostOnceAndIsIdempotent
 
     h.coordinator.BeginTeardown();
     EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Teardown, HostOutcome::Drained), 1U);
+}
+
+// ---------------------------------------------------------------------------
+// AV/C (E4): discovery pushes the description, the host publishes it
+// ---------------------------------------------------------------------------
+
+TEST(AudioCoordinatorRoutingTests, AvcDeviceIsServedByTheHost) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    EXPECT_EQ(h.Host().KindForGuid(kAvcGuid), ASFW::Audio::AudioBackendKind::Avc);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcDeviceAddedBeforeDiscoveryIsRefusedAsAwaitingDiscovery) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+
+    h.coordinator.OnDeviceAdded(device);
+
+    EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
+    EXPECT_EQ(h.runtime.FindEndpointRuntime(kAvcGuid), nullptr);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcDeviceResumedWhileIdleIsRefreshedOnceWithoutRebind) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+
+    h.coordinator.OnDeviceResumed(device);
+
+    EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
+    EXPECT_EQ(RebindOutcomes(h.Host()), 0U);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcConfigurationReadyIsPublishedThroughTheHostOnce) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    const auto offered = MakeDiscoveredConfig(kAvcGuid);
+
+    h.coordinator.OnAVCAudioConfigurationReady(kAvcGuid, offered);
+
+    // One publication, decided once. The test publisher has no driver, so the
+    // nub cannot be created: PublishFailed. The decision is still recorded.
+    EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
+
+    // The endpoint runtime carries exactly the description discovery offered.
+    const auto endpoint = h.runtime.FindEndpointRuntime(kAvcGuid);
+    ASSERT_NE(endpoint, nullptr);
+    ASFW::Audio::Model::ASFWAudioDevice committed{};
+    ASSERT_TRUE(endpoint->CopyConfig(committed));
+    EXPECT_EQ(committed.guid, offered.guid);
+    EXPECT_EQ(committed.deviceName, offered.deviceName);
+    EXPECT_EQ(committed.inputChannelCount, offered.inputChannelCount);
+    EXPECT_EQ(committed.outputChannelCount, offered.outputChannelCount);
+    EXPECT_EQ(committed.sampleRates, offered.sampleRates);
+    EXPECT_EQ(committed.currentSampleRate, offered.currentSampleRate);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcDiscoveryAfterAddedPublishesWhatAddedCouldNot) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+
+    h.coordinator.OnDeviceAdded(device);
+    h.coordinator.OnAVCAudioConfigurationReady(kAvcGuid, MakeDiscoveredConfig(kAvcGuid));
+
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
+    EXPECT_EQ(PublishOutcomes(h.Host()), 2U);
+}
+
+TEST(AudioCoordinatorRoutingTests, TimingLossOnAvcIsQueuedAndJudgedOnTheHost) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    uint32_t sleptMs = 0;
+    h.Host().SetSleepForTesting([&sleptMs](uint32_t ms) { sleptMs += ms; });
+    auto* queue = h.Host().WorkQueueForTesting();
+    ASSERT_NE(queue, nullptr);
+    queue->SetManualDispatchForTesting(true);
+
+    h.coordinator.HandleHostTimingLoss(kAvcGuid);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 1U);
+    EXPECT_EQ(RuntimeFaultOutcomes(h.Host()), 1U);
+    queue->DrainAllForTesting();
+
+    // The session is not streaming: the settle sees the device gone on its first
+    // check, so no restart is requested and nothing sleeps.
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::RuntimeFault, HostOutcome::DeviceLeft), 1U);
+    EXPECT_EQ(RestartLikeOutcomes(h.Host()), 0U);
+    EXPECT_EQ(sleptMs, 0U);
+}
+
+TEST(AudioCoordinatorRoutingTests, RemovedAvcDeviceDropsLaterTimingLossSilently) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    h.coordinator.OnDeviceAdded(device);
+    h.coordinator.OnAVCAudioConfigurationReady(kAvcGuid, MakeDiscoveredConfig(kAvcGuid));
+    const uint64_t publishBefore = PublishOutcomes(h.Host());
+
+    h.coordinator.OnDeviceRemoved(kAvcGuid);
+    h.coordinator.HandleHostTimingLoss(kAvcGuid);
+
+    EXPECT_EQ(RuntimeFaultOutcomes(h.Host()), 0U);
+    EXPECT_EQ(PublishOutcomes(h.Host()), publishBefore);
+}
+
+TEST(AudioCoordinatorRoutingTests, RemovalClearsTheStoredAvcDescription) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    h.coordinator.OnAVCAudioConfigurationReady(kAvcGuid, MakeDiscoveredConfig(kAvcGuid));
+    ASSERT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
+    ASSERT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 0U);
+
+    // Still stored: a refresh describes from it again and tries to publish.
+    h.Host().RefreshPublication(kAvcGuid);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 0U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 2U);
+
+    h.coordinator.OnDeviceRemoved(kAvcGuid);
+
+    // Gone with the device: a later refresh waits for discovery again.
+    h.Host().RefreshPublication(kAvcGuid);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 2U);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcTeardownDrainsOnceAndRefusesLaterDiscovery) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+
+    h.coordinator.BeginTeardown();
+    h.coordinator.BeginTeardown();
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Teardown, HostOutcome::Drained), 1U);
+
+    h.coordinator.OnAVCAudioConfigurationReady(kAvcGuid, MakeDiscoveredConfig(kAvcGuid));
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedTeardown), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 0U);
+}
+
+TEST(AudioCoordinatorRoutingTests, AvcIsAudioActiveIsFalseWhenIdle) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeAvcRom());
+    ASSERT_NE(device, nullptr);
+    EXPECT_FALSE(h.coordinator.IsAudioActive(kAvcGuid));
 }
 
 } // namespace
