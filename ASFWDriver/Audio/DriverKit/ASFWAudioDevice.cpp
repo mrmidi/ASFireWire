@@ -1359,6 +1359,11 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     return kr;
 }
 
+kern_return_t ASFWAudioDevice::ReleaseKeptWireForDriverStop() {
+    if (!ivars) return kIOReturnSuccess;
+    return ReleaseIdleKeptWire(*ivars, ASFW::Audio::Runtime::WireReleaseReason::kDriverStop);
+}
+
 kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz) {
     if (!ivars || !ivars->driverIvars) {
         return kIOReturnNotReady;

@@ -62,6 +62,12 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 }
 
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
+    // A wire kept across StopIO gets no StopIO on unplug: release it the way
+    // StopIO does, or the TX isoch resources and their mappings outlive the
+    // device (Phase 88 unplug while retained, 2026-10-08: no release, no free()).
+    if (ivars.audioDevice) {
+        (void)ivars.audioDevice->ReleaseKeptWireForDriverStop();
+    }
     ivars.runtime.isRunning.store(false, std::memory_order_release);
     // A wire kept across StopIO (Runtime/WireRetention.hpp) still has its TX
     // producer armed: stop it and wait out a pass in flight before the stream
