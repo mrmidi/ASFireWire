@@ -10,11 +10,11 @@
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
 #include "../Protocols/Backends/DiceAudioBackend.hpp"
-#include "../Protocols/Backends/MotuAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Session/AudioSessions.hpp"
 #include "../Host/AudioDeviceHost.hpp"
 #include "../Host/AvcFamilyAdapter.hpp"
+#include "../Host/MotuFamilyAdapter.hpp"
 #include "../Host/RmeFamilyAdapter.hpp"
 
 #include "../../Logging/Logging.hpp"
@@ -83,7 +83,6 @@ public:
     // composition before device callbacks begin.
     void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept { sessions_.SetTimerScheduler(timer); }
     void HandleHostTimingLoss(uint64_t guid) noexcept;
-    [[nodiscard]] bool RequestMotuTimingRecovery(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
                                             uint32_t command, std::string& output) noexcept;
 
@@ -115,11 +114,11 @@ private:
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
     DiceAudioBackend dice_;
-    MotuAudioBackend motu_;
     // Families moved onto the host (documentation/AUDIO_DEVICE_HOST.md §6).
     // Adapters are declared before the host so they outlive its teardown.
     Host::RmeFamilyAdapter rmeAdapter_;
     Host::AvcFamilyAdapter avcAdapter_;
+    Host::MotuFamilyAdapter motuAdapter_;
     Host::AudioDeviceHost host_;
 
     IOLock* lock_{nullptr};

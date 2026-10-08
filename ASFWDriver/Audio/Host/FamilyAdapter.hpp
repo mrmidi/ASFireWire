@@ -60,7 +60,17 @@ struct DescribeRefusal {
     const char* reason{"unspecified"};
 };
 
-using DescribeResult = std::variant<Model::ASFWAudioDevice, KeepCommitted, DescribeRefusal>;
+/// A description the family could not fully read from the device (it fell back
+/// to a model constant). `note` is a static string the host prints once, in the
+/// [AudioHost] line of the publication, so a fallback is visible next to the
+/// outcome it produced.
+struct DescribedWithNote {
+    Model::ASFWAudioDevice device;
+    const char* note{"unspecified"};
+};
+
+using DescribeResult =
+    std::variant<Model::ASFWAudioDevice, KeepCommitted, DescribeRefusal, DescribedWithNote>;
 /// Called exactly once, on any thread, possibly after Describe returned.
 using DescribeDone = std::function<void(DescribeResult)>;
 

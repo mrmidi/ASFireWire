@@ -209,8 +209,8 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
-    // Stage 2b D1: defensive teardown in the destructor, matching MotuAudioBackend's
-    // shape. Normal lifecycle calls BeginTeardown() explicitly before destruction;
+    // Stage 2b D1: defensive teardown in the destructor (the shape the host's
+    // destructor also uses). Normal lifecycle calls BeginTeardown() explicitly before destruction;
     // this only covers a destructor-only path. Idempotent by exchange latch.
     BeginTeardown();
     notifications_.ClearObserver(this);

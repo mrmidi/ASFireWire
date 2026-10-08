@@ -33,7 +33,6 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                     return endpoint ? endpoint.get() : nullptr;
                 })
     , dice_(publisher_, registry_, runtime_, sessions_, diceNotifications)
-    , motu_(publisher_, registry_, runtime_, sessions_)
     , host_(publisher_, registry_, runtime_, sessions_, hostTransport_) {
     lock_ = IOLockAlloc();
     if (!lock_) {
@@ -42,6 +41,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
 
     host_.Install(AudioBackendKind::RmeRegister, rmeAdapter_);
     host_.Install(AudioBackendKind::Avc, avcAdapter_);
+    host_.Install(AudioBackendKind::MotuRegister, motuAdapter_);
 
     sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
@@ -191,7 +191,6 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // removal is reported. Cancel all backend work so cleanup does not depend
     // on resolving a policy for a device that is known to be gone.
     dice_.CancelRemoteDeviceWork(guid);
-    motu_.CancelRemoteDeviceWork(guid);
     host_.CancelRemoteDeviceWork(guid);
 
     kern_return_t hostStatus = kIOReturnSuccess;
@@ -248,7 +247,7 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
         return;
     }
 
-    // Only backends forward it. RME and AV/C never acted on cycle inconsistent;
+    // Only backends forward it. RME, AV/C and MOTU never acted on cycle inconsistent;
     // whether the host forwards it for every family is decided when DICE, the
     // one family that acts on it, moves (AUDIO_DEVICE_HOST.md §6 E5).
     if (auto* backend = BackendForGuid(guid)) {
@@ -272,7 +271,7 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     }
     switch (*backendKind) {
         case AudioBackendKind::MotuRegister:
-            return &motu_;
+            return nullptr;  // served by the host
         case AudioBackendKind::RmeRegister:
             return nullptr;  // served by the host
         case AudioBackendKind::Dice:
@@ -285,7 +284,8 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
 
 bool AudioCoordinator::ServedByHost(uint64_t guid) const noexcept {
     const auto kind = host_.KindForGuid(guid);
-    return kind.has_value() && (*kind == AudioBackendKind::RmeRegister || *kind == AudioBackendKind::Avc);
+    return kind.has_value() && (*kind == AudioBackendKind::RmeRegister || *kind == AudioBackendKind::Avc ||
+                                *kind == AudioBackendKind::MotuRegister);
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock) noexcept {
@@ -463,7 +463,6 @@ void AudioCoordinator::BeginTeardown() noexcept {
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
     dice_.BeginTeardown();
-    motu_.BeginTeardown();
     host_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
@@ -503,7 +502,7 @@ IOReturn AudioCoordinator::MotuCaptureCommand(uint64_t guid, uint32_t stream,
     if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnNotReady;
     if (command == 0) {
         // Only arm a known MOTU endpoint; never label another family's packets as MOTU.
-        if (BackendForGuid(guid) != &motu_) return kIOReturnUnsupported;
+        if (host_.KindForGuid(guid) != AudioBackendKind::MotuRegister) return kIOReturnUnsupported;
         const auto protocol = runtime_.FindShared(guid);
         if (!protocol) return kIOReturnNotReady;
         Wire::MotuRxStreamMetadata metadata{};
@@ -528,12 +527,6 @@ IOReturn AudioCoordinator::MotuCaptureCommand(uint64_t guid, uint32_t stream,
         if (output.empty()) return kIOReturnBusy;
     }
     return kIOReturnSuccess;
-}
-
-bool AudioCoordinator::RequestMotuTimingRecovery(uint64_t guid) noexcept {
-    if (teardownRequested_.load(std::memory_order_acquire) || BackendForGuid(guid) != &motu_)
-        return false;
-    return motu_.QueueTimingRecovery(guid);
 }
 
 void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {

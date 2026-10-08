@@ -338,6 +338,34 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             return;
         }
 
+        // Publish a description, or check it against the live nub. `note` (may be
+        // null) is the family's account of a fallback it made; the host prints it
+        // beside the outcome it produced.
+        const auto publish = [&](const Model::ASFWAudioDevice& value, const char* note) {
+            char detail[96];
+            const char* detailText = nullptr;
+            if (note != nullptr) {
+                snprintf(detail, sizeof(detail), "note=%s", note);
+                detailText = detail;
+            }
+            // A live nub's graph was read once; never replace the runtime
+            // config under it. Check, and latch a mismatch (§4.3).
+            if (publisher_.GetNub(guid) != nullptr) {
+                const bool unchanged = publisher_.RefreshNubProperties(guid, value, family);
+                Record(guid, family, HostEvent::Publish,
+                       unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
+                       unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
+                return;
+            }
+            if (const auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+                endpoint->UpdateConfig(value);
+            }
+            const bool published = publisher_.EnsureNub(guid, value, family);
+            Record(guid, family, HostEvent::Publish,
+                   published ? HostOutcome::Published : HostOutcome::PublishFailed,
+                   published ? kIOReturnSuccess : kIOReturnError, 0, detailText);
+        };
+
         std::visit(
             [&](const auto& value) {
                 using T = std::decay_t<decltype(value)>;
@@ -348,23 +376,10 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                            0, detail);
                 } else if constexpr (std::is_same_v<T, KeepCommitted>) {
                     Record(guid, family, HostEvent::Publish, HostOutcome::KeptCommittedFormation);
+                } else if constexpr (std::is_same_v<T, DescribedWithNote>) {
+                    publish(value.device, value.note);
                 } else {
-                    // A live nub's graph was read once; never replace the runtime
-                    // config under it. Check, and latch a mismatch (§4.3).
-                    if (publisher_.GetNub(guid) != nullptr) {
-                        const bool unchanged = publisher_.RefreshNubProperties(guid, value, family);
-                        Record(guid, family, HostEvent::Publish,
-                               unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
-                               unchanged ? kIOReturnSuccess : kIOReturnNotPermitted);
-                        return;
-                    }
-                    if (const auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
-                        endpoint->UpdateConfig(value);
-                    }
-                    const bool published = publisher_.EnsureNub(guid, value, family);
-                    Record(guid, family, HostEvent::Publish,
-                           published ? HostOutcome::Published : HostOutcome::PublishFailed,
-                           published ? kIOReturnSuccess : kIOReturnError);
+                    publish(value, nullptr);
                 }
             },
             result);
