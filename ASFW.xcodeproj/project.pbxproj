@@ -977,6 +977,7 @@
 		68FCF09440E88789D78C6AD6 /* GapCountOptimizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = GapCountOptimizer.hpp; sourceTree = "<group>"; };
 		6990DACCD98CD6D7F483A379 /* TransactionHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionHandler.hpp; sourceTree = "<group>"; };
 		69DA61FB6DCC4A0CA981A042 /* AVCCommandFilter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCCommandFilter.hpp; sourceTree = "<group>"; };
+		69F6BB42F81D1FFC8653F3B1 /* WireRetention.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WireRetention.hpp; sourceTree = "<group>"; };
 		6A3F62568E393783B10656D1 /* AVCHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCHandler.hpp; sourceTree = "<group>"; };
 		6A754FD91C272D2F8CCC9EE0 /* DiceWireTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceWireTests.swift; sourceTree = "<group>"; };
 		6A816C540C2BEB377CE294ED /* DriverConnector+Saffire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+Saffire.swift"; sourceTree = "<group>"; };
@@ -3700,6 +3701,7 @@
 				88D6BD97ADB99F287CA2A904 /* ResolvedTimingGeometry.hpp */,
 				FBE4833B65F8742236FCCE28 /* Seqlock.hpp */,
 				790F88B19E2C68FF684F5356 /* TxCompletionStampDrain.hpp */,
+				69F6BB42F81D1FFC8653F3B1 /* WireRetention.hpp */,
 				D783CA293D481BE11F1DE208 /* Configuration */,
 			);
 			path = Runtime;

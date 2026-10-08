@@ -117,6 +117,14 @@ public:
     // (Linux waits 4 s; cross-validated with Linux bebob_stream.c:10,636-666).
     [[nodiscard]] virtual uint32_t InitialClockAnchorTimeoutMs() const noexcept { return 500; }
 
+    // Keep the device's wire running across CoreAudio StopIO, and keep a
+    // warming wire when a start's first timestamp is late, so the HAL's
+    // StopIO/StartIO churn and retries cost no bus traffic and do not restart
+    // the device's own warm-up (Runtime/WireRetention.hpp; AppleFWAudio keeps
+    // streams from device start to device stop). Opt-in per profile until each
+    // family is verified on hardware.
+    [[nodiscard]] virtual bool RetainsWireAcrossStopIO() const noexcept { return false; }
+
     // Sum the streams the device actually carries. The previous form was
     // pcmChannels * StreamCount(), which silently assumes every stream has
     // stream 0's width: the recorded Venice F24 carries 16 + 8, so that form

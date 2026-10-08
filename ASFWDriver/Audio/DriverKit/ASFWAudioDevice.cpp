@@ -9,6 +9,7 @@
 #include <new>
 #include "../Runtime/Configuration/DeviceConfigurationStateMachine.hpp"
 #include "../Runtime/RateValidation.hpp"
+#include "../Runtime/WireRetention.hpp"
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
@@ -40,7 +41,9 @@ struct ASFWAudioDevice_IVars {
     // An unresolved stop must not be disguised as a stopped configuration
     // window. Keep the mappings alive until a subsequent stop succeeds.
     std::atomic<kern_return_t> transportStopStatus{kIOReturnSuccess};
-
+    // Whether the wire outlives CoreAudio IO (Runtime/WireRetention.hpp).
+    // Touched only on the driver's work queue (RunOnWorkQueue).
+    ASFW::Audio::Runtime::WireRetention wire{};
 };
 
 bool ASFWAudioDevice::init(IOUserAudioDriver* in_driver,
@@ -96,6 +99,173 @@ void QuiesceTxPreparation(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 }
 
+// The wire state is serialised on the driver's work queue. StartIO/StopIO and
+// the HAL configuration calls arrive off it; the driver's own actions
+// (IoRestartRequired, DeviceClockChanged) and Stop run on it.
+void RunOnWorkQueue(ASFWAudioDriver_IVars& ivars, IODispatchBlock block) noexcept {
+    if (!ivars.workQueue || ivars.workQueue->OnQueue()) {
+        block();
+        return;
+    }
+    ivars.workQueue->DispatchSync(block);
+}
+
+// The profile opts in. M-Audio's transmit-sourced clock is excluded: its
+// timeline epoch is owned by the TX bridge armed per start.
+[[nodiscard]] bool WireRetainable(const ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto* profile =
+        static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
+    return profile != nullptr && profile->RetainsWireAcrossStopIO() &&
+           !ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire);
+}
+
+// A kept wire is only worth joining while transport and producer are sound.
+[[nodiscard]] bool TransportHealthy(const ASFWAudioDriver_IVars& ivars,
+                                    kern_return_t stopStatus) noexcept {
+    const auto* control = ivars.runtime.directAudioGraph.control;
+    return stopStatus == kIOReturnSuccess && control != nullptr &&
+           control->fatalGeneration.load(std::memory_order_acquire) == 0 &&
+           ivars.runtime.txActive.load(std::memory_order_acquire) &&
+           ivars.runtime.txSlotProvider.queueControl != nullptr;
+}
+
+// Stop the wire and release the audio-owned TX slabs. The body StopIO always
+// had, minus the HAL's own StopIO: also used to drop a kept wire nobody else
+// will stop (rate change, IO restart, fault, driver stop). On a failed remote
+// stop the mappings are kept, as before, and the failure is latched.
+kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
+                                   std::atomic<kern_return_t>& stopStatus) noexcept {
+    ivars.runtime.isRunning.store(false, std::memory_order_release);
+    QuiesceTxPreparation(ivars);
+    ivars.runtime.mAudioInternalTxTiming.Disarm();
+    ivars.runtime.mAudioTxClockBridge.Disarm();
+    ivars.runtime.mAudioInternalTxActive = false;
+
+    const auto& fill = ivars.runtime.txStreamEngine.PayloadWriterCounters();
+    ASFW_LOG(Audio,
+             "[TxFillSummary] visited=%llu written=%llu withoutPacket=%llu outsidePacket=%llu missedFinality=%llu",
+             fill.framesVisited.load(std::memory_order_relaxed),
+             fill.framesWritten.load(std::memory_order_relaxed),
+             fill.framesWithoutPacket.load(std::memory_order_relaxed),
+             fill.framesOutsidePacket.load(std::memory_order_relaxed),
+             fill.framesMissedFinality.load(std::memory_order_relaxed));
+
+    if (ivars.runtime.directAudioGraph.control) {
+        const auto* control = ivars.runtime.directAudioGraph.control;
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG STOPIO guid=0x%016llx callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
+                 ivars.device.guid,
+                 ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
+                 ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
+                 control->counters.ztsPublished.load(std::memory_order_relaxed),
+                 control->counters.ztsRxPublished.load(std::memory_order_relaxed),
+                 control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed),
+                 control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
+                 control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
+                 control->client.outputClientWriteEndFrame.load(std::memory_order_acquire),
+                 control->counters.txPackets.load(std::memory_order_relaxed),
+                 control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
+                 control->counters.txUnderruns.load(std::memory_order_relaxed));
+    }
+
+    if (ivars.device.audioNub) {
+        const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
+        stopStatus.store(stopKr, std::memory_order_release);
+        if (stopKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+            ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+            return stopKr;
+        }
+    }
+
+    ivars.txPayloadMap = nullptr;
+    ivars.txMetadataMap = nullptr;
+    ivars.txControlMap = nullptr;
+    ivars.txPayloadBuffer = nullptr;
+    ivars.txMetadataBuffer = nullptr;
+    ivars.txControlBuffer = nullptr;
+    ivars.runtime.txSlotProvider.payloadBase = nullptr;
+    ivars.runtime.txSlotProvider.metadataRing = nullptr;
+    ivars.runtime.txSlotProvider.queueControl = nullptr;
+    ivars.runtime.txSlotProvider.numSlots = 0;
+    ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+
+    // Secondary playback stream teardown. Drop txSecondaryActive first so the
+    // RT pump/IO paths stop touching the secondary engine before its mapped
+    // slab is released.
+    ivars.runtime.txSecondaryActive = false;
+    ivars.txPayloadMapSecondary = nullptr;
+    ivars.txMetadataMapSecondary = nullptr;
+    ivars.txControlMapSecondary = nullptr;
+    ivars.txPayloadBufferSecondary = nullptr;
+    ivars.txMetadataBufferSecondary = nullptr;
+    ivars.txControlBufferSecondary = nullptr;
+    ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
+    ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
+    ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
+    ivars.runtime.txSlotProviderSecondary.numSlots = 0;
+
+    if (ivars.device.audioNub) {
+        ivars.device.audioNub->FreeTxIsochResources();
+    }
+    return kIOReturnSuccess;
+}
+
+// Release a kept wire and say why. Every release of a wire that outlived IO
+// goes through here, so one [WireRetain] line names each.
+kern_return_t ReleaseKeptWire(ASFWAudioDriver_IVars& ivars,
+                              std::atomic<kern_return_t>& stopStatus,
+                              ASFW::Audio::Runtime::WireRetention& wire,
+                              ASFW::Audio::Runtime::WireReleaseReason reason) noexcept {
+    const auto previous = wire.State();
+    const uint32_t rate = wire.RateHz();
+    const kern_return_t kr = ReleaseWireTransport(ivars, stopStatus);
+    wire.OnReleased();
+    ASFW_LOG(Audio,
+             "[WireRetain] phase=release guid=0x%016llx reason=%{public}s from=%{public}s rate=%u kr=0x%x (%{public}s)",
+             ivars.device.guid, ASFW::Audio::Runtime::WireReleaseReasonName(reason),
+             ASFW::Audio::Runtime::WireStateName(previous), rate, kr,
+             ASFW::Logging::IOReturnName(kr));
+    return kr;
+}
+
+// CoreAudio-facing write state for a client joining a running wire: the first
+// write after this is handled exactly as a fresh start's first write
+// (PlaybackRingRange firstWrite; FillTransmitPayloads starts at it). The TX
+// timeline, RX replay and the hardware timeline are left running.
+void ResetClientWriteSide(ASFWAudioDriver_IVars& ivars,
+                          ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    control.client.Reset();
+    control.playbackRingWriteFrame.store(0, std::memory_order_relaxed);
+    control.playbackRingReadFrame.store(0, std::memory_order_relaxed);
+    control.playbackRingOldestValidFrame.store(0, std::memory_order_release);
+    ivars.runtime.txFilledFrameEnd = 0;
+    ivars.runtime.txPlacementLogged = false;
+    ivars.runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
+    ivars.runtime.ioCallbacksOutsideRun.store(0, std::memory_order_relaxed);
+    // The next anchor the RX side publishes on the continuing timeline is the
+    // join's first timestamp.
+    ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
+}
+
+// An event that invalidates a kept wire while CoreAudio IO is stopped: nobody
+// else will stop that wire (no StopIO follows), so release it here. A live
+// wire is left to the StopIO the HAL issues around the change.
+kern_return_t ReleaseIdleKeptWire(ASFWAudioDevice_IVars& local,
+                                  ASFW::Audio::Runtime::WireReleaseReason reason) noexcept {
+    if (!local.driverIvars) return kIOReturnSuccess;
+    auto& ivars = *local.driverIvars;
+    __block kern_return_t kr = kIOReturnSuccess;
+    RunOnWorkQueue(ivars, ^{
+        if (local.wire.MustReleaseOnInvalidation()) {
+            kr = ReleaseKeptWire(ivars, local.transportStopStatus, local.wire, reason);
+        }
+    });
+    return kr;
+}
+
 } // namespace
 
 kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
@@ -116,9 +286,13 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     IOLockUnlock(this->ivars->rateLock);
     if (pendingRate) return kIOReturnBusy;
     auto& ivars = *this->ivars->driverIvars;
+    auto& local = *this->ivars;
     __block kern_return_t kr = kIOReturnSuccess;
 
     ivars.workQueue->DispatchSync(^{
+        using ASFW::Audio::Runtime::WireReleaseReason;
+        using ASFW::Audio::Runtime::WireStartPlan;
+        using ASFW::Audio::Runtime::WireStopPlan;
         bool streamingStarted = false;
         bool txResourcesAllocated = false;
 
@@ -185,6 +359,72 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      result, ASFW::Logging::IOReturnName(result));
             return result;
         };
+
+        // --- Kept wire: join it, or release it before a full start ---
+        const uint32_t startRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate);
+        {
+            WireReleaseReason releaseReason{};
+            const auto plan = local.wire.PlanStart(
+                startRateHz,
+                TransportHealthy(ivars, local.transportStopStatus.load(std::memory_order_acquire)),
+                &releaseReason);
+            if (plan == WireStartPlan::kReleaseThenFresh) {
+                const kern_return_t releaseKr =
+                    ReleaseKeptWire(ivars, local.transportStopStatus, local.wire, releaseReason);
+                if (releaseKr != kIOReturnSuccess) {
+                    kr = releaseKr;
+                    return;
+                }
+            } else if (plan == WireStartPlan::kRejoin) {
+                auto* control = ivars.runtime.directAudioGraph.control;
+                const auto* profile =
+                    static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
+                const uint32_t budgetMs = profile ? profile->InitialClockAnchorTimeoutMs() : 500U;
+                ResetClientWriteSide(ivars, *control);
+                uint32_t waitMs = 0;
+                while (ivars.runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_acquire) == 0 &&
+                       waitMs < budgetMs) {
+                    IOSleep(1);
+                    ++waitMs;
+                }
+                if (ivars.runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_acquire) == 0) {
+                    WireReleaseReason timeoutReason{};
+                    if (local.wire.PlanStartTimeout(
+                            true,
+                            TransportHealthy(ivars, local.transportStopStatus.load(std::memory_order_acquire)),
+                            &timeoutReason) == WireStopPlan::kRetain) {
+                        local.wire.OnStartTimedOutRetained(startRateHz);
+                        ASFW_LOG(Audio,
+                                 "[WireRetain] phase=rejoin-timeout action=keep guid=0x%016llx rate=%u waitMs=%u timeouts=%u rxData=%llu rxNoData=%llu",
+                                 ivars.device.guid, startRateHz, waitMs,
+                                 local.wire.ConsecutiveStartTimeouts(),
+                                 control->rxDataPackets.load(std::memory_order_relaxed),
+                                 control->rxNoDataPackets.load(std::memory_order_relaxed));
+                    } else {
+                        (void)ReleaseKeptWire(ivars, local.transportStopStatus, local.wire, timeoutReason);
+                    }
+                    kr = kIOReturnTimeout;
+                    return;
+                }
+                ivars.runtime.isRunning.store(true, std::memory_order_release);
+                kr = super::StartIO(in_flags);
+                if (kr != kIOReturnSuccess) {
+                    ivars.runtime.isRunning.store(false, std::memory_order_release);
+                    (void)ReleaseKeptWire(ivars, local.transportStopStatus, local.wire,
+                                          WireReleaseReason::kHalStartFailed);
+                    return;
+                }
+                local.wire.OnStarted(startRateHz);
+                ASFW_LOG(Audio,
+                         "[WireRetain] phase=rejoin guid=0x%016llx rate=%u waitMs=%u epoch=%llu ztsSample=%llu txPackets=%llu txUnderruns=%llu",
+                         ivars.device.guid, startRateHz, waitMs,
+                         control->hardwareTimeline.Epoch(),
+                         ivars.runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_acquire),
+                         control->counters.txPackets.load(std::memory_order_relaxed),
+                         control->counters.txUnderruns.load(std::memory_order_relaxed));
+                return;
+            }
+        }
 
         // --- Reset IO state ---
         ivars.runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
@@ -566,7 +806,26 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     "(no control block)",
                     ztsWaitMs);
             }
+            // Keep the warming wire for the HAL's retry instead of tearing it
+            // down: a teardown restarts the device's own warm-up (Phase 88:
+            // 4+ s of NO-DATA after each fresh start, 2026-10-08 log).
+            WireReleaseReason timeoutReason{};
+            if (WireRetainable(ivars) &&
+                local.wire.PlanStartTimeout(
+                    true,
+                    TransportHealthy(ivars, local.transportStopStatus.load(std::memory_order_acquire)),
+                    &timeoutReason) == WireStopPlan::kRetain) {
+                ivars.runtime.isRunning.store(false, std::memory_order_release);
+                local.wire.OnStartTimedOutRetained(startRateHz);
+                ASFW_LOG(Audio,
+                         "[WireRetain] phase=start-timeout action=keep guid=0x%016llx rate=%u waitMs=%u timeouts=%u",
+                         ivars.device.guid, startRateHz, ztsWaitMs,
+                         local.wire.ConsecutiveStartTimeouts());
+                kr = kIOReturnTimeout;
+                return;
+            }
             kr = failStart(kIOReturnTimeout, "WaitForInitialHardwareZts");
+            local.wire.OnReleased();
             return;
         }
         ASFW_LOG(
@@ -586,6 +845,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             kr = failStart(kr, "super::StartIO");
             return;
         }
+        local.wire.OnStarted(startRateHz);
         ASFW_LOG(
             DirectAudio,
             "ADK DBG StartIO super::StartIO ok callbacks=%llu outsideRun=%llu",
@@ -682,87 +942,54 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
              static_cast<uint64_t>(in_flags));
 
     auto& ivars = *this->ivars->driverIvars;
+    auto& local = *this->ivars;
     __block kern_return_t kr = kIOReturnSuccess;
 
     ivars.workQueue->DispatchSync(^{
+        using ASFW::Audio::Runtime::WireState;
+        using ASFW::Audio::Runtime::WireStopPlan;
         ivars.runtime.isRunning.store(false, std::memory_order_release);
-        QuiesceTxPreparation(ivars);
-        ivars.runtime.mAudioInternalTxTiming.Disarm();
-        ivars.runtime.mAudioTxClockBridge.Disarm();
-        ivars.runtime.mAudioInternalTxActive = false;
 
-        const auto& fill = ivars.runtime.txStreamEngine.PayloadWriterCounters();
-        ASFW_LOG(Audio,
-                 "[TxFillSummary] visited=%llu written=%llu withoutPacket=%llu outsidePacket=%llu missedFinality=%llu",
-                 fill.framesVisited.load(std::memory_order_relaxed),
-                 fill.framesWritten.load(std::memory_order_relaxed),
-                 fill.framesWithoutPacket.load(std::memory_order_relaxed),
-                 fill.framesOutsidePacket.load(std::memory_order_relaxed),
-                 fill.framesMissedFinality.load(std::memory_order_relaxed));
-
-        if (ivars.runtime.directAudioGraph.control) {
+        // Keep the wire when the profile opts in and it is sound
+        // (Runtime/WireRetention.hpp; AppleFWAudio's engine stop leaves the
+        // streams running). The TX producer keeps arming packets; with no
+        // new CoreAudio writes they carry silence (PlaybackRingRange).
+        const auto stopStatus = local.transportStopStatus.load(std::memory_order_acquire);
+        if (local.wire.State() == WireState::kRetained) {
+            kr = super::StopIO(in_flags);
+            return;
+        }
+        ASFW::Audio::Runtime::WireReleaseReason reason{};
+        if (local.wire.State() == WireState::kLive &&
+            local.wire.PlanStop(WireRetainable(ivars), TransportHealthy(ivars, stopStatus),
+                                &reason) == WireStopPlan::kRetain) {
+            local.wire.OnRetained();
             const auto* control = ivars.runtime.directAudioGraph.control;
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG STOPIO guid=0x%016llx callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
-                     ivars.device.guid,
-                     ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
-                     ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
-                     control->counters.ztsPublished.load(std::memory_order_relaxed),
-                     control->counters.ztsRxPublished.load(std::memory_order_relaxed),
-                     control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed),
-                     control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
-                     control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
-                     control->client.outputClientWriteEndFrame.load(std::memory_order_acquire),
-                     control->counters.txPackets.load(std::memory_order_relaxed),
-                     control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
-                     control->counters.txUnderruns.load(std::memory_order_relaxed));
+            ASFW_LOG(Audio,
+                     "[WireRetain] phase=retain guid=0x%016llx rate=%u txPackets=%llu txUnderruns=%llu",
+                     ivars.device.guid, local.wire.RateHz(),
+                     control ? control->counters.txPackets.load(std::memory_order_relaxed) : 0ULL,
+                     control ? control->counters.txUnderruns.load(std::memory_order_relaxed) : 0ULL);
+            kr = super::StopIO(in_flags);
+            return;
         }
 
-        if (ivars.device.audioNub) {
-            const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
-            this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
-            if (stopKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
-                ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
-                // Stop HAL IO even when the remote connection cannot be
-                // released, but propagate the failure and retain DMA memory.
-                (void)super::StopIO(in_flags);
-                kr = stopKr;
-                return;
-            }
+        kern_return_t stopKr = kIOReturnSuccess;
+        // A profile that never keeps the wire stops as it always did, without a
+        // [WireRetain] line on every StopIO.
+        if (local.wire.State() == WireState::kLive && WireRetainable(ivars)) {
+            stopKr = ReleaseKeptWire(ivars, local.transportStopStatus, local.wire, reason);
+        } else {
+            stopKr = ReleaseWireTransport(ivars, local.transportStopStatus);
+            local.wire.OnReleased();
         }
-
-        ivars.txPayloadMap = nullptr;
-        ivars.txMetadataMap = nullptr;
-        ivars.txControlMap = nullptr;
-        ivars.txPayloadBuffer = nullptr;
-        ivars.txMetadataBuffer = nullptr;
-        ivars.txControlBuffer = nullptr;
-        ivars.runtime.txSlotProvider.payloadBase = nullptr;
-        ivars.runtime.txSlotProvider.metadataRing = nullptr;
-        ivars.runtime.txSlotProvider.queueControl = nullptr;
-        ivars.runtime.txSlotProvider.numSlots = 0;
-        ivars.runtime.txExecutionTimeline.queueControl = nullptr;
-
-        // Secondary playback stream teardown. Drop txSecondaryActive first so the
-        // RT pump/IO paths stop touching the secondary engine before its mapped
-        // slab is released.
-        ivars.runtime.txSecondaryActive = false;
-        ivars.txPayloadMapSecondary = nullptr;
-        ivars.txMetadataMapSecondary = nullptr;
-        ivars.txControlMapSecondary = nullptr;
-        ivars.txPayloadBufferSecondary = nullptr;
-        ivars.txMetadataBufferSecondary = nullptr;
-        ivars.txControlBufferSecondary = nullptr;
-        ivars.runtime.txSlotProviderSecondary.payloadBase = nullptr;
-        ivars.runtime.txSlotProviderSecondary.metadataRing = nullptr;
-        ivars.runtime.txSlotProviderSecondary.queueControl = nullptr;
-        ivars.runtime.txSlotProviderSecondary.numSlots = 0;
-
-        if (ivars.device.audioNub) {
-            ivars.device.audioNub->FreeTxIsochResources();
+        if (stopKr != kIOReturnSuccess) {
+            // Stop HAL IO even when the remote connection cannot be released,
+            // but propagate the failure and retain DMA memory.
+            (void)super::StopIO(in_flags);
+            kr = stopKr;
+            return;
         }
-
         kr = super::StopIO(in_flags);
     });
 
@@ -1083,6 +1310,9 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
         ASFW_LOG(Audio, "[RateTxn] phase=stage origin=%{public}s guid=%016llx token=%llu gen=%u old=%u requested=%u",
             hardwareObservation ? "HardwareObservation" : "CoreAudio", ivars.device.guid, identity.token, ivars.device.rateBusGeneration,
             static_cast<uint32_t>(ivars.device.currentSampleRate), rateHz);
+        // The kept wire carries the old rate; the session must apply the new
+        // one with the wire down, as it does after a StopIO that releases.
+        (void)ReleaseIdleKeptWire(local, ASFW::Audio::Runtime::WireReleaseReason::kRateChange);
         const auto status = RequestDeviceConfigurationChange(kAvcRateActionPrefix | identity.token, nullptr);
         if (status != kIOReturnSuccess) {
             IOLockLock(local.rateLock);
@@ -1116,6 +1346,7 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     // The commit (including the ZTS period, legal only inside the perform
     // window) happens in PerformDeviceConfigurationChange; the host stops IO,
     // performs, then restarts IO (SAMPLE_RATE_EXPANSION.md, ADK transaction).
+    (void)ReleaseIdleKeptWire(*this->ivars, ASFW::Audio::Runtime::WireReleaseReason::kRateChange);
     ivars.device.pendingSampleRateHz.store(rateHz, std::memory_order_release);
     const kern_return_t kr =
         RequestDeviceConfigurationChange(kConfigChangeActionSampleRate, nullptr);
@@ -1141,6 +1372,7 @@ kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz)
         return kIOReturnSuccess; // already in sync — nothing to do
     }
 
+    (void)ReleaseIdleKeptWire(*this->ivars, ASFW::Audio::Runtime::WireReleaseReason::kRateChange);
     driverIvars.device.pendingSampleRateHz.store(nominalRateHz,
                                                  std::memory_order_release);
     ASFW_LOG(Audio,
@@ -1158,6 +1390,20 @@ kern_return_t ASFWAudioDevice::RequestIoRestart(uint32_t reason) {
              "ASFWAudioDevice: transport requests an IO restart (reason=%u) -- "
              "requesting configuration-change window",
              reason);
+    if (ivars && ivars->driverIvars) {
+        // An idle kept wire is released now: no StopIO will come for it. A live
+        // wire is marked, so the StopIO inside the window releases it and the
+        // StartIO after it rebuilds the TX queue (the point of the restart).
+        auto& local = *ivars;
+        RunOnWorkQueue(*local.driverIvars, ^{
+            if (local.wire.MustReleaseOnInvalidation()) {
+                (void)ReleaseKeptWire(*local.driverIvars, local.transportStopStatus, local.wire,
+                                      ASFW::Audio::Runtime::WireReleaseReason::kIoRestart);
+            } else {
+                local.wire.OnIoRestartRequested();
+            }
+        });
+    }
     return RequestDeviceConfigurationChange(kConfigChangeActionIoRestart, nullptr);
 }
 

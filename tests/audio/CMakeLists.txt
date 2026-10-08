@@ -163,6 +163,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
+    AudioRuntime/WireRetentionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
 )
 
