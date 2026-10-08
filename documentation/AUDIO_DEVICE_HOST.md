@@ -266,22 +266,31 @@ public:
     virtual const char* Name() const noexcept = 0;
 
     // Build the endpoint description. May complete later (DICE loads geometry
-    // asynchronously); must complete exactly once. An error refuses publication
-    // and names why in the log; it is not retried by the host.
-    using DescribeDone = std::function<void(std::expected<Model::ASFWAudioDevice, IOReturn>)>;
+    // asynchronously); completes exactly once with a description, KeepCommitted
+    // (leave the live endpoint alone, §4.3), or a DescribeRefusal{kr, reason}.
+    // A refusal is not retried by the host.
     virtual void Describe(const DescribeInput& in, DescribeDone done) = 0;
 
-    // Runs on the host queue, may block. `cancel` reads true on teardown or
-    // device removal; waits must give up when it does.
+    // Runs on the host queue, may block; returns promptly once
+    // context.Cancelled() reads true.
     virtual FaultVerdict JudgeRuntimeFault(uint64_t guid, DuplexRestartReason reason,
-                                           const std::atomic<bool>& cancel) = 0;
+                                           FaultContext& context) = 0;
 
-    // The host wires its event sink in once, before device callbacks begin.
+    // The host wires its event sink in once, before device callbacks begin;
+    // null detaches it at teardown.
     virtual void SetEventSink(DeviceEventSink* sink) noexcept = 0;
 };
 
+using DescribeResult = std::variant<Model::ASFWAudioDevice, KeepCommitted, DescribeRefusal>;
 enum class FaultVerdict { kRestart, kSelfHealed, kDeviceLeft };
 ```
+
+`FaultContext` is what a judgement may ask about the live system, implemented by the host
+for one device and one fault: `Cancelled()`, `StillStreaming()`,
+`ReceiveReplayEstablished()` (AV/C's test), `ReadHealth(timeoutMs)` (DICE's test, through
+`FamilyDriver::ReadHealth`, holding the protocol alive), and `Sleep(ms)` (replaceable in
+tests). The adapter needs no references of its own. The code is in
+`ASFWDriver/Audio/Host/FamilyAdapter.hpp`.
 
 `DescribeInput` holds the registry record snapshot, the resolved policy and route token,
 and the `shared_ptr<IDeviceProtocol>`. These are exactly the inputs the four
@@ -439,6 +448,7 @@ commit that makes it.
 | Δ4 (D3) | RME ties bus-reset rebind to the run | not tied, as DICE and AV/C do | possibly: a reset rebind can no longer be dropped as stale | session golden for RME reset, if the rig covers RME; otherwise hardware |
 | Δ5 | DICE "DEGRADED -> recover" log | "DEGRADED (logged only, as TCAT)" | no | none needed |
 | Δ6 (D3, U3) | MOTU: nothing restarts the stream after a bus reset while streaming | `Rebind` restart, as every other family | **yes**: a full restart sequence after the reset | host test for the rebind; session golden for a MOTU reset if the rig covers MOTU; hardware best effort (§8 U6) |
+| Δ8 (D2, E4) | AV/C: a discovery re-delivery for a live nub overwrites the endpoint config (`AudioCoordinator.cpp:218-220`) while the nub keeps its graph | refresh check only (§4.3); a changed description latches "geometry changed" instead of silently diverging | no | host test; Phase 88 replug on hardware |
 | Δ7 (U5) | MOTU publishes a fixed 14 × 14 before the first start | publishes the counts from the optical config register (`0x0c04`), read before publication | **yes, one extra quadlet read**; HAL-visible: an ADAT-mode 828mk2 publishes 22 channels per ADAT direction at 44.1/48 kHz instead of 14 | `Describe` unit tests for each optical combination; MOTU golden for the extra read |
 
 Not a delta: D5 stays per family, which is what `JudgeRuntimeFault` is for.
@@ -505,7 +515,7 @@ Below, *Haiku*, *Sonnet* and *Me* (Opus) mark each stage's author.
 - **E3: MOTU onto the host** (Δ1, Δ2, Δ3, Δ6). *Sonnet*, after E2 and E3a. Without E3a,
   Δ2 would make an ADAT-mode MOTU latch "geometry changed" on its first restart. The
   capture-diagnostics path (`AudioCoordinator.cpp:475-518`) goes through the MOTU adapter.
-- **E4: AV/C onto the host.** *Sonnet*. `DiscoveryCoordinator` pushes the config, so
+- **E4: AV/C onto the host** (Δ8). *Sonnet*. `DiscoveryCoordinator` pushes the config, so
   `AvcFamilyAdapter::Describe` returns what discovery last delivered or `kIOReturnNotReady`,
   and discovery's ready event calls `RefreshPublication`. The 256 ms settle moves into
   `JudgeRuntimeFault`. Hardware: Phase 88 and Duet, timing loss and replug.
@@ -633,10 +643,10 @@ Line format, with one tag so a single predicate finds the whole trail:
 
 | `HostEvent` | `HostOutcome` values |
 |---|---|
-| `Publish` | `Published`, `Refreshed`, `RefusedTeardown`, `RefusedStaleRoute`, `RefusedNoPolicy`, `RefusedDescribe` (with the adapter's `kr`), `RefusedGeometryChanged`, `KeptCommittedFormation` |
-| `Rebind` (bus reset while streaming) | `Queued`, `Deduped`, `RestartRequested`, `Declined`, `Failed`, `NotStreaming` |
-| `RuntimeFault` | `Queued`, `Deduped`, `Stale`, `SelfHealed`, `DeviceLeft`, `RestartRequested`, `Declined`, `Failed` |
-| `DeviceEvent` | `ConfigChange`, `DescriptionChanged`, `ClockProbe`, `DeviceRateChange` (with device and host rates), `ClockEcho` |
+| `Publish` | `Published`, `Refreshed`, `PublishFailed`, `RefusedTeardown`, `RefusedStaleRoute`, `RefusedNoPolicy`, `RefusedNoAdapter`, `RefusedDescribe` (with the adapter's `kr` and reason), `RefusedGeometryChanged`, `KeptCommittedFormation` |
+| `Rebind` (bus reset while streaming) | `Queued`, `Deduped`, `NotStreaming`, `Cancelled`, `RestartRequested`, `Declined`, `Failed` |
+| `RuntimeFault` | `Queued`, `Deduped`, `Cancelled`, `SelfHealed`, `DeviceLeft`, `RestartRequested`, `Declined` (the session declined, e.g. a stale run), `Failed` |
+| `DeviceEvent` | `ConfigChange`, `NotStreaming`, `Cancelled`, `ClockProbe`, `ClockHealthy`, `ClockDegraded` (logged only, as TCAT), `DeviceRateChange` (with device and host rates), `ClockEcho`, `ProbeFailed`; E7 adds `DescriptionChanged` |
 | `Reconfigure` (E7) | `Requested`, `Committed` (with old and new revision), `Restored`, `RestoreFailed`, `RefusedNotWindowable` |
 | `Teardown` | `Drained` (one summary line: drain ms plus every counter since start) |
 
