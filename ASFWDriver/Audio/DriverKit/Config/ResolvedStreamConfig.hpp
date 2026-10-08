@@ -26,6 +26,7 @@
 // ASFWAudioDevice::StartIO is the only production caller.
 
 #pragma once
+#include "../../Wire/MOTU/MotuBlockLayout.hpp"
 
 #include "AudioDriverConfig.hpp"
 #include "AudioStreamProfile.hpp"
@@ -71,8 +72,10 @@ BuildResolvedTxStreamConfig(const IAudioStreamProfile& profile,
     }
 
     const ParsedWireStream& wire = resolvedStreams[index];
+    const bool packed = profile.TxWireFormat() == Encoding::AudioWireFormat::kMotuPacked;
     if (wire.pcmChannels == 0 || wire.pcmChannels > 255 || wire.am824Slots > 255 ||
-        wire.am824Slots < wire.pcmChannels || wire.midiPorts > 255 || wire.channelOffset > 255 ||
+        (packed ? (wire.midiPorts != 0 || !wire.pcmSlotMap.IsIdentity() ||
+            wire.am824Slots != ::ASFW::Encoding::Motu::DataBlockQuadlets(wire.pcmChannels, outConfig.motuMessageChunks)) : wire.am824Slots < wire.pcmChannels) || wire.midiPorts > 255 || wire.channelOffset > 255 ||
         !wire.pcmSlotMap.FitsWithin(wire.pcmChannels, wire.am824Slots)) return false;
     outConfig.pcmSlotMap = wire.pcmSlotMap;
     outConfig.hasPcmSlotMap = wire.hasPcmSlotMap;

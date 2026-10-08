@@ -39,8 +39,9 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     size_t payloadBytes = length - kIsochHeaderSize;
     uint8_t cipDBS = 0;
     if (!headerless) {
-        const auto* quadlets = reinterpret_cast<const uint32_t*>(data);
-        const auto cip = ASFW::Isoch::CIPHeader::Decode(quadlets[0], quadlets[1]);
+        uint32_t quadlets[2]{};
+        std::memcpy(quadlets, data, sizeof(quadlets));
+        const auto cip = codec.DecodeHeader(quadlets[0], quadlets[1]);
         if (!cip) {
             result.status = DirectRxWriteStatus::kInvalidCipHeader;
             return result;

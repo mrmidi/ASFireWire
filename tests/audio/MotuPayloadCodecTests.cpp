@@ -10,6 +10,7 @@
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 
 #include <gtest/gtest.h>
 
@@ -191,6 +192,8 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
     constexpr uint32_t kDbs = 4;
     MotuTxTimingStamper stamper(&cache, kDbs);
 
+    std::atomic<uint32_t> readiness{0};
+    stamper.BindCache(&cache, &readiness);
     EXPECT_TRUE(stamper.IsSytUnaware());
 
     // Allocate buffer for 1 slot: 8 bytes CIP + 2 blocks * 16 bytes = 40 bytes.
@@ -255,9 +258,43 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
            (static_cast<uint32_t>(slotBytes[26]) << 8) |
            static_cast<uint32_t>(slotBytes[27]);
 
-    // Both SPH words must be non-zero and stamped with cycle 20 base
-    EXPECT_NE(sph0, 0U);
-    EXPECT_NE(sph1, 0U);
+    // Replay preserves the device's uneven per-frame presentation sequence.
+    EXPECT_EQ(sph0, (20U << 12) | 200U);
+    EXPECT_EQ(sph1, (20U << 12) | 1200U);
+    EXPECT_EQ(readiness.load(), 1U);
+    cache.Reset();
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    EXPECT_EQ(readiness.load(), 0U);
+}
+
+TEST(MotuPayloadCodecTests, SynthesizedPhaseResyncKeepsDataAndReacquiresAfterEpochReset) {
+    MotuEventOffsetCache cache;
+    MotuTxTimingStamper stamper(&cache, 4, TimingPolicy::SynthesizedExperimental);
+    std::atomic<uint32_t> readiness{0};
+    stamper.BindCache(&cache, &readiness);
+    std::array<uint8_t, 136> payload{};
+    TxPacketSlotView slot{.bytes = payload.data(), .capacityBytes = payload.size()};
+    PreparedTxPacket packet{.byteCount = payload.size(), .isData = true, .framesInPacket = 8, .dbs = 4};
+    auto stamp = [&](uint32_t tick, uint32_t cycle) {
+        for (uint32_t i = 0; i < 8; ++i) StoreBigEndian(payload.data() + 8 + i * 16, SphFromTick(tick + i * 512));
+        EXPECT_EQ(cache.Capture(payload, 4, 8, cycle), 8U);
+        AmdtpTimingState timing{.transmitCycle = cycle, .transmitCycleValid = true};
+        return stamper.StampPacket(slot, packet, timing);
+    };
+    for (uint32_t frame = 0; frame < 1024; frame += 8)
+        ASSERT_EQ(stamp(20000 + frame * 512, frame / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    ASSERT_EQ(readiness.load(), 1U);
+    const auto anchor = 20000 + 1024 * 512 + 5 * kTicksPerCycle;
+    ASSERT_EQ(stamp(anchor, 1024 / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(anchor));
+    EXPECT_EQ(readiness.load(), 0U);
+    for (uint32_t frame = 8; frame <= 512; frame += 8)
+        ASSERT_EQ(stamp(anchor + frame * 512, (1024 + frame) / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(readiness.load(), 1U);
+    cache.Reset();
+    ASSERT_EQ(stamp(1000000, 0), ::ASFW::Audio::TxTimingStampResult::kOk);
+    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(1000000));
+    EXPECT_EQ(readiness.load(), 0U);
 }
 
 TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
@@ -310,6 +347,51 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
 
     // Counter must reflect the revert
     EXPECT_EQ(engine.Counters().timingUnavailableReverts.load(), 1U);
+}
+
+TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
+    using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
+    using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
+    ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{3};
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    DiceTxStreamEngine engine{};
+    ASSERT_TRUE(engine.Configure(profile, config));
+    TestTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+
+    MotuEventOffsetCache cache{};
+    std::vector<uint8_t> capture(16 + 8 * config.dbs * 4, 0);
+    for (uint32_t frame = 0; frame < 8; ++frame)
+        StoreBigEndian(capture.data() + 16 + frame * config.dbs * 4,
+            SphFromTick(BaseTickForCycle(100) + 200 + frame * 512));
+    for (uint32_t packet = 0; packet < 8; ++packet)
+        cache.Capture(capture, config.dbs, 8, 100, 16);
+    ASSERT_TRUE(cache.IsEstablished());
+    MotuTxTimingStamper stamper{&cache, config.dbs};
+    engine.BindTimingStamper(&stamper);
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.nextDataSyt = 0x1234;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.transmitCycleValid = true;
+    timing.transmitCycle = 100;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+    ASSERT_TRUE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.bytes[2] & 0x04, 0x04); // SPH bit, on the wire.
+    EXPECT_EQ(provider.bytes[3], 8);           // End-event DBC.
+    EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
+              (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
+
+    timing.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(1, timing), TxSlotPrepareResult::kPrepared);
+    EXPECT_FALSE(provider.publishedPacket.isData);
+    EXPECT_EQ(provider.publishedPacket.byteCount, 8U);
+    EXPECT_EQ(provider.bytes[3], 8);
+    EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
+              (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
 }
 
 TEST(MotuPayloadCodecTests, MotuRxDiagnosticCaptureRecordsStartupAndSteadyState) {

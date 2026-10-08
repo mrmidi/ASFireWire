@@ -36,7 +36,7 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.rateRouteIncarnation = parsedConfig.rateRouteIncarnation;
     device.rateRouteEpoch = parsedConfig.rateRouteEpoch;
     device.rateBusGeneration = parsedConfig.rateBusGeneration;
-    device.diceRateFormations = parsedConfig.diceRateFormations;
+    device.usesRateFormations = parsedConfig.usesRateFormations;
     device.vendorId = parsedConfig.vendorId;
     device.modelId = parsedConfig.modelId;
     device.profileBuilderId = parsedConfig.profileBuilderId;
@@ -249,7 +249,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!profileProvidedSampleRates) {
         ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
     }
-    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
+    const uint32_t channelLimit = profile && profile->RxWireFormat() == ASFW::Encoding::AudioWireFormat::kMotuPacked
+        ? ASFW::Audio::Runtime::kMaxPackedPcmChannels : ASFW::Encoding::kMaxPcmChannels;
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, channelLimit);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
     ivars.device.profile = profile;
 

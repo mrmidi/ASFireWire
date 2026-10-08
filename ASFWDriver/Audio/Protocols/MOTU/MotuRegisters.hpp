@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuV2Registers.hpp - Register plane for MOTU FireWire protocol-v2 devices
+// MotuRegisters.hpp - Register plane for MOTU FireWire protocol-v2 devices
 // (828mk2 first; family covers Traveler, UltraLite, 896HD, 8pre).
 //
 // Pure value codecs; no transport. The eventual IDeviceProtocol issues these
@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "../../Wire/MOTU/MotuBlockLayout.hpp"
+#include "../../Wire/MOTU/MotuModel.hpp"
 #include "../../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 #include <cstdint>
@@ -33,6 +33,8 @@ enum class Reg : uint32_t {
     PacketFormat = 0x0b10,
     ClockStatusV2 = 0x0b14,
     InOutConfV2 = 0x0c04,
+    OpticalBanksV3 = 0x0c94,
+    StreamConfigV3 = 0x0b1c,
 };
 
 //==============================================================================
@@ -147,10 +149,13 @@ struct V2PcmChunks {
 };
 
 [[nodiscard]] constexpr V2PcmChunks ResolveV2PcmChunks(uint32_t inOutConfRaw,
-                                                       uint32_t mode) noexcept {
+                                                       uint32_t mode, uint32_t unitVersion = 3) noexcept {
     V2PcmChunks chunks{};
+    const auto* model = Encoding::Motu::FindModel(unitVersion);
+    if (!model || model->protocol != Encoding::Motu::ProtocolVersion::V2 || mode >= 3) return chunks;
     const uint32_t fixed =
-        mode < Encoding::Motu::kModeCount ? Encoding::Motu::k828mk2FixedPcmChunks[mode] : 0U;
+        model->captureChunks[mode];
+    const uint32_t fixedPlayback = model->playbackChunks[mode];
     const auto optical = DecodeOptIfaceConfig(inOutConfRaw);
     chunks.opticalDecoded = optical.has_value();
     const bool inputIsAdat = optical.has_value() && optical->input == OptIfaceMode::Adat;
@@ -159,39 +164,101 @@ struct V2PcmChunks {
         chunks.inputMode = optical->input;
         chunks.outputMode = optical->output;
     }
-    const uint32_t adatExtra = Encoding::Motu::AdatExtraChunks(mode);
+    const uint32_t adatExtra = model->optical == Encoding::Motu::OpticalLayout::None ? 0U :
+        (mode == 1 && model->optical == Encoding::Motu::OpticalLayout::V2EightPre ? 8U : Encoding::Motu::AdatExtraChunks(mode));
     chunks.tx = fixed + (inputIsAdat ? adatExtra : 0U);
-    chunks.rx = fixed + (outputIsAdat ? adatExtra : 0U);
+    chunks.rx = fixedPlayback + (outputIsAdat ? adatExtra : 0U);
     chunks.txOnlyFixedChunks = optical.has_value() && !inputIsAdat;
     chunks.rxOnlyFixedChunks = optical.has_value() && !outputIsAdat;
     return chunks;
 }
 
-/// The sample rates a MOTU endpoint is published with. Every one of them is in
-/// the same rate mode, so one set of channel counts is right for all of them;
-/// that is what lets the description carry a single count per direction
-/// instead of per-rate formations. Publishing 88.2/96 kHz (mode 1, where ADAT
-/// adds 4 chunks instead of 8) needs per-rate formations first.
-inline constexpr uint32_t kPublishedSampleRatesHz[] = {44100u, 48000u};
-
-[[nodiscard]] constexpr uint32_t PublishedRateMode() noexcept {
-    return Encoding::Motu::IndexToMode(
-        static_cast<uint32_t>(Encoding::Motu::RateToIndex(kPublishedSampleRatesHz[0])));
+// V1 clock/optical/fetch codecs. Linux motu-protocol-v1.c:10-118,186-248,
+// 336-380,394-451. Original 828 shares clock and isoch control at 0xb00;
+// its clock/fetch writes MUST clear the upper half (command strobes).
+[[nodiscard]] constexpr std::optional<uint32_t> DecodeRateV1(uint32_t raw, uint32_t version) noexcept {
+    if (version == 1) return (raw & 4) ? 48000U : 44100U;
+    if (version == 2) return Encoding::Motu::kClockRates[(raw >> 3) & 3];
+    return std::nullopt;
 }
-
-[[nodiscard]] constexpr bool AllPublishedRatesShareOneMode() noexcept {
-    for (const uint32_t rate : kPublishedSampleRatesHz) {
-        const int32_t index = Encoding::Motu::RateToIndex(rate);
-        if (index < 0 ||
-            Encoding::Motu::IndexToMode(static_cast<uint32_t>(index)) != PublishedRateMode()) {
-            return false;
-        }
+[[nodiscard]] constexpr std::optional<uint32_t> EncodeRateV1(uint32_t raw, uint32_t rate, uint32_t version) noexcept {
+    const auto* model = Encoding::Motu::FindModel(version);
+    if (!model || !Encoding::Motu::SupportsRate(*model, rate)) return std::nullopt;
+    if (version == 1) return (raw & 0xffffU & ~4U) | (rate == 48000 ? 4U : 0U);
+    if (version == 2) return (raw & ~0x18U) | (static_cast<uint32_t>(Encoding::Motu::RateToIndex(rate)) << 3);
+    return std::nullopt;
+}
+[[nodiscard]] constexpr uint32_t EncodeFetchingV1(uint32_t raw, bool enable, uint32_t version) noexcept {
+    if (version == 1) return (raw & 0xffffU & ~0x88U) | (enable ? 0x88U : 0U);
+    // 896 output-on bits are irreversible; preserve them when fetching stops.
+    return (raw & ~0xf0000000U) | (enable ? 0x23000000U : 0U);
+}
+[[nodiscard]] constexpr std::optional<ClockSourceV2> DecodeClockSourceV1(uint32_t raw, uint32_t version) noexcept {
+    if (version == 2) {
+        if ((raw & 7) == 2) return ClockSourceV2::AesEbuOnXlr;
+        return DecodeClockSourceV2(raw);
     }
-    return true;
+    switch (raw & 0x23) {
+    case 0: return ClockSourceV2::Internal;
+    case 1: return ClockSourceV2::AdatOnDsub;
+    case 2: return ClockSourceV2::Spdif;
+    case 3: return ClockSourceV2::Sph;
+    case 0x21: return ClockSourceV2::AdatOnOpt;
+    default: return std::nullopt;
+    }
 }
-static_assert(AllPublishedRatesShareOneMode(),
-              "published rates span rate modes: one channel count per direction is no longer "
-              "right; publish per-rate formations (see AUDIO_DEVICE_HOST.md, E3a)");
+
+// V3 register codecs: Linux motu-protocol-v3.c:11-38,180-235.
+[[nodiscard]] constexpr std::optional<uint32_t> DecodeRateV3(uint32_t raw) noexcept {
+    const auto index = (raw >> 8) & 0xff;
+    return index < Encoding::Motu::kClockRateCount ?
+        std::optional<uint32_t>{Encoding::Motu::kClockRates[index]} : std::nullopt;
+}
+[[nodiscard]] constexpr std::optional<ClockSourceV2> DecodeClockSourceV3(uint32_t raw) noexcept {
+    switch (raw & 0xff) {
+    case 0: return ClockSourceV2::Internal;
+    case 1: return ClockSourceV2::WordOnBnc;
+    case 2: return ClockSourceV2::Sph;
+    case 8: return ClockSourceV2::AesEbuOnXlr;
+    case 0x10: return ClockSourceV2::Spdif;
+    case 0x18: case 0x19: return ClockSourceV2::AdatOnOpt; // bank refinement is separate
+    default: return std::nullopt;
+    }
+}
+[[nodiscard]] constexpr V2PcmChunks ResolvePcmChunks(uint32_t raw, uint32_t mode, uint32_t version) noexcept {
+    const auto* model = Encoding::Motu::FindModel(version);
+    if (!model || mode >= 3 || (model->unresolvedModes & (1U << mode))) return {};
+    if (model->protocol == Encoding::Motu::ProtocolVersion::V1) {
+        V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};
+        if (!chunks.tx || !chunks.rx) return {};
+        if (version == 1) {
+            if (!(raw & 0x8000)) chunks.tx += 8;
+            if (!(raw & 0x4000)) chunks.rx += 8;
+        } else {
+            // 896 has no optical mode register: reserve eight ADAT chunks at
+            // 1x. The unresolved vendor/Linux 2x divergence is withheld by the model.
+            chunks.tx += 8; chunks.rx += 8;
+        }
+        chunks.txOnlyFixedChunks = chunks.tx == model->captureChunks[mode];
+        chunks.rxOnlyFixedChunks = chunks.rx == model->playbackChunks[mode];
+        return chunks;
+    }
+    if (model->protocol == Encoding::Motu::ProtocolVersion::V2) return ResolveV2PcmChunks(raw, mode, version);
+    if (model->protocol != Encoding::Motu::ProtocolVersion::V3 || (model->unresolvedModes & (1U << mode))) return {};
+    V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};
+    if (!chunks.tx || !chunks.rx) return {};
+    if (model->optical == Encoding::Motu::OpticalLayout::V3Banks && mode < 2) {
+        const auto extra = [mode](bool enabled, bool spdif) { return !enabled ? 0U : (spdif ? 4U : (mode == 0 ? 8U : 4U)); };
+        chunks.tx += extra(raw & 1, raw & 0x10000) + extra(raw & 2, raw & 0x100000);
+        chunks.rx += extra(raw & 0x100, raw & 0x40000) + extra(raw & 0x200, raw & 0x400000);
+        // Vendor hybrid S/PDIF counts differ from Linux. Withhold this shape.
+        if (version == 0x35 && (((raw & 1) && (raw & 0x10000)) || ((raw & 2) && (raw & 0x100000)) ||
+            ((raw & 0x100) && (raw & 0x40000)) || ((raw & 0x200) && (raw & 0x400000)))) return {};
+    }
+    chunks.txOnlyFixedChunks = chunks.tx == model->captureChunks[mode];
+    chunks.rxOnlyFixedChunks = chunks.rx == model->playbackChunks[mode];
+    return chunks;
+}
 
 //==============================================================================
 // Iso communication control (0x0b00): channel numbers + activation for both
@@ -317,11 +384,12 @@ inline constexpr uint32_t kClockModelSpecific = 0x04000000u;
 /// internal clock, it reduces to the plain fetch-enable write.
 [[nodiscard]] constexpr uint32_t EncodeFetchingMode(uint32_t currentData,
                                                     bool enable,
-                                                    bool spartan) noexcept {
+                                                    bool spartan, bool traveler = false) noexcept {
     uint32_t data = currentData & ~(kClockFetchEnable | kClockModelSpecific);
     if (enable) {
         data |= kClockFetchEnable;
     }
+    if (traveler) data |= kClockModelSpecific;
     if (spartan) {
         const auto source = DecodeClockSourceV2(currentData);
         const auto rate = DecodeRateV2(currentData);

@@ -17,10 +17,10 @@ namespace ASFW::Isoch::Audio {
 constexpr double kDefaultSampleRate = 48000.0;
 constexpr uint32_t kDefaultChannelCount = 2;
 constexpr uint32_t kMaxSampleRates = 8;
-// Covers high-channel-count interfaces (e.g. Midas Venice F32 = 32x32 duplex)
+// Covers the largest host format, including 34-channel packed MOTU capture.
 // so per-channel device labels can be carried for every element, not just the
 // first 8. Each name is at most 64 bytes (see ParsedAudioDriverConfig).
-constexpr uint32_t kMaxNamedChannels = 32;
+constexpr uint32_t kMaxNamedChannels = ::ASFW::Audio::Runtime::kMaxHostPcmChannels;
 constexpr uint32_t kMaxBoolControls = 16;
 /// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
 /// Duplicated rather than included so this header stays on the AudioDriverKit
@@ -61,7 +61,7 @@ struct ParsedAudioDriverConfig {
     uint64_t rateRouteIncarnation{0};
     uint64_t rateRouteEpoch{0};
     uint32_t rateBusGeneration{0};
-    bool diceRateFormations{false};
+    bool usesRateFormations{false};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, carried across the nub.

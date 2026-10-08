@@ -39,6 +39,7 @@
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSArray.h>
 #include <DriverKit/OSNumber.h>
 #include <DriverKit/OSSharedPtr.h>
 
@@ -108,12 +109,12 @@ struct OutputAudioBufferGeometry {
     uint64_t bufferBytes{0};
 };
 
-static uint32_t ClampAudioChannels(uint32_t channels) {
+static uint32_t ClampAudioChannels(uint32_t channels, uint32_t limit = ASFW::Encoding::kMaxPcmChannels) {
     if (channels == 0) {
         return 0;
     }
-    return (channels > ASFW::Encoding::kMaxPcmChannels)
-        ? ASFW::Encoding::kMaxPcmChannels
+    return (channels > limit)
+        ? limit
         : channels;
 }
 
@@ -141,15 +142,24 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
 
     namespace Keys = ASFW::Audio::Model::PropertyKeys;
 
+    uint32_t channelLimit = ASFW::Encoding::kMaxPcmChannels;
+    if (auto* formations = OSDynamicCast(OSArray, props->getObject(Keys::kRateFormations))) {
+        for (uint32_t i = 0; i < formations->getCount(); ++i) {
+            auto* entry = OSDynamicCast(OSDictionary, formations->getObject(i));
+            auto* packed = entry ? OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPackedPcm")) : nullptr;
+            if (packed && packed->unsigned32BitValue())
+                channelLimit = ASFW::Audio::Runtime::kMaxPackedPcmChannels;
+        }
+    }
     if (auto* count = OSDynamicCast(OSNumber, props->getObject(Keys::kChannelCount))) {
-        aggregate = ClampAudioChannels(count->unsigned32BitValue());
+        aggregate = ClampAudioChannels(count->unsigned32BitValue(), channelLimit);
     }
     if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kInputChannelCount))) {
-        input = ClampAudioChannels(inputCount->unsigned32BitValue());
+        input = ClampAudioChannels(inputCount->unsigned32BitValue(), channelLimit);
         hasInputCountProperty = true;
     }
     if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject(Keys::kOutputChannelCount))) {
-        output = ClampAudioChannels(outputCount->unsigned32BitValue());
+        output = ClampAudioChannels(outputCount->unsigned32BitValue(), channelLimit);
         hasOutputCountProperty = true;
     }
     if (auto* currentRate = OSDynamicCast(OSNumber, props->getObject(Keys::kCurrentSampleRate))) {
@@ -796,7 +806,7 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
         if (endpoint->CopyConfig(config))
             for (const auto& formation : config.rateFormationCandidates)
                 if (formation.sampleRateHz == sampleRateHz &&
-                    ASFW::Audio::Runtime::RateEnabled(formation, config.currentSampleRate, config.diceRateFormations))
+                    ASFW::Audio::Runtime::RateEnabled(formation, config.currentSampleRate, config.usesRateFormations))
                     catalogRateAllowed = true;
     }
     if (!catalogRateAllowed && !ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
@@ -832,7 +842,7 @@ kern_return_t IMPL(ASFWAudioNub, ReadRateClockState) {
     *outBusGeneration = *outOutputRateHz = *outInputRateHz = 0;
     const auto endpoint = FindEndpointRuntime(ivars);
     ASFW::Audio::Model::ASFWAudioDevice config;
-    if (endpoint && endpoint->CopyConfig(config) && config.diceRateFormations) {
+    if (endpoint && endpoint->CopyConfig(config) && config.usesRateFormations) {
         ProtocolRuntimeBinding binding{};
         if (ResolveProtocolRuntimeBinding(ivars, binding) != kIOReturnSuccess || !binding.registry)
             return kIOReturnNotReady;
@@ -925,10 +935,10 @@ kern_return_t IMPL(ASFWAudioNub, ApplyRate) {
     const auto found = std::ranges::find(config.rateFormationCandidates, sampleRateHz,
         &ASFW::Audio::Runtime::RateFormation::sampleRateHz);
     if (found == config.rateFormationCandidates.end() ||
-        !ASFW::Audio::Runtime::RateEnabled(*found, config.currentSampleRate, config.diceRateFormations)) return kIOReturnUnsupported;
+        !ASFW::Audio::Runtime::RateEnabled(*found, config.currentSampleRate, config.usesRateFormations)) return kIOReturnUnsupported;
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) return kIOReturnNotReady;
-    if (config.diceRateFormations) {
+    if (config.usesRateFormations) {
         binding.protocol->UpdateRuntimeContext(route, nullptr);
         ivars->rateObservationValid = false;
         ivars->rateHardwareObservation.reset();
@@ -975,7 +985,7 @@ kern_return_t IMPL(ASFWAudioNub, InstallRateFormation) {
     if (!endpoint->CopyConfig(prior)) return kIOReturnNotReady;
     const auto next = ASFW::Audio::Model::WithRateFormation(prior, sampleRateHz);
     if (!next) return kIOReturnUnsupported;
-    if (prior.diceRateFormations && (!ivars->rateHardwareObservation ||
+    if (prior.usesRateFormations && (!ivars->rateHardwareObservation ||
         !ivars->rateHardwareObservation->clockConfirmed ||
         !ASFW::Audio::RuntimeCapsMatchConfiguration(*next, ivars->rateHardwareObservation->caps)))
         return kIOReturnNotReady;

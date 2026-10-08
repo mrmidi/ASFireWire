@@ -116,6 +116,11 @@ public:
         (void)avcUnit;
     }
 
+    // Explicit discovery/reset hook, including idle devices. The caller retains
+    // the protocol until completion. Register protocols restore notification IO
+    // here; ordinary protocols have no reset registration work.
+    virtual void RebindNotifications(VoidCallback callback) { callback(kIOReturnSuccess); }
+
     /// Check if protocol can expose/control a boolean control.
     // These virtuals intentionally match the host-facing `(class, element[, value])` contract.
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)

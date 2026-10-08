@@ -51,7 +51,7 @@ struct ASFWAudioDevice {
     uint64_t rateRouteIncarnation{0};
     uint64_t rateRouteEpoch{0};
     uint32_t rateBusGeneration{0};
-    bool diceRateFormations{false};
+    bool usesRateFormations{false};
     uint32_t vendorId{0};
     uint32_t modelId{0};
     /// The device catalog's resolved ProfileBuilderId, as a raw uint32 so this
@@ -186,7 +186,7 @@ struct ASFWAudioDevice {
                 {PropertyKeys::kRateRouteIncarnation, rateRouteIncarnation},
                 {PropertyKeys::kRateRouteEpoch, rateRouteEpoch},
                 {PropertyKeys::kRateBusGeneration, rateBusGeneration},
-                {PropertyKeys::kDiceRateFormations, diceRateFormations ? 1U : 0U}}}) {
+                {PropertyKeys::kUsesRateFormations, usesRateFormations ? 1U : 0U}}}) {
                 auto number = OSSharedPtr(OSNumber::withNumber(value, 64), OSNoRetain);
                 if (!number) return false;
                 properties->setObject(key, number.get());
@@ -218,6 +218,9 @@ struct ASFWAudioDevice {
                          formation.mode == Encoding::StreamMode::kBlocking ? 1U : 0U) ||
                     !add(PropertyKeys::kFormationProtocolSupported, formation.protocolSupported) ||
                     !add(PropertyKeys::kFormationHardwareValidated, formation.hardwareValidated) ||
+                    !add("ASFWMotuPackedPcm", formation.packedPcm) ||
+                    !add("ASFWMotuCaptureMessageChunks", formation.packedCaptureMessageChunks) ||
+                    !add("ASFWMotuPlaybackMessageChunks", formation.packedPlaybackMessageChunks) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kPlaybackStreams, streams(formation.playback)) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kCaptureStreams, streams(formation.capture))) return false;
                 catalog->setObject(entry.get());

@@ -3,12 +3,23 @@
 #include "ASFWAudioDevice.hpp"
 #include "../Protocols/AudioTypes.hpp"
 #include <optional>
+#include <algorithm>
+#include "../Wire/MOTU/MotuBlockLayout.hpp"
 namespace ASFW::Audio {
 [[nodiscard]] inline bool RuntimeCapsMatchConfiguration(
     const Model::ASFWAudioDevice& config, const AudioStreamRuntimeCaps& caps) noexcept {
     if (caps.sampleRateHz != config.currentSampleRate ||
         caps.hostInputPcmChannels != config.inputChannelCount ||
         caps.hostOutputPcmChannels != config.outputChannelCount) return false;
+    const auto formation = std::ranges::find(config.rateFormationCandidates,
+        config.currentSampleRate, &Runtime::RateFormation::sampleRateHz);
+    if (formation != config.rateFormationCandidates.end() && formation->packedPcm) {
+        return config.playbackStreams.size() == 1 && config.captureStreams.size() == 1 &&
+            config.playbackStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.hostToDevicePcmChunks) &&
+            config.captureStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.deviceToHostPcmChunks) &&
+            caps.hostToDevicePcmChunks == caps.hostOutputPcmChannels &&
+            caps.deviceToHostPcmChunks == caps.hostInputPcmChannels;
+    }
     const auto matches = [](const auto& streams, uint32_t count, const auto& observed) {
         if (count != streams.size() || count > kMaxAudioStreamsPerDirection) return false;
         for (uint32_t i = 0; i < count; ++i)

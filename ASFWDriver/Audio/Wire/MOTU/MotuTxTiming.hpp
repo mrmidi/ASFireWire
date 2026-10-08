@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuTxTiming.hpp - Transmit-side SPH stamping for MOTU protocol-v2 streams.
+// MotuTxTiming.hpp - Transmit-side SPH stamping for MOTU streams using the observed-offset replay policy.
 //
 // MOTU is duplex-always: the device recovers its media clock from the host replaying the
 // device's own timing, and it needs BOTH replays -- the data-blocks-per-packet sequence
 // and the per-data-block source packet header as presentation time
-// (motu-stream.c:205-207). This header covers the second one.
+// (motu-stream.c:289-291). This header covers the second one.
 //
 // The algorithm is Linux write_sph() (amdtp-motu.c:373-393):
 //

@@ -61,12 +61,13 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         ivars.runtime.motuTxTimingStamper.BindCache(nullptr);
         return 0;
     }
-    // MOTU's per-block SPH offsets are captured on the transport side and replayed here.
+    // MOTU's audio receive codec captures per-block SPH offsets; this producer
+    // applies the model's timing policy.
     // They live in the shared control block -- the seam both services map -- rather than
     // in the capture consumer, which IsochDuplexHostTransport owns and destroys on stop
     // while this service may still be preparing packets (the FW-60 cross-service class).
     // Rebind on every pass so the stamper's pointer is never older than directControl.
-    ivars.runtime.motuTxTimingStamper.BindCache(&directControl->motuEventOffsets);
+    ivars.runtime.motuTxTimingStamper.BindCache(&directControl->motuEventOffsets, &directControl->transmitTimingReady);
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;
@@ -771,12 +772,13 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     }
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
     const auto txPolicy = profile.TxStreamPolicy();
-    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuV2) {
+    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
         ivars.runtime.motuPayloadWriter.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
                 .pcmChunks = txConfig.pcmChannels,
                 .sourceChannelOffset = txConfig.sourceChannelOffset,
-                .ports = txPolicy.motuPlaybackPorts});
+                .ports = txPolicy.motuPlaybackPorts,
+                .pcmByteOffset = txConfig.motuPcmByteOffset});
         ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
         ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
 
@@ -789,7 +791,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
                 currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
             return true;
         });
-        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs);
+        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs, txConfig.sampleRate, txPolicy.motuTiming);
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);

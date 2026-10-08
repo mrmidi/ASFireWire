@@ -494,7 +494,7 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                 case AudioFamilyProviderId::MotuRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
                     EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
-                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuRegister);
                     break;
                 case AudioFamilyProviderId::RmeRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::RmeRegister);

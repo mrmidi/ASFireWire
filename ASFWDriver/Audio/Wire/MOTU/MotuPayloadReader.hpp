@@ -49,7 +49,7 @@ inline void DecodeMotuBlock(std::span<const uint8_t> block,
                             uint32_t channelOffset,
                             float* outPcmFrame,
                             uint32_t outChannels,
-                            MotuPortMap ports = {}) noexcept {
+                            MotuPortMap ports = {}, uint32_t pcmByteOffset = kPcmByteOffset) noexcept {
     if (outPcmFrame == nullptr) {
         return;
     }
@@ -57,14 +57,14 @@ inline void DecodeMotuBlock(std::span<const uint8_t> block,
     for (uint32_t ch = 0; ch < outChannels; ++ch) {
         const uint32_t chunk = ChunkForHostChannel(map, channelOffset + ch);
         const size_t chunkEnd =
-            static_cast<size_t>(kPcmByteOffset) + (chunk + 1U) * kBytesPerChunk;
+            static_cast<size_t>(pcmByteOffset) + (chunk + 1U) * kBytesPerChunk;
         if (chunk >= pcmChunks || chunkEnd > block.size()) {
             outPcmFrame[ch] = 0.0f;
             continue;
         }
         // ReadPcmChannel yields the sample in the top 24 bits; shift down to a signed
         // 24-bit value before normalising.
-        const int32_t raw = ReadPcmChannel(block, chunk);
+        const int32_t raw = ReadPcmSample(block.subspan(pcmByteOffset + chunk * kBytesPerChunk, kBytesPerChunk));
         outPcmFrame[ch] = Signed24ToFloat32(raw >> 8);
     }
 }

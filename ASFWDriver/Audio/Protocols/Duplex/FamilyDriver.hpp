@@ -4,8 +4,8 @@
 // FamilyDriver.hpp - What the session asks of a device family.
 //
 // documentation/AUDIO_SESSION_REDESIGN.md §4.2. A pure interface: only pure
-// virtuals and a virtual destructor, so every family states its answer to every
-// step. A step with nothing to do is written out in the family, with its
+// stage virtuals and a virtual destructor, so every family states its answer
+// to every stage. Optional policy queries supply neutral defaults. A step with nothing to do is written out in the family, with its
 // reason; it is never inherited. Shared sequencing lives in Audio/Session's
 // RestartRoutine and StopRoutine, never here. Each device protocol implements
 // it (IDeviceProtocol::AsFamilyDriver); the session consumes it.
@@ -47,6 +47,12 @@ public:
     struct StopPolicy {
         bool stopHostContextsBeforeDevice{false};
     };
+    struct StartReadinessPolicy {
+        bool requireTransmitTiming{false};
+        uint32_t minimumHostRunMs{0};
+        uint32_t timeoutMs{1000};
+    };
+    [[nodiscard]] virtual StartReadinessPolicy GetStartReadinessPolicy() const noexcept { return {}; }
     virtual ~FamilyDriver() = default;
 
     // Service teardown: once `cancel` reads true, waits give up and no new

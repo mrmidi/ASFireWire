@@ -100,7 +100,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         // disagrees with the packet geometry; writing anyway would corrupt the next
         // block's SPH.
         const uint32_t requiredBytes =
-            kPcmByteOffset + streamConfig_.pcmChunks * kBytesPerChunk;
+            streamConfig_.pcmByteOffset + streamConfig_.pcmChunks * kBytesPerChunk;
         if (requiredBytes > blockBytes) {
             ++truncated;
             continue;
@@ -117,7 +117,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             // driving, and those must carry silence rather than stale bytes.
             const float sample = (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             WritePcmSample(
-                std::span<uint8_t>(block + kPcmByteOffset + chunk * kBytesPerChunk,
+                std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
                                    kBytesPerChunk),
                 Float32ToMotuSample(sample));
         }

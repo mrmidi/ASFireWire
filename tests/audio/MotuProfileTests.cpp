@@ -1,3 +1,4 @@
+#include "Audio/Wire/MOTU/MotuModel.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // MOTU device-profile and catalog-resolution tests.
@@ -61,12 +62,12 @@ TEST(MotuProfileTests, Enables828mk2AudioIntegration) {
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk2);
 }
 
-TEST(MotuProfileTests, NamesUnverifiedSiblingsWithoutEnablingThem) {
+TEST(MotuProfileTests, NamesTableBackedSiblings) {
     const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(kMotu896hdSwVersion));
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->modelName, "896HD");
-    EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
-    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu896hd);
 }
 
 TEST(MotuProfileTests, RejectsMotuWithoutMatchingUnit) {
@@ -90,13 +91,13 @@ TEST(MotuProfileTests, UltraLiteIsAudioEnabledAndNamed) {
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::MotuUltralite);
 }
 
-TEST(MotuProfileTests, SiblingsWithUnconfirmedLayoutsStayAudioDisabled) {
+TEST(MotuProfileTests, TableBackedV2SiblingsAreEnabled) {
     for (const uint32_t version : {0x000005u, 0x000009u, 0x00000fu}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version));
         ASSERT_TRUE(plan.has_value()) << "version " << version;
-        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported)
+        EXPECT_EQ(plan->support, SupportDisposition::Supported)
             << "version " << version;
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None)
+        EXPECT_NE(plan->profileBuilder, ProfileBuilderId::None)
             << "version " << version;
     }
 }
@@ -111,3 +112,17 @@ TEST(MotuProfileTests, ResolvesKnownMotuSwVersionsToNames) {
 }
 
 } // namespace
+
+TEST(MotuProfileTests, FireWireScopeKeepsV1BehindValidationAndUsbModelsRecognized) {
+    for (uint32_t version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U}) {
+        const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
+        const bool enabled = version > 2 || ASFW::Encoding::Motu::kV1HardwareBatch;
+        EXPECT_EQ(plan->support, enabled ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported);
+        EXPECT_EQ(plan->profileBuilder == ProfileBuilderId::None, !enabled);
+    }
+    for (uint32_t version : {48U,51U,53U,55U,57U,69U}) {
+        const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
+        EXPECT_EQ(plan->support,SupportDisposition::RecognizedUnsupported);
+        EXPECT_EQ(plan->profileBuilder,ProfileBuilderId::None);
+    }
+}

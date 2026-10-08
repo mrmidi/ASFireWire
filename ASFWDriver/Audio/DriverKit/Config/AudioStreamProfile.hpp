@@ -4,6 +4,7 @@
 // AudioStreamProfile.hpp - Protocol-neutral ADK stream geometry contract.
 
 #pragma once
+#include "../../Wire/MOTU/MotuModel.hpp"
 
 #include "IAudioDeviceProfile.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
@@ -29,6 +30,9 @@ struct AudioStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+    bool cipSph{false};
+    uint8_t motuMessageChunks{2};
+    uint8_t motuPcmByteOffset{10};
     uint8_t sourceChannelOffset{0};
     Encoding::AudioPacketFraming packetFraming{Encoding::AudioPacketFraming::kCip};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};
@@ -49,6 +53,7 @@ struct AudioStreamTxPolicy final {
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
+    Encoding::Motu::TimingPolicy motuTiming{Encoding::Motu::TimingPolicy::ReplayObserved};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 
 };

@@ -227,7 +227,7 @@ AudioCoordinator (one: device observer, one-active-device rule, removal order,
 AudioRuntimeRegistry ── IDeviceProtocol per device ── FamilyDriver     (unchanged)
    DICE: DICETcatProtocol/SPro24Dsp → DiceFamilyDriver → DiceDeviceIo
    AV/C: BeBoB (M-Audio special, Onyx, Fireworks), GenericAvc, ApogeeDuet → FCP, CMP/PCR
-   MOTU: MotuV2Protocol → MOTU registers
+   MOTU: MotuProtocol → MOTU registers
    RME:  FirefaceDeviceProtocol / FirefaceFamilyDriver → RME registers
 ```
 
@@ -328,7 +328,7 @@ against the committed revision.
 `FamilyDriver::ReadHealth`, then compares `nominalRateHz` against the nub's rate and the
 session's desired clock, and calls `nub->NotifyDeviceClockChanged` on a real
 device-initiated change. Every family fills `nominalRateHz` (BeBoB `BeBoBProtocol.cpp:542`,
-MOTU `MotuV2Protocol.cpp:607`, Duet `ApogeeDuetDuplex.cpp:661`, RME
+MOTU `MotuProtocol.cpp:607`, Duet `ApogeeDuetDuplex.cpp:661`, RME
 `FirefaceFamilyDriver.hpp:170`), so the check moves to the host unchanged. Only DICE raises
 `kClockStatusChanged` today, so only DICE runs it. That is no wire change.
 
@@ -425,7 +425,7 @@ generation it was read under. No pointer into either service's memory crosses (F
 - MOTU raises it from its notification address. The vendor kext registers that address and
   re-sends it after a reset (`SendPseudoAddressSpaceAddress`,
   `tmp/motu-research/motu-vendor/evidence.md`). We never call
-  `MotuV2Protocol::RegisterAsyncMessageAddress`. E7c wires it, re-sent before the Δ6
+  `MotuProtocol::RegisterAsyncMessageAddress`. E7c wires it, re-sent before the Δ6
   restart in the vendor's order.
 
 **Controls and channel roles as description data.** AV/C already publishes controls as
@@ -463,7 +463,7 @@ stops isoch on the reset, then re-sends the notification address
 `0x13e85-0x13f6b` and `0x14034` blocks. Linux re-registers the address on reset
 (`motu/motu.c:143-149`) and updates iso resources on the next start
 (`motu/motu-stream.c:236-248`). Our MOTU code never registers a notification address:
-`MotuV2Protocol::RegisterAsyncMessageAddress` has no caller. So the rebind is a plain
+`MotuProtocol::RegisterAsyncMessageAddress` has no caller. So the rebind is a plain
 session restart today. If address registration is wired later, the rebind must re-send it
 before streaming, in the vendor's order.
 
@@ -508,15 +508,15 @@ Below, *Haiku*, *Sonnet* and *Me* (Opus) mark each stage's author.
 - **E2: RME onto the host** (Δ1, Δ3, Δ4). *Haiku*. Smallest backend, constant
   description. Adds the RME teardown coverage it has never had (D6).
 - **E3a: MOTU describes from the optical register** (Δ7). *Sonnet*. Before publication,
-  `MotuV2Protocol::EnsureRuntimeStreamGeometry` reads `InOutConfV2` (`0x0c04`)
+  `MotuProtocol::EnsureRuntimeStreamGeometry` reads `InOutConfV2` (`0x0c04`)
   asynchronously, as DICE loads its caps. Counts come from the same arithmetic `Configure`
-  already uses (`MotuV2Protocol.cpp:383-393`), moved into one function that both call. This
+  already uses (`MotuProtocol.cpp:383-393`), moved into one function that both call. This
   matches Linux, which reads the register at PCM open (`motu/motu-pcm.c:143`,
   `motu-protocol-v2.c:227-262`). The backend comment calling an early read a deadlock
   (`MotuAudioBackend.cpp:145-148`) is wrong and goes. The fixed 14-chunk fallback stays
   only for a failed read, recorded as `Publish/Published` with a reason.
-  **Done (E3a).** The arithmetic is `ResolveV2PcmChunks` (`MotuV2Registers.hpp`), called by
-  `PrepareDuplex` and by `MotuV2Protocol::EnsureRuntimeStreamGeometry` (the published
+  **Done (E3a).** The arithmetic is `ResolveV2PcmChunks` (`MotuRegisters.hpp`), called by
+  `PrepareDuplex` and by `MotuProtocol::EnsureRuntimeStreamGeometry` (the published
   counts). The published rates (44.1/48 kHz) are one rate mode, so one count per direction is
   right for all of them; a `static_assert` stops anyone adding 88.2/96 kHz without per-rate
   formations (open question for that day: ADAT is 22 at 1x and 18 at 2x). Bit positions
@@ -760,7 +760,7 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
 - **U5. Answered (2026-10-08): no.** 14 × 14 is right only while neither optical direction
   of an 828mk2 is in ADAT mode. ADAT adds 8 chunks at 1x and 4 at 2x, independently per
   direction: Linux `motu-protocol-v2.c:246-262` (`V2_IN_OUT_CONF` at PCM open,
-  `motu-pcm.c:143`), and our own `MotuV2Protocol.cpp:383-393`, which computes it at
+  `motu-pcm.c:143`), and our own `MotuProtocol.cpp:383-393`, which computes it at
   `Configure`. Today an ADAT-mode device is published as 14 while the wire carries 22. This
   is not verified on hardware. Fixed by E3a (Δ7). The earlier vendor note that optical works
   only at 1x is specific to the original 896 (`Box896::AllowOptical @0x1add0`). The 828mkII
@@ -770,12 +770,33 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
 - **U6. Answered (2026-10-08):** no MOTU or RME hardware on hand. Best effort: host tests,
   goldens, the references, and the vendor drivers in `~/DEV/FirWireDriver/OTHER/KEXTs/`
   (MOTU, RME) read with IDA when a behaviour question needs them.
-- **U7. Open: MOTU after E3 (2026-10-08).** From the Linux and vendor-kext research
+- **U7. MOTU after E3 (2026-10-08), implementation update.** The common stack
+  now supplies V2 model/rate formations, correct packed-payload bandwidth,
+  post-host-start fetching, completed mute/stop writes, vendor-inspired SPH
+  synthesis and a scoped V3 header decoder. Timing/activation policies are selected
+  per model; default builds preserve observed-offset SPH replay. V3 synthesis is
+  opt-in via `ASFW_MOTU_SYNTH_VALIDATION`. All five V2 and four FireWire-only V3
+  models are table-backed. V1 828/896 activation is opt-in via
+  `ASFW_MOTU_V1_VALIDATION`; the original 896's unresolved 2x modes are withheld.
+  Session waits for producer timing readiness before fetch/unmute; valid synthesized
+  phase discontinuities re-anchor in-stream, while sustained timing loss recovers.
+  Failed register reads refuse publication instead of guessing geometry. V3 clock switching
+  owns a registered notification mailbox, waits for CLK_CHANGED with a four-second
+  timeout, and verifies readback. Discovery explicitly re-registers notification
+  addresses after reset, including idle devices. USB/hybrid models are excluded by request.
+  None of the newly enabled models is hardware-validated.
+  See [MOTU_STACK.md](MOTU_STACK.md) for the checklist and current limits.
+
+  The following is the original E3 gap inventory; items 1, 2, 4 and 5's fetch,
+  bandwidth and clock gate have been addressed in software. Automatic graph
+  rebuilding for live optical or unsolicited clock changes remains open.
+
+  **Original open inventory:** From the Linux and vendor-kext research
   (`tmp/motu-research/`). None of it is verified on hardware; there is no MOTU on hand (U6).
   - **Ours to decide (code or design):**
     1. **Rates above 48 kHz.** MOTU publishes 44.1 and 48 kHz only, one rate mode. Publishing
        88.2/96 kHz needs per-rate formations: ADAT is 22 chunks at 1x and 18 at 2x. A
-       `static_assert` on `kPublishedSampleRatesHz` (`MotuV2Registers.hpp`) blocks adding them
+       `static_assert` on `kPublishedSampleRatesHz` (`MotuRegisters.hpp`) blocks adding them
        without that.
     2. **Current rate outside the published list.** A device left at 88.2/96 kHz from its front
        panel publishes a current rate the list does not contain. Existed before E3.
@@ -788,7 +809,7 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
        status byte. A V3 rate change in Linux waits up to 4 s for the device's message. E7c.
     5. **Wire differences from the vendor and Linux** (a separate MOTU stage, matched to the
        vendor, after the host work):
-       - **Fetch-enable.** Written during prepare and never cleared (`MotuV2Protocol.cpp`
+       - **Fetch-enable.** Written during prepare and never cleared (`MotuProtocol.cpp`
          `ApplyFetchingModeIfNeeded`). Linux sets it after both streams are ready
          (`motu/motu-stream.c:302`). The vendor starts with the muted config word, unmutes
          after the output phase locks to the input (`Box::Mute @0x10db0`,

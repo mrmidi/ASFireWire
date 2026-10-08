@@ -83,6 +83,49 @@ using SchedulerTest = ShapedSchedulerTest<kCmpDevice>;
 using ApogeeTest = ShapedSchedulerTest<kApogeeDevice>;
 using DiceQuietPeriodTest = ShapedSchedulerTest<kDiceDevice>;
 
+TEST_F(SchedulerTest, ConfirmationWaitsForProducerTimingAfterBothHostStarts) {
+    Device().readinessPolicy = {.requireTransmitTiming = true};
+    auto start = std::async(std::launch::async, [&] { return rig.Start(); });
+    const bool waiting = WaitFor([&] { return rig.binding.readinessChecks.load(std::memory_order_acquire) > 0; });
+    EXPECT_TRUE(waiting);
+    EXPECT_EQ(Count("D confirm"), 0);
+    EXPECT_GT(Count("H start rx"), 0);
+    EXPECT_GT(Count("H start tx"), 0);
+    rig.binding.timingReady.store(true, std::memory_order_release);
+    EXPECT_EQ(start.get(), kIOReturnSuccess);
+    EXPECT_EQ(Count("D confirm"), 1);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+TEST_F(SchedulerTest, MissingProducerTimingRollsBackWithoutConfirming) {
+    Device().readinessPolicy = {.requireTransmitTiming = true, .timeoutMs = 5};
+    EXPECT_EQ(rig.Start(), kIOReturnTimeout);
+    EXPECT_EQ(Count("D confirm"), 0);
+    EXPECT_FALSE(rig.IsStreaming());
+    EXPECT_GT(Count("D stop"), 0);
+}
+TEST_F(SchedulerTest, TeardownCancelsProducerTimingWait) {
+    Device().readinessPolicy = {.requireTransmitTiming = true};
+    auto start = std::async(std::launch::async, [&] { return rig.Start(); });
+    EXPECT_TRUE(WaitFor([&] { return rig.binding.readinessChecks.load(std::memory_order_acquire) > 0; }));
+    rig.cancel.store(true, std::memory_order_release);
+    EXPECT_EQ(start.get(), kIOReturnAborted);
+    EXPECT_EQ(Count("D confirm"), 0);
+    EXPECT_FALSE(rig.IsStreaming());
+}
+TEST_F(SchedulerTest, OfferedFormationsDriveAdmissionWithoutFamilyKnowledge) {
+    ASFW::Audio::Runtime::RateFormation formation{};
+    formation.sampleRateHz = 88200;
+    formation.protocolSupported = true;
+    formation.hardwareValidated = true;
+    formation.playback = {{8, 9}};
+    formation.capture = {{8, 9}};
+    Device().formations = std::make_shared<const std::vector<ASFW::Audio::Runtime::RateFormation>>(std::vector{formation});
+    EXPECT_EQ(rig.sessions.Attach(rig.guid, {.sampleRateHz = 96000}), kIOReturnUnsupported);
+    EXPECT_EQ(rig.sessions.Attach(rig.guid, {.sampleRateHz = 88200}), kIOReturnSuccess);
+    EXPECT_EQ(Snapshot().appliedClock.sampleRateHz, 88200U);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
 TEST_F(SchedulerTest, RejectedIdleRateDoesNotBecomeStartupRate) {
     rig.FailDevice("apply_clock");
     EXPECT_EQ(rig.sessions.ChangeClock(rig.guid, AudioClockConfig{.sampleRateHz = 32000},
