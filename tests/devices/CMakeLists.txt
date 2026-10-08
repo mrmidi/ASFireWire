@@ -546,3 +546,35 @@ add_device_test(AudioCoordinatorRoutingTests
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
+
+# DICE family adapter on the audio device host: Describe refusals, runtime-fault
+# judgement, and device-event mapping (AUDIO_DEVICE_HOST.md §6 E5).
+add_device_test(DiceFamilyAdapterTests
+    DiceFamilyAdapterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Session/StopRoutine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Host/DiceFamilyAdapter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Host/AudioDeviceHost.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioNubPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+)
