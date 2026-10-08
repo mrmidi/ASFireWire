@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ASFWAudioDevice.hpp"
+#include "RateConfiguration.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -74,6 +75,24 @@ ClassifyGeometryRefresh(const ASFWAudioDevice& published,
                 : GeometryRefreshDecision::kGeometryChanged;
 }
 
+/// A republish is a diff against the configuration the endpoint holds NOW, not
+/// the one it was first published with (AUDIO_DEVICE_HOST.md §4.7, E7b). A rate
+/// transaction moves a formation-based endpoint to another formation after
+/// publication; a description read at that rate, or at any other rate of the
+/// same formation list, is projected onto the committed rate before comparing.
+/// Only a change in what the formations themselves say is a geometry change.
+[[nodiscard]] inline GeometryRefreshDecision
+ClassifyAgainstCommitted(const ASFWAudioDevice& committed,
+                         const ASFWAudioDevice& incoming) noexcept {
+    if (committed.usesRateFormations && incoming.usesRateFormations &&
+        committed.currentSampleRate != incoming.currentSampleRate) {
+        const auto projected = WithRateFormation(incoming, committed.currentSampleRate);
+        if (!projected) return GeometryRefreshDecision::kGeometryChanged;
+        return ClassifyGeometryRefresh(committed, *projected);
+    }
+    return ClassifyGeometryRefresh(committed, incoming);
+}
+
 // A mismatch stays latched even if a later observation matches again. Only
 // destroying/recreating the published endpoint establishes a new contract.
 class NubGeometryRefreshState {
@@ -86,6 +105,8 @@ public:
         return !blocked_;
     }
     [[nodiscard]] bool IsBlocked() const noexcept { return blocked_; }
+    /// Latch a mismatch decided against the committed configuration.
+    void Block() noexcept { blocked_ = true; }
 private:
     ASFWAudioDevice published_;
     bool blocked_{false};

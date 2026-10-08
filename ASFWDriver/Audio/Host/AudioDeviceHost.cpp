@@ -321,7 +321,8 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
 
     const auto route = policy->route;
     const char* family = adapter->Name();
-    adapter->Describe(input, [this, guid, route, family, admission](DescribeResult result) {
+    const auto committed = input.committed;
+    adapter->Describe(input, [this, guid, route, family, admission, committed](DescribeResult result) {
         if (admission->AbortIfStopping()) {
             Record(guid, family, HostEvent::Publish, HostOutcome::RefusedTeardown, kIOReturnAborted);
             return;
@@ -349,8 +350,20 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                 detailText = detail;
             }
             // A live nub's graph was read once; never replace the runtime
-            // config under it. Check, and latch a mismatch (§4.3).
+            // config under it. Check, and latch a mismatch (§4.3). The check is
+            // against the committed configuration, which a rate transaction
+            // moves after publication (§4.7 E7b); without one, against the
+            // first publication as before.
             if (publisher_.GetNub(guid) != nullptr) {
+                if (committed.has_value()) {
+                    const bool unchanged = Model::ClassifyAgainstCommitted(*committed, value) ==
+                                           Model::GeometryRefreshDecision::kMayRefresh;
+                    if (!unchanged) publisher_.BlockGeometryChange(guid, family);
+                    Record(guid, family, HostEvent::Publish,
+                           unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
+                           unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
+                    return;
+                }
                 const bool unchanged = publisher_.RefreshNubProperties(guid, value, family);
                 Record(guid, family, HostEvent::Publish,
                        unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,

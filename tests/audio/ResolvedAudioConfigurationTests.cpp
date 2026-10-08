@@ -1,4 +1,5 @@
 #include "Audio/Model/RateConfiguration.hpp"
+#include "Audio/Model/NubGeometryRefresh.hpp"
 #include "Audio/Model/DiscoveredRuntimeCaps.hpp"
 #include "Audio/Runtime/ResolvedAudioConfiguration.hpp"
 #include <gtest/gtest.h>
@@ -147,4 +148,45 @@ TEST(ResolvedAudioConfigurationTests, DiceReadbackChecksEveryStreamRatherThanAgg
         std::begin(caps.deviceToHostStreams));
     caps.sampleRateHz = 48000;
     EXPECT_FALSE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
+}
+
+// E7b (AUDIO_DEVICE_HOST.md §4.7): a republish diffs against the committed
+// configuration. A rate transaction moved the endpoint to 96 kHz after it was
+// published at 48 kHz; a description read at either rate of the same formation
+// list is unchanged against the committed one, though it differs from the
+// first publication. Different formations are a real geometry change.
+TEST(ResolvedAudioConfigurationTests, RepublishIsDiffedAgainstTheCommittedFormation) {
+    using ASFW::Audio::Model::ClassifyAgainstCommitted;
+    using ASFW::Audio::Model::ClassifyGeometryRefresh;
+    using ASFW::Audio::Model::GeometryRefreshDecision;
+    using ASFW::Audio::Model::WithRateFormation;
+    ASFW::Audio::Model::ASFWAudioDevice base;
+    base.usesRateFormations = true;
+    base.currentSampleRate = 48000;
+    base.sampleRates = {48000, 96000};
+    base.rateFormationCandidates = {Formation(48000, 16), Formation(96000, 12)};
+    const auto published = WithRateFormation(base, 48000);
+    ASSERT_TRUE(published);
+    const auto committed = WithRateFormation(*published, 96000);
+    ASSERT_TRUE(committed);
+
+    const auto describedAt96 = WithRateFormation(base, 96000);
+    ASSERT_TRUE(describedAt96);
+    EXPECT_EQ(ClassifyGeometryRefresh(*published, *describedAt96), GeometryRefreshDecision::kGeometryChanged)
+        << "against the first publication this would latch";
+    EXPECT_EQ(ClassifyAgainstCommitted(*committed, *describedAt96), GeometryRefreshDecision::kMayRefresh);
+    EXPECT_EQ(ClassifyAgainstCommitted(*committed, *published), GeometryRefreshDecision::kMayRefresh)
+        << "a description read at 48 kHz projects onto the committed 96 kHz formation";
+
+    auto changed = base;
+    changed.rateFormationCandidates = {Formation(48000, 16), Formation(96000, 10)};
+    const auto changedAt96 = WithRateFormation(changed, 96000);
+    ASSERT_TRUE(changedAt96);
+    EXPECT_EQ(ClassifyAgainstCommitted(*committed, *changedAt96), GeometryRefreshDecision::kGeometryChanged);
+    auto missingRate = base;
+    missingRate.rateFormationCandidates = {Formation(48000, 16)};
+    const auto missingAt48 = WithRateFormation(missingRate, 48000);
+    ASSERT_TRUE(missingAt48);
+    EXPECT_EQ(ClassifyAgainstCommitted(*committed, *missingAt48), GeometryRefreshDecision::kGeometryChanged)
+        << "the committed rate is no longer described";
 }
