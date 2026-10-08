@@ -77,6 +77,21 @@ DiceObservedFormat(const AudioStreamRuntimeCaps& caps) {
     return format;
 }
 
+/// The per-mode formats a device publishes. When the EAP read succeeded its
+/// formats stand for every mode and the stream registers are not consulted
+/// (Linux dice-stream.c:618-621): registers read before a clock select can
+/// describe another mode (:635-643). Without EAP only the observed mode is
+/// known (Linux's fallback); no clock probing, no guessed scaling.
+[[nodiscard]] inline DiceRateFormats SelectPublishedFormats(bool eapRead, DiceRateFormats eap,
+                                                            const AudioStreamRuntimeCaps& caps) {
+    if (eapRead) return eap;
+    DiceRateFormats observedOnly{};
+    const auto mode = DiceRateMode(caps.sampleRateHz);
+    const auto observed = DiceObservedFormat(caps);
+    if (mode && observed) observedOnly[*mode] = *observed;
+    return observedOnly;
+}
+
 // EAP entries carry PCM count, MIDI port count, names and AC3. Only the
 // leading two quadlets are read here; entry stride is 0x10c, not eight bytes.
 // Cross-validated with Linux dice-extension.c:34-41, 64-76.

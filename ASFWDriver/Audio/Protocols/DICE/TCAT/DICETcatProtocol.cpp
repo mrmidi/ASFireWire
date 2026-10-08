@@ -645,16 +645,17 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                 diceReader_.ReadRateFormats(caps.deviceRateMask,
                                     [this, caps, callback = std::move(callback)](IOReturn status,
                                                                                 DiceRateFormats formats) mutable {
-                                        // Linux's non-EAP fallback retains only the observed
-                                        // rate mode. No clock probing or guessed scaling.
                                         if (status == kIOReturnAborted || status == kIOReturnNoDevice ||
                                             status == kIOReturnOffline) {
                                             callback(status); return;
                                         }
-                                        if (status != kIOReturnSuccess) formats = {};
-                                        const auto mode = DiceRateMode(caps.sampleRateHz);
-                                        const auto observed = DiceObservedFormat(caps);
-                                        if (mode && observed) formats[*mode] = *observed;
+                                        // EAP formats stand for every mode; the registers
+                                        // only for a device without EAP. A Pro 24 DSP found
+                                        // locked at 88.2 kHz with its 48 kHz layout
+                                        // (2026-10-08) used to overwrite the EAP 2x entry
+                                        // with 16 inputs, and every 2x switch rolled back.
+                                        formats = SelectPublishedFormats(status == kIOReturnSuccess,
+                                                                         formats, caps);
                                         auto formations = DiceFormations(caps.deviceRateMask, formats,
                                             runtimePolicy_.exposeDeviceToHostToCoreAudio);
                                         PublishRateFormations(

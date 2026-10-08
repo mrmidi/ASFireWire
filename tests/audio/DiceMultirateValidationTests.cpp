@@ -28,3 +28,35 @@ TEST(DiceMultirateValidation, ExplicitBatchEnablesKnownModesAndMatchingClockEnco
         EXPECT_EQ(config->captureChannels, formation.capture[0].pcmChannels);
     }
 }
+
+// Hardware, 2026-10-08 (Pro 24 DSP device report): attached while locked at
+// 88.2 kHz with its stream registers still in the 48 kHz layout (16 in). EAP
+// current_config says 2x is 12 in. With EAP, its formats stand for every mode
+// (Linux dice-stream.c:618-621); the registers are the fallback only.
+TEST(DiceMultirateValidation, EapFormatsAreNotOverwrittenByStaleRegisters) {
+    using namespace ASFW::Audio;
+    DICE::DiceRateFormats eap;
+    eap[0] = DICE::DiceModeFormat{{{8, 9, 1, {}, 1}}, {{16, 17, 1, {}, 1}}};
+    eap[1] = DICE::DiceModeFormat{{{8, 9, 1, {}, 1}}, {{12, 13, 1, {}, 1}}};
+    eap[2] = DICE::DiceModeFormat{{{8, 9, 1, {}, 1}}, {{8, 9, 1, {}, 1}}};
+    AudioStreamRuntimeCaps stale{};
+    stale.sampleRateHz = 88200;
+    stale.deviceToHostStreamCount = 1;
+    stale.deviceToHostStreams[0] = {.pcmChannels = 16, .am824Slots = 17, .midiPorts = 1};
+    stale.hostToDeviceStreamCount = 1;
+    stale.hostToDeviceStreams[0] = {.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1};
+
+    const auto withEap = DICE::SelectPublishedFormats(true, eap, stale);
+    ASSERT_TRUE(withEap[1].has_value());
+    ASSERT_EQ(withEap[1]->capture.size(), 1U);
+    EXPECT_EQ(withEap[1]->capture[0].pcmChannels, 12U) << "the stale 48 kHz layout must not become 2x";
+    EXPECT_TRUE(withEap[0].has_value());
+    EXPECT_TRUE(withEap[2].has_value());
+
+    // Without EAP only the observed mode is known (Linux's fallback).
+    const auto withoutEap = DICE::SelectPublishedFormats(false, eap, stale);
+    EXPECT_FALSE(withoutEap[0].has_value());
+    ASSERT_TRUE(withoutEap[1].has_value());
+    EXPECT_EQ(withoutEap[1]->capture[0].pcmChannels, 16U);
+    EXPECT_FALSE(withoutEap[2].has_value());
+}
