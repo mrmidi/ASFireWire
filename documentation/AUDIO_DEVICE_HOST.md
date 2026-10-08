@@ -599,6 +599,32 @@ declares its deltas in its commit.
   general revision diff, and U4 goes away. `NubGeometryRefresh`'s latch stays only for the
   last row of §4.7's table. New `HostEvent` `Reconfigure` with outcomes `Requested`,
   `Committed`, `Restored`, `RestoreFailed`, `RefusedNotWindowable`.
+  **Part 1 done (2026-10-08, `56875049`), not run on hardware.** A live endpoint's new
+  description is diffed against its *committed* configuration
+  (`Model::ClassifyAgainstCommitted`), projected onto the committed rate when both carry
+  rate formations; a mismatch latches through `AudioNubPublisher::BlockGeometryChange`. This
+  fixed a real defect of the merged MOTU multi-rate stack: an ADAT-mode 828mk2 switched from
+  48 to 96 kHz latched "geometry changed" on the restart after the switch (22 vs 18 inputs
+  against the first-publish snapshot). DICE keeps its own `KeepCommitted` guard until E7d,
+  because a DICE without EAP describes only its observed mode.
+  **Part 2 open, needs the Pro 24 DSP in hand.** The windowable branch (rows 3–4 of §4.7's
+  table) installs a changed description inside `PerformDeviceConfigurationChange`. Facts
+  for whoever does it:
+  - The available-format lists are built once, in `BuildAudioGraph`
+    (`ASFWAudioDriverGraph.cpp`, the `inputFormats[8]`/`outputFormats[8]` loop). Factor that
+    loop into a helper that rebuilds both lists from `ivars.device`, and call it from the
+    window with `SetAvailableStreamFormats` on both streams, then `SetCurrentStreamFormat`.
+    Not yet exercised on our ADK code (§4.7 "What is not exercised").
+  - The rate transaction installs through `ASFWAudioNub::InstallRateFormation`
+    (`ASFWAudioNub.cpp`), which refuses unless `RuntimeCapsMatchConfiguration(next,
+    observation)` holds. A description change carries its own formation list, so it needs a
+    sibling entry point that installs a whole revision (config + formation list) as a value
+    with the route incarnation, epoch and generation (§4.7 "Across the seam").
+  - Endpoint audio memory is sized once from `MaximumFormationAllocation` over the
+    formations (`AudioEndpointRuntime.hpp`). A revision whose maximum exceeds it needs
+    `SetIOMemoryDescriptor` in the window, also unexercised. Refuse that case first
+    (`RefusedNotWindowable`) and add it only if a device needs it.
+  - The latch stays only for the last row of §4.7's table.
 - **E7c: MOTU notification address.** *Me*. Register at first publication and re-send it
   after every reset, before the Δ6 restart (vendor order). Release it on teardown
   (`motu-transaction.c:121-133`). Notifications become `DescriptionChanged` / `ClockStatus`
@@ -619,7 +645,16 @@ declares its deltas in its commit.
     front-panel rate change. Other bits stay unnamed until traced
     (`tmp/motu-research/vendor-controller-followup.md`), so no `DescriptionChanged` yet.
 - **E7d: DICE without EAP, every advertised rate, the kext's way.** *Me*. Builds on E7b.
-  Replaces the "observed mode only" rule at `DiceAudioBackend.cpp:939-950`.
+  Replaces the "observed mode only" rule, now in `DiceFamilyAdapter.cpp` (`DescribeFromCaps`)
+  and in `DICETcatProtocol.cpp`'s standard-discovery path (`DiceObservedFormat` →
+  `DiceFormations`).
+  **Open (2026-10-08): depends on E7b part 2.** Publishing every CLOCK_CAPS rate with the
+  current mode's counts before the window path exists would make things worse: switching to
+  an assumed mode fails `InstallRateFormation`'s observation check and rolls back, so the
+  menu would list rates that can never be selected. Order: E7b part 2 on the Pro 24 DSP
+  with EAP (regression), then the `ASFW_DICE_IGNORE_EAP` lane, then the assumed entries
+  (mark each `RateFormation` confirmed or assumed, so a commit replaces an assumed entry
+  with the re-read one).
   - **Publish:** every rate in CLOCK_CAPS with one channel count, the current mode's, as the
     kext does (E7a). A CoreAudio format always carries a count, so there is no way to
     announce "unknown". When every entry has the same count, Audio MIDI Setup shows a plain
