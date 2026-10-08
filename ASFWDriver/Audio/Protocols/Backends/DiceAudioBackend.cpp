@@ -186,12 +186,10 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
                                    Session::AudioSessions& sessions,
-                                   Driver::HardwareInterface& hardware,
                                    DICE::DiceNotificationRouter& notifications) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
-    , hardware_(hardware)
     , sessions_(sessions)
     , notifications_(notifications) {
     lock_ = IOLockAlloc();
@@ -303,9 +301,6 @@ void DiceAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        attemptsByGuid_.erase(guid);
-        retryOutstanding_.erase(guid);
-        activeStreamingGuids_.erase(guid);
         recoveringGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
@@ -805,7 +800,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             // so publishing here would ship exactly the unvalidated endpoint
             // the caps check below exists to prevent -- it just reached the
             // nub by a different door. Refuse; the device is not lost, because
-            // StartStreaming and OnDeviceRecordUpdated both call back into
+            // OnDeviceRecordUpdated and OnStreamsRestarted both call back into
             // EnsureNubForGuid once a protocol exists.
             ASFW_LOG_ERROR(Audio,
                            "DiceAudioBackend::EnsureNubForGuid: refusing to publish "
@@ -1068,88 +1063,6 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
     finish(std::move(dev), protocol);
-}
-
-IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) {
-        return kIOReturnBadArgument;
-    }
-    if (stopping_.load(std::memory_order_acquire)) {
-        ASFW_LOG(Audio,
-                 "DiceAudioBackend: StartStreaming refused by teardown GUID=0x%016llx",
-                 guid);
-        return kIOReturnAborted;
-    }
-
-    auto* nub = publisher_.GetNub(guid);
-    if (!nub) {
-        EnsureNubForGuid(guid);
-        nub = publisher_.GetNub(guid);
-        if (!nub) {
-            return kIOReturnNotReady;
-        }
-    }
-
-    auto endpoint = runtime_.FindEndpointRuntime(guid);
-    if (!endpoint || !endpoint->HasCompleteDirectAudioMemory()) {
-        ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: StartStreaming refused missing direct runtime/memory GUID=0x%016llx endpoint=%p",
-                       guid,
-                       endpoint.get());
-        return kIOReturnNotReady;
-    }
-
-    const IOReturn status = sessions_.Attach(guid);
-    if (status == kIOReturnSuccess) {
-        EnsureNubForGuid(guid);
-        if (lock_) {
-            IOLockLock(lock_);
-            activeStreamingGuids_.insert(guid);
-            IOLockUnlock(lock_);
-        }
-    }
-    return status;
-}
-
-IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
-        ASFW_LOG(Audio,
-                 "DiceAudioBackend: StopStreaming refused by teardown GUID=0x%016llx",
-                 guid);
-        if (lock_) {
-            IOLockLock(lock_);
-            activeStreamingGuids_.erase(guid);
-            recoveringGuids_.erase(guid);
-            IOLockUnlock(lock_);
-        }
-        return kIOReturnAborted;
-    }
-
-    const IOReturn status = sessions_.Detach(guid);
-    if (status == kIOReturnSuccess && lock_) {
-        IOLockLock(lock_);
-        activeStreamingGuids_.erase(guid);
-        recoveringGuids_.erase(guid);
-        IOLockUnlock(lock_);
-    }
-    return status;
-}
-
-IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
-                                              const AudioClockConfig& desiredClock,
-                                              DuplexRestartReason reason) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
-        ASFW_LOG(Audio,
-                 "DiceAudioBackend: RequestClockConfig refused by teardown GUID=0x%016llx",
-                 guid);
-        return kIOReturnAborted;
-    }
-
-    const IOReturn status = sessions_.ChangeClock(guid, desiredClock, reason);
-    if (status == kIOReturnSuccess) {
-        EnsureNubForGuid(guid);
-    }
-    return status;
 }
 
 } // namespace ASFW::Audio

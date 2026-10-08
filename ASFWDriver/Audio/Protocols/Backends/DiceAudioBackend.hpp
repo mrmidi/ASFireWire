@@ -21,7 +21,6 @@
 #include <DriverKit/OSSharedPtr.h>
 #include <atomic>
 #include <cstdint>
-#include <unordered_map>
 #include <unordered_set>
 
 namespace ASFW::Audio {
@@ -38,7 +37,6 @@ public:
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
                      Session::AudioSessions& sessions,
-                     Driver::HardwareInterface& hardware,
                      DICE::DiceNotificationRouter& notifications) noexcept;
     ~DiceAudioBackend() noexcept override;
 
@@ -56,12 +54,6 @@ public:
     void HandleHostTimingLoss(uint64_t guid) noexcept override;
     void HandleCycleInconsistent(uint64_t guid) noexcept override;
     void HandleRecoveryEvent(uint64_t guid, DuplexRestartReason reason) noexcept;
-
-    [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
-    [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
-    [[nodiscard]] IOReturn RequestClockConfig(uint64_t guid,
-                                              const AudioClockConfig& desiredClock,
-                                              DuplexRestartReason reason) noexcept;
 
     // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
     // cancels in-flight recovery (sessions), then drains the work queue (synchronous
@@ -86,7 +78,6 @@ private:
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    Driver::HardwareInterface& hardware_;
     std::atomic<bool> stopping_{false}; // FW-61 teardown latch
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
@@ -131,19 +122,11 @@ private:
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
-    std::unordered_map<uint64_t, uint8_t> attemptsByGuid_{};
-    std::unordered_set<uint64_t> retryOutstanding_{};
-    std::unordered_set<uint64_t> activeStreamingGuids_{};
     std::unordered_set<uint64_t> recoveringGuids_{};
     std::atomic<uint64_t> recoveryRejectCount_{0};
     std::atomic<uint64_t> probeRejectCount_{0};
     std::atomic<uint64_t> probeAbortCount_{0};
-    // Publication attempts refused because teardown already latched (I3: late
-    // work counts, never acts). Reported in the BeginTeardown drain summary.
-    std::atomic<uint64_t> publicationRejectCount_{0};
 
-    static constexpr uint32_t kCapsRetryDelayMs = 50;
-    static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms
     static constexpr uint32_t kHealthBridgeTimeoutMs = 1000;
 };
 

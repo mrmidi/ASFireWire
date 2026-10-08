@@ -546,7 +546,7 @@ struct SessionRig {
         if (IsDice()) {
             // The real DICE backend listens, as in the driver: every DICE
             // golden also shows which notifications it turns into restarts.
-            diceBackend.emplace(publisher, registry, runtime, sessions, hardware, notifications);
+            diceBackend.emplace(publisher, registry, runtime, sessions, notifications);
         }
         bus.Trace().Clear();
     }

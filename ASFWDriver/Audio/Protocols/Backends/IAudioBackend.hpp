@@ -17,9 +17,6 @@ public:
 
     [[nodiscard]] virtual const char* Name() const noexcept = 0;
 
-    [[nodiscard]] virtual IOReturn StartStreaming(uint64_t guid) noexcept = 0;
-    [[nodiscard]] virtual IOReturn StopStreaming(uint64_t guid) noexcept = 0;
-
     virtual void OnDeviceRecordUpdated(uint64_t guid) noexcept { (void)guid; }
     virtual void OnDeviceResumed(uint64_t guid) noexcept { (void)guid; }
     virtual void CancelRemoteDeviceWork(uint64_t guid) noexcept = 0;

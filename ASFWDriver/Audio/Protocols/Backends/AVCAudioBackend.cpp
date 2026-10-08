@@ -15,12 +15,10 @@ AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
                                  IIsochDuplexHostTransport& hostTransport,
-                                 Session::AudioSessions& sessions,
-                                 Driver::HardwareInterface& hardware) noexcept
+                                 Session::AudioSessions& sessions) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
-    , hardware_(hardware)
     , hostTransport_(hostTransport)
     , sessions_(sessions) {
     lock_ = IOLockAlloc();
@@ -74,12 +72,6 @@ void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFW
         return;
     }
 
-    if (lock_) {
-        IOLockLock(lock_);
-        configByGuid_[guid] = config;
-        IOLockUnlock(lock_);
-    }
-
     (void)publisher_.EnsureNub(guid, config, "AVC");
 }
 
@@ -88,11 +80,7 @@ void AVCAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        configByGuid_.erase(guid);
         recoveringGuids_.erase(guid);
-        if (activeGuid_ == guid) {
-            activeGuid_ = 0;
-        }
         IOLockUnlock(lock_);
     }
 
@@ -208,8 +196,7 @@ void AVCAudioBackend::HandleTimingLoss(uint64_t guid) noexcept {
         // unplugged during the settle window — that is the ordinary case, not
         // an edge one — and nothing else cancels this block, so without the
         // liveness check the escalation runs against a device whose record,
-        // nub and CoreAudio presence are already gone (FW-146). The generic
-        // remote-device owner clears activeGuid_ before it unpublishes the nub.
+        // nub and CoreAudio presence are already gone (FW-146).
         for (uint32_t waited = 0; waited < kTimingLossSettleMs;
              waited += kTimingLossPollMs) {
             if (stopping_.load(std::memory_order_acquire)) {
@@ -318,135 +305,6 @@ void AVCAudioBackend::BeginTeardown() noexcept {
     while (!teardownComplete_.load(std::memory_order_acquire)) {
         IOSleep(1);
     }
-}
-
-IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AVCAudioBackend: StartStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
-        // Claim the backend before leaving the lock. The session performs
-        // blocking setup, so delaying this assignment until it returns would
-        // allow a second GUID to begin concurrently.
-        activeGuid_ = guid;
-        IOLockUnlock(lock_);
-    }
-
-    auto failStart = [&](IOReturn status, const char* stage) -> IOReturn {
-        if (lock_) {
-            IOLockLock(lock_);
-            if (activeGuid_ == guid) {
-                activeGuid_ = 0;
-            }
-            IOLockUnlock(lock_);
-        }
-        ASFW_LOG_ERROR(Audio,
-                       "AVCAudioBackend: StartStreaming failed stage=%{public}s GUID=0x%016llx kr=0x%x",
-                       stage ? stage : "unknown",
-                       guid,
-                       status);
-        return status;
-    };
-
-    Model::ASFWAudioDevice config{};
-    bool hasConfig = false;
-    if (lock_) {
-        IOLockLock(lock_);
-        auto it = configByGuid_.find(guid);
-        if (it != configByGuid_.end()) {
-            config = it->second;
-            hasConfig = true;
-        }
-        IOLockUnlock(lock_);
-    }
-    if (!hasConfig) {
-        ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no config) GUID=0x%016llx", guid);
-        return failStart(kIOReturnNotReady, "config");
-    }
-
-    if (!registry_.SnapshotByGuid(guid).has_value()) {
-        ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no device record) GUID=0x%016llx", guid);
-        return failStart(kIOReturnNotReady, "device record");
-    }
-
-    auto* nub = publisher_.GetNub(guid);
-    if (!nub) {
-        (void)publisher_.EnsureNub(guid, config, "AVC-Start");
-        nub = publisher_.GetNub(guid);
-        if (!nub) return failStart(kIOReturnNotReady, "nub");
-    }
-
-    const auto endpoint = runtime_.FindEndpointRuntime(guid);
-    if (!endpoint) {
-        return failStart(kIOReturnNotReady, "direct binding source");
-    }
-    if (!endpoint->HasCompleteDirectAudioMemory()) {
-        return failStart(kIOReturnNotReady, "direct memory");
-    }
-
-    const IOReturn startStatus = sessions_.Attach(guid);
-    if (startStatus != kIOReturnSuccess) {
-        return failStart(startStatus, "session");
-    }
-
-    ASFW_LOG(Audio,
-             "AVCAudioBackend: Streaming started GUID=0x%016llx (in=%u out=%u mode=%{public}s)",
-             guid,
-             config.inputChannelCount,
-             config.outputChannelCount,
-             config.streamMode == Model::StreamMode::kBlocking ? "blocking" : "non-blocking");
-
-    return kIOReturnSuccess;
-}
-
-IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AVCAudioBackend: StopStreaming refused requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
-        if (activeGuid_ == 0) {
-            IOLockUnlock(lock_);
-            ASFW_LOG(Audio,
-                     "AVCAudioBackend: StopStreaming idempotent inactive GUID=0x%016llx",
-                     guid);
-            return kIOReturnSuccess;
-        }
-        IOLockUnlock(lock_);
-    }
-
-    const IOReturn stopStatus = sessions_.Detach(guid);
-    if (stopStatus != kIOReturnSuccess) return stopStatus;
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ == guid) {
-            activeGuid_ = 0;
-        }
-        IOLockUnlock(lock_);
-    }
-
-    ASFW_LOG(Audio, "AVCAudioBackend: Streaming stopped GUID=0x%016llx", guid);
-    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::Audio

@@ -25,7 +25,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <unordered_set>
 
 namespace ASFW::Discovery {
 class DeviceRegistry;
@@ -48,17 +47,13 @@ public:
     MotuAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     Session::AudioSessions& sessions,
-                     Driver::HardwareInterface& hardware) noexcept;
+                     Session::AudioSessions& sessions) noexcept;
     ~MotuAudioBackend() noexcept override;
 
     MotuAudioBackend(const MotuAudioBackend&) = delete;
     MotuAudioBackend& operator=(const MotuAudioBackend&) = delete;
 
     [[nodiscard]] const char* Name() const noexcept override { return "MOTU"; }
-
-    [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
-    [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
 
     /// Quiesce before the core detaches hardware, mirroring DiceAudioBackend::
     /// BeginTeardown. Close recovery admission before draining the work queue.
@@ -87,22 +82,16 @@ private:
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    Driver::HardwareInterface& hardware_;
     Session::AudioSessions& sessions_;
 
     OSSharedPtr<IODispatchQueue> workQueue_{};
     std::atomic<bool> recoveryInFlight_{false};
-    std::atomic<uint64_t> recoveryRejectCount_{0};
 
     PublicationGate recoveryAdmission_{};
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
     std::atomic<bool> stopping_{false};
-    // Publication attempts refused because teardown already latched (I3: late
-    // work counts, never acts).
-    std::atomic<uint64_t> publicationRejectCount_{0};
     IOLock* lock_{nullptr};
-    std::unordered_set<uint64_t> activeStreamingGuids_{};
 };
 
 } // namespace ASFW::Audio

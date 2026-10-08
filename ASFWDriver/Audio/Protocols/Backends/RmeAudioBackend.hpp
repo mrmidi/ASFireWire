@@ -24,8 +24,6 @@ public:
                     Session::AudioSessions&) noexcept;
     ~RmeAudioBackend() noexcept override;
     const char* Name() const noexcept override { return "RME Fireface"; }
-    IOReturn StartStreaming(uint64_t guid) noexcept override;
-    IOReturn StopStreaming(uint64_t guid) noexcept override;
     void OnDeviceRecordUpdated(uint64_t guid) noexcept override;
     void OnDeviceResumed(uint64_t guid) noexcept override;
     void CancelRemoteDeviceWork(uint64_t guid) noexcept override;
@@ -73,7 +71,6 @@ private:
     std::atomic<bool> teardownStarted_{false};
     std::atomic<bool> teardownComplete_{false};
     IOLock* lock_{nullptr};
-    std::unordered_set<uint64_t> active_{};
     std::unordered_set<uint64_t> recoveringGuids_{};
 };
 } // namespace ASFW::Audio

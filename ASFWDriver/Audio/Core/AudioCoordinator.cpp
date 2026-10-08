@@ -32,10 +32,10 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
                     return endpoint ? endpoint.get() : nullptr;
                 })
-    , dice_(publisher_, registry_, runtime_, sessions_, hardware, diceNotifications)
-    , motu_(publisher_, registry_, runtime_, sessions_, hardware)
+    , dice_(publisher_, registry_, runtime_, sessions_, diceNotifications)
+    , motu_(publisher_, registry_, runtime_, sessions_)
     , rme_(publisher_, registry_, runtime_, sessions_)
-    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_, hardware) {
+    , avc_(publisher_, registry_, runtime_, hostTransport_, sessions_) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");

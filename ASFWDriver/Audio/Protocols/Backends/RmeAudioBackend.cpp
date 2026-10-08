@@ -42,7 +42,6 @@ void RmeAudioBackend::BeginTeardown() noexcept {
     }
     if (lock_) {
         IOLockLock(lock_);
-        active_.clear();
         recoveringGuids_.clear();
         IOLockUnlock(lock_);
     }
@@ -101,7 +100,6 @@ void RmeAudioBackend::OnDeviceResumed(uint64_t guid) noexcept {
 void RmeAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (lock_) {
         IOLockLock(lock_);
-        active_.erase(guid);
         recoveringGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
@@ -117,31 +115,6 @@ void RmeAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     auto config = BuildNubConfig(*record, policy->plan.profileBuilder, protocol->GetName());
     if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) endpoint->UpdateConfig(config);
     (void)publisher_.EnsureNub(guid, config, "RME");
-}
-
-IOReturn RmeAudioBackend::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
-    const auto record = registry_.SnapshotByGuid(guid);
-    const auto* policy = record ? DeviceProfiles::Audio::CurrentAudioPolicy(*record) : nullptr;
-    if (!policy || policy->plan.family != DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister ||
-        policy->plan.streamTraits.start.startRatePinHz != 48000U) return kIOReturnUnsupported;
-    if (!publisher_.GetNub(guid)) EnsureNubForGuid(guid);
-    auto endpoint = runtime_.FindEndpointRuntime(guid);
-    if (!publisher_.GetNub(guid) || !endpoint || !endpoint->HasCompleteDirectAudioMemory())
-        return kIOReturnNotReady;
-    const IOReturn status = sessions_.Attach(guid);
-    if (status == kIOReturnSuccess && lock_) {
-        IOLockLock(lock_); active_.insert(guid); IOLockUnlock(lock_);
-    }
-    return status;
-}
-
-IOReturn RmeAudioBackend::StopStreaming(uint64_t guid) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) return kIOReturnAborted;
-    const IOReturn status = sessions_.Detach(guid);
-    if (status == kIOReturnSuccess) CancelRemoteDeviceWork(guid);
-    return status;
 }
 
 void RmeAudioBackend::HandleHostTimingLoss(uint64_t guid) noexcept {

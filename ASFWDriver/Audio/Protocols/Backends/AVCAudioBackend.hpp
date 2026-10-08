@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <unordered_map>
 #include <unordered_set>
 
 #include <DriverKit/IODispatchQueue.h>
@@ -35,8 +34,7 @@ public:
                     Discovery::DeviceRegistry& registry,
                     AudioRuntimeRegistry& runtime,
                     IIsochDuplexHostTransport& hostTransport,
-                    Session::AudioSessions& sessions,
-                    Driver::HardwareInterface& hardware) noexcept;
+                    Session::AudioSessions& sessions) noexcept;
     ~AVCAudioBackend() noexcept override;
 
     AVCAudioBackend(const AVCAudioBackend&) = delete;
@@ -55,9 +53,6 @@ public:
     // Called by the backend-neutral AudioCoordinator transport callback.
     void HandleTimingLoss(uint64_t guid) noexcept;
 
-    [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
-    [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
-
 private:
     // Clears the per-GUID in-flight recovery flag (recoveringGuids_). Shared exit
     // point for the timing-loss escalation block.
@@ -68,7 +63,6 @@ private:
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    Driver::HardwareInterface& hardware_;
     IIsochDuplexHostTransport& hostTransport_;
     std::atomic<bool> stopping_{false};
     std::atomic<bool> teardownStarted_{false};
@@ -107,11 +101,9 @@ private:
 
     IOLock* lock_{nullptr};
     OSSharedPtr<IODispatchQueue> workQueue_{};
-    std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};
     // GUIDs with a recovery block queued or settling; a second event for the
     // same GUID joins it instead of queueing another. Guarded by lock_.
     std::unordered_set<uint64_t> recoveringGuids_{};
-    uint64_t activeGuid_{0};
 
     // Debounce before escalating an RX timing-loss to a restart. AppleFWAudio
     // uses 80 ms × 2 consecutive late RX callbacks; we settle ~256 ms (≥ several

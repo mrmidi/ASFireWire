@@ -28,12 +28,10 @@ namespace ASFW::Audio {
 MotuAudioBackend::MotuAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                   Session::AudioSessions& sessions,
-                                   Driver::HardwareInterface& hardware) noexcept
+                                   Session::AudioSessions& sessions) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
-    , hardware_(hardware)
     , sessions_(sessions) {
     lock_ = IOLockAlloc();
 
@@ -72,28 +70,18 @@ void MotuAudioBackend::BeginTeardown() noexcept {
         workQueue_->DispatchSync(^{});
 #endif
     }
-    if (lock_) {
-        IOLockLock(lock_);
-        activeStreamingGuids_.clear();
-        IOLockUnlock(lock_);
-    }
     teardownComplete_.store(true, std::memory_order_release);
 }
 
 void MotuAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     if (stopping_.load(std::memory_order_acquire)) {
-        publicationRejectCount_.fetch_add(1, std::memory_order_acq_rel);
         return;
     }
     EnsureNubForGuid(guid);
 }
 
 void MotuAudioBackend::CancelRemoteDeviceWork(uint64_t guid) noexcept {
-    if (lock_) {
-        IOLockLock(lock_);
-        activeStreamingGuids_.erase(guid);
-        IOLockUnlock(lock_);
-    }
+    (void)guid;
 }
 
 void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
@@ -184,65 +172,6 @@ void MotuAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     (void)publisher_.EnsureNub(guid, dev, "MOTU");
 }
 
-IOReturn MotuAudioBackend::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) {
-        return kIOReturnBadArgument;
-    }
-    if (stopping_.load(std::memory_order_acquire)) {
-        ASFW_LOG(Audio,
-                 "MotuAudioBackend: StartStreaming refused by teardown GUID=0x%016llx",
-                 guid);
-        return kIOReturnAborted;
-    }
-
-    auto* nub = publisher_.GetNub(guid);
-    if (!nub) {
-        EnsureNubForGuid(guid);
-        nub = publisher_.GetNub(guid);
-        if (!nub) {
-            return kIOReturnNotReady;
-        }
-    }
-
-    auto endpoint = runtime_.FindEndpointRuntime(guid);
-    if (!endpoint || !endpoint->HasCompleteDirectAudioMemory()) {
-        ASFW_LOG_ERROR(Audio,
-                       "MotuAudioBackend: StartStreaming refused missing direct runtime/memory GUID=0x%016llx",
-                       guid);
-        return kIOReturnNotReady;
-    }
-
-    const IOReturn status = sessions_.Attach(guid);
-    if (status == kIOReturnSuccess) {
-        EnsureNubForGuid(guid);
-        if (lock_) {
-            IOLockLock(lock_);
-            activeStreamingGuids_.insert(guid);
-            IOLockUnlock(lock_);
-        }
-    }
-    return status;
-}
-
-IOReturn MotuAudioBackend::StopStreaming(uint64_t guid) noexcept {
-    if (stopping_.load(std::memory_order_acquire)) {
-        if (lock_) {
-            IOLockLock(lock_);
-            activeStreamingGuids_.erase(guid);
-            IOLockUnlock(lock_);
-        }
-        return kIOReturnAborted;
-    }
-
-    const IOReturn status = sessions_.Detach(guid);
-    if (status == kIOReturnSuccess && lock_) {
-        IOLockLock(lock_);
-        activeStreamingGuids_.erase(guid);
-        IOLockUnlock(lock_);
-    }
-    return status;
-}
-
 bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
     PublicationGate::AdmissionScope admission(recoveryAdmission_);
     if (!admission.IsAdmitted()) return false;
@@ -256,7 +185,6 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
     if (observedRun == Session::SessionScheduler::kNotRunning) return false;
 
     if (recoveryInFlight_.exchange(true, std::memory_order_acq_rel)) {
-        recoveryRejectCount_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
 
@@ -297,7 +225,6 @@ bool MotuAudioBackend::QueueTimingRecovery(uint64_t guid) noexcept {
     }
     // No work queue available — cannot recover synchronously from the packet
     // thread. This backend cannot recover until it is recreated with a queue.
-    recoveryRejectCount_.fetch_add(1, std::memory_order_relaxed);
     recoveryInFlight_.store(false, std::memory_order_release);
     return false;
 }

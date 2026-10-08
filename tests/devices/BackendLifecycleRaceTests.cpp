@@ -125,8 +125,8 @@ struct TestFixture {
         }};
     AudioNubPublisher publisher{nullptr};
     ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
-    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions, hardware};
-    DiceAudioBackend dice{publisher, registry, runtime, sessions, hardware, diceNotifications};
+    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions};
+    DiceAudioBackend dice{publisher, registry, runtime, sessions, diceNotifications};
 
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};
@@ -343,7 +343,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 
 TEST(BackendLifecycleRaceTests, MotuConcurrentTeardownWaitsForQueueAndRejectsRecovery) {
     TestFixture f;
-    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.sessions, f.hardware);
+    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.sessions);
     auto* queue = motu.WorkQueueForTesting();
     ASSERT_NE(queue, nullptr);
     std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
