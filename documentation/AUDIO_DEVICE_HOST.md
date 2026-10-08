@@ -762,11 +762,61 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
   direction: Linux `motu-protocol-v2.c:246-262` (`V2_IN_OUT_CONF` at PCM open,
   `motu-pcm.c:143`), and our own `MotuV2Protocol.cpp:383-393`, which computes it at
   `Configure`. Today an ADAT-mode device is published as 14 while the wire carries 22. This
-  is not verified on hardware. Fixed by E3a (Δ7). Further MOTU material, not yet folded in:
-  `tmp/motu-research/` (vendor kext notes for v1/v2/v3 geometry, the PR #172 review) and
-  the vendor driver under `~/DEV/FirWireDriver/OTHER/KEXTs/MOTU`. Vendor note to check
-  against E3a/E7d: the vendor's `AllowOptical` accepts optical only at 1x, while Linux
-  reserves ADAT chunks at 1x and 2x (`tmp/motu-research/motu-vendor/v1-v2-v3-comparison.md`).
+  is not verified on hardware. Fixed by E3a (Δ7). The earlier vendor note that optical works
+  only at 1x is specific to the original 896 (`Box896::AllowOptical @0x1add0`). The 828mkII
+  adds 8 chunks at 1x and 4 at 2x with ADAT (`Box828mk2::GetNumInputs @0x1c230`), as Linux
+  and FFADO do. Research: `tmp/motu-research/linux-motu-research.md` and
+  `tmp/motu-research/vendor-motu-gap-research.md`; open items are in U7.
 - **U6. Answered (2026-10-08):** no MOTU or RME hardware on hand. Best effort: host tests,
   goldens, the references, and the vendor drivers in `~/DEV/FirWireDriver/OTHER/KEXTs/`
   (MOTU, RME) read with IDA when a behaviour question needs them.
+- **U7. Open: MOTU after E3 (2026-10-08).** From the Linux and vendor-kext research
+  (`tmp/motu-research/`). None of it is verified on hardware; there is no MOTU on hand (U6).
+  - **Ours to decide (code or design):**
+    1. **Rates above 48 kHz.** MOTU publishes 44.1 and 48 kHz only, one rate mode. Publishing
+       88.2/96 kHz needs per-rate formations: ADAT is 22 chunks at 1x and 18 at 2x. A
+       `static_assert` on `kPublishedSampleRatesHz` (`MotuV2Registers.hpp`) blocks adding them
+       without that.
+    2. **Current rate outside the published list.** A device left at 88.2/96 kHz from its front
+       panel publishes a current rate the list does not contain. Existed before E3.
+    3. **Optical mode change on a live nub.** The next refresh latches "geometry changed" and
+       blocks the start (Δ2). The vendor pauses the engine, rebuilds the streams and resumes.
+       E7b's job.
+    4. **Notification address never registered.** `RegisterAsyncMessageAddress` has no caller.
+       The vendor registers it at init and after every bus reset
+       (`Box::SendPseudoAddressSpaceAddress @0xfb60`) and drives re-reads and restarts from the
+       status byte. A V3 rate change in Linux waits up to 4 s for the device's message. E7c.
+    5. **Wire differences from the vendor and Linux** (a separate MOTU stage, matched to the
+       vendor, after the host work):
+       - **Fetch-enable.** Written during prepare and never cleared (`MotuV2Protocol.cpp`
+         `ApplyFetchingModeIfNeeded`). Linux sets it after both streams are ready
+         (`motu/motu-stream.c:302`). The vendor starts with the muted config word, unmutes
+         after the output phase locks to the input (`Box::Mute @0x10db0`,
+         `FWProvider::SlaveOutputToInput @0x281e0`), and mutes before stopping.
+       - **IRM bandwidth.** Sized from a one-slot placeholder, about 40 payload bytes against
+         Linux's 424. The vendor sizes it from the actual layout.
+       - **Clock-lock gate.** We poll for clock lock before starting. Neither Linux nor the
+         vendor does: `StartShouldWaitForClockLock` returns 0 for every FireWire model.
+       - **V3 receive.** Our RX CIP decoder rejects V3 headers (`CIPHeader.hpp:91-117`). V3 also
+         needs the bank register at `0x0c94`.
+    6. **Model coverage.** One fixed-chunk table (`k828mk2FixedPcmChunks`) serves the 828mkII
+       and UltraLite. Other models, such as the 8pre with two optical interfaces, are
+       unsupported.
+  - **The vendor kext could still answer (more IDA):**
+    - Per-model counts for the 896HD, Traveler, UltraLite, 8pre and the other Mk3 models; only
+      the 828mkII, 828, 896 and 828 Mk3 were read in detail.
+    - Byte offsets of the original 828's status chunks.
+    - Notification bit meanings beyond `CheckStatus`, and how the Mk3 consumes clock-change
+      messages.
+    - The Audio Express write-response quirk (not examined).
+    - The 828 Mk3 hybrid counts at 4x: S/PDIF bank width and the host-to-device total may
+      differ from Linux, or be a decompile misread.
+  - **Only hardware can answer:**
+    - Replayed SPH (Linux) versus synthesised SPH tracking the input (vendor): same format,
+      different algorithm. Does the device care?
+    - Whether the clock-source name write (16 bytes at `0x0c60`,
+      `BoxDSP::SendClockSourceNameToBox @0x2d2a0`) is needed.
+    - DBC and cadence tolerance.
+    - Whether the original 896 turns optical off above 1x as the vendor forces it to; Linux
+      counts 8 ADAT chunks there.
+    - Whether our V2 streaming works on a device at all.
