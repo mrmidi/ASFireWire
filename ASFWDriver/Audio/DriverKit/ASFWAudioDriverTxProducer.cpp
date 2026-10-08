@@ -776,7 +776,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
                 .pcmChunks = txConfig.pcmChannels,
                 .sourceChannelOffset = txConfig.sourceChannelOffset,
-                .ports = txPolicy.motuPlaybackPorts});
+                .ports = txPolicy.motuPlaybackPorts,
+                .pcmByteOffset = txConfig.motuPcmByteOffset});
         ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
         ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
 

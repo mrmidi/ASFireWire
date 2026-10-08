@@ -173,15 +173,76 @@ struct V2PcmChunks {
     return chunks;
 }
 
+// V1 clock/optical/fetch codecs. Linux motu-protocol-v1.c:10-118,186-248,
+// 336-380,394-451. Original 828 shares clock and isoch control at 0xb00;
+// its clock/fetch writes MUST clear the upper half (command strobes).
+[[nodiscard]] constexpr std::optional<uint32_t> DecodeRateV1(uint32_t raw, uint32_t version) noexcept {
+    if (version == 1) return (raw & 4) ? 48000U : 44100U;
+    if (version == 2) return Encoding::Motu::kClockRates[(raw >> 3) & 3];
+    return std::nullopt;
+}
+[[nodiscard]] constexpr std::optional<uint32_t> EncodeRateV1(uint32_t raw, uint32_t rate, uint32_t version) noexcept {
+    const auto* model = Encoding::Motu::FindModel(version);
+    if (!model || !Encoding::Motu::SupportsRate(*model, rate)) return std::nullopt;
+    if (version == 1) return (raw & 0xffffU & ~4U) | (rate == 48000 ? 4U : 0U);
+    if (version == 2) return (raw & ~0x18U) | (static_cast<uint32_t>(Encoding::Motu::RateToIndex(rate)) << 3);
+    return std::nullopt;
+}
+[[nodiscard]] constexpr uint32_t EncodeFetchingV1(uint32_t raw, bool enable, uint32_t version) noexcept {
+    if (version == 1) return (raw & 0xffffU & ~0x88U) | (enable ? 0x88U : 0U);
+    // 896 output-on bits are irreversible; preserve them when fetching stops.
+    return (raw & ~0xf0000000U) | (enable ? 0x23000000U : 0U);
+}
+[[nodiscard]] constexpr std::optional<ClockSourceV2> DecodeClockSourceV1(uint32_t raw, uint32_t version) noexcept {
+    if (version == 2) {
+        if ((raw & 7) == 2) return ClockSourceV2::AesEbuOnXlr;
+        return DecodeClockSourceV2(raw);
+    }
+    switch (raw & 0x23) {
+    case 0: return ClockSourceV2::Internal;
+    case 1: return ClockSourceV2::AdatOnDsub;
+    case 2: return ClockSourceV2::Spdif;
+    case 3: return ClockSourceV2::Sph;
+    case 0x21: return ClockSourceV2::AdatOnOpt;
+    default: return std::nullopt;
+    }
+}
+
 // V3 register codecs: Linux motu-protocol-v3.c:11-38,180-235.
 [[nodiscard]] constexpr std::optional<uint32_t> DecodeRateV3(uint32_t raw) noexcept {
     const auto index = (raw >> 8) & 0xff;
     return index < Encoding::Motu::kClockRateCount ?
         std::optional<uint32_t>{Encoding::Motu::kClockRates[index]} : std::nullopt;
 }
+[[nodiscard]] constexpr std::optional<ClockSourceV2> DecodeClockSourceV3(uint32_t raw) noexcept {
+    switch (raw & 0xff) {
+    case 0: return ClockSourceV2::Internal;
+    case 1: return ClockSourceV2::WordOnBnc;
+    case 2: return ClockSourceV2::Sph;
+    case 8: return ClockSourceV2::AesEbuOnXlr;
+    case 0x10: return ClockSourceV2::Spdif;
+    case 0x18: case 0x19: return ClockSourceV2::AdatOnOpt; // bank refinement is separate
+    default: return std::nullopt;
+    }
+}
 [[nodiscard]] constexpr V2PcmChunks ResolvePcmChunks(uint32_t raw, uint32_t mode, uint32_t version) noexcept {
     const auto* model = Encoding::Motu::FindModel(version);
     if (!model || mode >= 3) return {};
+    if (model->protocol == Encoding::Motu::ProtocolVersion::V1) {
+        V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};
+        if (!chunks.tx || !chunks.rx) return {};
+        if (version == 1) {
+            if (!(raw & 0x8000)) chunks.tx += 8;
+            if (!(raw & 0x4000)) chunks.rx += 8;
+        } else {
+            // 896 has no optical mode register: reserve eight ADAT chunks at
+            // both rates, as Linux detect_packet_formats_896 does.
+            chunks.tx += 8; chunks.rx += 8;
+        }
+        chunks.txOnlyFixedChunks = chunks.tx == model->captureChunks[mode];
+        chunks.rxOnlyFixedChunks = chunks.rx == model->playbackChunks[mode];
+        return chunks;
+    }
     if (model->protocol == Encoding::Motu::ProtocolVersion::V2) return ResolveV2PcmChunks(raw, mode, version);
     if (model->protocol != Encoding::Motu::ProtocolVersion::V3 || (model->unresolvedModes & (1U << mode))) return {};
     V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};

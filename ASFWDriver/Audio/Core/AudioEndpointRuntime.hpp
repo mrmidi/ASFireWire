@@ -401,12 +401,12 @@ private:
         out.sampleRateHz = directSampleRateHz_;
     }
 
-    [[nodiscard]] static uint32_t ClampAudioChannels(uint32_t channels) noexcept {
+    [[nodiscard]] static uint32_t ClampAudioChannels(uint32_t channels, uint32_t limit) noexcept {
         if (channels == 0) {
             return 0;
         }
-        return (channels > ASFW::Encoding::kMaxPcmChannels)
-            ? ASFW::Encoding::kMaxPcmChannels
+        return (channels > limit)
+            ? limit
             : channels;
     }
 
@@ -545,10 +545,11 @@ private:
         // device->host stream for its firmware/clock protocol while explicitly
         // publishing zero CoreAudio input channels. In that case the aggregate
         // count is the transport buffer's safe fallback geometry.
+        const uint32_t channelLimit = Runtime::HostChannelLimit(config_.rateFormationCandidates);
         const uint32_t outputChannels = ClampAudioChannels(
-            config_.outputChannelCount ? config_.outputChannelCount : config_.channelCount);
+            config_.outputChannelCount ? config_.outputChannelCount : config_.channelCount, channelLimit);
         const uint32_t inputChannels = ClampAudioChannels(
-            config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
+            config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount, channelLimit);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
         // Allocate the maximum once; publish the active ring for this rate.
         Runtime::ConfigurationAllocation allocation{Isoch::Config::kAudioRingBufferFrames,

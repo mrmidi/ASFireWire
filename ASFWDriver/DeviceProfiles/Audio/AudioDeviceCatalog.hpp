@@ -174,7 +174,8 @@ enum class ProfileBuilderId : uint16_t {
     MotuTraveler,
     Motu8pre,
     Motu828mk3,
-    kLastValid = Motu828mk3,
+    Motu828, Motu896, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
+    kLastValid = MotuTravelerMk3,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately

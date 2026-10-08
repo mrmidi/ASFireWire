@@ -15,7 +15,7 @@ namespace {
 
 constexpr uint32_t kFramesPerDataPacket = 8; // 48 kHz / 8000 cycles
 
-void FillStreamConfig(AudioStreamConfig& outConfig, AudioStreamDirection direction, uint32_t chunks) noexcept {
+void FillStreamConfig(AudioStreamConfig& outConfig, AudioStreamDirection direction, uint32_t chunks, uint32_t version) noexcept {
     outConfig = AudioStreamConfig{};
     outConfig.direction = direction;
     outConfig.sampleRate = 48000;
@@ -25,13 +25,15 @@ void FillStreamConfig(AudioStreamConfig& outConfig, AudioStreamDirection directi
     // MIDI rides in the data block's second-quadlet message slot rather than an AM824
     // MIDI conformant block, so it costs no PCM chunk here (motu-stream.c:117-131).
     outConfig.midiSlots = 0;
-    outConfig.dbs = static_cast<uint8_t>(::ASFW::Encoding::Motu::DataBlockQuadlets(chunks));
+    outConfig.dbs = static_cast<uint8_t>(::ASFW::Encoding::Motu::DataBlockQuadlets(chunks, ::ASFW::Encoding::Motu::MessageChunks(version, direction == AudioStreamDirection::DeviceToHost)));
     outConfig.framesPerDataPacket = static_cast<uint8_t>(kFramesPerDataPacket);
     // MOTU sets the CIP SPH bit and uses fmt 0x02 / FDF 0x22, not AM824's 0x10 / 0x02
     // (amdtp-motu.c:19-25).
     outConfig.fdf = 0x22;
     outConfig.fmt = 0x02;
     outConfig.cipSph = true;
+    outConfig.motuMessageChunks = ::ASFW::Encoding::Motu::MessageChunks(version, direction == AudioStreamDirection::DeviceToHost);
+    outConfig.motuPcmByteOffset = ::ASFW::Encoding::Motu::PcmByteOffset(version);
 }
 
 } // namespace
@@ -52,15 +54,15 @@ Encoding::AudioWireFormat MotuProfile::RxWireFormat() const noexcept {
 
 bool MotuProfile::BuildDefaultTxStreamConfig(AudioStreamConfig& outConfig) const noexcept {
     const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_);
-    if (!model) return false;
-    FillStreamConfig(outConfig, AudioStreamDirection::HostToDevice, model->playbackChunks[0]);
+    if (!model || !::ASFW::Encoding::Motu::FireWireOnly(unitSwVersion_)) return false;
+    FillStreamConfig(outConfig, AudioStreamDirection::HostToDevice, model->playbackChunks[0], unitSwVersion_);
     return true;
 }
 
 bool MotuProfile::BuildDefaultRxStreamConfig(AudioStreamConfig& outConfig) const noexcept {
     const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_);
-    if (!model) return false;
-    FillStreamConfig(outConfig, AudioStreamDirection::DeviceToHost, model->captureChunks[0]);
+    if (!model || !::ASFW::Encoding::Motu::FireWireOnly(unitSwVersion_)) return false;
+    FillStreamConfig(outConfig, AudioStreamDirection::DeviceToHost, model->captureChunks[0], unitSwVersion_);
     return true;
 }
 
@@ -82,12 +84,12 @@ AudioStreamTxPolicy MotuProfile::TxStreamPolicy() const noexcept {
 }
 
 std::vector<uint32_t> MotuProfile::SupportedSampleRates() const {
-    // V2 rates follow the model table; the V3 828mk3 path is captured only at 48k.
+    // Best-effort FireWire rates follow each model's wire geometry table.
     std::vector<uint32_t> rates;
     if (const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_))
         for (const auto rate : ::ASFW::Encoding::Motu::kClockRates)
             if (::ASFW::Encoding::Motu::SupportsRate(*model, rate) &&
-                (model->protocol == ::ASFW::Encoding::Motu::ProtocolVersion::V2 || rate == 48000)) rates.push_back(rate);
+                ::ASFW::Encoding::Motu::FireWireOnly(unitSwVersion_)) rates.push_back(rate);
     return rates;
 }
 
@@ -102,12 +104,12 @@ uint32_t MotuProfile::RxMidiSlots() const noexcept {
 
 uint32_t MotuProfile::TxDbs() const noexcept {
     const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_);
-    return model ? ::ASFW::Encoding::Motu::DataBlockQuadlets(model->playbackChunks[0]) : 0;
+    return model ? ::ASFW::Encoding::Motu::DataBlockQuadlets(model->playbackChunks[0], ::ASFW::Encoding::Motu::MessageChunks(unitSwVersion_, false)) : 0;
 }
 
 uint32_t MotuProfile::RxDbs() const noexcept {
     const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_);
-    return model ? ::ASFW::Encoding::Motu::DataBlockQuadlets(model->captureChunks[0]) : 0;
+    return model ? ::ASFW::Encoding::Motu::DataBlockQuadlets(model->captureChunks[0], ::ASFW::Encoding::Motu::MessageChunks(unitSwVersion_, true)) : 0;
 }
 
 uint32_t MotuProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {

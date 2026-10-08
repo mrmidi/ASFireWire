@@ -911,6 +911,7 @@
 		58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SaffireproCommon.cpp; sourceTree = "<group>"; };
 		582742484D61634C43CE6873 /* BusResetWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetWireFormats.hpp; sourceTree = "<group>"; };
 		59E5457F9203C72E40C4F72C /* AvcGraphBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AvcGraphBuilder.cpp; sourceTree = "<group>"; };
+		5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuNotificationMailbox.hpp; sourceTree = "<group>"; };
 		5A48BB418AED6FDF98DAD440 /* DuplexIRMReservations.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DuplexIRMReservations.hpp; sourceTree = "<group>"; };
 		5B620010564D5E5CB0CA32AD /* IRMClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IRMClient.cpp; sourceTree = "<group>"; };
 		5C041C20D869A06663A77B32 /* BoundedPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedPlaceholder.swift; sourceTree = "<group>"; };
@@ -1981,6 +1982,7 @@
 		37AF15EE4187516EA2FDB2CB /* MOTU */ = {
 			isa = PBXGroup;
 			children = (
+				5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */,
 				00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */,
 				C5E583C7BF3E87EA0C34C09C /* MotuProtocol.hpp */,
 				F2606DEAAE46A69032D50B5A /* MotuRegisters.hpp */,

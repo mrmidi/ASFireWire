@@ -285,6 +285,10 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
             formation.hardwareValidated = validated->unsigned32BitValue() != 0;
             if (auto* packed = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPackedPcm")))
                 formation.packedPcm = packed->unsigned32BitValue() != 0;
+            if (auto* value = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuCaptureMessageChunks")))
+                formation.packedCaptureMessageChunks = value->unsigned32BitValue();
+            if (auto* value = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPlaybackMessageChunks")))
+                formation.packedPlaybackMessageChunks = value->unsigned32BitValue();
             for (uint32_t j = 0; j < playbackCount; ++j)
                 formation.playback.push_back({playback[j].pcmChannels, playback[j].am824Slots,
                     inOutConfig.usesRateFormations ? (playback[j].midiPorts ? 1U : 0U) : playback[j].midiPorts,

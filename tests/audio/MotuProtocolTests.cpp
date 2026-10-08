@@ -14,6 +14,7 @@
 
 #include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Discovery/DeviceRegistry.hpp"
+#include "tests/mocks/FakeTimerScheduler.hpp"
 
 #include <map>
 #include <optional>
@@ -70,6 +71,15 @@ public:
     std::vector<Write> writes;
     std::vector<uint32_t> reads;
     std::optional<uint32_t> readValue;
+    std::function<void(uint32_t, uint32_t)> onWrite;
+    bool deferWrites{false};
+    std::vector<std::function<void()>> deferredWrites;
+    void CompleteNextWrite() {
+        ASSERT_FALSE(deferredWrites.empty());
+        auto completion = std::move(deferredWrites.front());
+        deferredWrites.erase(deferredWrites.begin());
+        completion();
+    }
     /// Per-register replay, keyed by address low bits. Consulted before `readValue`, so a
     /// sequence touching several registers (duplex bring-up reads the optical config and
     /// the packet format) can give each one a distinct value.
@@ -112,7 +122,9 @@ public:
             (!isFirstWrite && failWritesAfterFirst != AsyncStatus::kSuccess)
                 ? failWritesAfterFirst
                 : writeStatus;
-        callback(status, {});
+        if (onWrite) onWrite(address.addressLo, value);
+        if (deferWrites) deferredWrites.push_back([callback = std::move(callback), status] { callback(status, {}); });
+        else callback(status, {});
         return AsyncHandle{1};
     }
 
@@ -1070,16 +1082,16 @@ TEST(MotuV3Protocol, Current48kGeometryUsesBanksAndChangesNoClock) {
     EXPECT_EQ(caps->hostInputPcmChannels, 26U);
     EXPECT_EQ(caps->hostOutputPcmChannels, 22U);
     const auto formations = protocol.RateFormations();
-    ASSERT_TRUE(formations); ASSERT_EQ(formations->size(), 1U);
+    ASSERT_TRUE(formations); ASSERT_EQ(formations->size(), 6U);
     EXPECT_FALSE(formations->front().hardwareValidated);
     const auto prepared = protocol.Configure(MakeChannels(), kClock48k);
     ASSERT_TRUE(prepared);
-    ASSERT_EQ(bus.writes.size(), 1U); // format only, no speculative rate writes
-    EXPECT_EQ(bus.writes.front().addressLo, LowOf(Reg::PacketFormat));
+    ASSERT_EQ(bus.writes.size(), 3U); // address pair and format; no speculative rate writes
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::PacketFormat));
     std::optional<IOReturn> changed;
     protocol.SetSampleRate(96000, [&](auto s) { changed = s; });
-    EXPECT_EQ(changed, kIOReturnUnsupported);
-    EXPECT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(changed, kIOReturnNotReady); // rate change needs a timeout scheduler
+    EXPECT_EQ(bus.writes.size(), 3U);
 }
 TEST(MotuV3Protocol, ArmStagesUseCapturedActivateAndStreamConfiguration) {
     RecordingBus bus; RouteState routes;
@@ -1133,4 +1145,133 @@ TEST(MotuV2GeometryTests, PublishedFormationsFollowCurrentRateAndEightPreWidths)
     EXPECT_EQ(forms->back().sampleRateHz, 96000U);
     EXPECT_EQ(forms->back().capture.front().pcmChannels, 18U);
     EXPECT_EQ(forms->back().capture.front().dataBlockSize, 16U);
+}
+
+TEST(MotuV1Protocol, Original828UsesSharedClockRegisterAndTrailingCaptureStatus) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0x41408004; // SPDIF input, ADAT output, 48k
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 1);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    auto caps = protocol.RuntimeCaps(); ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->sampleRateHz, 48000U);
+    EXPECT_EQ(caps->hostInputPcmChannels, 10U); EXPECT_EQ(caps->hostOutputPcmChannels, 18U);
+    const auto formations = protocol.RateFormations(); ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 2U);
+    EXPECT_EQ(formations->front().capture[0].dataBlockSize, 10U);
+    EXPECT_EQ(formations->front().playback[0].dataBlockSize, 15U);
+    EXPECT_EQ(formations->front().packedCaptureMessageChunks, 2U);
+    EXPECT_EQ(formations->front().packedPlaybackMessageChunks, 0U);
+    std::optional<IOReturn> result;
+    protocol.SetSampleRate(44100, [&](auto status) { result = status; });
+    ASSERT_EQ(result, kIOReturnSuccess);
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::IsocCommControl));
+    EXPECT_EQ(bus.writes.back().value, 0x8000U); // upper command strobes cleared
+    bus.writes.clear();
+    protocol.SetSampleRate(96000, [&](auto status) { result = status; });
+    EXPECT_EQ(result, kIOReturnUnsupported); EXPECT_TRUE(bus.writes.empty());
+}
+TEST(MotuV1Protocol, Original896ReservesAdatAtDoubleRateAndPreservesOutputOnAtStop) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x83000018;
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 2);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    const auto formations = protocol.RateFormations(); ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 4U);
+    EXPECT_EQ(formations->back().sampleRateHz, 96000U);
+    EXPECT_EQ(formations->back().capture[0].pcmChannels, 18U);
+    EXPECT_EQ(formations->back().capture[0].dataBlockSize, 15U);
+    const auto prepared = protocol.Configure(MakeChannels(), {.sampleRateHz = 96000});
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(protocol.Stop(), kIOReturnSuccess);
+    ASSERT_GE(bus.writes.size(), 3U);
+    EXPECT_EQ(bus.writes[bus.writes.size()-2].value, 0x03000018U);
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::IsocCommControl));
+}
+TEST(MotuV3Protocol, AllFireWireModelsPublishSixRatesAndOtherModelsRefuseInitialization) {
+    for (uint32_t version : {0x15U, 0x17U, 0x19U, 0x1bU}) {
+        RecordingBus bus; RouteState routes;
+        bus.readValues[LowOf(Reg::IsocCommControl)] = 0x1234;
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300; // current 96k
+        bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0;
+        bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, version);
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+        ASSERT_EQ(protocol.RateFormations()->size(), 6U);
+        EXPECT_TRUE(protocol.Configure(MakeChannels(), {.sampleRateHz = 96000}));
+        EXPECT_TRUE(protocol.ArmDeviceTxAndEnable());
+        ASSERT_FALSE(bus.writes.empty());
+        EXPECT_EQ(bus.writes.back().value & 0xffffU, version == 0x15 ? 0U : 0x1234U);
+        // The observed 828mk3 48k-only word must not leak to other models/rates.
+        for (const auto& write : bus.writes) EXPECT_NE(write.addressLo, LowOf(Reg::StreamConfigV3));
+    }
+    for (uint32_t version : {0x30U, 0x33U, 0x35U, 0x37U, 0x39U, 0x45U}) {
+        RecordingBus bus; RouteState routes;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, version);
+        EXPECT_EQ(protocol.Initialize(), kIOReturnUnsupported); EXPECT_TRUE(bus.writes.empty());
+    }
+}
+TEST(MotuV3Protocol, ClockChangeRequiresMatchingNotificationAndReadbackWithBoundedTimeout) {
+    using namespace ASFW::Audio::Motu;
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x1b, nullptr, &timer);
+    std::optional<IOReturn> result; int completions = 0;
+    protocol.SetSampleRate(96000, [&](auto status) { result = status; ++completions; });
+    ASSERT_EQ(bus.writes.size(), 3U); EXPECT_FALSE(result);
+    EXPECT_EQ(bus.writes.back().value, 0x300U);
+    const uint64_t address = kAsyncMessageRegionStart | bus.writes[1].value;
+    const std::array<uint8_t,4> clockChanged{0,0,0,2};
+    ASFW::Async::LocalRequestContext ctx{.destOffset = address, .sourceID = kNodeId,
+        .generation = routes.route.generation.value, .writePayload = clockChanged};
+    auto wrong = ctx; ++wrong.generation; (void)Notifications::Handle(wrong); EXPECT_FALSE(result);
+    wrong = ctx; ++wrong.sourceID; (void)Notifications::Handle(wrong); EXPECT_FALSE(result);
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300;
+    EXPECT_EQ(Notifications::Handle(ctx).rcode, ASFW::Async::ResponseCode::Complete);
+    ASSERT_EQ(result, kIOReturnSuccess); EXPECT_EQ(protocol.CachedSampleRateHz(), 96000U);
+    timer.Advance(4'000'000'000ULL); EXPECT_EQ(completions, 1);
+    result.reset();
+    protocol.SetSampleRate(192000, [&](auto status) { result = status; ++completions; });
+    EXPECT_FALSE(result); timer.Advance(4'000'000'000ULL);
+    EXPECT_EQ(result, kIOReturnTimeout); EXPECT_EQ(completions, 2);
+    (void)Notifications::Handle(ctx); EXPECT_EQ(completions, 2); // late event cannot revive timeout
+}
+TEST(MotuV3Protocol, NotificationBeforeAckAndRouteCancellationAreSafe) {
+    using namespace ASFW::Audio::Motu;
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x19, nullptr, &timer);
+    int calls = 0; std::optional<IOReturn> result;
+    bus.onWrite = [&](uint32_t address, uint32_t value) {
+        if (address != LowOf(Reg::ClockStatusV2)) return;
+        bus.readValues[address] = value;
+        const std::array<uint8_t,4> changed{0,0,0,2};
+        (void)Notifications::Handle({.destOffset = kAsyncMessageRegionStart | bus.writes[1].value,
+            .sourceID = kNodeId, .generation = routes.route.generation.value, .writePayload = changed});
+    };
+    protocol.SetSampleRate(88200, [&](auto status) { result = status; ++calls; });
+    EXPECT_EQ(result, kIOReturnSuccess); EXPECT_EQ(calls, 1);
+    bus.onWrite = {}; result.reset();
+    protocol.SetSampleRate(192000, [&](auto status) { result = status; ++calls; });
+    EXPECT_FALSE(result);
+    auto updated = routes.route; ++updated.routeEpoch;
+    protocol.UpdateRuntimeContext(updated, nullptr);
+    EXPECT_EQ(result, kIOReturnAborted);
+    timer.Advance(4'000'000'000ULL); EXPECT_EQ(calls, 2);
+}
+
+TEST(MotuProtocolTests, ShutdownAddressReleaseCompletesAfterProtocolDestruction) {
+    RecordingBus bus; RouteState routes;
+    auto protocol = std::make_unique<MotuProtocol>(bus,bus,routes.registry,routes.route,3);
+    protocol->RegisterAsyncMessageAddress(0xffc0U,kAsyncMessageRegionStart,nullptr);
+    ASSERT_TRUE(protocol->HasRegisteredAsyncAddress()); bus.deferWrites = true;
+    EXPECT_EQ(protocol->Shutdown(),kIOReturnSuccess);
+    protocol.reset(); // both register IO completions must own their state
+    bus.CompleteNextWrite(); bus.CompleteNextWrite();
+    EXPECT_TRUE(bus.deferredWrites.empty()); ASSERT_EQ(bus.writes.size(),4U);
+    EXPECT_EQ(bus.writes[2].value,0U); EXPECT_EQ(bus.writes[3].value,0U);
 }

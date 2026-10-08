@@ -6,6 +6,8 @@
 #include "ASFWDriver/Audio/Protocols/MOTU/MotuRegisters.hpp"
 #include "ASFWDriver/Audio/Runtime/ResolvedAudioConfiguration.hpp"
 #include <cmath>
+#include <thread>
+#include "ASFWDriver/Audio/Protocols/MOTU/MotuNotificationMailbox.hpp"
 using namespace ASFW::Encoding::Motu;
 using namespace ASFW::Audio::Motu;
 
@@ -99,4 +101,85 @@ TEST(MotuSynthesis, FourCycleDiscontinuityRequestsRecoveryInsteadOfAStampJump) {
     synth.Reset();
     EXPECT_FALSE(synth.Current().discontinuity);
     EXPECT_TRUE(synth.Observe(100));
+}
+
+TEST(MotuStack, OriginalLayoutsAndFireWire896Mk3Geometry) {
+    EXPECT_EQ(ResolvePcmChunks(0, 0, 1).tx, 18U);
+    EXPECT_EQ(ResolvePcmChunks(0xc000, 0, 1).rx, 10U);
+    EXPECT_EQ(ResolvePcmChunks(0, 1, 2).tx, 18U);
+    EXPECT_EQ(ResolvePcmChunks(0, 0, 0x17).rx, 18U); // provider "1394"
+    EXPECT_EQ(DataBlockQuadlets(18, MessageChunks(1, true)), 16U);
+    EXPECT_EQ(DataBlockQuadlets(18, MessageChunks(1, false)), 15U);
+    EXPECT_EQ(EncodeFetchingV1(0xffff00ff, false, 1), 0x77U);
+    EXPECT_EQ(EncodeFetchingV1(0xf3000018, false, 2), 0x03000018U);
+    EXPECT_EQ(EncodeFetchingV1(0x18, true, 2), 0x23000018U);
+}
+TEST(MotuStack, V1CaptureReadsPcmImmediatelyAfterSphAndIgnoresTrailingStatus) {
+    ASFW::Audio::Wire::MotuRxPayloadCodec codec(10, {}, false, 2, 4);
+    std::array<uint8_t,40> block{};
+    WritePcmSample(std::span(block).subspan(4,3), 0x40000000);
+    block[34] = 0x7f; block[38] = 0x06; // trailing status, never first-channel PCM
+    float output[10]{};
+    ASFW::AudioEngine::Direct::Rx::RxCaptureChannelMap map{};
+    ASSERT_TRUE(codec.ValidateGeometry(10,0,10,10));
+    codec.DecodeBlock(block,10,0,map,output,nullptr);
+    EXPECT_NEAR(output[0], 0.5f, 0.000001f);
+    for (size_t i = 1; i < 10; ++i) EXPECT_EQ(output[i], 0.0f);
+}
+
+TEST(MotuNotifications, ConcurrentAckNotificationAndTimeoutCompleteExactlyOnce) {
+    for (int i = 0; i < 100; ++i) {
+        std::atomic<int> calls{0};
+        auto pending = std::make_shared<ClockChangeWait>([&](IOReturn) { ++calls; });
+        ASSERT_TRUE(pending->Valid());
+        std::thread ack([&] { pending->Ack(kIOReturnSuccess); });
+        std::thread notify([&] { pending->Notify(); });
+        std::thread timeout([&] { pending->Fail(kIOReturnTimeout); });
+        ack.join(); notify.join(); timeout.join();
+        EXPECT_EQ(calls.load(),1); EXPECT_TRUE(pending->Done());
+    }
+}
+TEST(MotuNotifications, ExpiredEndpointAndMalformedMessagesCannotCompleteAnOperation) {
+    auto mailbox = std::make_shared<NotificationMailbox>(ASFW::Discovery::DeviceRouteToken{
+        .guid=1, .deviceIncarnation=1, .routeEpoch=1, .generation=ASFW::FW::Generation{1}, .nodeId=1});
+    const auto address = Notifications::Register(mailbox); ASSERT_NE(address,0U);
+    int completions = 0;
+    auto wait = mailbox->Begin([&](IOReturn) { ++completions; }); ASSERT_TRUE(wait);
+    wait->Ack(kIOReturnSuccess);
+    const std::array<uint8_t,3> shortPayload{0,0,2};
+    EXPECT_EQ(Notifications::Handle({.destOffset=address,.sourceID=1,.generation=1,.writePayload=shortPayload}).rcode,
+        ASFW::Async::ResponseCode::TypeError);
+    EXPECT_EQ(completions,0);
+    mailbox.reset();
+    const std::array<uint8_t,4> validPayload{0,0,0,2};
+    EXPECT_EQ(Notifications::Handle({.destOffset=address,.sourceID=1,.generation=1,.writePayload=validPayload}).rcode,
+        ASFW::Async::ResponseCode::Complete);
+    EXPECT_EQ(completions,0);
+    wait->Fail(kIOReturnAborted); EXPECT_EQ(completions,1);
+}
+
+TEST(MotuStack, DualAdatCaptureKeepsAll34ChannelsAndRejectsOversizedFormats) {
+    using namespace ASFW::Audio::Runtime;
+    RateFormation f{};
+    f.sampleRateHz = 48000; f.protocolSupported = true; f.packedPcm = true;
+    const auto chunks = ResolvePcmChunks(0x303, 0, 0x15);
+    ASSERT_EQ(chunks.tx, 34U);
+    f.playback = {{chunks.rx, DataBlockQuadlets(chunks.rx)}};
+    f.capture = {{chunks.tx, DataBlockQuadlets(chunks.tx)}};
+    const auto capacity = MaximumFormationAllocation(std::span(&f,1), {16384,0,0,0});
+    ASSERT_TRUE(capacity); EXPECT_EQ(capacity->captureChannelCapacity,34U);
+    const auto resolved = ResolveAudioConfiguration(48000,std::span(&f,1),{64,64,128,128},*capacity,0,
+        ConfigurationValidationPolicy::HardwareBatch);
+    ASSERT_TRUE(resolved); EXPECT_EQ(resolved->captureChannels,34U);
+    ASFW::Audio::Wire::MotuRxPayloadCodec codec(34,{},true);
+    std::array<uint8_t,112> block{};
+    WritePcmSample(std::span(block).subspan(10 + 33 * 3,3),0x40000000);
+    std::array<float,34> output{};
+    ASSERT_TRUE(codec.ValidateGeometry(34,0,28,28));
+    codec.DecodeBlock(block,34,0,{},output.data(),nullptr);
+    EXPECT_NEAR(output[33],0.5f,0.000001f);
+    f.capture[0] = {35,DataBlockQuadlets(35)};
+    EXPECT_FALSE(MaximumFormationAllocation(std::span(&f,1), {16384,0,0,0}));
+    f.capture[0] = {34,28}; f.packedPcm = false;
+    EXPECT_FALSE(MaximumFormationAllocation(std::span(&f,1), {16384,0,0,0}));
 }

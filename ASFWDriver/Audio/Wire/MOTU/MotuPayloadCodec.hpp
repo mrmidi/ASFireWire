@@ -19,8 +19,8 @@ public:
     MotuRxPayloadCodec() noexcept = default;
 
     explicit MotuRxPayloadCodec(uint32_t pcmChunks,
-                                ::ASFW::Encoding::Motu::MotuPortMap ports = {}, bool v3 = false) noexcept
-        : pcmChunks_(pcmChunks), ports_(ports), v3_(v3) {}
+                                ::ASFW::Encoding::Motu::MotuPortMap ports = {}, bool v3 = false, uint32_t messageChunks = 2, uint32_t pcmByteOffset = 10) noexcept
+        : v3_(v3), pcmChunks_(pcmChunks), ports_(ports), messageChunks_(messageChunks), pcmByteOffset_(pcmByteOffset) {}
 
     void Configure(uint32_t pcmChunks,
                    ::ASFW::Encoding::Motu::MotuPortMap ports = {}) noexcept {
@@ -39,7 +39,7 @@ public:
 
     [[nodiscard]] uint32_t StrideQuadlets(uint8_t cipDbs) const noexcept override {
         return pcmChunks_ != 0
-            ? ::ASFW::Encoding::Motu::DataBlockQuadlets(pcmChunks_)
+            ? ::ASFW::Encoding::Motu::DataBlockQuadlets(pcmChunks_, messageChunks_)
             : static_cast<uint32_t>(cipDbs);
     }
 
@@ -54,7 +54,7 @@ public:
         }
         const size_t dbsBytes = static_cast<size_t>(strideQuadlets) * 4U;
         const size_t requiredBytes =
-            static_cast<size_t>(::ASFW::Encoding::Motu::kPcmByteOffset) +
+            static_cast<size_t>(pcmByteOffset_) +
             static_cast<size_t>(pcmChunks_) * ::ASFW::Encoding::Motu::kBytesPerChunk;
         if (requiredBytes > dbsBytes) {
             return false;
@@ -70,7 +70,7 @@ public:
         float* frameOut,
         float* delayedOut) const noexcept override {
         ::ASFW::Encoding::Motu::DecodeMotuBlock(
-            blockBytes, pcmChunks_, channelOffset, frameOut, channels, ports_);
+            blockBytes, pcmChunks_, channelOffset, frameOut, channels, ports_, pcmByteOffset_);
 
         if (delayedOut != nullptr && map.HasDelay()) {
             for (uint32_t ch = 0; ch < channels; ++ch) {
@@ -84,6 +84,8 @@ public:
 
 private:
     bool v3_{false};
+    uint32_t messageChunks_{2};
+    uint32_t pcmByteOffset_{10};
     uint32_t pcmChunks_{0};
     ::ASFW::Encoding::Motu::MotuPortMap ports_{};
 };

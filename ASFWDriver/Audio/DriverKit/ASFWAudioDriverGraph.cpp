@@ -249,7 +249,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!profileProvidedSampleRates) {
         ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
     }
-    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
+    const uint32_t channelLimit = profile && profile->RxWireFormat() == ASFW::Encoding::AudioWireFormat::kMotuPacked
+        ? ASFW::Audio::Runtime::kMaxPackedPcmChannels : ASFW::Encoding::kMaxPcmChannels;
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, channelLimit);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
     ivars.device.profile = profile;
 

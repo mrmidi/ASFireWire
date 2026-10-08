@@ -29,7 +29,7 @@ namespace {
     if (policy && policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister) {
         const auto* model = Encoding::Motu::FindModel(policy->plan.unitVersion);
         return model && Encoding::Motu::SupportsRate(*model, clock.sampleRateHz) &&
-            (model->protocol == Encoding::Motu::ProtocolVersion::V2 || clock.sampleRateHz == 48000);
+            Encoding::Motu::FireWireOnly(model->unitVersion);
     }
     if (Runtime::kDiceHardwareBatch && policy &&
         ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice)

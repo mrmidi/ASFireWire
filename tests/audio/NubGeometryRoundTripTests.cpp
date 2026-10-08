@@ -336,3 +336,30 @@ TEST(NubGeometryRoundTrip, MotuPackedFormationPreservesSmallerThanPcmDbs) {
     EXPECT_EQ(parsed.rateFormationCandidates.front(), f);
     EXPECT_FALSE(parsed.rateFormationCandidates.front().hardwareValidated);
 }
+
+TEST(NubGeometryRoundTrip, Original828DirectionSpecificStatusChunksSurvive) {
+    auto dev = MakeVeniceF24(); dev.usesRateFormations = true;
+    ASFW::Audio::Runtime::RateFormation formation{};
+    formation.sampleRateHz = 48000; formation.protocolSupported = true; formation.packedPcm = true;
+    formation.packedCaptureMessageChunks = 2; formation.packedPlaybackMessageChunks = 0;
+    formation.capture = {{18,16}}; formation.playback = {{18,15}};
+    dev.rateFormationCandidates = {formation}; bool published = false;
+    const auto parsed = RoundTrip(dev,published); ASSERT_TRUE(published);
+    EXPECT_EQ(parsed.rateFormationCandidates,dev.rateFormationCandidates);
+}
+
+TEST(NubGeometryRoundTrip, Packed34ChannelCaptureAndLastNameSurvivePublication) {
+    auto dev = MakeVeniceF24(); dev.usesRateFormations = true;
+    dev.inputChannelCount = dev.channelCount = 34; dev.outputChannelCount = 30;
+    dev.captureStreams = {{34,28}}; dev.playbackStreams = {{30,25}};
+    for (uint32_t i = 0; i < 34; ++i) dev.inputChannelNames.push_back("Capture " + std::to_string(i+1));
+    ASFW::Audio::Runtime::RateFormation f{};
+    f.sampleRateHz = 48000; f.protocolSupported = true; f.packedPcm = true;
+    f.capture = {{34,28}}; f.playback = {{30,25}};
+    dev.rateFormationCandidates = {f}; bool published = false;
+    const auto parsed = RoundTrip(dev,published); ASSERT_TRUE(published);
+    EXPECT_EQ(parsed.inputChannelCount,34U);
+    EXPECT_STREQ(parsed.inputChannelNames[33],"Capture 34");
+    ASSERT_EQ(parsed.captureStreamCount,1U); EXPECT_EQ(parsed.captureStreams[0].pcmChannels,34U);
+    EXPECT_EQ(parsed.rateFormationCandidates,dev.rateFormationCandidates);
+}

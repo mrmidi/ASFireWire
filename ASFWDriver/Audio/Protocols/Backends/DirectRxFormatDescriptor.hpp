@@ -20,6 +20,8 @@ struct DirectRxFormatDescriptor final {
     uint32_t streamChannels{0};
     bool trustConfiguredStride{false};
     bool motuV3{false};
+    uint32_t motuMessageChunks{2};
+    uint32_t motuPcmByteOffset{10};
     uint32_t motuPcmChunks{0};
     ::ASFW::Encoding::Motu::MotuPortMap motuPorts{};
     AudioEngine::Direct::Rx::RxCaptureChannelMap captureChannelMap{};

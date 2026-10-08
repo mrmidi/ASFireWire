@@ -62,6 +62,7 @@ struct MotuPayloadStreamConfig final {
     uint32_t sourceChannelOffset{0};
     /// Chunk behind each host channel; empty encodes in wire order.
     MotuPortMap ports{};
+    uint32_t pcmByteOffset{10};
 };
 
 class MotuPayloadWriter final : public ::ASFW::Audio::ITxPayloadWriter {

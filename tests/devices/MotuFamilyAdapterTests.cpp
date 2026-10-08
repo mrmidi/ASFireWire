@@ -520,4 +520,18 @@ TEST(MotuFamilyAdapterTests, InstallingAnEventSinkRaisesNothing) {
     EXPECT_STREQ(adapter.Name(), "MOTU");
 }
 
+TEST(MotuFamilyAdapterTests, V1AndV3ReadFailureRefusesGuessedInitialGeometry) {
+    for (uint32_t version : {1U,2U,0x15U,0x17U,0x19U,0x1bU}) {
+        MotuRig rig;
+        rig.record.unitSwVersion = version;
+        const auto route = rig.registry.CurrentRoute(kMotuGuid);
+        rig.protocol = std::make_shared<MotuProtocol>(rig.bus,rig.bus,rig.registry,*route,version);
+        rig.bus.readStatus = AsyncStatus::kTimeout;
+        MotuFamilyAdapter adapter;
+        const auto outcome = RunDescribe(adapter,rig.Input());
+        ASSERT_TRUE(outcome.result.has_value());
+        EXPECT_NE(std::get_if<DescribeRefusal>(&*outcome.result),nullptr);
+    }
+}
+
 }  // namespace

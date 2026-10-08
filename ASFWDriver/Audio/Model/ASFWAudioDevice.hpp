@@ -219,6 +219,8 @@ struct ASFWAudioDevice {
                     !add(PropertyKeys::kFormationProtocolSupported, formation.protocolSupported) ||
                     !add(PropertyKeys::kFormationHardwareValidated, formation.hardwareValidated) ||
                     !add("ASFWMotuPackedPcm", formation.packedPcm) ||
+                    !add("ASFWMotuCaptureMessageChunks", formation.packedCaptureMessageChunks) ||
+                    !add("ASFWMotuPlaybackMessageChunks", formation.packedPlaybackMessageChunks) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kPlaybackStreams, streams(formation.playback)) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kCaptureStreams, streams(formation.capture))) return false;
                 catalog->setObject(entry.get());

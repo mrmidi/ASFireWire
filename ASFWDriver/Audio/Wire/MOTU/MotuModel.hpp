@@ -25,15 +25,15 @@ struct Model final {
 // Vendor disagreements: tmp/motu-research/vendor-four-gaps.md. Counts include
 // padding chunks; they must never be interpreted as physical port counts.
 inline constexpr std::array kModels{
-    Model{0x1, "828", ProtocolVersion::V1, {}, {}, OpticalLayout::None, FetchRule::None, 7},
-    Model{0x2, "896", ProtocolVersion::V1, {}, {}, OpticalLayout::None, FetchRule::None, 7},
+    Model{0x1, "828", ProtocolVersion::V1, {10,0,0}, {10,0,0}, OpticalLayout::None, FetchRule::None},
+    Model{0x2, "896", ProtocolVersion::V1, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::None},
     Model{0x3, "828mk2", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::V2, FetchRule::None},
     Model{0x5, "896HD", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::None},
     Model{0x9, "Traveler", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::Traveler},
     Model{0xd, "UltraLite", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::None, FetchRule::Spartan},
     Model{0xf, "8pre", ProtocolVersion::V2, {10,10,0}, {6,6,0}, OpticalLayout::V2EightPre, FetchRule::Spartan},
     Model{0x15, "828mk3", ProtocolVersion::V3, {18,18,14}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3},
-    Model{0x17, "896mk3", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 1},
+    Model{0x17, "896mk3", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3},
     Model{0x19, "UltraLite mk3", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3},
     Model{0x1b, "Traveler mk3", ProtocolVersion::V3, {18,14,10}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3},
     Model{0x30, "UltraLite mk3 Hybrid", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3},
@@ -43,6 +43,24 @@ inline constexpr std::array kModels{
     Model{0x39, "Track16", ProtocolVersion::V3, {14,14,14}, {6,6,6}, OpticalLayout::V3Banks, FetchRule::V3, 7},
     Model{0x45, "4pre", ProtocolVersion::V3, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::V3},
 };
+// Vendor 896mk3 SetupStrmFwIds @0x3f118 compares provider Gestalt to
+// 0x31333934 ("1394"): FireWire selects 18 playback chunks at 1x, matching
+// Linux motu-protocol-v3.c. The 16-chunk branch belongs to other providers.
+[[nodiscard]] constexpr bool FireWireOnly(uint32_t version) noexcept {
+    switch (version) {
+    case 1: case 2: case 3: case 5: case 9: case 0xd: case 0xf:
+    case 0x15: case 0x17: case 0x19: case 0x1b: return true;
+    default: return false;
+    }
+}
+// Linux motu-protocol-v1.c:394-461: V1 PCM starts immediately after SPH.
+// Original 828 capture has two trailing status chunks; playback has none.
+[[nodiscard]] constexpr uint32_t MessageChunks(uint32_t version, bool capture) noexcept {
+    return version == 1 ? (capture ? 2U : 0U) : version == 2 ? 0U : 2U;
+}
+[[nodiscard]] constexpr uint32_t PcmByteOffset(uint32_t version) noexcept {
+    return version == 1 || version == 2 ? 4U : 10U;
+}
 [[nodiscard]] constexpr const Model* FindModel(uint32_t version) noexcept {
     for (const auto& model : kModels) if (model.unitVersion == version) return &model;
     return nullptr;

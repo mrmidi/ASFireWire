@@ -95,6 +95,8 @@ void LogReservationSummary(uint64_t guid, FW::Generation generation, FW::FwSpeed
         .streamChannels = stream.pcmChannels,
         .trustConfiguredStride = profile.captureTrustConfiguredStride,
         .motuV3 = profile.captureMotuV3,
+        .motuMessageChunks = profile.captureMotuMessageChunks,
+        .motuPcmByteOffset = profile.captureMotuPcmByteOffset,
         .motuPcmChunks = profile.captureMotuPcmChunks,
         .motuPorts = profile.captureMotuPorts,
         .captureChannelMap = profile.captureChannelMap,

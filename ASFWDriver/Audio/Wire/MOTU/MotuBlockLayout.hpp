@@ -74,8 +74,8 @@ inline constexpr uint32_t k828mk2FixedPcmChunks[kModeCount] = {14, 14, 0};
 
 /// Data block size: one SPH quadlet, then (msg + pcm) 3-byte chunks padded to
 /// quadlet alignment (amdtp-motu.c:69-74).
-[[nodiscard]] constexpr uint32_t DataBlockQuadlets(uint32_t pcmChunks) noexcept {
-    const uint32_t chunkBytes = (kMsgChunks + pcmChunks) * kBytesPerChunk;
+[[nodiscard]] constexpr uint32_t DataBlockQuadlets(uint32_t pcmChunks, uint32_t msgChunks = kMsgChunks) noexcept {
+    const uint32_t chunkBytes = (msgChunks + pcmChunks) * kBytesPerChunk;
     return 1 + (chunkBytes + 3) / 4;
 }
 

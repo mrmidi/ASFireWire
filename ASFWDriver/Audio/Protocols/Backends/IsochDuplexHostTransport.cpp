@@ -38,7 +38,7 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     }
     if (format.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuPacked) {
         motuRxCodecs_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxPayloadCodec>(
-            format.motuPcmChunks, format.motuPorts, format.motuV3);
+            format.motuPcmChunks, format.motuPorts, format.motuV3, format.motuMessageChunks, format.motuPcmByteOffset);
         consumer->SetPayloadCodec(motuRxCodecs_[streamIndex].get());
 
         motuRxTimingObservers_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxTimingObserver>(

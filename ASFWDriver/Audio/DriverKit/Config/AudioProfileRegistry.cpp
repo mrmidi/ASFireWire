@@ -105,6 +105,11 @@ AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
 MOTU::Profiles::MotuProfile gMotu828mk3Profile{21};
+MOTU::Profiles::MotuProfile gMotu828Profile{1};
+MOTU::Profiles::MotuProfile gMotu896Profile{2};
+MOTU::Profiles::MotuProfile gMotu896mk3Profile{23};
+MOTU::Profiles::MotuProfile gMotuUltraliteMk3Profile{25};
+MOTU::Profiles::MotuProfile gMotuTravelerMk3Profile{27};
 MOTU::Profiles::MotuProfile gMotu896hdProfile{5};
 MOTU::Profiles::MotuProfile gMotuTravelerProfile{9};
 MOTU::Profiles::MotuProfile gMotu8preProfile{15};
@@ -156,6 +161,11 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MotuTraveler:
         case Builder::Motu8pre:
         case Builder::Motu828mk3:
+        case Builder::Motu828:
+        case Builder::Motu896:
+        case Builder::Motu896mk3:
+        case Builder::MotuUltraliteMk3:
+        case Builder::MotuTravelerMk3:
         case Builder::GenericAvc:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
@@ -205,6 +215,11 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MotuTraveler: return &gMotuTravelerProfile;
         case Builder::Motu8pre: return &gMotu8preProfile;
         case Builder::Motu828mk3: return &gMotu828mk3Profile;
+        case Builder::Motu828: return &gMotu828Profile;
+        case Builder::Motu896: return &gMotu896Profile;
+        case Builder::Motu896mk3: return &gMotu896mk3Profile;
+        case Builder::MotuUltraliteMk3: return &gMotuUltraliteMk3Profile;
+        case Builder::MotuTravelerMk3: return &gMotuTravelerMk3Profile;
         case Builder::RmeFireface400:
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:

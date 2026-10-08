@@ -282,3 +282,20 @@ TEST(MotuPayloadWriterTests, DoesNothingWhenUnconfiguredOrUnbound) {
 }
 
 } // namespace
+
+TEST(MotuPayloadWriterTests, OriginalProtocolWritesImmediatelyAfterSphWithoutMessageGap) {
+    TimelineHarness harness{1,0,3}; // SPH + two packed PCM chunks + padding
+    MotuPayloadWriter writer{};
+    writer.Configure({.pcmChunks=2,.pcmByteOffset=4});
+    writer.BindTimeline(&harness.timeline);
+    const std::array<float,2> samples{1.0f,-1.0f};
+    HostAudioBufferView view{};
+    view.interleavedFloat32=samples.data(); view.frameCount=1; view.channels=2;
+    writer.WriteFloat32Interleaved(view,0);
+    EXPECT_EQ(writer.Counters().framesWritten.load(),1U);
+    const auto* block = harness.bytes.data()+8;
+    EXPECT_EQ(block[0],0xee); EXPECT_EQ(block[3],0xee); // SPH remains owned by timing
+    EXPECT_EQ(block[4],0x7f); EXPECT_EQ(block[5],0xff); EXPECT_EQ(block[6],0xff);
+    EXPECT_EQ(block[7],0x80); EXPECT_EQ(block[8],0x00); EXPECT_EQ(block[9],0x01); // symmetric full-scale quantization
+    EXPECT_EQ(block[10],0xee); EXPECT_EQ(block[11],0xee); // padding untouched
+}

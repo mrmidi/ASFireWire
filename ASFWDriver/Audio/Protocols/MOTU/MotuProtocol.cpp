@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuProtocol.cpp - MOTU protocol-v2 register device protocol.
+// MotuProtocol.cpp - Shared MOTU V1/V2/V3 register device protocol.
 //
 // Register semantics cross-validated with Linux sound/firewire/motu
 // (motu-protocol-v2.c, motu-transaction.c) and confirmed against an 828mkII on
@@ -35,11 +35,20 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                Discovery::DeviceRegistry& routeRegistry,
                                const Discovery::DeviceRouteToken& route,
                                uint32_t unitSwVersion,
-                               ::ASFW::IRM::IRMClient* irmClient)
+                               ::ASFW::IRM::IRMClient* irmClient,
+                               Scheduling::ITimerScheduler* timerScheduler)
     : io_(busOps, busInfo, routeRegistry, route)
     , busInfo_(busInfo)
     , irmClient_(irmClient)
-    , unitSwVersion_(unitSwVersion) {}
+    , unitSwVersion_(unitSwVersion), timerScheduler_(timerScheduler), route_(route) {
+    if (IsV3() && Encoding::Motu::FireWireOnly(unitSwVersion_)) {
+        notifications_ = std::make_shared<NotificationMailbox>(route);
+        notificationAddress_ = Notifications::Register(notifications_);
+    }
+}
+MotuProtocol::~MotuProtocol() {
+    if (notifications_ && notifications_->Valid()) notifications_->Cancel();
+}
 
 bool MotuProtocol::IsV3() const noexcept {
     const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
@@ -49,12 +58,12 @@ bool MotuProtocol::IsV3() const noexcept {
 const char* MotuProtocol::GetName() const {
     const char* const model =
         DeviceProfiles::Audio::AudioDeviceCatalog::MotuModelNameForSwVersion(unitSwVersion_);
-    return model != nullptr ? model : "MOTU (protocol v2)";
+    return model != nullptr ? model : "MOTU (FireWire)";
 }
 
 IOReturn MotuProtocol::Initialize() {
     const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
-    if (!model || (model->protocol != Encoding::Motu::ProtocolVersion::V2 && unitSwVersion_ != 0x15)) return kIOReturnUnsupported;
+    if (!model || !Encoding::Motu::FireWireOnly(unitSwVersion_)) return kIOReturnUnsupported;
     initialized_ = true;
 
     // Prime the cached clock state. Best-effort: a failure here leaves the cache at 0
@@ -77,16 +86,27 @@ IOReturn MotuProtocol::Initialize() {
 
 IOReturn MotuProtocol::Shutdown() {
     initialized_ = false;
+    if (notifications_ && notifications_->Valid()) notifications_->Cancel();
     cachedSampleRateHz_.store(0, std::memory_order_release);
 
     // Hand the device back to its front panel. Fire-and-forget: Shutdown is synchronous,
     // and a device that has already gone away cannot be released anyway.
-    if (asyncAddressRegistered_.load(std::memory_order_acquire)) {
-        ReleaseAsyncMessageAddress([](IOReturn status) {
-            if (status != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "MotuProtocol: async address release failed: 0x%x", status);
-            }
-        });
+    if (asyncAddressRegistered_.exchange(false, std::memory_order_acq_rel)) {
+        // Shutdown does not wait on Default. Own a copy of the IO route for
+        // these two completions; neither may retain this protocol's address.
+        const auto releaseIo = std::make_shared<Protocols::Ports::ProtocolRegisterIO>(io_);
+        const auto report = [](Async::AsyncStatus status) {
+            const auto result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (result != kIOReturnSuccess)
+                ASFW_LOG(Audio, "MotuProtocol: async address release failed: %{public}s (0x%x)",
+                         Logging::IOReturnName(result), result);
+        };
+        (void)releaseIo->WriteQuadBE(AddressOf(Reg::AsyncAddrHi), 0,
+            [releaseIo, report](Async::AsyncStatus status) {
+                if (status != Async::AsyncStatus::kSuccess) { report(status); return; }
+                (void)releaseIo->WriteQuadBE(AddressOf(Reg::AsyncAddrLo), 0,
+                    [releaseIo, report](Async::AsyncStatus status) { report(status); });
+            });
     }
 
     return kIOReturnSuccess;
@@ -94,13 +114,18 @@ IOReturn MotuProtocol::Shutdown() {
 
 void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                           std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
-    (void)avcUnit; // MOTU v2 is register-based; no AV/C.
+    (void)avcUnit; // MOTU is register-based; no AV/C.
+    if (route == route_) return;
+    route_ = route;
     io_.UpdateRoute(route);
+    if (notifications_ && notifications_->Valid()) notifications_->UpdateRoute(route);
+    asyncAddressRegistered_.store(false, std::memory_order_release);
+    opticalSnapshot_.store(0, std::memory_order_release);
 }
 
 void MotuProtocol::ReadClockStatus(ClockStatusCallback callback) {
     (void)io_.ReadQuadBE(
-        AddressOf(Reg::ClockStatusV2),
+        AddressOf(ClockRegister()),
         [this, callback = std::move(callback)](Async::AsyncStatus status, uint32_t value) mutable {
             const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (result != kIOReturnSuccess) {
@@ -112,9 +137,9 @@ void MotuProtocol::ReadClockStatus(ClockStatusCallback callback) {
 
             ClockStatus clock{};
             clock.raw = value;
-            clock.sampleRateHz = (IsV3() ? DecodeRateV3(value) : DecodeRateV2(value)).value_or(0U);
-            clock.source = IsV3()
-                ? ((value & 0xff) == 0 ? std::optional{ClockSourceV2::Internal} : std::nullopt)
+            clock.sampleRateHz = (IsV1() ? DecodeRateV1(value, unitSwVersion_) : IsV3() ? DecodeRateV3(value) : DecodeRateV2(value)).value_or(0U);
+            clock.source = IsV1() ? DecodeClockSourceV1(value, unitSwVersion_) : IsV3()
+                ? DecodeClockSourceV3(value)
                 : DecodeClockSourceV2(value);
             cachedSampleRateHz_.store(clock.sampleRateHz, std::memory_order_release);
 
@@ -136,14 +161,13 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
             return;
         }
 
-        if (IsV3()) {
-            // No notification receiver yet: never turn an ACK into clock-ready.
-            // Linux motu-protocol-v3.c:62-113 waits for CLK_CHANGED (4s).
-            if (callback) callback(rateHz == 48000 && clock.sampleRateHz == rateHz
-                ? kIOReturnSuccess : kIOReturnUnsupported);
+        const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
+        if (!model || !Encoding::Motu::SupportsRate(*model, rateHz) || !Encoding::Motu::FireWireOnly(unitSwVersion_)) {
+            if (callback) callback(kIOReturnUnsupported);
             return;
         }
-        const auto encoded = EncodeRateV2(clock.raw, rateHz);
+        if (IsV3()) { SetSampleRateV3(rateHz, clock, std::move(callback)); return; }
+        const auto encoded = IsV1() ? EncodeRateV1(clock.raw, rateHz, unitSwVersion_) : EncodeRateV2(clock.raw, rateHz);
         if (!encoded.has_value()) {
             ASFW_LOG(Audio, "MotuProtocol: unsupported sample rate %u", rateHz);
             if (callback) {
@@ -160,7 +184,7 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
         }
 
         (void)io_.WriteQuadBE(
-            AddressOf(Reg::ClockStatusV2),
+            AddressOf(ClockRegister()),
             *encoded,
             [this, rateHz, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
                 const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus);
@@ -169,6 +193,48 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
                 }
                 if (callback) {
                     callback(result);
+                }
+            });
+    });
+}
+
+void MotuProtocol::EnsureAsyncAddress(CompletionCallback callback) {
+    if (HasRegisteredAsyncAddress()) { if (callback) callback(kIOReturnSuccess); return; }
+    const auto node = busInfo_.GetLocalNodeID();
+    if (!notificationAddress_ || node == FW::kInvalidNodeId) {
+        if (callback) callback(kIOReturnNotReady);
+        return;
+    }
+    RegisterAsyncMessageAddress(static_cast<uint16_t>(0xffc0U | (node.value & 0x3fU)), notificationAddress_, std::move(callback));
+}
+
+void MotuProtocol::SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback) {
+    // Linux motu-protocol-v3.c:62-113: clear fetch, write clock, await
+    // CLK_CHANGED for four seconds. ACK alone never establishes clock readiness.
+    const uint32_t value = (clock.raw & ~0x0200ff00U) |
+        (static_cast<uint32_t>(Encoding::Motu::RateToIndex(rate)) << 8);
+    EnsureAsyncAddress([this, rate, clock, value, callback = std::move(callback)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess) { if (callback) callback(status); return; }
+        if (value == clock.raw) { if (callback) callback(kIOReturnSuccess); return; }
+        if (!timerScheduler_) { if (callback) callback(kIOReturnNotReady); return; }
+        auto wait = notifications_->Begin([this, rate, callback](IOReturn result) mutable {
+            if (result != kIOReturnSuccess) { if (callback) callback(result); return; }
+            ReadClockStatus([rate, callback = std::move(callback)](IOReturn result, ClockStatus observed) {
+                if (callback) callback(result != kIOReturnSuccess ? result :
+                    observed.sampleRateHz == rate ? kIOReturnSuccess : kIOReturnNotReady);
+            });
+        });
+        if (!wait) { if (callback) callback(kIOReturnBusy); return; }
+        (void)io_.WriteQuadBE(AddressOf(ClockRegister()), value,
+            [this, wait](Async::AsyncStatus status) {
+                const auto result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+                wait->Ack(result);
+                if (result == kIOReturnSuccess && !wait->Done()) {
+                    const std::weak_ptr<ClockChangeWait> weak = wait;
+                    const auto token = timerScheduler_->ScheduleAfter(4'000'000'000ULL, [weak] {
+                        if (const auto held = weak.lock()) held->Fail(kIOReturnTimeout);
+                    });
+                    if (token == Scheduling::kInvalidTimerToken) wait->Fail(kIOReturnNoResources);
                 }
             });
     });
@@ -258,9 +324,16 @@ void MotuProtocol::ModifyRegister(Reg reg,
 
 void MotuProtocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
     if (!IsV3()) { ReadOpticalGeometry(std::move(callback)); return; }
-    ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus clock) mutable {
-        if (status != kIOReturnSuccess || clock.sampleRateHz != 48000) { if (callback) callback(status != kIOReturnSuccess ? status : kIOReturnUnsupported); return; }
-        ReadOpticalGeometry(std::move(callback));
+    EnsureAsyncAddress([this, callback = std::move(callback)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess) { if (callback) callback(status); return; }
+        ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus clock) mutable {
+            const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
+            if (status != kIOReturnSuccess || !model || !Encoding::Motu::SupportsRate(*model, clock.sampleRateHz)) {
+                if (callback) callback(status != kIOReturnSuccess ? status : kIOReturnUnsupported);
+                return;
+            }
+            ReadOpticalGeometry(std::move(callback));
+        });
     });
 }
 
@@ -325,7 +398,7 @@ std::shared_ptr<const std::vector<Runtime::RateFormation>> MotuProtocol::RateFor
     auto formations = std::make_shared<std::vector<Runtime::RateFormation>>();
     const auto optical = static_cast<uint32_t>(snapshot);
     for (const auto rate : Encoding::Motu::kClockRates) {
-        if (!Encoding::Motu::SupportsRate(*model, rate) || (IsV3() && rate != 48000)) continue;
+        if (!Encoding::Motu::SupportsRate(*model, rate)) continue;
         const auto chunks = ResolvePcmChunks(optical,
             Encoding::Motu::IndexToMode(static_cast<uint32_t>(Encoding::Motu::RateToIndex(rate))), unitSwVersion_);
         // A reserved optical code cannot establish any usable formation.
@@ -334,8 +407,10 @@ std::shared_ptr<const std::vector<Runtime::RateFormation>> MotuProtocol::RateFor
         formation.sampleRateHz = rate;
         formation.protocolSupported = true;
         formation.packedPcm = true;
-        formation.capture.push_back({chunks.tx, Encoding::Motu::DataBlockQuadlets(chunks.tx)});
-        formation.playback.push_back({chunks.rx, Encoding::Motu::DataBlockQuadlets(chunks.rx)});
+        formation.packedCaptureMessageChunks = Encoding::Motu::MessageChunks(unitSwVersion_, true);
+        formation.packedPlaybackMessageChunks = Encoding::Motu::MessageChunks(unitSwVersion_, false);
+        formation.capture.push_back({chunks.tx, Encoding::Motu::DataBlockQuadlets(chunks.tx, formation.packedCaptureMessageChunks)});
+        formation.playback.push_back({chunks.rx, Encoding::Motu::DataBlockQuadlets(chunks.rx, formation.packedPlaybackMessageChunks)});
         formations->push_back(std::move(formation));
     }
     return formations;
@@ -545,6 +620,12 @@ void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
     // Xilinx Spartan XC3S200 and do (motu-protocol-v2.c:190-225). Fire-and-forget by
     // design: this rides alongside bring-up, and a device that has gone away cannot be
     // configured anyway.
+    if (IsV1()) {
+        ModifyRegister(ClockRegister(), [enable, version = unitSwVersion_](uint32_t current) {
+            return EncodeFetchingV1(current, enable, version);
+        }, std::move(callback));
+        return;
+    }
     if (!IsV3() && !NeedsFetchingModeWrite(unitSwVersion_)) {
         if (callback) {
             callback(kIOReturnSuccess);
@@ -600,8 +681,10 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
 
     ModifyRegister(
         Reg::IsocCommControl,
-        [rxChannel, txChannel, v3 = IsV3()](uint32_t current) {
-            return EncodeIsoCommStart(v3 ? 0U : current, rxChannel, txChannel);
+        [rxChannel, txChannel, clearLow = unitSwVersion_ == 0x15](uint32_t current) {
+            // Zeroing is observed on the 828mk3 in PR #172. Other models
+            // preserve unrelated low bits like Linux motu-stream.c:62-84.
+            return EncodeIsoCommStart(clearLow ? 0U : current, rxChannel, txChannel);
         },
         [this, rxChannel, txChannel, callback = std::move(callback)](IOReturn status) mutable {
             if (status != kIOReturnSuccess) {
@@ -618,7 +701,7 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
             result.channels.deviceToHostIsoChannel = static_cast<uint8_t>(txChannel);
             result.runtimeCaps = MakeRuntimeCaps();
             if (callback) {
-                if (IsV3()) {
+                if (unitSwVersion_ == 0x15 && preparedRateHz_.load(std::memory_order_acquire) == 48000) {
                     (void)io_.WriteQuadBE(AddressOf(Reg::StreamConfigV3), 0x00120000,
                         [result, callback = std::move(callback)](Async::AsyncStatus status) mutable {
                             callback(Protocols::Ports::MapAsyncStatusToIOReturn(status), result);
@@ -799,7 +882,7 @@ std::expected<DuplexHealthResult, IOReturn> MotuProtocol::ReadHealth(uint32_t ti
 }
 
 std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceRx() {
-    if (IsV3()) {
+    if (unitSwVersion_ == 0x15) {
         const auto status = AwaitStageStatus([this](auto callback) {
             ModifyRegister(Reg::IsocCommControl, [](uint32_t) { return kChangeRxState | kChangeTxState; }, std::move(callback));
         }, teardownCancel_);
@@ -817,6 +900,14 @@ std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceTxAndEnable() 
 }
 
 std::expected<DuplexConfirmResult, IOReturn> MotuProtocol::Confirm() {
+    if (unitSwVersion_ == 1) {
+        // Linux motu-protocol-v1.c:346-355: 828 may mute until it has
+        // received a batch of host packets. Sleep on Session, never Default.
+        for (uint32_t elapsed = 0; elapsed < 100; elapsed += 10) {
+            if (teardownCancel_ && teardownCancel_->load(std::memory_order_acquire)) return std::unexpected(kIOReturnAborted);
+            IOSleep(10);
+        }
+    }
     return AwaitStage<DuplexConfirmResult>(
         [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuProtocol.hpp - Device protocol for MOTU protocol-v2 register devices.
+// MotuProtocol.hpp - Shared control adapter for MOTU FireWire devices.
 //
 // Thin adapter: all wire encoding/decoding lives in the pure codecs of
 // MotuRegisters.hpp; this class owns only transport (async register IO against
@@ -15,6 +15,8 @@
 #pragma once
 
 #include "MotuRegisters.hpp"
+#include "MotuNotificationMailbox.hpp"
+#include "../../../Scheduling/ITimerScheduler.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -26,14 +28,14 @@
 
 namespace ASFW::Audio::Motu {
 
-/// Device clock state as reported by the clock status register (0x0b14).
+/// Device clock state (0x0b14, or original 828's 0x0b00).
 struct ClockStatus {
     uint32_t raw{0};
     uint32_t sampleRateHz{0};                ///< 0 when the rate index is unknown.
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
-/// Shared MOTU register adapter: V2 and experimental 828mk3 V3 at 48 kHz.
+/// Shared MOTU register adapter for FireWire-only V1, V2 and V3 models.
 ///
 /// Also serves as its own FamilyDriver: the audio session reaches every protocol
 /// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
@@ -48,7 +50,9 @@ public:
                    Discovery::DeviceRegistry& routeRegistry,
                    const Discovery::DeviceRouteToken& route,
                    uint32_t unitSwVersion,
-                   ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                   ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                   Scheduling::ITimerScheduler* timerScheduler = nullptr);
+    ~MotuProtocol() override;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -57,7 +61,7 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
-    /// Read the optical config (0x0c04) and cache the PCM chunk counts the endpoint is
+    /// Read the model's optical config and cache the PCM chunk counts the endpoint is
     /// published in per-rate formations, then call back. Asynchronous, so it
     /// is safe on the Default queue. Linux reads the same register at PCM open
     /// (motu-pcm.c:143), so reading it ahead of publication is not a deadlock: it
@@ -175,7 +179,11 @@ private:
     /// land: the device only acts on a complete address, so a failed second write leaves
     /// it holding a half-updated value and the caller sees the failure.
     [[nodiscard]] bool IsV3() const noexcept;
-    [[nodiscard]] Reg OpticalRegister() const noexcept { return IsV3() ? Reg::OpticalBanksV3 : Reg::InOutConfV2; }
+    [[nodiscard]] bool IsV1() const noexcept { return unitSwVersion_ == 1 || unitSwVersion_ == 2; }
+    [[nodiscard]] Reg ClockRegister() const noexcept { return unitSwVersion_ == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2; }
+    void EnsureAsyncAddress(CompletionCallback callback);
+    void SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback);
+    [[nodiscard]] Reg OpticalRegister() const noexcept { return IsV1() ? ClockRegister() : IsV3() ? Reg::OpticalBanksV3 : Reg::InOutConfV2; }
     void ReadOpticalGeometry(CompletionCallback callback);
     void ReadDuplexConfirmation(ConfirmCallback callback);
     void WriteAsyncAddrPair(AsyncAddrValues values,
@@ -201,12 +209,16 @@ private:
     /// through GetIRMClient(); the protocol only carries the handle.
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     const uint32_t unitSwVersion_;
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    std::shared_ptr<NotificationMailbox> notifications_;
+    uint64_t notificationAddress_{0};
+    Discovery::DeviceRouteToken route_;
     std::atomic<uint32_t> cachedSampleRateHz_{0};
     std::atomic<bool> asyncAddressRegistered_{false};
     bool initialized_{false};
 
-    // Iso channels the host assigned, latched by PrepareDuplex48k and consumed by
-    // ProgramTxAndEnableDuplex48k. Device-relative naming: RX is host->device
+    // Iso channels the host assigned, latched by PrepareDuplex and consumed by
+    // ProgramTxAndEnableDuplex. Device-relative naming: RX is host->device
     // (playback), TX is device->host (capture).
     std::atomic<uint8_t> deviceRxChannel_{0};
     std::atomic<uint8_t> deviceTxChannel_{0};

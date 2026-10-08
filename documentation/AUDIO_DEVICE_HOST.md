@@ -774,12 +774,16 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
   now supplies V2 model/rate formations, correct packed-payload bandwidth,
   post-host-start fetching, completed mute/stop writes, vendor-inspired SPH
   synthesis and a scoped V3 header decoder. All five V2 models are table-backed;
-  828mk3 FW activation is experimental at 48 kHz only. Other V3 models and V1
-  remain recognized. See [MOTU_STACK.md](MOTU_STACK.md) for current limits.
+  all four FireWire-only V3 models and the original V1 828/896 now have
+  best-effort activation and their model-supported rates. V3 clock switching
+  owns a registered notification mailbox, waits for CLK_CHANGED with a four-second
+  timeout, and verifies readback. USB/hybrid models are excluded by request.
+  None of the newly enabled models is hardware-validated.
+  See [MOTU_STACK.md](MOTU_STACK.md) for the checklist and current limits.
 
-  The following is the original E3 gap inventory; items 1, 2 and 5's fetch,
-  bandwidth and clock gate have been addressed in software. Notification
-  registration, live optical reconfiguration and V3 rate switching remain open.
+  The following is the original E3 gap inventory; items 1, 2, 4 and 5's fetch,
+  bandwidth and clock gate have been addressed in software. Automatic graph
+  rebuilding for live optical or unsolicited clock changes remains open.
 
   **Original open inventory:** From the Linux and vendor-kext research
   (`tmp/motu-research/`). None of it is verified on hardware; there is no MOTU on hand (U6).

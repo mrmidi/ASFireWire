@@ -120,7 +120,8 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
                 done(std::move(config));
                 return;
             }
-            if (nubIsLive || record.unitSwVersion.value_or(0) == 0x15) {
+            const auto* model = Encoding::Motu::FindModel(record.unitSwVersion.value_or(0));
+            if (nubIsLive || !model || model->protocol != Encoding::Motu::ProtocolVersion::V2) {
                 // The live nub's counts came from an earlier read. Building from the
                 // fixed table now would differ from them and latch "geometry changed"
                 // on what may be one lost transaction; refuse, and the next trigger

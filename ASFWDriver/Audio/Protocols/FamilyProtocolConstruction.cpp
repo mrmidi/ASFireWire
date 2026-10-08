@@ -198,7 +198,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      "Creating MotuProtocol version=0x%06x node=0x%04x",
                      plan.unitVersion, nodeId);
             return std::make_unique<Motu::MotuProtocol>(
-                busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient);
+                busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient, timerScheduler);
 
         case ProtocolImplementationId::RmeFireface: {
             const auto definition = plan.candidates.empty()
