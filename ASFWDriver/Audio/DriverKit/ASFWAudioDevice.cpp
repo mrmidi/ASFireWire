@@ -1453,21 +1453,41 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         };
         uint64_t incarnation = 0, epoch = 0;
         uint32_t generation = 0, output = 0, input = 0;
+        // The window pins the route its first read sees; every later read
+        // (readback, prior read) must find the device on that same route. The
+        // epoch and generation published with the endpoint are those of
+        // publication: a bus reset since moves both while the device stays the
+        // same (same incarnation), and comparing against them refused every
+        // rate change after any reset (Pro 24 DSP, 2026-10-08).
+        bool routePinned = false;
+        uint64_t pinnedEpoch = 0;
+        uint32_t pinnedGeneration = 0;
         const auto observe = [&]() {
             const auto status = driver.device.audioNub->ReadRateClockState(
                 &incarnation, &epoch, &generation, &output, &input);
             if (status != kIOReturnSuccess) return status;
-            if (incarnation != driver.device.rateRouteIncarnation || epoch != driver.device.rateRouteEpoch ||
-                generation != transaction.identity.routeGeneration) return kIOReturnAborted;
+            if (incarnation != driver.device.rateRouteIncarnation) return kIOReturnAborted;
+            if (!routePinned) {
+                routePinned = true;
+                pinnedEpoch = epoch;
+                pinnedGeneration = generation;
+            } else if (epoch != pinnedEpoch || generation != pinnedGeneration) {
+                return kIOReturnAborted;
+            }
             return kIOReturnSuccess;
         };
         const auto confirmed = [&](uint32_t rate) { return input == rate && (output == rate || output == 0); };
         auto status = driver.runtime.isRunning.load(std::memory_order_acquire)
             ? kIOReturnBusy : observe();
         if (status != kIOReturnSuccess) {
-            (void)advance(HardwareCompleted{transaction.identity, HardwareUnknown{}});
-            (void)advance(RecoveryRestoredInWindow{transaction.identity, {}, false});
-            ASFW_LOG(Audio, "[RateTxn] phase=unavailable token=%llu gen=%u kr=0x%x (%{public}s)",
+            // Nothing was written: the device is where it was before the
+            // window. Return to the prior configuration so IO can restart; the
+            // old path declared the hardware unknown, left the machine
+            // Unavailable and rateUnavailable set, and every later StartIO
+            // failed until the device was replugged.
+            (void)advance(HardwareCompleted{transaction.identity, HardwareUnchanged{}});
+            local.rateUnavailable.store(false, std::memory_order_release);
+            ASFW_LOG(Audio, "[RateTxn] phase=unavailable token=%llu gen=%u kr=0x%x (%{public}s) prior-kept",
                 transaction.identity.token, generation, status, ASFW::Logging::IOReturnName(status));
             return status;
         }
