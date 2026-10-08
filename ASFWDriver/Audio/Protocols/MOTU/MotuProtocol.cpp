@@ -41,8 +41,12 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
     , busInfo_(busInfo)
     , irmClient_(irmClient)
     , unitSwVersion_(unitSwVersion), timerScheduler_(timerScheduler), route_(route) {
-    if (IsV3() && Encoding::Motu::FireWireOnly(unitSwVersion_)) {
-        notifications_ = std::make_shared<NotificationMailbox>(route);
+    // Every model gets a notification address, as Linux registers one for each
+    // (motu-transaction.c snd_motu_transaction_register) and the vendor's Box
+    // base class sends one (SendPseudoAddressSpaceAddress). Only V3 names a
+    // clock-changed bit (CLK_CHANGED 0x2).
+    if (Encoding::Motu::FireWireOnly(unitSwVersion_)) {
+        notifications_ = std::make_shared<NotificationMailbox>(route, IsV3() ? 0x2U : 0U);
         notificationAddress_ = Notifications::Register(notifications_);
     }
 }
@@ -203,8 +207,7 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
 
 void MotuProtocol::RebindNotifications(VoidCallback callback) {
     if (shuttingDown_.load(std::memory_order_acquire)) { if (callback) callback(kIOReturnAborted); return; }
-    if (IsV3()) EnsureAsyncAddress(std::move(callback));
-    else if (callback) callback(kIOReturnSuccess);
+    EnsureAsyncAddress(std::move(callback));
 }
 
 void MotuProtocol::EnsureAsyncAddress(CompletionCallback callback) {
@@ -347,8 +350,18 @@ void MotuProtocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> cal
             ReadOpticalGeometry(std::move(callback));
         });
     };
-    if (IsV3()) EnsureAsyncAddress(std::move(read));
-    else read(kIOReturnSuccess);
+    if (IsV3()) {
+        // V3 clock changes wait for CLK_CHANGED, so registration is required.
+        EnsureAsyncAddress(std::move(read));
+        return;
+    }
+    // V1/V2 never wait on a notification: register best effort, then read.
+    EnsureAsyncAddress([read = std::move(read)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess)
+            ASFW_LOG(Audio, "MotuProtocol: notification address registration failed kr=0x%x (%{public}s)",
+                     status, Logging::IOReturnName(status));
+        read(kIOReturnSuccess);
+    });
 }
 
 void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {

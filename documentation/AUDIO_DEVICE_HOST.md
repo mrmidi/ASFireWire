@@ -603,6 +603,21 @@ declares its deltas in its commit.
   after every reset, before the Δ6 restart (vendor order). Release it on teardown
   (`motu-transaction.c:121-133`). Notifications become `DescriptionChanged` / `ClockStatus`
   events.
+  **Done (E7c, 2026-10-08), not run on hardware.** Already in from `feature/motu-stack`: V3
+  registration before geometry and rate work, re-registration on every rediscovery
+  (`AudioRuntimeRegistry::EnsureForDevice` → `RebindNotifications`, which runs before the
+  coordinator's resume rebind), release on `Shutdown`. Added:
+  - V1/V2 register too (Linux registers for every model; the vendor's `Box` base class
+    sends the address). Best effort before their geometry read: a failure is logged and the
+    read goes on, since V1/V2 never wait on a notification. **Wire delta:** two quadlet
+    writes (`0x0b04`, `0x0b08`) before the first V2 geometry read, also on the
+    hardware-validated UltraLite.
+  - A notification no host-requested wait claims is logged once
+    (`[MotuNotify] guid=… bits=… unsolicited clockChanged=…`) and handed to the MOTU adapter.
+    Only V3's `CLK_CHANGED` (`0x2`, Linux `V3_MSG_FLAG_CLK_CHANGED`) has a name; it becomes
+    `DeviceEvent::kClockStatusChanged`, so the host's clock probe (§4.4) resyncs the HAL on a
+    front-panel rate change. Other bits stay unnamed until traced
+    (`tmp/motu-research/vendor-controller-followup.md`), so no `DescriptionChanged` yet.
 - **E7d: DICE without EAP, every advertised rate, the kext's way.** *Me*. Builds on E7b.
   Replaces the "observed mode only" rule at `DiceAudioBackend.cpp:939-950`.
   - **Publish:** every rate in CLOCK_CAPS with one channel count, the current mode's, as the

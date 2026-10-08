@@ -489,7 +489,9 @@ TEST(MotuV2GeometryTests, EveryOpticalCombinationIsPublishedFromTheRegister) {
     }
 }
 
-TEST(MotuV2GeometryTests, ReadingGeometryChecksClockAndOpticalStateWithoutWrites) {
+// E7c: V2 registers its notification address first, as Linux does for every
+// model (motu-transaction.c), then reads. Those two writes are the only ones.
+TEST(MotuV2GeometryTests, ReadingGeometryRegistersNotificationsThenReadsClockAndOptical) {
     RecordingBus bus;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
@@ -502,7 +504,10 @@ TEST(MotuV2GeometryTests, ReadingGeometryChecksClockAndOpticalStateWithoutWrites
     ASSERT_EQ(bus.reads.size(), 2U);
     EXPECT_EQ(bus.reads[0], LowOf(Reg::ClockStatusV2));
     EXPECT_EQ(bus.reads[1], LowOf(Reg::InOutConfV2));
-    EXPECT_TRUE(bus.writes.empty());
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::AsyncAddrHi));
+    EXPECT_EQ(bus.writes[1].addressLo, LowOf(Reg::AsyncAddrLo));
+    EXPECT_TRUE(protocol.HasRegisteredAsyncAddress());
 }
 
 TEST(MotuV2GeometryTests, BeforeAnyReadCapsAreUnavailable) {
@@ -1249,6 +1254,83 @@ TEST(MotuV3Protocol, ClockChangeRequiresMatchingNotificationAndReadbackWithBound
     EXPECT_EQ(result, kIOReturnTimeout); EXPECT_EQ(completions, 2);
     (void)Notifications::Handle(ctx); EXPECT_EQ(completions, 2); // late event cannot revive timeout
 }
+// E7c: a notification no host-requested wait claims reaches the one observer.
+// Only V3 names CLK_CHANGED (0x2); V2 bits arrive unnamed; a stale route or a
+// foreign node never reaches it; a CLK_CHANGED claimed by the host's own clock
+// change is not forwarded.
+TEST(MotuV3Protocol, UnsolicitedNotificationsReachTheObserverOnlyWhenUnclaimed) {
+    using namespace ASFW::Audio::Motu;
+    struct Seen { uint64_t guid; uint32_t bits; bool clockChanged; };
+    static std::vector<Seen> seen;
+    seen.clear();
+    int context = 0;
+    Notifications::SetObserver(&context, [](void*, uint64_t guid, uint32_t bits, bool clockChanged) {
+        seen.push_back({guid, bits, clockChanged});
+    });
+
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x1b, nullptr, &timer);
+    protocol.SetSampleRate(96000, [](auto) {});
+    ASSERT_EQ(bus.writes.size(), 3U);
+    const uint64_t address = kAsyncMessageRegionStart | bus.writes[1].value;
+    const std::array<uint8_t,4> clockChanged{0,0,0,2};
+    ASFW::Async::LocalRequestContext ctx{.destOffset = address, .sourceID = kNodeId,
+        .generation = routes.route.generation.value, .writePayload = clockChanged};
+
+    // Claimed by the pending host clock change: not forwarded.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300;
+    (void)Notifications::Handle(ctx);
+    EXPECT_TRUE(seen.empty());
+
+    // Front-panel change afterwards: forwarded, named.
+    (void)Notifications::Handle(ctx);
+    ASSERT_EQ(seen.size(), 1U);
+    EXPECT_EQ(seen[0].guid, routes.route.guid);
+    EXPECT_EQ(seen[0].bits, 2U);
+    EXPECT_TRUE(seen[0].clockChanged);
+
+    // An unnamed bit is forwarded with clockChanged=false.
+    const std::array<uint8_t,4> other{0,0,0,8};
+    auto otherCtx = ctx; otherCtx.writePayload = other;
+    (void)Notifications::Handle(otherCtx);
+    ASSERT_EQ(seen.size(), 2U);
+    EXPECT_FALSE(seen[1].clockChanged);
+
+    // Stale generation or a foreign node: dropped.
+    auto wrong = ctx; ++wrong.generation; (void)Notifications::Handle(wrong);
+    wrong = ctx; ++wrong.sourceID; (void)Notifications::Handle(wrong);
+    EXPECT_EQ(seen.size(), 2U);
+
+    // Unsubscribed: nothing more arrives.
+    Notifications::ClearObserver(&context);
+    (void)Notifications::Handle(ctx);
+    EXPECT_EQ(seen.size(), 2U);
+}
+
+TEST(MotuV2Protocol, NotificationsAreRegisteredAndForwardedUnnamed) {
+    using namespace ASFW::Audio::Motu;
+    static std::vector<bool> named;
+    named.clear();
+    int context = 0;
+    Notifications::SetObserver(&context, [](void*, uint64_t, uint32_t, bool clockChanged) {
+        named.push_back(clockChanged);
+    });
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+    ASSERT_GE(bus.writes.size(), 2U);
+    ASSERT_EQ(bus.writes[1].addressLo, LowOf(Reg::AsyncAddrLo));
+    const std::array<uint8_t,4> bits{0,0,0,2};
+    (void)Notifications::Handle({.destOffset = kAsyncMessageRegionStart | bus.writes[1].value,
+        .sourceID = kNodeId, .generation = routes.route.generation.value, .writePayload = bits});
+    ASSERT_EQ(named.size(), 1U);
+    EXPECT_FALSE(named[0]) << "V2 names no clock-changed bit";
+    Notifications::ClearObserver(&context);
+}
+
 TEST(MotuV3Protocol, NotificationBeforeAckAndRouteCancellationAreSafe) {
     using namespace ASFW::Audio::Motu;
     RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;

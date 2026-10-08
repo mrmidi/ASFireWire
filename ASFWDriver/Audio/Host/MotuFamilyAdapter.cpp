@@ -8,6 +8,7 @@
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../Protocols/MOTU/MotuRegisters.hpp"
+#include "../Protocols/MOTU/MotuNotificationMailbox.hpp"
 #include "../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../Model/RateConfiguration.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
@@ -105,6 +106,34 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
             // publication. Discovery can retry when the route is usable again.
             done(DescribeRefusal{geometryStatus, kReadFailedReason});
         });
+}
+
+MotuFamilyAdapter::~MotuFamilyAdapter() noexcept {
+    Motu::Notifications::ClearObserver(this);
+}
+
+void MotuFamilyAdapter::SetEventSink(DeviceEventSink* sink) noexcept {
+    if (sink != nullptr) {
+        sink_.store(sink, std::memory_order_release);
+        Motu::Notifications::SetObserver(this, &MotuFamilyAdapter::NotificationThunk);
+        return;
+    }
+    Motu::Notifications::ClearObserver(this);
+    sink_.store(nullptr, std::memory_order_release);
+}
+
+void MotuFamilyAdapter::OnUnsolicitedNotification(uint64_t guid, uint32_t bits,
+                                                  bool clockChanged) noexcept {
+    DeviceEventSink* sink = sink_.load(std::memory_order_acquire);
+    if (sink == nullptr || !clockChanged) return;
+    sink->OnDeviceEvent(guid, DeviceEvent::kClockStatusChanged, bits);
+}
+
+void MotuFamilyAdapter::NotificationThunk(void* context, uint64_t guid, uint32_t bits,
+                                          bool clockChanged) noexcept {
+    if (auto* self = static_cast<MotuFamilyAdapter*>(context)) {
+        self->OnUnsolicitedNotification(guid, bits, clockChanged);
+    }
 }
 
 } // namespace ASFW::Audio::Host

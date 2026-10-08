@@ -236,8 +236,16 @@ public:
 
 class RecordingSink final : public DeviceEventSink {
 public:
-    void OnDeviceEvent(uint64_t, DeviceEvent, uint32_t) noexcept override { ++events; }
+    void OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t detail) noexcept override {
+        ++events;
+        lastGuid = guid;
+        lastEvent = event;
+        lastDetail = detail;
+    }
     int events{0};
+    uint64_t lastGuid{0};
+    std::optional<DeviceEvent> lastEvent{};
+    uint32_t lastDetail{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -353,7 +361,8 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesIdentityNamesAndPublishedRates) {
     EXPECT_FALSE(dev->outputChannelNames.empty());
 }
 
-TEST(MotuFamilyAdapterTests, DescribeReadsCurrentClockAndOpticalStateWithoutWriting) {
+// E7c: the only writes are the notification address registration (V2 too).
+TEST(MotuFamilyAdapterTests, DescribeRegistersNotificationsThenReadsClockAndOptical) {
     MotuRig rig;
     rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
     MotuFamilyAdapter adapter;
@@ -364,7 +373,7 @@ TEST(MotuFamilyAdapterTests, DescribeReadsCurrentClockAndOpticalStateWithoutWrit
     ASSERT_EQ(rig.bus.reads.size(), 2U);
     EXPECT_EQ(rig.bus.reads[0], LowOf(Reg::ClockStatusV2));
     EXPECT_EQ(rig.bus.reads[1], LowOf(Reg::InOutConfV2));
-    EXPECT_TRUE(rig.bus.writes.empty());
+    EXPECT_EQ(rig.bus.writes, (std::vector<uint32_t>{LowOf(Reg::AsyncAddrHi), LowOf(Reg::AsyncAddrLo)}));
 }
 
 TEST(MotuFamilyAdapterTests, DescribeCompletesOnlyAfterTheRegisterReadDoes) {
@@ -514,6 +523,29 @@ TEST(MotuFamilyAdapterTests, InstallingAnEventSinkRaisesNothing) {
     adapter.SetEventSink(nullptr);
     EXPECT_EQ(sink.events, 0);
     EXPECT_STREQ(adapter.Name(), "MOTU");
+}
+
+// E7c: an unsolicited, named clock change becomes the host's clock-status
+// event; an unnamed bit, or no sink, raises nothing.
+TEST(MotuFamilyAdapterTests, UnsolicitedClockChangeRaisesClockStatusOnly) {
+    MotuFamilyAdapter adapter;
+    RecordingSink sink;
+    adapter.OnUnsolicitedNotification(kMotuGuid, 2U, true);
+    EXPECT_EQ(sink.events, 0) << "no sink installed";
+
+    adapter.SetEventSink(&sink);
+    adapter.OnUnsolicitedNotification(kMotuGuid, 8U, false);
+    EXPECT_EQ(sink.events, 0) << "unnamed bits are logged, not raised";
+
+    adapter.OnUnsolicitedNotification(kMotuGuid, 2U, true);
+    ASSERT_EQ(sink.events, 1);
+    EXPECT_EQ(sink.lastGuid, kMotuGuid);
+    EXPECT_EQ(sink.lastEvent, DeviceEvent::kClockStatusChanged);
+    EXPECT_EQ(sink.lastDetail, 2U);
+
+    adapter.SetEventSink(nullptr);
+    adapter.OnUnsolicitedNotification(kMotuGuid, 2U, true);
+    EXPECT_EQ(sink.events, 1);
 }
 
 TEST(MotuFamilyAdapterTests, V1AndV3ReadFailureRefusesGuessedInitialGeometry) {

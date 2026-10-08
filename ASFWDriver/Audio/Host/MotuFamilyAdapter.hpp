@@ -4,10 +4,13 @@
 // MotuFamilyAdapter.hpp - MOTU V1/V2/V3 on the shared audio host.
 // Describe reads current clock/optical state and publishes model-derived
 // formations. A failed read refuses publication; it never substitutes counts.
-// V3 notifications acknowledge explicit clock changes. Unsolicited front-panel
-// changes are not yet forwarded through DeviceEventSink.
+// V3 notifications acknowledge explicit clock changes. An unsolicited V3
+// CLK_CHANGED becomes a clock-status device event (E7c); other bits are logged
+// only, until their meaning is traced.
 
 #pragma once
+
+#include <atomic>
 
 #include "FamilyAdapter.hpp"
 
@@ -36,16 +39,27 @@ public:
         return FaultVerdict::kRestart;
     }
 
-    void SetEventSink(DeviceEventSink* sink) noexcept override {
-        // Clock-change acknowledgements are consumed by the protocol. Publishing
-        // unsolicited control changes needs a separate host event bridge.
-        (void)sink;
-    }
+    /// Subscribes to the MOTU notification table while a sink is installed;
+    /// null unsubscribes, and no notification is running once it returns. A
+    /// clock change the host asked for is claimed by the protocol's wait; an
+    /// unsolicited one with the model's named clock-changed bit becomes
+    /// kClockStatusChanged, which the host turns into its clock probe (§4.4).
+    /// Other bits are only logged (E7c).
+    void SetEventSink(DeviceEventSink* sink) noexcept override;
+
+    /// The notification table's observer, public for tests.
+    void OnUnsolicitedNotification(uint64_t guid, uint32_t bits, bool clockChanged) noexcept;
+
+    ~MotuFamilyAdapter() noexcept override;
 
     /// The endpoint the MOTU backend published, with the geometry the protocol
     /// currently reports from completed clock/optical reads.
     [[nodiscard]] static Model::ASFWAudioDevice BuildNubConfig(const Discovery::DeviceRecord& record,
                                                                const IDeviceProtocol& protocol);
+
+private:
+    static void NotificationThunk(void* context, uint64_t guid, uint32_t bits, bool clockChanged) noexcept;
+    std::atomic<DeviceEventSink*> sink_{nullptr};
 };
 
 } // namespace ASFW::Audio::Host
