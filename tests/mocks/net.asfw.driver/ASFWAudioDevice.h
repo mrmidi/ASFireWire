@@ -29,6 +29,12 @@ public:
         uint64_t hostTime{0};
     };
 
+    kern_return_t ReleaseKeptWireForDriverStop() {
+        ++keptWireReleaseRequests;
+        return kIOReturnSuccess;
+    }
+    uint32_t keptWireReleaseRequests{0};
+
     void UpdateCurrentZeroTimestamp(uint64_t sampleTime, uint64_t hostTime) override {
         published.push_back({sampleTime, hostTime});
     }
