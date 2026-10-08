@@ -652,7 +652,15 @@ not proof of a process crash or proof that its root cause has been eliminated.
 Late stop after remote removal: the coordinator records the actual host-stop
 result, and publication stores it atomically on the specific nub before
 termination. `StopAudioStreaming` reads this result before resolving the parent,
-so clearing `parentDriver` in nub `Stop` no longer produces `NotReady` after
-successful cleanup. Failed quiescence remains an error; an unpublished result
+so clearing `parentDriver` in nub `Stop` does not erase successful cleanup.
+Audio callers use the LOCALONLY `StopAudioStreamingOrRemoteResult` bridge,
+which checks that result before issuing RPC: after service termination RPC
+itself can return `kIOReturnIPCError` (`0xe00002bf`) before the handler executes.
+This code is distinct from `kIOReturnNotReady` (`0xe00002d8`). Failed quiescence remains an error; an unpublished result
 never authorizes success. A replacement nub starts with an unpublished slot.
 `[StopTrace] owner=nub phase=late-remote-stop` records the terminal result.
+
+Audio lifecycle, rate transactions, session scheduling and DICE/isoch stop logs
+retain hexadecimal IOReturn values and append their original SDK constant names,
+e.g. `kr=0xe00002bf (kIOReturnIPCError)`. The shared `Logging::IOReturnName`
+helper is allocation-free and returns `unknown IOReturn` for unlisted values.

@@ -27,9 +27,15 @@ public:
     }
     void RequestTimingRecovery(uint64_t rxEpoch) { lastTimingRecoveryEpoch = rxEpoch; }
 
+    kern_return_t rpcStopResult{kIOReturnSuccess};
+    kern_return_t StopAudioStreamingOrRemoteResult() {
+        if (const auto terminal = ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(remoteStopResult))
+            return *terminal;
+        return StopAudioStreaming();
+    }
     kern_return_t StopAudioStreaming() {
         ++stopStreamingCalls;
-        return ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(remoteStopResult).value_or(kIOReturnSuccess);
+        return rpcStopResult;
     }
     // Each registration records what it was given; the driver's stop passes null.
     kern_return_t RegisterTxPreparationAction(OSAction* action) { txPreparationAction = action; return kIOReturnSuccess; }

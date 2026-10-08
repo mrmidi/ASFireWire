@@ -127,7 +127,7 @@ IOReturn DICETcatProtocol::Shutdown() {
         if (driver_->IsPrepared() || driver_->IsRunning()) {
             const IOReturn stopStatus = driver_->Stop();
             if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
-                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x", stopStatus);
+                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x (%{public}s)", stopStatus, ASFW::Logging::IOReturnName(stopStatus));
             }
         }
     }
@@ -393,8 +393,8 @@ std::expected<AudioDuplexChannels, IOReturn> DICETcatProtocol::AssignChannels(co
         return std::unexpected(kIOReturnNotReady);
     }
     if (const IOReturn status = driver_->AssignChannels(channels); status != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x",
-                       channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status);
+        ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x (%{public}s)",
+                       channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status, ASFW::Logging::IOReturnName(status));
         return std::unexpected(status);
     }
     return channels;
@@ -550,7 +550,7 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
 
     diceReader_.ReadGeneralSections([this, callback = std::move(callback)](IOReturn status, GeneralSections sections) mutable {
         if (status != kIOReturnSuccess) {
-            ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x", status);
+            ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x (%{public}s)", status, ASFW::Logging::IOReturnName(status));
             callback(status);
             return;
         }

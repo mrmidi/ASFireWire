@@ -903,8 +903,8 @@ IOReturn DiceFamilyDriver::CompleteConfirm(uint32_t notification, uint32_t statu
     session_.deviceRunning = true;
     session_.phase = DuplexRestartPhase::kRunning;
     session_.appliedClock = session_.desiredClock;
-    ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x ext=0x%08x",
-             IsSourceLocked(status) ? 1U : 0U, notification, status, extStatus);
+    ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x (%{public}s) ext=0x%08x",
+             IsSourceLocked(status) ? 1U : 0U, notification, status, ASFW::Logging::IOReturnName(status), extStatus);
     return kIOReturnSuccess;
 }
 
@@ -921,7 +921,7 @@ IOReturn DiceFamilyDriver::Rollback(IOReturn error) {
 
     const IOReturn stopStatus = StopSequence();
     if (stopStatus != kIOReturnSuccess) {
-        ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x after start failure 0x%x", stopStatus, error);
+        ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x (%{public}s) after start failure 0x%x", stopStatus, ASFW::Logging::IOReturnName(stopStatus), error);
     }
     flowMode_ = FlowMode::kNone;
     return error;

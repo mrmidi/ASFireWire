@@ -389,5 +389,5 @@ TEST(BackendLifecycleRaceTests, NubTerminationPreservesRemoteTransportResult) {
     ASSERT_EQ(publisher.GetNub(guid), provider.nub);
     publisher.TerminateNub(guid, "remote-device-lost", kIOReturnTimeout);
     EXPECT_EQ(publisher.GetNub(guid), nullptr);
-    EXPECT_EQ(provider.nub->StopAudioStreaming(), kIOReturnTimeout);
+    EXPECT_EQ(provider.nub->StopAudioStreamingOrRemoteResult(), kIOReturnTimeout);
 }

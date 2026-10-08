@@ -166,23 +166,23 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.mAudioInternalTxActive = false;
             if (streamingStarted && ivars.device.audioNub) {
                 const kern_return_t stopKr =
-                    ivars.device.audioNub->StopAudioStreaming();
+                    ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
                 if (stopKr != kIOReturnSuccess) {
                     this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
                     ASFW_LOG(
                         Audio,
-                        "ASFWAudioDevice: StopAudioStreaming failed while unwinding %{public}s: 0x%x",
+                        "ASFWAudioDevice: StopAudioStreaming failed while unwinding %{public}s: 0x%x (%{public}s)",
                         stage,
-                        stopKr);
-                    ASFW_LOG(Audio, "[StreamStop] unwind failed; retaining TX mappings stage=%{public}s kr=0x%x", stage, stopKr);
+                        stopKr, ASFW::Logging::IOReturnName(stopKr));
+                    ASFW_LOG(Audio, "[StreamStop] unwind failed; retaining TX mappings stage=%{public}s kr=0x%x (%{public}s)", stage, stopKr, ASFW::Logging::IOReturnName(stopKr));
                     return result;
                 }
             }
             releaseTxResources();
             ASFW_LOG(Audio,
-                     "ASFWAudioDevice: StartIO failed at %{public}s: 0x%x",
+                     "ASFWAudioDevice: StartIO failed at %{public}s: 0x%x (%{public}s)",
                      stage,
-                     result);
+                     result, ASFW::Logging::IOReturnName(result));
             return result;
         };
 
@@ -329,7 +329,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 &rawPayload, &rawMetadata, &rawControl
             );
             if (allocKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: AllocateTxIsochResources failed: 0x%x", allocKr);
+                ASFW_LOG(Audio, "ASFWAudioDevice: AllocateTxIsochResources failed: 0x%x (%{public}s)", allocKr, ASFW::Logging::IOReturnName(allocKr));
                 kr = failStart(allocKr, "AllocateTxIsochResources");
                 return;
             }
@@ -719,11 +719,11 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         }
 
         if (ivars.device.audioNub) {
-            const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreaming();
+            const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
             this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
             if (stopKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x", stopKr);
-                ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x", stopKr);
+                ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+                ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
                 // Stop HAL IO even when the remote connection cannot be
                 // released, but propagate the failure and retain DMA memory.
                 (void)super::StopIO(in_flags);
@@ -905,7 +905,7 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     // skips the redundant CLOCK_SELECT write.
     kern_return_t kr = programHardware ? ivars.device.audioNub->RequestSampleRateChange(rateHz) : kIOReturnSuccess;
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: transport reconfig failed 0x%x", rateHz, kr);
+        ASFW_LOG(Audio, "[Timing] rate %u: transport reconfig failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     ivars.device.currentSampleRate = rate;
@@ -913,7 +913,7 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     // The validated ADK contract (ADKVirtualAudioLab) moves the active format
     // with SetSampleRate; the base implementation does nothing more.
     if ((kr = device.SetSampleRate(rate)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: SetSampleRate failed 0x%x", rateHz, kr);
+        ASFW_LOG(Audio, "[Timing] rate %u: SetSampleRate failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -923,8 +923,8 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     if (priorPeriod != next.zeroTimestampPeriodFrames) {
         if ((kr = device.SetZeroTimeStampPeriod(next.zeroTimestampPeriodFrames)) !=
             kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[Timing] rate %u: SetZeroTimeStampPeriod(%u) failed 0x%x",
-                     rateHz, next.zeroTimestampPeriodFrames, kr);
+            ASFW_LOG(Audio, "[Timing] rate %u: SetZeroTimeStampPeriod(%u) failed 0x%x (%{public}s)",
+                     rateHz, next.zeroTimestampPeriodFrames, kr, ASFW::Logging::IOReturnName(kr));
             return kr;
         }
         ASFW_LOG(Audio, "[Timing] rate %u: ZTS period %u -> %u", rateHz, priorPeriod,
@@ -941,12 +941,12 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     ASFW::Audio::DriverKit::FillFloat32Format(outputFormat, rate, ivars.device.outputChannelCount);
     if (ivars.inputStream &&
         (kr = ivars.inputStream->SetCurrentStreamFormat(&inputFormat)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: input SetCurrentStreamFormat failed 0x%x", rateHz, kr);
+        ASFW_LOG(Audio, "[Timing] rate %u: input SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     if (ivars.outputStream &&
         (kr = ivars.outputStream->SetCurrentStreamFormat(&outputFormat)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: output SetCurrentStreamFormat failed 0x%x", rateHz, kr);
+        ASFW_LOG(Audio, "[Timing] rate %u: output SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -961,7 +961,7 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     };
     for (const kern_return_t declared : declKr) {
         if (declared != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[Timing] rate %u: re-declaration failed 0x%x", rateHz, declared);
+            ASFW_LOG(Audio, "[Timing] rate %u: re-declaration failed 0x%x (%{public}s)", rateHz, declared, ASFW::Logging::IOReturnName(declared));
             return declared;
         }
     }
@@ -1039,7 +1039,7 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     }
     const auto stopStatus = ivars->transportStopStatus.load(std::memory_order_acquire);
     if (stopStatus != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop requested=%.0f kr=0x%x", in_sample_rate, stopStatus);
+        ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop requested=%.0f kr=0x%x (%{public}s)", in_sample_rate, stopStatus, ASFW::Logging::IOReturnName(stopStatus));
         return stopStatus;
     }
     auto& ivars = *this->ivars->driverIvars;
@@ -1122,8 +1122,8 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     if (kr != kIOReturnSuccess) {
         ivars.device.pendingSampleRateHz.store(0, std::memory_order_release);
         ASFW_LOG(Audio,
-                 "ASFWAudioDevice: HandleChangeSampleRate %u Hz window request failed 0x%x",
-                 rateHz, kr);
+                 "ASFWAudioDevice: HandleChangeSampleRate %u Hz window request failed 0x%x (%{public}s)",
+                 rateHz, kr, ASFW::Logging::IOReturnName(kr));
     }
     return kr;
 }
@@ -1179,7 +1179,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             auto aborted = Reduce(local.rateMachine, ADKAborted{transaction.identity});
             if (aborted) local.rateMachine = std::move(aborted->next);
             IOLockUnlock(local.rateLock);
-            ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop token=%llu kr=0x%x", transaction.identity.token, stopStatus);
+            ASFW_LOG(Audio, "[RateTxn] phase=refused reason=unresolved-stop token=%llu kr=0x%x (%{public}s)", transaction.identity.token, stopStatus, ASFW::Logging::IOReturnName(stopStatus));
             return stopStatus;
         }
         std::array<char, sizeof(driver.device.inputChannelNames)> priorInputNames{};
@@ -1216,8 +1216,8 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         if (status != kIOReturnSuccess) {
             (void)advance(HardwareCompleted{transaction.identity, HardwareUnknown{}});
             (void)advance(RecoveryRestoredInWindow{transaction.identity, {}, false});
-            ASFW_LOG(Audio, "[RateTxn] phase=unavailable token=%llu gen=%u kr=0x%x",
-                transaction.identity.token, generation, status);
+            ASFW_LOG(Audio, "[RateTxn] phase=unavailable token=%llu gen=%u kr=0x%x (%{public}s)",
+                transaction.identity.token, generation, status, ASFW::Logging::IOReturnName(status));
             return status;
         }
         ASFW_LOG(Audio, "[RateTxn] phase=apply token=%llu gen=%u old=%u requested=%u observedOut=%u observedIn=%u",
@@ -1233,8 +1233,8 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             !confirmed(transaction.candidate.sampleRate)) {
             (void)advance(HardwareCompleted{transaction.identity, HardwareUnchanged{}});
             local.rateUnavailable.store(false, std::memory_order_release);
-            ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=unchanged token=%llu gen=%u requested=%u confirmed=%u kr=0x%x",
-                transaction.identity.token, generation, transaction.candidate.sampleRate, input, status);
+            ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=unchanged token=%llu gen=%u requested=%u confirmed=%u kr=0x%x (%{public}s)",
+                transaction.identity.token, generation, transaction.candidate.sampleRate, input, status, ASFW::Logging::IOReturnName(status));
             return status == kIOReturnSuccess ? kIOReturnNotReady : status;
         }
         auto commitConfiguration = transaction.candidate;
@@ -1244,9 +1244,9 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             const auto actual = ResolveRate(driver, input, transaction.prior.revision + 1);
             if (actual) { commitConfiguration = *actual; otherConfirmed = true; }
         }
-        ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=%{public}s token=%llu gen=%u requested=%u out=%u in=%u kr=0x%x",
+        ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=%{public}s token=%llu gen=%u requested=%u out=%u in=%u kr=0x%x (%{public}s)",
             requestedConfirmed ? "requested" : otherConfirmed ? "other" : "unknown",
-            transaction.identity.token, generation, transaction.candidate.sampleRate, output, input, readback);
+            transaction.identity.token, generation, transaction.candidate.sampleRate, output, input, readback, ASFW::Logging::IOReturnName(readback));
         if (requestedConfirmed || otherConfirmed) {
             const HardwareConfigurationOutcome outcome = requestedConfirmed
                 ? HardwareConfigurationOutcome{HardwareConfirmedRequested{{commitConfiguration}}}
@@ -1298,8 +1298,8 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         } else restored = priorRead == kIOReturnSuccess ? kIOReturnNotReady : priorRead;
         (void)advance(RecoveryRestoredInWindow{transaction.identity, {prior}, restored == kIOReturnSuccess});
         local.rateUnavailable.store(restored != kIOReturnSuccess, std::memory_order_release);
-        ASFW_LOG(Audio, "[RateTxn] phase=rollback token=%llu gen=%u prior=%u out=%u in=%u failure=0x%x restore=0x%x",
-            transaction.identity.token, generation, prior.sampleRate, output, input, failure, restored);
+        ASFW_LOG(Audio, "[RateTxn] phase=rollback token=%llu gen=%u prior=%u out=%u in=%u failure=0x%x (%{public}s) restore=0x%x (%{public}s)",
+            transaction.identity.token, generation, prior.sampleRate, output, input, failure, ASFW::Logging::IOReturnName(failure), restored, ASFW::Logging::IOReturnName(restored));
         return failure;
     }
     if (change_action == kConfigChangeActionIoRestart) {
@@ -1332,8 +1332,8 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         kr = CommitSampleRate(*this, driverIvars, *next);
     }
     ASFW_LOG(Audio,
-             "ASFWAudioDevice: sample rate change to %u Hz %{public}s (0x%x)",
-             rateHz, kr == kIOReturnSuccess ? "committed" : "FAILED", kr);
+             "ASFWAudioDevice: sample rate change to %u Hz %{public}s (0x%x (%{public}s))",
+             rateHz, kr == kIOReturnSuccess ? "committed" : "FAILED", kr, ASFW::Logging::IOReturnName(kr));
     const kern_return_t superKr =
         super::PerformDeviceConfigurationChange(change_action, in_change_info);
     return kr != kIOReturnSuccess ? kr : superKr;

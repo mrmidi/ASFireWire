@@ -641,7 +641,7 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     const IOReturn kr = coordinator->StartStreaming(ivars->guid,
         ASFW::Audio::AudioClockConfig{.sampleRateHz = sampleRateHz});
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
+        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
     } else {
         endpoint->MarkStreaming(true);
     }
@@ -650,6 +650,18 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
 
 void ASFWAudioNub::RecordRemoteDeviceStopResult(kern_return_t status) {
     if (ivars) ASFW::Audio::Runtime::RemoteDeviceStopResult::Publish(ivars->remoteStopResult, status);
+}
+
+kern_return_t ASFWAudioNub::StopAudioStreamingOrRemoteResult() {
+    // After Terminate, RPC dispatch itself may return kIOReturnIPCError before
+    // StopAudioStreaming's handler executes. Consult the nub-owned proof first.
+    if (ivars) {
+        if (const auto terminal = ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(ivars->remoteStopResult)) {
+            ASFW_LOG(Audio, "[StopTrace] owner=nub guid=%016llx phase=late-remote-stop kr=0x%x (%{public}s)", ivars->guid, *terminal, ASFW::Logging::IOReturnName(*terminal));
+            return *terminal;
+        }
+    }
+    return StopAudioStreaming();
 }
 
 kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
@@ -661,7 +673,7 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
     // Remote-loss cleanup precedes nub termination. Its result survives
     // Stop() clearing parentDriver and is specific to this old nub instance.
     if (const auto terminal = ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(ivars->remoteStopResult)) {
-        ASFW_LOG(Audio, "[StopTrace] owner=nub guid=%016llx phase=late-remote-stop kr=0x%x", ivars->guid, *terminal);
+        ASFW_LOG(Audio, "[StopTrace] owner=nub guid=%016llx phase=late-remote-stop kr=0x%x (%{public}s)", ivars->guid, *terminal, ASFW::Logging::IOReturnName(*terminal));
         return *terminal;
     }
     auto* coordinator = GetAudioCoordinator(ivars);
@@ -671,7 +683,7 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 
     const IOReturn kr = coordinator->StopStreaming(ivars->guid);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
+        ASFW_LOG(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
     }
     if (kr == kIOReturnSuccess) {
         if (auto endpoint = FindEndpointRuntime(ivars)) endpoint->MarkStreaming(false);

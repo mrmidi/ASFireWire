@@ -204,8 +204,9 @@ TEST(RemoteDeviceStopResultTests, UnpublishedResultDoesNotAuthorizeLateStop) {
 TEST(RemoteDeviceStopResultTests, ResultSurvivesDetachmentAndRepeatedStops) {
     ASFWAudioNub nub;
     nub.RecordRemoteDeviceStopResult(kIOReturnSuccess);
-    EXPECT_EQ(nub.StopAudioStreaming(), kIOReturnSuccess);
-    EXPECT_EQ(nub.StopAudioStreaming(), kIOReturnSuccess);
+    nub.rpcStopResult = kIOReturnIPCError; // Terminated service rejects RPC dispatch.
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnSuccess);
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnSuccess);
     ASFWAudioNub replacement;
     EXPECT_FALSE(ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(replacement.remoteStopResult));
 }
@@ -214,7 +215,14 @@ TEST(RemoteDeviceStopResultTests, FailedQuiescenceRemainsAFailureForLateStops) {
     ASFWAudioNub nub;
     for (const auto status : {kIOReturnTimeout, kIOReturnNotReady, kIOReturnDMAError}) {
         nub.RecordRemoteDeviceStopResult(status);
-        EXPECT_EQ(nub.StopAudioStreaming(), status);
-        EXPECT_EQ(nub.StopAudioStreaming(), status);
+        EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), status);
+        EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), status);
     }
+}
+
+TEST(RemoteDeviceStopResultTests, UnconfirmedStopStillPropagatesRpcFailure) {
+    ASFWAudioNub nub;
+    nub.rpcStopResult = kIOReturnIPCError;
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnIPCError);
+    EXPECT_EQ(nub.stopStreamingCalls, 1U);
 }

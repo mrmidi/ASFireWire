@@ -9,6 +9,7 @@
 #endif
 
 #include "LogConfig.hpp"
+#include "IOReturnName.hpp"
 #include "LogRing.hpp"
 
 #ifndef OS_LOG_TYPE_DEFAULT

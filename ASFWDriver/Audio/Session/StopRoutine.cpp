@@ -34,8 +34,8 @@ IOReturn StopRoutine::Run(uint64_t guid,
         const uint64_t begin = UptimeMilliseconds();
         ASFW_LOG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=begin", guid, stage);
         const IOReturn status = action();
-        ASFW_LOG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=end kr=0x%x elapsedMs=%llu",
-                 guid, stage, status, UptimeMilliseconds() - begin);
+        ASFW_LOG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=end kr=0x%x (%{public}s) elapsedMs=%llu",
+                 guid, stage, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - begin);
         return status;
     };
     // No MMIO after teardown: the service detaches the hardware next.
@@ -64,8 +64,8 @@ IOReturn StopRoutine::Run(uint64_t guid,
         if ((playback != kIOReturnSuccess || capture != kIOReturnSuccess) &&
             registry_.IsCurrent(policy->route)) {
             ASFW_LOG_ERROR(Audio,
-                "[CmpReservationHeld] guid=0x%016llx playback=0x%08x capture=0x%08x tx=0x%08x rx=0x%08x; remote disconnect unresolved",
-                guid, playback, capture, transmit, receive);
+                "[CmpReservationHeld] guid=0x%016llx playback=0x%08x (%{public}s) capture=0x%08x (%{public}s) tx=0x%08x (%{public}s) rx=0x%08x (%{public}s); remote disconnect unresolved",
+                guid, playback, ASFW::Logging::IOReturnName(playback), capture, ASFW::Logging::IOReturnName(capture), transmit, ASFW::Logging::IOReturnName(transmit), receive, ASFW::Logging::IOReturnName(receive));
             return playback != kIOReturnSuccess ? playback : capture;
         }
         // The contexts are already stopped; StopAll releases the reservation and
@@ -76,9 +76,9 @@ IOReturn StopRoutine::Run(uint64_t guid,
                                                               : cleanup;
         if (result != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio,
-                           "[Session] stop failed GUID=0x%016llx tx=0x%08x rx=0x%08x "
-                           "cleanup=0x%08x -> 0x%08x",
-                           guid, transmit, receive, cleanup, result);
+                           "[Session] stop failed GUID=0x%016llx tx=0x%08x (%{public}s) rx=0x%08x (%{public}s) "
+                           "cleanup=0x%08x (%{public}s) -> 0x%08x (%{public}s)",
+                           guid, transmit, ASFW::Logging::IOReturnName(transmit), receive, ASFW::Logging::IOReturnName(receive), cleanup, ASFW::Logging::IOReturnName(cleanup), result, ASFW::Logging::IOReturnName(result));
         }
         return result;
     }

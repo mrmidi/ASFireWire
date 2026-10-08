@@ -35,9 +35,9 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     auto failStart = [&](kern_return_t status, const char* stage) -> kern_return_t {
         const kern_return_t result = (status == kIOReturnSuccess) ? kIOReturnError : status;
         ASFW_LOG(Audio,
-                 "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x - unwinding partial ADK graph",
+                 "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x (%{public}s) - unwinding partial ADK graph",
                  stage ? stage : "unknown",
-                 result);
+                 result, ASFW::Logging::IOReturnName(result));
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
@@ -177,8 +177,8 @@ void IMPL(ASFWAudioDriver, DeviceClockChanged)
         ivars->audioDevice->RequestExternalRateResync(nominalRateHz);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio,
-                 "ASFWAudioDriver: external rate resync request failed: 0x%x",
-                 kr);
+                 "ASFWAudioDriver: external rate resync request failed: 0x%x (%{public}s)",
+                 kr, ASFW::Logging::IOReturnName(kr));
     }
 }
 
@@ -190,7 +190,7 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
     }
     const kern_return_t kr = ivars->audioDevice->RequestIoRestart(reason);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x", kr);
+        ASFW_LOG(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
     }
 }
 
@@ -253,7 +253,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     // ASFWAudioDevice::StartIO, called by the framework via super::StartDevice.
     const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
     if (superStartKr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x", superStartKr);
+        ASFW_LOG(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x (%{public}s)", superStartKr, ASFW::Logging::IOReturnName(superStartKr));
         return superStartKr;
     }
     ASFW_LOG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
@@ -271,7 +271,7 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
     // ASFWAudioDevice::StopIO, called by the framework via super::StopDevice.
     const kern_return_t superStopKr = super::StopDevice(in_object_id, in_flags);
     if (superStopKr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x", superStopKr);
+        ASFW_LOG(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x (%{public}s)", superStopKr, ASFW::Logging::IOReturnName(superStopKr));
     }
 
     return superStopKr;

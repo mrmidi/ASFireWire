@@ -763,6 +763,7 @@
 		35E77E9DF2A0B759301A2D02 /* AnalyzerRenderSubmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerRenderSubmission.swift; sourceTree = "<group>"; };
 		35F37E8BD922667FEF047B58 /* CommandsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandsView.swift; sourceTree = "<group>"; };
 		35FEEEBFF27C11DB7258268C /* SelectProbeBootstrap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelectProbeBootstrap.hpp; sourceTree = "<group>"; };
+		36677308040EB4AD3F4E9527 /* IOReturnName.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IOReturnName.hpp; sourceTree = "<group>"; };
 		36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SessionRegistry.cpp; sourceTree = "<group>"; };
 		36C2979781EB95C72EE6C491 /* DiceStreamConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceStreamConfig.hpp; sourceTree = "<group>"; };
 		36EE629034C5CFE5502C4317 /* PcmSlotCodec.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PcmSlotCodec.cpp; sourceTree = "<group>"; };
@@ -2418,6 +2419,7 @@
 		64703FF5DF32EA80FEFED722 /* Logging */ = {
 			isa = PBXGroup;
 			children = (
+				36677308040EB4AD3F4E9527 /* IOReturnName.hpp */,
 				ED4A3A1028716DA2733167A2 /* LogConfig.cpp */,
 				70353FE22B6FC379ACA5F0D5 /* LogConfig.hpp */,
 				0BB2655AA61DF8D0D37E22FA /* Logging.cpp */,

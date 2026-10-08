@@ -115,7 +115,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     IOMemoryMap* pMap = nullptr;
     kern_return_t kr = payloadSlab->CreateMapping(0, 0, 0, 0, 0, &pMap);
     if (kr != kIOReturnSuccess || !pMap) {
-        ASFW_LOG(Isoch, "IT: Failed to map payload slab: 0x%08x", kr);
+        ASFW_LOG(Isoch, "IT: Failed to map payload slab: 0x%08x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     payloadMap_ = Common::AdoptRetained(pMap);
@@ -147,7 +147,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, 0, slabLen, &flags,
                                     &segmentCount, segments.data());
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab: 0x%08x", kr);
+            ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab: 0x%08x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
             return kr;
         }
 
@@ -201,7 +201,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     IOMemoryMap* mMap = nullptr;
     kr = metadataRing->CreateMapping(0, 0, 0, 0, 0, &mMap);
     if (kr != kIOReturnSuccess || !mMap) {
-        ASFW_LOG(Isoch, "IT: Failed to map metadata ring: 0x%08x", kr);
+        ASFW_LOG(Isoch, "IT: Failed to map metadata ring: 0x%08x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     metadataMap_ = Common::AdoptRetained(mMap);
@@ -211,7 +211,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     IOMemoryMap* cMap = nullptr;
     kr = controlBlock->CreateMapping(0, 0, 0, 0, 0, &cMap);
     if (kr != kIOReturnSuccess || !cMap) {
-        ASFW_LOG(Isoch, "IT: Failed to map control block: 0x%08x", kr);
+        ASFW_LOG(Isoch, "IT: Failed to map control block: 0x%08x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     controlMap_ = Common::AdoptRetained(cMap);
@@ -456,8 +456,8 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
                 ? kIOReturnDMAError
                 : kIOReturnTimeout;
             ASFW_LOG_ERROR(Isoch,
-                           "IT: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining DMA bindings",
-                           contextIndex_, control, failure);
+                           "IT: stop did not quiesce context=%u control=0x%08x kr=0x%08x (%{public}s); retaining DMA bindings",
+                           contextIndex_, control, failure, ASFW::Logging::IOReturnName(failure));
             return failure;
         }
 

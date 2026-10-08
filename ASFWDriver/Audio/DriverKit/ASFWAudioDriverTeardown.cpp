@@ -64,9 +64,9 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.isRunning.store(false, std::memory_order_release);
     if (auto* nub = ivars.device.audioNub) {
-        const kern_return_t stopKr = nub->StopAudioStreaming();
+        const kern_return_t stopKr = nub->StopAudioStreamingOrRemoteResult();
         if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
+            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
         }
         (void)nub->RegisterTxPreparationAction(nullptr);
         (void)nub->RegisterZtsAnchorAction(nullptr);

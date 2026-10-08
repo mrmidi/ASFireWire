@@ -126,7 +126,7 @@ void AudioCoordinator::HandleBusReset() noexcept {
     // Do not destroy consumers or mutate the session's reservation ledger on
     // this interrupt queue while reconciliation may still own them.
     const auto status = hostTransport_.QuiesceForBusReset();
-    ASFW_LOG(Audio, "[StopTrace] owner=reset guid=%016llx local=0x%x action=await-rebind", guid, status);
+    ASFW_LOG(Audio, "[StopTrace] owner=reset guid=%016llx local=0x%x (%{public}s) action=await-rebind", guid, status, ASFW::Logging::IOReturnName(status));
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -190,8 +190,8 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
         if (hostStatus != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio,
                            "AudioCoordinator: remote-device host teardown incomplete "
-                           "GUID=0x%016llx kr=0x%08x; completing removal",
-                           guid, hostStatus);
+                           "GUID=0x%016llx kr=0x%08x (%{public}s); completing removal",
+                           guid, hostStatus, ASFW::Logging::IOReturnName(hostStatus));
         }
     }
 
@@ -209,8 +209,8 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     sessions_.Erase(guid);
     ASFW_LOG(Audio,
              "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
-             "active=%u host=0x%08x",
-             guid, wasActive ? 1U : 0U, hostStatus);
+             "active=%u host=0x%08x (%{public}s)",
+             guid, wasActive ? 1U : 0U, hostStatus, ASFW::Logging::IOReturnName(hostStatus));
 }
 
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
@@ -306,9 +306,9 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
     const IOReturn kr = sessions_.Attach(guid, clock);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x",
+                       "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
                        guid,
-                       kr);
+                       kr, ASFW::Logging::IOReturnName(kr));
         if (setActive && lock_) {
             IOLockLock(lock_);
             if (activeGuid_ == guid) activeGuid_ = 0;
@@ -348,9 +348,9 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     const IOReturn kr = sessions_.Detach(guid);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: StopStreaming failed GUID=0x%016llx kr=0x%x",
+                       "AudioCoordinator: StopStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
                        guid,
-                       kr);
+                       kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -407,9 +407,9 @@ IOReturn AudioCoordinator::RequestClockConfig(
     const IOReturn kr = sessions_.ChangeClock(guid, desiredClock, reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x",
+                       "AudioCoordinator: RequestClockConfig failed GUID=0x%016llx kr=0x%x (%{public}s)",
                        guid,
-                       kr);
+                       kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -449,8 +449,8 @@ void AudioCoordinator::BeginTeardown() noexcept {
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
-                       "AudioCoordinator: host isoch teardown incomplete kr=0x%08x",
-                       hostStatus);
+                       "AudioCoordinator: host isoch teardown incomplete kr=0x%08x (%{public}s)",
+                       hostStatus, ASFW::Logging::IOReturnName(hostStatus));
     }
 
     if (lock_) {
@@ -467,8 +467,8 @@ kern_return_t AudioCoordinator::StopHostTransport(const char* reason,
                                      : hostTransport_.StopAll();
     ASFW_LOG(Audio,
              "[Lifecycle] AudioCoordinator host-isoch teardown owner reason=%{public}s "
-             "generation-invalidated=%u kr=0x%08x",
-             reason, generationInvalidated ? 1U : 0U, status);
+             "generation-invalidated=%u kr=0x%08x (%{public}s)",
+             reason, generationInvalidated ? 1U : 0U, status, ASFW::Logging::IOReturnName(status));
     return status;
 }
 

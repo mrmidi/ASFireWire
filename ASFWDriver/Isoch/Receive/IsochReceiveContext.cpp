@@ -204,8 +204,8 @@ kern_return_t IsochReceiveContext::Stop() {
             ? kIOReturnDMAError
             : kIOReturnTimeout;
         ASFW_LOG_ERROR(Isoch,
-                       "IR: stop did not quiesce context=%u control=0x%08x kr=0x%08x; retaining direct binding",
-                       contextIndex_, control, failure);
+                       "IR: stop did not quiesce context=%u control=0x%08x kr=0x%08x (%{public}s); retaining direct binding",
+                       contextIndex_, control, failure, ASFW::Logging::IOReturnName(failure));
         rxLock_.clear(std::memory_order_release);
         return failure;
     }
