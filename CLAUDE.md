@@ -287,6 +287,7 @@ Do not ask the user to run traces the agent can capture itself. Two real gotchas
 - **CRTP** for compile-time context role enforcement (AT Request vs AT Response, etc.).
 - **RAII** for all resources — IOLock wrappers, DMA buffers, etc.
 - **`std::span`** for non-owning array views; no raw pointer arithmetic unless interfacing with C APIs.
+- **Ranges** (DriverKit 27 libc++ ships `<ranges>` incl. `std::ranges::to`, `zip`, `join`). Prefer `std::ranges::` algorithms over iterator pairs everywhere. Use `std::views` pipelines (`| filter | transform`) only in cold list-to-list code (discovery, caps → rate/format lists, Config ROM walks): consume or materialise them (`std::ranges::to<std::vector>()`) in the same statement, never store a view in a member or capture one across an async callback (it references its source — the FW-60 lifetime class). No views in isoch/TX/RX hot loops (the HW-tested dext is a Debug build; each view layer is a call per element). If a dropped element needs a logged reason, write the loop with an explicit `continue` + log instead of a silent `filter`. Do not restyle working loops just to use ranges.
 - **`constexpr`/`static_assert`** for compile-time invariant checking — one wrong bit shift causes silent bus errors.
 - **Cite specs in comments** (e.g. `// OHCI §7.2.3`, `// IEC 61883-6 §6.2`) — see *Ground truth per question type*. Never invent a section number.
 
