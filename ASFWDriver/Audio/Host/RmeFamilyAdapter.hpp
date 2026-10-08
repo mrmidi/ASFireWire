@@ -23,6 +23,12 @@ public:
 
     void Describe(const DescribeInput& in, DescribeDone done) override;
 
+    [[nodiscard]] bool ActsOn(DuplexRestartReason reason) const noexcept override {
+        // RmeAudioBackend never acted on cycle inconsistent (IAudioBackend's
+        // default no-op); everything else restarts.
+        return reason != DuplexRestartReason::kRecoverAfterCycleInconsistent;
+    }
+
     [[nodiscard]] FaultVerdict JudgeRuntimeFault(uint64_t guid, DuplexRestartReason reason,
                                                 FaultContext& context) override {
         // RmeAudioBackend restarted on every timing loss without a health read.

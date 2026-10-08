@@ -441,6 +441,13 @@ void AudioDeviceHost::OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) 
         Record(guid, family, HostEvent::RuntimeFault, HostOutcome::Declined, kIOReturnUnsupported, 0, detail);
         return;
     }
+    // A fault the family ignores (only DICE acts on cycle inconsistent) is
+    // declined before it can take the recovery slot from one it acts on.
+    if (!adapter->ActsOn(reason)) {
+        snprintf(detail, sizeof(detail), "reason=%u not-acted-on", static_cast<unsigned>(reason));
+        Record(guid, family, HostEvent::RuntimeFault, HostOutcome::Declined, kIOReturnUnsupported, 0, detail);
+        return;
+    }
     const uint64_t observedRun = IsRunTied(reason) ? sessions_.RunningRun(guid) : 0;
     if (!TryBeginRecovery(guid)) {
         Record(guid, family, HostEvent::RuntimeFault, HostOutcome::Deduped, kIOReturnSuccess, observedRun, detail);

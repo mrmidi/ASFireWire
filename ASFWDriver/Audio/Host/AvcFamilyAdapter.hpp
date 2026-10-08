@@ -41,6 +41,12 @@ public:
 
     void Describe(const DescribeInput& in, DescribeDone done) override;
 
+    [[nodiscard]] bool ActsOn(DuplexRestartReason reason) const noexcept override {
+        // AVCAudioBackend never acted on cycle inconsistent (E4 kept it
+        // unforwarded); the RX settle-and-replay judgement covers the rest.
+        return reason != DuplexRestartReason::kRecoverAfterCycleInconsistent;
+    }
+
     [[nodiscard]] FaultVerdict JudgeRuntimeFault(uint64_t guid, DuplexRestartReason reason,
                                                 FaultContext& context) override;
 

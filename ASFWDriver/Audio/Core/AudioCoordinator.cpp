@@ -32,13 +32,14 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
                     return endpoint ? endpoint.get() : nullptr;
                 })
-    , dice_(publisher_, registry_, runtime_, sessions_, diceNotifications)
+    , diceAdapter_(diceNotifications)
     , host_(publisher_, registry_, runtime_, sessions_, hostTransport_) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
     }
 
+    host_.Install(AudioBackendKind::Dice, diceAdapter_);
     host_.Install(AudioBackendKind::RmeRegister, rmeAdapter_);
     host_.Install(AudioBackendKind::Avc, avcAdapter_);
     host_.Install(AudioBackendKind::MotuRegister, motuAdapter_);
@@ -53,11 +54,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
         return nub != nullptr && nub->NotifyIoRestartRequired(static_cast<uint32_t>(reason));
     });
     sessions_.SetRestartObserver([this](uint64_t guid) {
-        if (auto* backend = BackendForGuid(guid)) {
-            backend->OnStreamsRestarted(guid);
-        } else if (ServedByHost(guid)) {
-            host_.RefreshPublication(guid);
-        }
+        if (ServedByHost(guid)) host_.RefreshPublication(guid);
     });
     deviceManager_.RegisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
@@ -87,11 +84,7 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
         remoteLostStopResults_.erase(guid);
         IOLockUnlock(lock_);
     }
-    if (auto* backend = BackendForGuid(guid)) {
-        backend->OnDeviceRecordUpdated(guid);
-    } else if (ServedByHost(guid)) {
-        host_.RefreshPublication(guid);
-    }
+    if (ServedByHost(guid)) host_.RefreshPublication(guid);
 }
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
@@ -103,24 +96,15 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
         remoteLostStopResults_.erase(guid);
         IOLockUnlock(lock_);
     }
-    auto* backend = BackendForGuid(guid);
-    const bool hostServed = backend == nullptr && ServedByHost(guid);
-    if (backend) {
-        backend->OnDeviceRecordUpdated(guid);
-    } else if (hostServed) {
-        host_.RefreshPublication(guid);
-    }
+    const bool hostServed = ServedByHost(guid);
+    if (hostServed) host_.RefreshPublication(guid);
 
     const bool recoverActiveStream = sessions_.IsStreaming(guid);
     if (!recoverActiveStream) {
         return;
     }
 
-    if (backend) {
-        backend->OnDeviceResumed(guid);
-    } else if (hostServed) {
-        host_.OnDeviceResumed(guid);
-    }
+    if (hostServed) host_.OnDeviceResumed(guid);
 }
 
 void AudioCoordinator::HandleBusReset() noexcept {
@@ -184,13 +168,12 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     }
 
     // Discovery has completed a new-generation scan and confirmed this GUID is
-    // absent. Latch before touching backend work: delayed recovery and StopIO
+    // absent. Latch before touching host work: delayed recovery and StopIO
     // callbacks must not recreate a session for the old route.
     sessions_.Retire(guid);
     // The registry has already invalidated the route policy by the time
-    // removal is reported. Cancel all backend work so cleanup does not depend
+    // removal is reported. Cancel the host's work for it so cleanup does not depend
     // on resolving a policy for a device that is known to be gone.
-    dice_.CancelRemoteDeviceWork(guid);
     host_.CancelRemoteDeviceWork(guid);
 
     kern_return_t hostStatus = kIOReturnSuccess;
@@ -247,45 +230,15 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
         return;
     }
 
-    // Only backends forward it. RME, AV/C and MOTU never acted on cycle inconsistent;
-    // whether the host forwards it for every family is decided when DICE, the
-    // one family that acts on it, moves (AUDIO_DEVICE_HOST.md §6 E5).
-    if (auto* backend = BackendForGuid(guid)) {
-        backend->HandleCycleInconsistent(guid);
-    }
-}
-
-IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
-    if (guid == 0) return nullptr;
-
-    const auto record = registry_.SnapshotByGuid(guid);
-    if (!record.has_value()) {
-        return nullptr;
-    }
-
-    const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(*record);
-    if (!policy || !registry_.IsCurrent(policy->route)) return nullptr;
-    const auto backendKind = ChooseAudioBackend(policy->plan);
-    if (!backendKind.has_value()) {
-        return nullptr;
-    }
-    switch (*backendKind) {
-        case AudioBackendKind::MotuRegister:
-            return nullptr;  // served by the host
-        case AudioBackendKind::RmeRegister:
-            return nullptr;  // served by the host
-        case AudioBackendKind::Dice:
-            return &dice_;
-        case AudioBackendKind::Avc:
-            return nullptr;  // served by the host
-    }
-    return nullptr;
+    // The host asks the family whether it acts on it (FamilyAdapter::ActsOn):
+    // only DICE does; RME, AV/C and MOTU decline it, as their backends did
+    // (AUDIO_DEVICE_HOST.md §6 E5).
+    if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
 }
 
 bool AudioCoordinator::ServedByHost(uint64_t guid) const noexcept {
     const auto kind = host_.KindForGuid(guid);
-    return kind.has_value() && (*kind == AudioBackendKind::RmeRegister || *kind == AudioBackendKind::Avc ||
-                                *kind == AudioBackendKind::MotuRegister);
+    return kind.has_value();
 }
 
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock) noexcept {
@@ -457,12 +410,11 @@ IOReturn AudioCoordinator::RequestClockConfig(
 void AudioCoordinator::BeginTeardown() noexcept {
     ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
     teardownRequested_.store(true, std::memory_order_release);
-    // Pending restarts go first: once the backends drain, nothing can raise one.
+    // Pending restarts go first: once the host drains, nothing can raise one.
     sessions_.BeginTeardown();
-    // Block new backend recovery callbacks before draining either backend
+    // Block new recovery callbacks before draining the host
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
-    dice_.BeginTeardown();
     host_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
@@ -538,11 +490,7 @@ void AudioCoordinator::HandleHostTimingLoss(uint64_t guid) noexcept {
             return;
         }
     }
-    if (auto* backend = BackendForGuid(guid)) {
-        backend->HandleHostTimingLoss(guid);
-    } else if (ServedByHost(guid)) {
-        host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
-    }
+    if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterTimingLoss);
 }
 
 std::optional<uint64_t> AudioCoordinator::GetSinglePublishedGuid() const noexcept {

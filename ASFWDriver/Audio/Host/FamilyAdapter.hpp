@@ -121,6 +121,11 @@ public:
     /// trigger (record update, restart) describes again.
     virtual void Describe(const DescribeInput& in, DescribeDone done) = 0;
 
+    /// Does this family act on `reason` at all? Asked before the fault takes the
+    /// device's recovery slot, so a fault the family ignores can never dedupe
+    /// one it acts on. Cheap and non-blocking.
+    [[nodiscard]] virtual bool ActsOn(DuplexRestartReason reason) const noexcept = 0;
+
     /// Is this runtime fault real? Runs on the host queue and may block, but
     /// must return promptly once `context.Cancelled()` reads true.
     [[nodiscard]] virtual FaultVerdict JudgeRuntimeFault(uint64_t guid,

@@ -13,7 +13,8 @@
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
+#include "Audio/Host/AudioDeviceHost.hpp"
+#include "Audio/Host/DiceFamilyAdapter.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
@@ -37,7 +38,10 @@ using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioNubPublisher;
 using ASFW::Audio::AudioRuntimeRegistry;
-using ASFW::Audio::DiceAudioBackend;
+using ASFW::Audio::Host::AudioDeviceHost;
+using ASFW::Audio::Host::DiceFamilyAdapter;
+using ASFW::Audio::Host::HostEvent;
+using ASFW::Audio::Host::HostOutcome;
 using ASFW::Audio::IIsochDuplexHostTransport;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
@@ -122,7 +126,12 @@ struct TestFixture {
         }};
     AudioNubPublisher publisher{nullptr};
     ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
-    DiceAudioBackend dice{publisher, registry, runtime, sessions, diceNotifications};
+    // DICE runs on the audio device host (AUDIO_DEVICE_HOST.md §6 E5). The
+    // adapter is declared first so it outlives the host's teardown.
+    DiceFamilyAdapter diceAdapter{diceNotifications};
+    AudioDeviceHost dice{publisher, registry, runtime, sessions, hostTransport};
+
+    TestFixture() { dice.Install(ASFW::Audio::AudioBackendKind::Dice, diceAdapter); }
 
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};
@@ -146,8 +155,8 @@ struct TestFixture {
     }
 };
 
-// Case 1 (DICE): Concurrent teardown on DiceAudioBackend
-TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain) {
+// Case 1 (DICE): Concurrent teardown of the host serving DICE
+TEST(BackendLifecycleRaceTests, DiceHostConcurrentTeardownWaitsForDrain) {
     TestFixture f;
     auto* queue = f.dice.WorkQueueForTesting();
     ASSERT_NE(queue, nullptr);
@@ -190,8 +199,8 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain)
     f.dice.SetOnSecondaryTeardownWaitingHookForTesting({});
 }
 
-// Case 4 (DICE): Publication versus Teardown on DiceAudioBackend
-TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionAbortsOnTeardown) {
+// Case 4 (DICE): Publication versus teardown on the host serving DICE
+TEST(BackendLifecycleRaceTests, DiceHostPublicationPausedAfterAdmissionAbortsOnTeardown) {
     TestFixture f;
     const uint64_t guid = 0x00130E0402004713ULL;
     f.SeedDiceDevice(guid);
@@ -210,7 +219,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
     });
 
     auto pubFut = std::async(std::launch::async, [&] {
-        f.dice.EnsureNubForGuidForTesting(guid);
+        f.dice.RefreshPublication(guid);
     });
 
     admitted.get_future().wait();
@@ -228,7 +237,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
     teardownFut.wait();
 
     EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
-    EXPECT_GE(f.dice.PublicationRejectCountForTesting(), 1u);
+    EXPECT_GE(f.dice.OutcomeCount(HostEvent::Publish, HostOutcome::RefusedTeardown), 1u);
 
     f.dice.SetBeforePublishHookForTesting({});
     f.dice.SetOnTeardownGateClosedHookForTesting({});

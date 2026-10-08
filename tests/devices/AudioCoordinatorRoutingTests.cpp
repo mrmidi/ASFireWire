@@ -316,7 +316,9 @@ TEST(AudioCoordinatorRoutingTests, RmeDeviceAddedIsPublishedThroughTheHostOnce) 
     EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
 }
 
-TEST(AudioCoordinatorRoutingTests, DiceDeviceAddedDoesNotReachTheHost) {
+// DICE runs on the host since E5. With no protocol object yet, its adapter
+// refuses to describe the device, and the host records that once.
+TEST(AudioCoordinatorRoutingTests, DiceDeviceAddedReachesTheHost) {
     CoordinatorHarness h;
     auto device = h.Seed(MakeDiceRom());
     ASSERT_NE(device, nullptr);
@@ -324,7 +326,8 @@ TEST(AudioCoordinatorRoutingTests, DiceDeviceAddedDoesNotReachTheHost) {
 
     h.coordinator.OnDeviceAdded(device);
 
-    EXPECT_EQ(PublishOutcomes(h.Host()), 0U);
+    EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::RefusedDescribe), 1U);
 }
 
 TEST(AudioCoordinatorRoutingTests, RmeDeviceResumedWhileIdleIsPublishedOnceWithoutRebind) {
@@ -355,14 +358,22 @@ TEST(AudioCoordinatorRoutingTests, TimingLossOnRmeIsQueuedAndDecidedOnce) {
     EXPECT_EQ(RestartLikeOutcomes(h.Host()), 1U);
 }
 
-TEST(AudioCoordinatorRoutingTests, TimingLossOnDiceNeverReachesHostRuntimeFault) {
+TEST(AudioCoordinatorRoutingTests, TimingLossOnDiceIsQueuedAndDecidedOnce) {
     CoordinatorHarness h;
     auto device = h.Seed(MakeDiceRom());
     ASSERT_NE(device, nullptr);
+    auto* queue = h.Host().WorkQueueForTesting();
+    ASSERT_NE(queue, nullptr);
+    queue->SetManualDispatchForTesting(true);
 
     h.coordinator.HandleHostTimingLoss(kDiceGuid);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 1U);
+    queue->DrainAllForTesting();
 
-    EXPECT_EQ(RuntimeFaultOutcomes(h.Host()), 0U);
+    // No protocol answers the health read, so DICE does not call it self-healed;
+    // the idle session declines the restart. One decision either way.
+    EXPECT_EQ(RestartLikeOutcomes(h.Host()), 1U);
+    EXPECT_EQ(h.Host().OutcomeCount(HostEvent::RuntimeFault, HostOutcome::SelfHealed), 0U);
 }
 
 TEST(AudioCoordinatorRoutingTests, RemovedRmeDeviceDropsLaterTimingLossSilently) {

@@ -27,7 +27,8 @@
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
-#include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
+#include "Audio/Host/AudioDeviceHost.hpp"
+#include "Audio/Host/DiceFamilyAdapter.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -554,9 +555,12 @@ struct SessionRig {
         runtime.Insert(guid, protocol);
         bus.RouteNotificationsTo(notifications);
         if (IsDice()) {
-            // The real DICE backend listens, as in the driver: every DICE
-            // golden also shows which notifications it turns into restarts.
-            diceBackend.emplace(publisher, registry, runtime, sessions, notifications);
+            // The real host and DICE adapter listen, as in the driver: every
+            // DICE golden also shows which notifications they turn into
+            // restarts (AUDIO_DEVICE_HOST.md §6 E5).
+            diceAdapter.emplace(notifications);
+            deviceHost.emplace(publisher, registry, runtime, sessions, host);
+            deviceHost->Install(ASFW::Audio::AudioBackendKind::Dice, *diceAdapter);
         }
         bus.Trace().Clear();
     }
@@ -689,7 +693,9 @@ struct SessionRig {
     std::shared_ptr<IDeviceProtocol> protocol;
     ASFW::Audio::Session::AudioSessions sessions;
     ASFW::Audio::AudioNubPublisher publisher{nullptr};
-    std::optional<ASFW::Audio::DiceAudioBackend> diceBackend;
+    // The adapter outlives the host, whose teardown detaches it.
+    std::optional<ASFW::Audio::Host::DiceFamilyAdapter> diceAdapter;
+    std::optional<ASFW::Audio::Host::AudioDeviceHost> deviceHost;
 };
 
 } // namespace ASFW::Testing::Session

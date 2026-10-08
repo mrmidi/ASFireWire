@@ -149,6 +149,9 @@ public:
         }
         done(DescribeRefusal{kIOReturnNotReady, "fake-default"});
     }
+    [[nodiscard]] bool ActsOn(DuplexRestartReason reason) const noexcept override {
+        return !ignored.has_value() || *ignored != reason;
+    }
     [[nodiscard]] FaultVerdict JudgeRuntimeFault(uint64_t guid, DuplexRestartReason reason,
                                                 FaultContext& context) override {
         ++judgeCalls;
@@ -165,6 +168,7 @@ public:
     DescribeInput lastInput{};
     uint64_t lastGuid{0};
     std::optional<DuplexRestartReason> lastReason{};
+    std::optional<DuplexRestartReason> ignored{};  // the one reason ActsOn refuses
     DeviceEventSink* sink{nullptr};
 };
 
@@ -545,6 +549,30 @@ TEST(AudioDeviceHostTests, FaultWithoutAdapterIsDeclinedAndNotQueued) {
     EXPECT_EQ(bare.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 0U);
     EXPECT_EQ(queue->PendingTaskCountForTesting(), 0U);
     EXPECT_EQ(f.adapter.judgeCalls, 0);
+}
+
+// A fault the family does not act on (cycle inconsistent for AV/C, MOTU, RME)
+// is declined before the recovery slot: it is never judged, and a fault the
+// family acts on, arriving right after, still queues (E5).
+TEST(AudioDeviceHostTests, FaultTheFamilyIgnoresIsDeclinedWithoutTakingTheSlot) {
+    HostFixture f;
+    f.SeedDiceDevice(kGuid);
+    f.adapter.ignored = DuplexRestartReason::kRecoverAfterCycleInconsistent;
+    auto* queue = f.host.WorkQueueForTesting();
+    ASSERT_NE(queue, nullptr);
+    queue->SetManualDispatchForTesting(true);
+
+    f.host.OnRuntimeFault(kGuid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Declined), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 0U);
+    EXPECT_EQ(queue->PendingTaskCountForTesting(), 0U);
+
+    f.host.OnRuntimeFault(kGuid, DuplexRestartReason::kRecoverAfterTimingLoss);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Deduped), 0U);
+    queue->DrainAllForTesting();
+    EXPECT_EQ(f.adapter.judgeCalls, 1);
+    EXPECT_EQ(f.adapter.lastReason, DuplexRestartReason::kRecoverAfterTimingLoss);
 }
 
 TEST(AudioDeviceHostTests, FaultContextAnswersMatchTheHostState) {

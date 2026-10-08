@@ -9,11 +9,11 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
-#include "../Protocols/Backends/DiceAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Session/AudioSessions.hpp"
 #include "../Host/AudioDeviceHost.hpp"
 #include "../Host/AvcFamilyAdapter.hpp"
+#include "../Host/DiceFamilyAdapter.hpp"
 #include "../Host/MotuFamilyAdapter.hpp"
 #include "../Host/RmeFamilyAdapter.hpp"
 
@@ -96,8 +96,7 @@ public:
     [[nodiscard]] std::optional<uint64_t> GetSinglePublishedGuid() const noexcept;
 
 private:
-    [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
-    // True when `guid`'s family runs on the host rather than a backend.
+    // True when `guid`'s current policy names a family the host serves.
     [[nodiscard]] bool ServedByHost(uint64_t guid) const noexcept;
     [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
                                                    bool generationInvalidated = false) noexcept;
@@ -113,9 +112,9 @@ private:
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
-    DiceAudioBackend dice_;
-    // Families moved onto the host (documentation/AUDIO_DEVICE_HOST.md §6).
+    // Every family runs on the host (documentation/AUDIO_DEVICE_HOST.md §6).
     // Adapters are declared before the host so they outlive its teardown.
+    Host::DiceFamilyAdapter diceAdapter_;
     Host::RmeFamilyAdapter rmeAdapter_;
     Host::AvcFamilyAdapter avcAdapter_;
     Host::MotuFamilyAdapter motuAdapter_;

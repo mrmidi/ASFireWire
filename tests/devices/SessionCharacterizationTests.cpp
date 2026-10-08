@@ -220,8 +220,8 @@ constexpr SessionShape kMultimixTwoPlaybackShape{
 // exists, so CoreAudio would never see the device.
 TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {
     SessionRig rig(kMultimixTwoPlaybackShape);
-    ASSERT_TRUE(rig.diceBackend.has_value());
-    rig.diceBackend->EnsureNubForGuidForTesting(rig.guid);
+    ASSERT_TRUE(rig.deviceHost.has_value());
+    rig.deviceHost->RefreshPublication(rig.guid);
     const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
     ASSERT_NE(endpoint, nullptr) << "the device was refused at publication";
     ASFW::Audio::Model::ASFWAudioDevice config{};

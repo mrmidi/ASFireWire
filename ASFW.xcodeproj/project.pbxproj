@@ -402,6 +402,7 @@
 		C37065634821FE7EEB593CCB /* ASFWDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC54AD9BD749D537A0D2BF05 /* ASFWDriver.cpp */; };
 		C3763225AF65E7A923D33CA3 /* ASFWAudioDriverTeardown.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */; };
 		C383A0E2BE9823CD5804D60A /* Logging.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0BB2655AA61DF8D0D37E22FA /* Logging.cpp */; };
+		C41DD03D4922E6C511235D0C /* DiceFamilyAdapter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E5B228E37BE686720B93D54B /* DiceFamilyAdapter.cpp */; };
 		C45F08B855B9EFD3A223D0AF /* LabelAllocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 08AC34805E6B658EC6032175 /* LabelAllocator.cpp */; };
 		C656D47DCC5D9B25F8FFF37E /* BusManagerElectionDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3210D655C3118526E23B9C5F /* BusManagerElectionDriver.cpp */; };
 		C7305631F9DE2A041ED453DA /* IsochReceiveContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 15835116B43BF0DCF553C721 /* IsochReceiveContext.cpp */; };
@@ -803,6 +804,7 @@
 		3F4984641130FA079EF36F9D /* DirectRxTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectRxTypes.hpp; sourceTree = "<group>"; };
 		3F9F1B6A7A51F012545B6764 /* LocalCSRAccessor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalCSRAccessor.cpp; sourceTree = "<group>"; };
 		3FA23BD871B73FAA369289B3 /* MoveOnlyCallback.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MoveOnlyCallback.hpp; sourceTree = "<group>"; };
+		3FBE5B2385C83F3B867DA25E /* DiceFamilyAdapter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceFamilyAdapter.hpp; sourceTree = "<group>"; };
 		3FD92A76AA32886FBDD522A0 /* AsyncSubsystem.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystem.cpp; sourceTree = "<group>"; };
 		405B02684F38F6B082A20E20 /* LocalRequestDispatch.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LocalRequestDispatch.hpp; sourceTree = "<group>"; };
 		40798EEB26FE751B40624648 /* DeviceManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DeviceManager.hpp; sourceTree = "<group>"; };
@@ -1468,6 +1470,7 @@
 		E53FAC1B54FD245F0CC70D14 /* IDMAMemory.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IDMAMemory.hpp; sourceTree = "<group>"; };
 		E56DDBE85FFBD889170978CA /* SelfIDCapture.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelfIDCapture.hpp; sourceTree = "<group>"; };
 		E59555396092ECD2402D8F08 /* FWUnit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FWUnit.hpp; sourceTree = "<group>"; };
+		E5B228E37BE686720B93D54B /* DiceFamilyAdapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiceFamilyAdapter.cpp; sourceTree = "<group>"; };
 		E5EE2C40B8486AC468AD29BD /* CSRContractVerifier.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRContractVerifier.hpp; sourceTree = "<group>"; };
 		E609DB6610DFDC460AA66A7C /* Signposts.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Signposts.hpp; sourceTree = "<group>"; };
 		E63E32AE7B0FFD5E318CD42B /* AudioSessions.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioSessions.cpp; sourceTree = "<group>"; };
@@ -2031,6 +2034,8 @@
 				A66D3E14EA38C040872F7198 /* AudioDeviceHost.hpp */,
 				920EAD3582D3D65E34FDECA0 /* AvcFamilyAdapter.cpp */,
 				24C51BF6EE330424420F145E /* AvcFamilyAdapter.hpp */,
+				E5B228E37BE686720B93D54B /* DiceFamilyAdapter.cpp */,
+				3FBE5B2385C83F3B867DA25E /* DiceFamilyAdapter.hpp */,
 				30E5EF7BF824AA7D4C85E48B /* FamilyAdapter.hpp */,
 				027D3A12C8E242A899327361 /* MotuFamilyAdapter.cpp */,
 				604730D9D5CD284DB3F4E177 /* MotuFamilyAdapter.hpp */,
@@ -4006,6 +4011,7 @@
 				FEF9E3E1F54EB89A0CD417A2 /* DiagnosticsService.cpp in Sources */,
 				6E23E4DD51970F6FB6E0A987 /* DiceAudioBackend.cpp in Sources */,
 				17AC0EEE6974FAF0A5215151 /* DiceDeviceIo.cpp in Sources */,
+				C41DD03D4922E6C511235D0C /* DiceFamilyAdapter.cpp in Sources */,
 				04DC79A9B5A6A4A387DF8069 /* DiceFamilyDriver.cpp in Sources */,
 				C85CCDEBC807B0479B97B40A /* DiceNotificationRouter.cpp in Sources */,
 				02B9D0017C8476EF79D430C1 /* DiceProfile.cpp in Sources */,
