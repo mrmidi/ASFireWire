@@ -84,3 +84,76 @@ python3 -m unittest discover -s tools/motu -p 'test_*.py' -v
 Checks cover stale routes, active-stream admission, failed transactions, provenance,
 generation zero, endian decoding and independent optical directions. They issue no
 hardware requests. Run the contributor matrix before treating observations as goldens.
+
+## SPH timing comparison
+
+`compare_sph.py` is a standard-library-only, hardware-free timing simulator:
+
+```sh
+python3 tools/motu/compare_sph.py
+python3 tools/motu/compare_sph.py --rate 44100 --seconds 10 --drift-ppm 200
+python3 -m unittest discover -s tools/motu -p test_compare_sph.py
+```
+
+Default output is `tmp/motu-sph-comparison/`: per-scenario CSV traces, SVG error
+plots and `summary.json`. Scenarios are steady clock drift, a drift reversal,
+SPH timestamp noise, and a missing packet. The default start crosses the
+one-second timestamp wrap. Supported rates are 44.1 through 192 kHz.
+
+Replay preserves incoming blocking cadence and translates each frame's SPH
+relative offset to the outgoing packet cycle. Synthesis now uses the controller
+behavior tested in PR #172: cumulative RX ticks and frames, feedback from the
+correction actually emitted on TX, and a Q32 fractional sample-time accumulator.
+It measures over buffer windows (`--window-frames`, default 512), rather than
+reacting to each audio block. Phase correction divides by the frames that
+actually elapsed, so a delayed update does not increase the loop gain.
+
+Acquisition uses full gain (`--acquisition-shift 0`); locked tracking uses quarter
+gain (`--locked-shift 2`). Lock requires error below 61.44 ticks and stays latched
+until error exceeds four bus cycles. Step limits remain a simulation policy
+(`--clamp-ppm`, default 2000), not a recovered vendor limit. The pure-controller
+API also accepts an absolute phase seed: it targets the captured +510-tick
+operating point and folds around the supplied phase center to avoid branch-cut
+jumps. The comparison itself starts at zero relative error; it does not model
+the telemetry conditioner that discovers an absolute operating point.
+
+Both algorithms use an identical fixed observation/buffering delay and are
+compared to the noiseless device timeline translated by that delay.
+Timestamp quantization is one tick.
+CSV frame indices identify samples, allowing comparison even when packet cadence
+differs. `cadence_mismatches` counts cycles with differing frame counts.
+
+**Scope:** replay matches the referenced timing arithmetic, not the entire Linux
+stream engine or its startup cache. Synthesis implements PR #172's tested loop,
+not a bit-exact clone of the vendor algorithm. The observation bridge, absolute
+phase conditioner and hard-resync placement remain simplified. Jitter means
+independent noise on SPH values, not DMA arrival latency. Noise results therefore
+cannot rank the actual drivers. There is no audio, DMA, HAL, clock-source
+selection, or recovery choreography simulated.
+Missing packets stop both models; synthesis continuation after loss is not claimed
+to reproduce vendor behavior. Startup begins from the first observed audio block;
+lock flags are tracked internally but output muting is not simulated.
+
+Regression checks include 24 captured official-driver SPH quadlets, host seconds
+excluded from wire stamps, second wrap, fractional 44.1 kHz periods, actual TX
+feedback, elapsed-interval gain, late updates, acquisition/lock boundaries,
+strict hard-resync threshold, absolute-seed sign and branch-cut folding,
+reference regressions, and clean-clock/loss simulations at all six rates.
+Captured quadlet round trips verify representation; they do not prove that our
+controller produces the vendor's trajectory.
+
+Behavioral sources (read-only; independently implemented):
+
+- `references/linux-sound-firewire-stack/firewire/motu/amdtp-motu.c:303–329,373–393`
+- `tmp/motu-research/linux-motu-research.md`, A1
+- `tmp/motu-research/vendor-motu-gap-research.md`, §§1.2–1.4
+- [PR #172 controller](https://github.com/cube666999/ASFireWire/blob/858f07582c9dac937dab492036097a40f104cead/ASFWDriver/Audio/Protocols/MOTU/MotuSphClockServo.hpp)
+- [PR #172 servo tests](https://github.com/cube666999/ASFireWire/blob/858f07582c9dac937dab492036097a40f104cead/tests/audio/MotuSphClockServoTests.cpp)
+- [PR #172 captured SPH tests](https://github.com/cube666999/ASFireWire/blob/858f07582c9dac937dab492036097a40f104cead/tests/audio/MotuV3SphWireParityTests.cpp)
+
+A 1-second run at 48 kHz and +100 ppm produces replay RMS error about 0.012 µs
+and synthesis about 0.093 µs. With 8-tick SPH noise, replay RMS is about 0.326 µs
+and synthesis about 0.398 µs (the previous per-block model was about 2.379 µs).
+The clean run locks at frame 512 without resyncs. Forty-two cycles have different
+packet frame counts, as small timing differences cross packet boundaries; total
+frame counts agree. These are simulator results, not hardware measurements.
