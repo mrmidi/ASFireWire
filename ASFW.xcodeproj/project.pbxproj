@@ -139,7 +139,6 @@
 		3D2EC2F37BBF0E246872F264 /* DiceReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C9CB7FD7D277B18AC1ABA76 /* DiceReportView.swift */; };
 		3D4211FC6DE43A112951FF2F /* DriverConnector+ConfigROM.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC7D308D1F12806CA102258 /* DriverConnector+ConfigROM.swift */; };
 		3D9D02951035C22384C1CBF0 /* AmdtpTxPacketizer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A63F3E78327A5940C2725365 /* AmdtpTxPacketizer.cpp */; };
-		3DA9E274A44D3A82390F4FFC /* ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 84EE5D95253736515AA645E1 /* ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 55C248E22BAFC97B171317B1 /* PostResetTimingCoordinator.cpp */; };
 		3F4A930252C8F951E3F089FF /* AudioSessions.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E63E32AE7B0FFD5E318CD42B /* AudioSessions.cpp */; };
 		3F5CE89F15F8E532332EEFDA /* AudioCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F71A638FD501761865722676 /* AudioCoordinator.cpp */; };
@@ -173,6 +172,7 @@
 		4F6ED6CD89668AFF93E61BC4 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 7BFB1B9EAD7D4D66C86B4AB0 /* MCP */; };
 		4FD45DE09D312E94F4160B10 /* fwicons.icon in Resources */ = {isa = PBXBuildFile; fileRef = B31D2FEE1FD985CD7AE779D2 /* fwicons.icon */; };
 		501A2A879B5CE46A068C4895 /* DiceRegisterModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB526A29FF8CDD653C1E0F62 /* DiceRegisterModelTests.swift */; };
+		50562D75CAA6487A569E1DA3 /* net.asfw.driver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = B6CB2AFAEB80414349FBF935 /* net.asfw.driver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		50919565F5D9A031D70542AC /* MetricsSink.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DC915CE751EF8C365B2EC9DB /* MetricsSink.cpp */; };
 		51CB28C0A2A31C5C46AB8121 /* AnalyzerRenderSubmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16B11C3B77C3B4EDDD3C0146 /* AnalyzerRenderSubmissionTests.swift */; };
 		520CA9F8E87C81E066EFEDCB /* AnalyzerReadoutBatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B4E3DBB11D09B17427FEAD0 /* AnalyzerReadoutBatch.swift */; };
@@ -532,7 +532,7 @@
 			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
 			dstSubfolderSpec = 16;
 			files = (
-				3DA9E274A44D3A82390F4FFC /* ASFWDriver.dext in Embed System Extensions */,
+				50562D75CAA6487A569E1DA3 /* net.asfw.driver.dext in Embed System Extensions */,
 			);
 			name = "Embed System Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1083,7 +1083,6 @@
 		843CA51BDFE95281367C3A8D /* DMASafeCopy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DMASafeCopy.hpp; sourceTree = "<group>"; };
 		846404E5C4AB028C1A8D7F1A /* MotuV2Protocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MotuV2Protocol.cpp; sourceTree = "<group>"; };
 		8485E39E1457C2EA049F4DA7 /* ARContextBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARContextBase.hpp; sourceTree = "<group>"; };
-		84EE5D95253736515AA645E1 /* ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		8544FF023E801CA773F297ED /* OxfwVendorDependent.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OxfwVendorDependent.hpp; sourceTree = "<group>"; };
 		8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochDmaGeometry.hpp; sourceTree = "<group>"; };
 		85B459C6BE789ECDDE3EE684 /* MCPSDKBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSDKBridgeTests.swift; sourceTree = "<group>"; };
@@ -1275,6 +1274,7 @@
 		B6092FC4D28C8CBE1F474D4B /* AVCHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCHandler.cpp; sourceTree = "<group>"; };
 		B6782BCBA6C17DF0ABBC5CD5 /* ASFWProtocolBooleanControl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWProtocolBooleanControl.cpp; sourceTree = "<group>"; };
 		B68AF53D0E4DFFFEFFB6C111 /* AVCUnit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCUnit.cpp; sourceTree = "<group>"; };
+		B6CB2AFAEB80414349FBF935 /* net.asfw.driver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.asfw.driver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6FC8F89D537351E9BA9D735 /* ControllerConfig.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerConfig.cpp; sourceTree = "<group>"; };
 		B72D79445AA6DCE3312ACA22 /* DbcCounter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DbcCounter.hpp; sourceTree = "<group>"; };
 		B72FF5C14E11A147CC838B5A /* AvcReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcReportTests.swift; sourceTree = "<group>"; };
@@ -3576,8 +3576,8 @@
 			isa = PBXGroup;
 			children = (
 				E37CAE998855106595F9A703 /* ASFW.app */,
-				84EE5D95253736515AA645E1 /* ASFWDriver.dext */,
 				E789FE1BCC1F31A996C8E799 /* ASFWTests.xctest */,
+				B6CB2AFAEB80414349FBF935 /* net.asfw.driver.dext */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -3734,7 +3734,7 @@
 			packageProductDependencies = (
 			);
 			productName = ASFWDriver;
-			productReference = 84EE5D95253736515AA645E1 /* ASFWDriver.dext */;
+			productReference = B6CB2AFAEB80414349FBF935 /* net.asfw.driver.dext */;
 			productType = "com.apple.product-type.driver-extension";
 		};
 		348672D607701677ABCB567C /* ASFWTests */ = {
@@ -4397,7 +4397,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4418,7 +4418,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4501,7 +4501,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4546,7 +4546,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4588,7 +4588,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4698,7 +4698,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
