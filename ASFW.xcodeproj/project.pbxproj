@@ -610,6 +610,7 @@
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0E9D9D9859BBCA2DA4256491 /* DiscoveryGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryGraph.cpp; sourceTree = "<group>"; };
+		0EA85E03A6F102629476D529 /* FirefaceChannelNames.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceChannelNames.hpp; sourceTree = "<group>"; };
 		0EFBB31EBA1674516A0A39D7 /* SBP2CommandWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2CommandWireFormats.hpp; sourceTree = "<group>"; };
 		0F1CAA3BCFF0815CDDDCE11A /* TestHooks.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TestHooks.hpp; sourceTree = "<group>"; };
 		0FCC9AE9BE1B3929CC94BE88 /* ApogeeDuetProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeDuetProtocol.hpp; sourceTree = "<group>"; };
@@ -2772,6 +2773,7 @@
 		83A156BB194E66B40C582BD8 /* RME */ = {
 			isa = PBXGroup;
 			children = (
+				0EA85E03A6F102629476D529 /* FirefaceChannelNames.hpp */,
 				34521E368635CF3AB114D33F /* FirefaceDeviceProtocol.hpp */,
 				5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */,
 			);

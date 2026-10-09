@@ -140,6 +140,33 @@ TEST(FirefaceIntegrationTests, PublicationConfigIsFixedDuplex48kWithoutMidi) {
     }
 }
 
+TEST(FirefaceIntegrationTests, PublicationNamesEveryChannelInWireOrder) {
+    // RME 3.41 channel-name tables (gChannelNames_FF400_in/out at 0x8020/0x8140,
+    // FF800 at 0x8260/0x8420); FFADO addDirPorts has the same order: analog,
+    // phones (playback), S/PDIF, ADAT.
+    ASFW::Discovery::DeviceRecord record{};
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    using ASFW::Audio::Host::RmeFamilyAdapter;
+    const auto ff400 = RmeFamilyAdapter::BuildNubConfig(record, ProfileBuilderId::RmeFireface400, "RME");
+    ASSERT_EQ(ff400.inputChannelNames.size(), 18U);
+    ASSERT_EQ(ff400.outputChannelNames.size(), 18U);
+    EXPECT_EQ(ff400.inputChannelNames[0], "Mic/Line 1");
+    EXPECT_EQ(ff400.inputChannelNames[2], "Inst/Line 3");
+    EXPECT_EQ(ff400.inputChannelNames[8], "SPDIF L");
+    EXPECT_EQ(ff400.inputChannelNames[17], "ADAT 8");
+    EXPECT_EQ(ff400.outputChannelNames[6], "Phones 7");
+    EXPECT_EQ(ff400.outputChannelNames[9], "SPDIF R");
+    const auto ff800 = RmeFamilyAdapter::BuildNubConfig(record, ProfileBuilderId::RmeFireface800, "RME");
+    ASSERT_EQ(ff800.inputChannelNames.size(), 28U);
+    ASSERT_EQ(ff800.outputChannelNames.size(), 28U);
+    EXPECT_EQ(ff800.inputChannelNames[0], "Analog 1");
+    EXPECT_EQ(ff800.inputChannelNames[9], "Mic 10");
+    EXPECT_EQ(ff800.inputChannelNames[10], "SPDIF L");
+    EXPECT_EQ(ff800.inputChannelNames[27], "ADAT 16");
+    EXPECT_EQ(ff800.outputChannelNames[8], "Phones 9");
+    EXPECT_EQ(ff800.outputChannelNames[12], "ADAT 1");
+}
+
 TEST(FirefaceRegisterTests, RegisterTupleUsesLittleEndianWithoutChangingBigEndianWriter) {
     RecordingFireWireBus bus;
     RouteState routeState;
