@@ -361,6 +361,23 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesIdentityNamesAndPublishedRates) {
     EXPECT_FALSE(dev->outputChannelNames.empty());
 }
 
+// The audio driver picks its stream profile by this builder. Without it the
+// registry falls back to the generic DICE profile, whose AM824 framing refuses
+// MOTU's packed geometry (fewer data block quadlets than channels) at StartIO.
+TEST(MotuFamilyAdapterTests, DescribeCarriesTheCatalogProfileBuilder) {
+    MotuRig rig;
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    MotuFamilyAdapter adapter;
+
+    const auto outcome = RunDescribe(adapter, rig.Input());
+
+    const ASFWAudioDevice* dev = AsDescription(outcome);
+    ASSERT_NE(dev, nullptr);
+    ASSERT_NE(rig.record.audioPolicy, nullptr);
+    EXPECT_EQ(rig.record.audioPolicy->plan.profileBuilder, Ids::ProfileBuilderId::Motu828mk2);
+    EXPECT_EQ(dev->profileBuilderId, static_cast<uint32_t>(Ids::ProfileBuilderId::Motu828mk2));
+}
+
 // E7c: the only writes are the notification address registration (V2 too).
 TEST(MotuFamilyAdapterTests, DescribeRegistersNotificationsThenReadsClockAndOptical) {
     MotuRig rig;
