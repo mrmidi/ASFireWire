@@ -38,6 +38,14 @@
 // The commit opcode is kExecute | (Low|Middle|High) | kLoadRouter, i.e.
 // 0x80070001. Committing only the low rate mode does not take effect. It appears
 // in the kext as the constant 0x01000780 (little-endian of the wire value).
+//
+// 2026-10-09: line outs 3-4 silently carried the stereo monitor mix instead of
+// playback channels 3-4. The router sent mixer outputs 0-1 to BOTH output
+// pairs and parked outputs 2-3 - which already had correct, unity-gain
+// coefficients for channels 3-4 - on MUTED. Fixed by routing outputs 2-3 to
+// line outs 3-4 instead of duplicating 0-1 there; no mixer coefficient
+// changed. Found and verified on a second Mbox Pro, on macOS Sequoia with a
+// separate user-space driver built against this device's own register map.
 
 #pragma once
 
@@ -75,17 +83,22 @@ inline constexpr uint16_t kRouterEntries[] = {
     0xb028, 0xb129, 0xb22a, 0xb32b, 0xb42c, 0xb52d, 0xb62e, 0xb72f,
     // InS1:0-1 on to block 3.
     0x5030, 0x5131,
-    // Mixer outputs 0-1 are the stereo monitor mix, and it is sent twice: to
-    // line outs 1-2 and again to 3-4. Outputs 4-5 feed line outs 5-6.
-    0x2040, 0x2141, 0x2042, 0x2143, 0x2444, 0x2545,
+    // Mixer outputs 0-1 are the stereo monitor mix, to line outs 1-2. Outputs
+    // 2-3 carry playback channels 3-4 independently, to line outs 3-4; they
+    // are NOT a duplicate of 0-1. The earlier table routed the monitor mix to
+    // both pairs and parked 2-3 on MUTED below, so playback channels 3-4 of
+    // the host never reached an output even though their mixer coefficients
+    // (indices 46 and 65, "straight passes at unity" further down) were
+    // already correct and simply unused. Outputs 4-5 feed line outs 5-6.
+    0x2040, 0x2141, 0x2242, 0x2343, 0x2444, 0x2545,
     // Mixer outputs 6-7 leave as S/PDIF.
     0x2600, 0x2701,
     // Mixer outputs 8-13 feed the headphones. With the coefficients below,
     // outputs 8-9 carry playback 1-2 and 10-11 carry playback 3-4, which is
     // exactly what Avid's manual says the two headphone jacks monitor.
     0x2850, 0x2951, 0x2a52, 0x2b53, 0x2c54, 0x2d55,
-    // Mixer outputs 2, 3, 14 and 15 go nowhere; parked on MUTED.
-    0x22f0, 0x23f1, 0x2ef0, 0x2ff1,
+    // Mixer outputs 14 and 15 go nowhere; parked on MUTED.
+    0x2ef0, 0x2ff1,
 };
 inline constexpr uint32_t kRouterEntryCount =
     static_cast<uint32_t>(sizeof(kRouterEntries) / sizeof(kRouterEntries[0]));
