@@ -908,6 +908,7 @@
 		576FAD72D5FA2D0054BE8A16 /* Submitter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Submitter.hpp; sourceTree = "<group>"; };
 		57D7A8E30C4597BA7B21E645 /* AudioGeometrySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGeometrySnapshot.swift; sourceTree = "<group>"; };
 		57FC72D395A005E060D93FFE /* DirectRxPacketDecoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DirectRxPacketDecoder.hpp; sourceTree = "<group>"; };
+		580F7718F107ACC5B90B62FA /* FirefaceRegisters.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceRegisters.hpp; sourceTree = "<group>"; };
 		580FC32A146406752A02DFC6 /* SpectrumVisualization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumVisualization.swift; sourceTree = "<group>"; };
 		581B0959C626D7BB8C2B75CA /* ControllerStateMachine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerStateMachine.cpp; sourceTree = "<group>"; };
 		58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SaffireproCommon.cpp; sourceTree = "<group>"; };
@@ -2776,6 +2777,7 @@
 				0EA85E03A6F102629476D529 /* FirefaceChannelNames.hpp */,
 				34521E368635CF3AB114D33F /* FirefaceDeviceProtocol.hpp */,
 				5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */,
+				580F7718F107ACC5B90B62FA /* FirefaceRegisters.hpp */,
 			);
 			path = RME;
 			sourceTree = "<group>";
