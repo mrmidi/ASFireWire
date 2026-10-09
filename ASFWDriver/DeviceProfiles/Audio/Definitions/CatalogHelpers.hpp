@@ -106,9 +106,11 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
     return AudioDeviceDefinition{
         .id = id,
         .variantId = static_cast<uint32_t>(id),
+        // No rootModelId constraint: the model lives in Unit_Sw_Version, and the
+        // 828mk3 root directory carries no Model_Id entry at all, so requiring
+        // model_id 0 there rejected it as an unknown device.
         .clauses = {IdentityMatchClause{
                         .rootVendorId = MaskedValue32{kMotuVendorId},
-                        .rootModelId = MaskedValue32{0},
                         .unitSpecifierId = MaskedValue32{kMotuVendorId},
                         .unitVersion = MaskedValue32{swVersion},
                     },

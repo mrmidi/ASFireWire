@@ -29,6 +29,8 @@
 namespace {
 
 using namespace ASFW::DeviceProfiles::Audio;
+using ASFW::DeviceProfiles::IdentityMatchClause;
+using ASFW::DeviceProfiles::MaskedValue32;
 namespace Discovery = ASFW::Discovery;
 
 // ---------------------------------------------------------------------------
@@ -280,6 +282,24 @@ TEST(AudioDeviceCatalog, MotuIsMatchedFromTheUnitDirectory) {
     EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk2);
 }
 
+// Config ROM read from a FireWire-only 828mk3 (GUID 0x0001f20000087236): the
+// root directory holds Vendor_Id, Node_Capabilities, the unit directory offset
+// and the Node_Unique_Id leaf -- no Model_Id entry. The unit directory carries
+// Unit_Spec_Id 0x0001f2, Unit_Sw_Version 0x000015 and Model_Id 0x106800.
+TEST(AudioDeviceCatalog, Motu828mk3WithoutRootModelIdIsMatched) {
+    const auto device = MakeDevice(0x0001F2'0000087236ULL, kMotuVendorId,
+                                   /*rootModelId=*/std::nullopt,
+                                   {{.offset = 4,
+                                     .specifierId = kMotuVendorId,
+                                     .version = 0x000015U,
+                                     .modelId = 0x106800U}});
+    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::MotuRegister);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Motu828mk3);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+}
+
 // Synthetic fixture derived from the Linux snd-fireface match table, not a
 // Config ROM captured from ASFW hardware.
 TEST(AudioDeviceCatalog, RmeFormerModelsRequireExactUnitIdentityAndBlockAvc) {
@@ -393,15 +413,24 @@ TEST(AudioDeviceCatalog, TableBackedEightPreGetsItsOwnAllocatorProfile) {
 }
 
 // A model_id that was never published must not be read as a model_id of 0, or
-// every DICE device on a vendor with a zero-model sibling collides.
+// every DICE device on a vendor with a zero-model sibling collides. Stated on
+// the clause itself: MOTU rows no longer constrain the root model_id, because
+// the 828mk3 publishes none.
 TEST(AudioDeviceCatalog, AnAbsentModelIdDoesNotMatchARowThatRequiresZero) {
     const auto device = MakeDevice(0x0001F2'0400000000ULL, kMotuVendorId,
                                    /*modelId=*/std::nullopt,
                                    {{.offset = 5,
                                      .specifierId = kMotuVendorId,
                                      .version = kMotu828mk2SwVersion}});
-    const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
-    EXPECT_FALSE(plan.has_value());
+    const IdentityMatchClause requiresZero{
+        .rootVendorId = MaskedValue32{kMotuVendorId},
+        .rootModelId = MaskedValue32{0},
+    };
+    EXPECT_FALSE(requiresZero.Matches(device.identity, device.identity.units[0]));
+
+    auto publishedZero = device;
+    publishedZero.identity.rootModelId = 0U;
+    EXPECT_TRUE(requiresZero.Matches(publishedZero.identity, publishedZero.identity.units[0]));
 }
 
 // The end of vendor-wide matching, stated as a test. The TCD3070 Pro 40 shares
