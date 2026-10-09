@@ -16,6 +16,7 @@
 #include "Discovery/DeviceRegistry.hpp"
 #include "tests/mocks/FakeTimerScheduler.hpp"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <string>
@@ -80,6 +81,20 @@ public:
         deferredWrites.erase(deferredWrites.begin());
         completion();
     }
+    /// Holds read completions like `deferWrites` holds writes, so a test can see how many
+    /// requests the protocol keeps outstanding at once.
+    bool deferReads{false};
+    std::vector<std::function<void()>> deferredReads;
+    size_t maxOutstanding{0};
+    void CompleteNextRead() {
+        ASSERT_FALSE(deferredReads.empty());
+        auto completion = std::move(deferredReads.front());
+        deferredReads.erase(deferredReads.begin());
+        completion();
+    }
+    void NoteOutstanding() {
+        maxOutstanding = std::max(maxOutstanding, deferredReads.size() + deferredWrites.size());
+    }
     /// Per-register replay, keyed by address low bits. Consulted before `readValue`, so a
     /// sequence touching several registers (duplex bring-up reads the optical config and
     /// the packet format) can give each one a distinct value.
@@ -100,11 +115,19 @@ public:
         }
         const uint32_t value =
             (perAddress != readValues.end()) ? perAddress->second : *readValue;
-        const uint8_t payload[4] = {static_cast<uint8_t>(value >> 24),
-                                    static_cast<uint8_t>(value >> 16),
-                                    static_cast<uint8_t>(value >> 8),
-                                    static_cast<uint8_t>(value)};
-        callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload, 4));
+        auto complete = [callback = std::move(callback), value] {
+            const uint8_t payload[4] = {static_cast<uint8_t>(value >> 24),
+                                        static_cast<uint8_t>(value >> 16),
+                                        static_cast<uint8_t>(value >> 8),
+                                        static_cast<uint8_t>(value)};
+            callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload, 4));
+        };
+        if (deferReads) {
+            deferredReads.push_back(std::move(complete));
+            NoteOutstanding();
+        } else {
+            complete();
+        }
         return AsyncHandle{1};
     }
 
@@ -123,8 +146,12 @@ public:
                 ? failWritesAfterFirst
                 : writeStatus;
         if (onWrite) onWrite(address.addressLo, value);
-        if (deferWrites) deferredWrites.push_back([callback = std::move(callback), status] { callback(status, {}); });
-        else callback(status, {});
+        if (deferWrites) {
+            deferredWrites.push_back([callback = std::move(callback), status] { callback(status, {}); });
+            NoteOutstanding();
+        } else {
+            callback(status, {});
+        }
         return AsyncHandle{1};
     }
 
@@ -1106,6 +1133,29 @@ TEST(MotuV3Protocol, Current48kGeometryUsesBanksAndChangesNoClock) {
     protocol.SetSampleRate(96000, [&](auto s) { changed = s; });
     EXPECT_EQ(changed, kIOReturnNotReady); // rate change needs a timeout scheduler
     EXPECT_EQ(bus.writes.size(), 3U);
+}
+// The 828mk3 answers a request that arrives while an earlier one is still outstanding
+// with ack_busy_X, and the transport only waits on a busy ack, it never resends.
+// Observed twice on hardware (2026-10-09): Initialize's clock read was still pending
+// when the first Describe wrote the notification address, the write timed out, and
+// publication was refused. The first Describe must find no request in flight.
+TEST(MotuV3Protocol, FirstGeometryReadNeverOverlapsAnotherRequest) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0;
+    bus.deferReads = true;
+    bus.deferWrites = true;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x15);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+    while (!bus.deferredReads.empty() || !bus.deferredWrites.empty()) {
+        if (!bus.deferredWrites.empty()) bus.CompleteNextWrite();
+        else bus.CompleteNextRead();
+    }
+    EXPECT_EQ(bus.maxOutstanding, 1U);
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(bus.reads.back(), LowOf(Reg::OpticalBanksV3));
 }
 TEST(MotuV3Protocol, ArmStagesUseCapturedActivateAndStreamConfiguration) {
     RecordingBus bus; RouteState routes;
