@@ -4534,7 +4534,7 @@
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "ASFireWire Driver";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
 				PRODUCT_NAME = net.asfw.driver;
@@ -4573,7 +4573,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -4625,7 +4625,7 @@
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "ASFireWire Driver";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
 				PRODUCT_NAME = net.asfw.driver;
@@ -4729,7 +4729,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
