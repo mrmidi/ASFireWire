@@ -39,10 +39,10 @@ public:
                 for (int b = 0; b < 4; ++b) block.push_back(static_cast<uint8_t>(w >> (8 * b)));
             };
             if (key == 0x0003000f0000ULL) {
-                for (uint32_t i = 0; i < length / 4; ++i) put(FlashWord(i));
+                for (uint32_t i = 0; i < length / 4; ++i) put(flashImage[i]);
             } else if (key == 0x80100290ULL) {
                 const uint32_t first = (ff400FlashAddr - 0x00060000U) / 4;
-                for (uint32_t i = 0; i < length / 4; ++i) put(FlashWord(first + i));
+                for (uint32_t i = 0; i < length / 4; ++i) put(flashImage[first + i]);
             } else if (key == 0x801c0000ULL) {
                 put(status0); put(status1); put(captureWord); put(status3);
             }
@@ -80,6 +80,12 @@ public:
     void DeliverDelayed() { if (delayed) { auto cb=std::move(delayed); cb(AsyncStatus::kSuccess, delayedBytes); } }
     // A recognisable settings image: quadlet i of the block holds 0x5e770000 | i.
     static constexpr uint32_t FlashWord(uint32_t i) noexcept { return 0x5e770000U | i; }
+    // Not a valid settings image: decodes to an error at the first field read.
+    std::array<uint32_t, 64> flashImage = [] {
+        std::array<uint32_t, 64> image{};
+        for (uint32_t i = 0; i < image.size(); ++i) image[i] = FlashWord(i);
+        return image;
+    }();
     uint32_t ff400FlashAddr{0};
     uint32_t status3{0};
     uint32_t revision{0x24d};
@@ -393,6 +399,41 @@ TEST(FirefaceFlashTests, FF400FlashCommandRegisterOnlyEverSeesReadOrRevision) {
         if (w.lo != 0x80100520U) continue;
         EXPECT_TRUE(w.bytes == LeWords({0x2U}) || w.bytes == LeWords({0xfU}));
     }
+}
+
+TEST(FirefaceFlashTests, DryRunRefusesAnImageItCannotDecodeAndStillStarts) {
+    FirefaceScriptBus bus; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto& dryRun = family.LastSettingsDryRun();
+    ASSERT_TRUE(dryRun.decodeError.has_value());
+    EXPECT_EQ(dryRun.decodeError->quadlet, ASFW::Audio::RME::FlashField::kSpdifInputMode);
+    EXPECT_FALSE(dryRun.config.has_value());
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(FirefaceFlashTests, DryRunComputesTheConfigurationAndComparesItWithStatusWithoutWriting) {
+    namespace F = ASFW::Audio::RME::FlashField;
+    FirefaceScriptBus bus; RouteState route;
+    bus.flashImage.fill(0);
+    bus.flashImage[F::kSpdifInputMode] = 1;        // coaxial
+    bus.flashImage[F::kSyncReference] = 3;         // word clock
+    bus.flashImage[F::kOutputLevel] = 2;           // high gain
+    bus.flashImage[F::kPlugSelect0] = 1;           // input 7 front
+    bus.flashImage[F::kInstrumentPlugSelect] = 1;  // input 1 front
+    bus.flashImage[F::kSampleRate] = 48000;
+    bus.status1 = 0x00001007U;  // internal, saved word-clock reference, 48 kHz
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto& dryRun = family.LastSettingsDryRun();
+    ASSERT_FALSE(dryRun.decodeError.has_value());
+    ASSERT_TRUE(dryRun.config.has_value());
+    EXPECT_EQ(*dryRun.config, (ASFW::Audio::RME::ConfigWords{0x00000408U, 0x00000B30U, 0x8000101FU}));
+    ASSERT_TRUE(dryRun.status.has_value());
+    EXPECT_TRUE(dryRun.status->Matches());
+    EXPECT_TRUE(bus.writes.empty()) << "a dry run never writes the configuration register";
 }
 
 TEST(FirefaceFlashTests, AFailedFlashReadNeverBlocksTheStart) {

@@ -426,6 +426,7 @@
 		CFFA3B4DC9DDFDACE3B06282 /* ASFWMCPTelemetryTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C219767F4362028CC2FEEA /* ASFWMCPTelemetryTools.swift */; };
 		D05A4EB25F35FC9C5C57DCAF /* AudioDebugViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF68FEB3C0FCEBFC05F8985 /* AudioDebugViewModel.swift */; };
 		D063A988555559BACBEE9ED6 /* AnalyzerRenderSubmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35E77E9DF2A0B759301A2D02 /* AnalyzerRenderSubmission.swift */; };
+		D0984112A9D03805C0100BED /* FirefaceSettings.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A4DE40868538E97BB3A4719B /* FirefaceSettings.cpp */; };
 		D11E9BC5727C139F30E525AB /* ASFWAudioDriverGraph.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0305E1A8A4D9799CD3CB2887 /* ASFWAudioDriverGraph.cpp */; };
 		D1354183D00EB01B4C541EB7 /* ASFWAudioDevice.iig in Sources */ = {isa = PBXBuildFile; fileRef = C062002784FB0770134A70FC /* ASFWAudioDevice.iig */; };
 		D2C8FB86DE8AB0063A69E56A /* SBP2CommandORB.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C2DA84B1F4EAB73C84D2D641 /* SBP2CommandORB.cpp */; };
@@ -791,6 +792,7 @@
 		3B6A6E8C021FEF7B9569D79A /* DICETcatProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DICETcatProtocol.cpp; sourceTree = "<group>"; };
 		3BC1BCBC9E52B53B87DEEA69 /* CIPHeader.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CIPHeader.hpp; sourceTree = "<group>"; };
 		3CCCE7A077DAD59020AD49F2 /* BusResetCoordinatorActions.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetCoordinatorActions.cpp; sourceTree = "<group>"; };
+		3CEE1AB91B6B75F2C4D2DE50 /* FirefaceSettings.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceSettings.hpp; sourceTree = "<group>"; };
 		3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPHardwareSmokeRunnerTests.swift; sourceTree = "<group>"; };
 		3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionIRM.cpp; sourceTree = "<group>"; };
 		3D26D51E676FCE0D7C7747FD /* InterruptDispatcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = InterruptDispatcher.hpp; sourceTree = "<group>"; };
@@ -1208,6 +1210,7 @@
 		A418B8B548743D3952A8089B /* OHCIConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OHCIConstants.hpp; sourceTree = "<group>"; };
 		A44CE611A4D71772ABB1BC0E /* App.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.Debug.entitlements; sourceTree = "<group>"; };
 		A4C9F8FE48511BE2BD69FC18 /* LocalIRMResourceCSRHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LocalIRMResourceCSRHandler.cpp; sourceTree = "<group>"; };
+		A4DE40868538E97BB3A4719B /* FirefaceSettings.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FirefaceSettings.cpp; sourceTree = "<group>"; };
 		A4F3C9444C03138628893C2B /* StopRoutine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = StopRoutine.hpp; sourceTree = "<group>"; };
 		A55435EA2259DC1B8FC0061F /* FireworksProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FireworksProtocol.hpp; sourceTree = "<group>"; };
 		A564F1D1FD37AFCF06BE08F6 /* TransactionManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TransactionManager.cpp; sourceTree = "<group>"; };
@@ -2778,6 +2781,8 @@
 				34521E368635CF3AB114D33F /* FirefaceDeviceProtocol.hpp */,
 				5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */,
 				580F7718F107ACC5B90B62FA /* FirefaceRegisters.hpp */,
+				A4DE40868538E97BB3A4719B /* FirefaceSettings.cpp */,
+				3CEE1AB91B6B75F2C4D2DE50 /* FirefaceSettings.hpp */,
 			);
 			path = RME;
 			sourceTree = "<group>";
@@ -4029,6 +4034,7 @@
 				806C06A5C005F19A60C71EBE /* FamilyProtocolConstruction.cpp in Sources */,
 				23856115480D27BA60AEE458 /* FetchAgent.cpp in Sources */,
 				F9E5BE0D1C6927E740FFA316 /* FireWireBusImpl.cpp in Sources */,
+				D0984112A9D03805C0100BED /* FirefaceSettings.cpp in Sources */,
 				420AF3299D901CDEC992FF6B /* FireworksProtocol.cpp in Sources */,
 				32C80B2AA98D3D2F974EF732 /* GapCountOptimizer.cpp in Sources */,
 				A1A4BE4E3EF4B899F2D4D97A /* GapPolicyCoordinator.cpp in Sources */,

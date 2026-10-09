@@ -8,11 +8,20 @@
 #include "../../Session/SessionClock.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "FirefaceRegisters.hpp"
+#include "FirefaceSettings.hpp"
 #include <algorithm>
 #include <array>
 #include <optional>
 
 namespace ASFW::Audio::RME {
+
+// What the last Configure found for the configuration upload (dry run).
+struct SettingsDryRun {
+    std::optional<FlashSettings> flash;
+    std::optional<FlashDecodeError> decodeError;
+    std::optional<ConfigWords> config;
+    std::optional<StatusComparison> status;
+};
 
 struct ClockStatus {
     uint32_t configuredSource{0};
@@ -44,7 +53,8 @@ public:
     }
     [[nodiscard]] StopPolicy GetStopPolicy() const noexcept override { return {.stopHostContextsBeforeDevice = true}; }
     /// The settings block read by the last Configure, for diagnostics.
-    [[nodiscard]] const std::optional<FlashSettings>& LastFlashSettings() const noexcept { return lastFlashSettings_; }
+    [[nodiscard]] const std::optional<FlashSettings>& LastFlashSettings() const noexcept { return lastDryRun_.flash; }
+    [[nodiscard]] const SettingsDryRun& LastSettingsDryRun() const noexcept { return lastDryRun_; }
     [[nodiscard]] std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return 5U; }
     void SetLinkSpeed(bool s800) noexcept { s800_ = s800; }
 
@@ -338,19 +348,21 @@ private:
         }
         return settings;
     }
-    // Dry run of the configuration upload (RME_FIREFACE_PLAN.md, item 3): log
-    // what the device has stored and what it reports, write nothing. A failure
-    // here never stops a start.
+    // Dry run of the configuration upload: read what the card stored, compute
+    // the 3 quadlets that would restore it, compare the fields the status
+    // quadlet mirrors, and log it all. Writes nothing; a failure never stops a
+    // start. Log lines start "[RME] settings dry-run".
     void LogSettingsDryRun() {
-        const char* model = model_ == FirefaceModel::kFF800 ? "FF800" : "FF400";
-        auto settings = ReadFlashSettings();
-        if (!settings) {
-            lastFlashSettings_.reset();
+        const bool ff800 = model_ == FirefaceModel::kFF800;
+        const char* model = ff800 ? "FF800" : "FF400";
+        lastDryRun_ = {};
+        auto flash = ReadFlashSettings();
+        if (!flash) {
             ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: flash read failed kr=0x%08x",
-                     model, settings.error());
+                     model, flash.error());
         } else {
-            lastFlashSettings_ = *settings;
-            const auto& q = *settings;
+            lastDryRun_.flash = *flash;
+            const auto& q = *flash;
             for (uint32_t i = 0; i < kFlashSettingsQuadlets; i += 8) {
                 uint32_t w[8]{};
                 for (uint32_t j = 0; j < 8 && i + j < kFlashSettingsQuadlets; ++j) w[j] = q[i + j];
@@ -358,12 +370,54 @@ private:
                          model, i, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
             }
         }
+        std::optional<uint32_t> status1;
         if (auto status = ReadWords(Register::kStatus, 4)) {
             const auto& w = status->words;
+            status1 = w[1];
             ASFW_LOG(Audio, "[RME] settings dry-run %{public}s status: %08x %08x %08x %08x",
                      model, w[0], w[1], w[2], w[3]);
         }
+        if (!lastDryRun_.flash) return;
+
+        const auto settings = DecodeFlashSettings(model_, *lastDryRun_.flash);
+        if (!settings) {
+            lastDryRun_.decodeError = settings.error();
+            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: flash q%02u = 0x%08x is unset or unknown; "
+                     "no configuration computed", model, settings.error().quadlet, settings.error().value);
+            return;
+        }
+        const auto& s = *settings;
+        ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: clock=%{public}s sync=%{public}s "
+                 "spdif-in=%{public}s spdif-out=%{public}s in=%{public}s out=%{public}s "
+                 "word-clock-1x=%d channels=%{public}s rate=%u",
+                 model, s.clockMaster ? "master" : "autosync", Name(s.syncReference),
+                 s.spdifInputOptical ? "optical" : "coaxial", s.spdifOutputOptical ? "optical" : "coaxial",
+                 Name(s.inputLevel), Name(s.outputLevel), s.wordClockSingleSpeed ? 1 : 0,
+                 Name(s.channelLimit), s.sampleRateHz);
+        if (ff800) {
+            ASFW_LOG(Audio, "[RME] settings dry-run FF800: phantom7-10=%d%d%d%d input1=%{public}s "
+                     "input7=%{public}s input8=%{public}s speaker-emulation=%d drive=%d limiter=%d",
+                     s.phantom[0], s.phantom[1], s.phantom[2], s.phantom[3], Name(s.ff800Input1),
+                     Name(s.ff800Input7), Name(s.ff800Input8), s.ff800SpeakerEmulation ? 1 : 0,
+                     s.ff800Drive ? 1 : 0, s.ff800Limiter ? 1 : 0);
+        } else {
+            ASFW_LOG(Audio, "[RME] settings dry-run FF400: phantom1-2=%d%d pad3-4=%d%d instrument3-4=%d%d "
+                     "phones=%{public}s", s.phantom[0], s.phantom[1], s.ff400Pad[0], s.ff400Pad[1],
+                     s.ff400Instrument[0], s.ff400Instrument[1], Name(s.ff400Phones));
+        }
+        const ConfigWords config = EncodeConfig(model_, s);
+        lastDryRun_.config = config;
+        ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: would write 0x%llx <- %08x %08x %08x (not written)",
+                 model, ff800 ? Register::kFF800Config : Register::kFF400Config, config[0], config[1], config[2]);
+        if (status1) {
+            const auto comparison = CompareWithStatus(model_, config, *status1);
+            lastDryRun_.status = comparison;
+            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: status mirror expected=%08x reported=%08x "
+                     "mask=%08x -> %{public}s", model, comparison.expected, comparison.reported,
+                     comparison.mask, comparison.Matches() ? "match" : "MISMATCH");
+        }
     }
+
     [[nodiscard]] std::expected<ClockStatus, IOReturn> ReadClockStatus() {
         auto q0 = Read(Register::kStatus); if (!q0) return std::unexpected(q0.error());
         auto q1 = Read(Register::kStatus + 4); if (!q1) return std::unexpected(q1.error());
@@ -421,7 +475,7 @@ private:
     AudioDuplexChannels channels_{};
     AudioStreamRuntimeCaps caps_{};
     FW::Generation stateGeneration_{0};
-    std::optional<FlashSettings> lastFlashSettings_{};
+    SettingsDryRun lastDryRun_{};
 };
 
 } // namespace ASFW::Audio::RME
