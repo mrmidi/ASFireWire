@@ -36,7 +36,10 @@ inline constexpr uint64_t kFF400Init = 0x80100500ULL;
 inline constexpr uint64_t kFF400Start = 0x8010050cULL;
 inline constexpr uint64_t kFF400Stop = 0x80100504ULL;
 inline constexpr uint64_t kFF400FlashCommand = 0x80100520ULL;
-inline constexpr uint64_t kFF400FlashStatus = 0x80100524ULL;
+// Read side of the same register: 0 once the flash command is done (FFADO
+// RME_FF400_FLASH_STAT_OFS == RME_FF400_FLASH_CMD_OFS, fireface_def.h:58-59;
+// RME 3.41 Wait 0x6c0a polls 0x80100520 for 0).
+inline constexpr uint64_t kFF400FlashStatus = kFF400FlashCommand;
 inline constexpr uint64_t kFF400Revision = 0x80100290ULL;
 inline constexpr uint64_t kFF800Init = 0x00020000001cULL;
 inline constexpr uint64_t kFF800Start = 0x000200000028ULL;

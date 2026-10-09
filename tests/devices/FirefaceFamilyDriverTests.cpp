@@ -7,6 +7,7 @@
 #include "Audio/Protocols/RME/FirefaceDeviceProtocol.hpp"
 #include "Audio/Host/RmeFamilyAdapter.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include <algorithm>
 #include <utility>
 
 namespace {
@@ -25,7 +26,10 @@ public:
         else if (key == 0x801c0000ULL) value = status0;
         else if (key == 0x801c0004ULL) value = status1;
         else if (key == 0x801c0008ULL) value = captureWord;
-        else if (key == 0x80100524ULL) value = flashStatus;
+        // FF400 flash status reads back on the command register itself
+        // (FFADO fireface_def.h:58-59,123-124; RME 3.41 Wait 0x6c0a polls 0x80100520).
+        else if (key == 0x80100520ULL) value = flashStatus;
+        else if (key == 0x80100524ULL) value = 0xdeadbeefU; // a different register: never 0
         else if (key == 0x80100290ULL) value = revision;
         if (key == failReadAddress) { callback(AsyncStatus::kHardwareError, {}); return {}; }
         if (readHook) readHook(key);
@@ -259,6 +263,24 @@ TEST(FirefaceSequenceTests, FF400SequenceUsesCaptureShiftAndExactStopTuple) {
     EXPECT_EQ(policy.capture.allowedIsoChannels, 0xffU);
 }
 
+TEST(FirefaceSequenceTests, FF400RevisionPollsTheFlashCommandRegisterUntilIdle) {
+    FirefaceScriptBus bus; bus.revision = 0x146;
+    uint32_t busyReads = 2;
+    bus.flashStatus = 1;
+    bus.readHook = [&](uint64_t address) {
+        if (address == 0x80100520ULL && busyReads > 0 && --busyReads == 0) bus.flashStatus = 0;
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    EXPECT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto reads = bus.reads;
+    EXPECT_EQ(std::count(reads.begin(), reads.end(), 0x80100524ULL), 0);
+    const auto revisionRead = std::find(reads.begin(), reads.end(), 0x80100290ULL);
+    ASSERT_NE(revisionRead, reads.end());
+    EXPECT_EQ(std::count(reads.begin(), revisionRead, 0x80100520ULL), 3) // busy, busy, idle
+        << "the revision is read only after the command register reads 0";
+}
+
 TEST(FirefaceSequenceTests, FirmwareZeroOldAndReadFailureAreRejectedBeforeInit) {
     for (const auto [revision, fail] : {std::pair<uint32_t,uint64_t>{0,0}, {0x24c,0}, {0x24d,0}, {0x24d,0x000200000100ULL}}) {
         FirefaceScriptBus bus; bus.revision = revision; bus.failReadAddress = fail;
@@ -272,7 +294,7 @@ TEST(FirefaceSequenceTests, FirmwareZeroOldAndReadFailureAreRejectedBeforeInit) 
 }
 
 TEST(FirefaceSequenceTests, FF400FirmwareGateRejectsZeroOldAndAsyncReadErrors) {
-    for (const auto [revision, fail] : {std::pair<uint32_t,uint64_t>{0,0}, {0x145,0}, {0x146,0x80100524ULL}, {0x146,0x80100290ULL}}) {
+    for (const auto [revision, fail] : {std::pair<uint32_t,uint64_t>{0,0}, {0x145,0}, {0x146,0x80100520ULL}, {0x146,0x80100290ULL}}) {
         FirefaceScriptBus bus; bus.revision = revision; bus.failReadAddress = fail;
         RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
         ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
