@@ -68,6 +68,19 @@ public:
     std::array<uint8_t, 4> delayedBytes{};
 };
 
+std::vector<uint8_t> MuteMask(uint32_t channels) {
+    std::vector<uint8_t> bytes(channels * 4U, 0);
+    for (uint32_t i = 0; i < channels; ++i) bytes[i * 4U] = 1; // LE quadlet value 1
+    return bytes;
+}
+
+void ExpectStopThenMute(const FirefaceScriptBus& bus, uint32_t stopLo, uint32_t channels) {
+    ASSERT_GE(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[bus.writes.size() - 2].lo, stopLo);
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, MuteMask(channels));
+}
+
 TEST(FirefaceIntegrationTests, Non48kAdmissionReturnsBeforeAnyRegisterTraffic) {
     FirefaceScriptBus bus;
     RouteState route;
@@ -167,22 +180,24 @@ TEST(FirefaceSequenceTests, FF800UsesActualReservedPlaybackAndDeviceSelectedCapt
     auto assigned = family.AssignChannels(channels);
     ASSERT_TRUE(assigned);
     EXPECT_EQ(assigned->deviceToHostIsoChannel, 6);
-    ASSERT_EQ(bus.writes.size(), 2U);
-    EXPECT_EQ(bus.writes[0].hi, 0U);
-    EXPECT_EQ(bus.writes[0].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[0].bytes, std::vector<uint8_t>(28U * 4U, 0));
-    EXPECT_EQ(bus.writes[1].hi, 2U);
-    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
-    EXPECT_EQ(bus.writes[1].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 3,0xe0,0,0, 0x1c,0x08,0,0}));
+    ASSERT_EQ(bus.writes.size(), 1U); // init only: the fetch mask stays closed until Confirm
+    EXPECT_EQ(bus.writes[0].hi, 2U);
+    EXPECT_EQ(bus.writes[0].lo, 0x1cU);
+    EXPECT_EQ(bus.writes[0].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 3,0xe0,0,0, 0x1c,0x08,0,0}));
     ASSERT_TRUE(family.ArmDeviceTxAndEnable());
     EXPECT_EQ(bus.writes.back().lo, 0x28U);
     EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0x1c,0x08,0,0x80}));
+    ASSERT_TRUE(family.Confirm());
+    EXPECT_EQ(bus.writes.back().hi, 0U);
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, std::vector<uint8_t>(28U * 4U, 0)); // fetch every channel
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x34U);
-    EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0,0,0,0, 0,0,0,0, 0,0,0,0}));
-    ASSERT_EQ(bus.writes.size(), 4U); // no mixer or clock-source writes
-    EXPECT_EQ(bus.writes[2].hi, 2U);
+    ASSERT_EQ(bus.writes.size(), 5U); // init, start, fetch, stop, mute; no mixer or clock-source writes
     EXPECT_EQ(bus.writes[3].hi, 2U);
+    EXPECT_EQ(bus.writes[3].lo, 0x34U);
+    EXPECT_EQ(bus.writes[3].bytes, (std::vector<uint8_t>{0,0,0,0, 0,0,0,0, 0,0,0,0}));
+    EXPECT_EQ(bus.writes[4].lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes[4].bytes, MuteMask(28U)); // stop first, then mute
 }
 
 TEST(FirefaceSequenceTests, FF800S400TupleDoesNotSetTheS800Flag) {
@@ -192,9 +207,9 @@ TEST(FirefaceSequenceTests, FF800S400TupleDoesNotSetTheS800Flag) {
     ASFW::Audio::AudioDuplexChannels channels{}; channels.hostToDeviceIsoChannel = 1;
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     ASSERT_TRUE(family.AssignChannels(channels));
-    EXPECT_EQ(bus.writes[1].hi, 0x0002U);
-    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
-    EXPECT_EQ(bus.writes[1].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 1,0xe0,0,0, 28,0,0,0}));
+    EXPECT_EQ(bus.writes[0].hi, 0x0002U);
+    EXPECT_EQ(bus.writes[0].lo, 0x1cU);
+    EXPECT_EQ(bus.writes[0].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 1,0xe0,0,0, 28,0,0,0}));
 }
 
 TEST(FirefaceSequenceTests, FF400RejectsOutOfRangeChannelBeforeAnyStreamingWrites) {
@@ -224,21 +239,24 @@ TEST(FirefaceSequenceTests, FF400SequenceUsesCaptureShiftAndExactStopTuple) {
     ASSERT_EQ(bus.writes.size(), 1U); // FF400 get_revision command only.
     EXPECT_EQ(bus.writes[0].lo, 0x80100520U);
     ASSERT_TRUE(family.AssignChannels(channels));
-    ASSERT_EQ(bus.writes.size(), 3U);
-    EXPECT_EQ(bus.writes[1].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[1].bytes, std::vector<uint8_t>(18U * 4U, 0));
-    EXPECT_EQ(bus.writes[2].lo, 0x80100500U);
-    EXPECT_EQ(bus.writes[2].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 2,0x90,0,0, 0x12,0,0,0}));
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[1].lo, 0x80100500U);
+    EXPECT_EQ(bus.writes[1].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 2,0x90,0,0, 0x12,0,0,0}));
     ASSERT_TRUE(family.ArmDeviceTxAndEnable());
     EXPECT_EQ(bus.writes.back().lo, 0x8010050cU);
     EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0xb2,0,0,0x80}));
+    ASSERT_TRUE(family.Confirm());
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, std::vector<uint8_t>(18U * 4U, 0));
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x80100504U);
-    EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0}));
+    ASSERT_EQ(bus.writes.size(), 6U); // get_revision + init + start + fetch + stop + mute only
+    EXPECT_EQ(bus.writes[4].lo, 0x80100504U);
+    EXPECT_EQ(bus.writes[4].bytes, (std::vector<uint8_t>{0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0}));
+    EXPECT_EQ(bus.writes[5].lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes[5].bytes, MuteMask(18U));
     const auto policy = family.GetResourcePolicy();
     EXPECT_EQ(policy.playback.allowedIsoChannels, 0xffU);
     EXPECT_EQ(policy.capture.allowedIsoChannels, 0xffU);
-    ASSERT_EQ(bus.writes.size(), 5U); // get_revision + fetch + init + start + stop only
 }
 
 TEST(FirefaceSequenceTests, FirmwareZeroOldAndReadFailureAreRejectedBeforeInit) {
@@ -279,6 +297,24 @@ TEST(FirefaceSequenceTests, ExternalSourceRequiresSelectedActiveLocked48Clock) {
     EXPECT_TRUE(locked.Configure({}, {.sampleRateHz = 48000}));
 }
 
+TEST(FirefaceSequenceTests, InternalFlagWinsOverSavedExternalSelection) {
+    // The device keeps the saved external choice (bits 12:10) while bit 0 selects
+    // internal clock; Linux parse_clock_bits tests bit 0 first.
+    for (const uint32_t savedExternal : {0x0400U, 0x0c00U, 0x1000U, 0x1800U}) {
+        FirefaceScriptBus bus;
+        bus.status1 = savedExternal | 0x1U | 0x6U; // internal, 48 kHz
+        bus.status0 = 0x01c00000U;                 // active source: internal
+        RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+        ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+        ASFW::Audio::AudioDuplexChannels channels{};
+        ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000})) << std::hex << savedExternal;
+        ASSERT_TRUE(family.AssignChannels(channels)) << std::hex << savedExternal;
+        const auto health = family.ReadHealth(0);
+        ASSERT_TRUE(health);
+        EXPECT_TRUE(health->sourceLocked) << std::hex << savedExternal;
+    }
+}
+
 TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation) {
     FirefaceScriptBus bus; bus.captureWord = 0xffffffffU;
     RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
@@ -294,7 +330,7 @@ TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation
     // Sanitized CI can add scheduling overhead to the 500 ms polling deadline.
     EXPECT_LT(elapsed, 750U);
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x34U); // assignment timeout resets the partially configured device
+    ExpectStopThenMute(bus, 0x34U, 28U); // assignment timeout resets the partially configured device
 
     FirefaceScriptBus cancelBus; RouteState cancelRoute;
     ProtocolRegisterIO cancelIo(cancelBus, cancelBus, cancelRoute.registry, cancelRoute.route);
@@ -331,7 +367,7 @@ TEST(FirefaceSequenceTests, NewRouteGenerationDiscardsOldInitStateAndReinitializ
     ASFW::Audio::AudioDuplexChannels channels{};
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     ASSERT_TRUE(family.AssignChannels(channels));
-    ASSERT_EQ(bus.writes.size(), 2U);
+    ASSERT_EQ(bus.writes.size(), 1U);
 
     route.registry.InvalidateLiveMappingsForBusReset();
     ::ASFW::Discovery::ConfigROM rom{};
@@ -346,9 +382,8 @@ TEST(FirefaceSequenceTests, NewRouteGenerationDiscardsOldInitStateAndReinitializ
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     auto assigned = family.AssignChannels(channels);
     ASSERT_TRUE(assigned);
-    ASSERT_EQ(bus.writes.size(), 4U);
-    EXPECT_EQ(bus.writes[2].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[3].lo, 0x1cU);
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
 }
 
 TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBoundaries) {
@@ -369,11 +404,13 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         std::unique_ptr<ASFW::Audio::RME::FirefaceFamilyDriver> ownedFamily;
         makeFamily(bus, route, io, owned, family, ownedFamily);
         ASSERT_TRUE(family->Configure(channels, {.sampleRateHz=48000}));
+        ASSERT_TRUE(family->AssignChannels(channels));
+        ASSERT_TRUE(family->ArmDeviceTxAndEnable());
         bus.failWriteAddress = 0x801c0000ULL;
-        EXPECT_FALSE(family->AssignChannels(channels));
-        EXPECT_EQ(bus.writes.size(), 1U); // failed fetch is not followed by init or stop traffic
+        EXPECT_FALSE(family->Confirm()); // a fetch mask the device refused fails the start
+        bus.failWriteAddress = 0;
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
-        EXPECT_EQ(bus.writes.size(), 1U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -384,7 +421,7 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         bus.failWriteAddress = 0x00020000001cULL;
         EXPECT_FALSE(family->AssignChannels(channels));
         EXPECT_EQ(family->Stop(), kIOReturnSuccess); // uncertain init completion is reset
-        EXPECT_EQ(bus.writes.back().lo, 0x34U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -396,7 +433,7 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         bus.failWriteAddress = 0x000200000028ULL;
         EXPECT_FALSE(family->ArmDeviceTxAndEnable());
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
-        EXPECT_EQ(bus.writes.back().lo, 0x34U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -407,9 +444,12 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         ASSERT_TRUE(family->AssignChannels(channels));
         ASSERT_TRUE(family->ArmDeviceTxAndEnable());
         bus.failWriteAddress = 0x000200000034ULL;
+        const size_t beforeFailedStop = bus.writes.size();
         EXPECT_EQ(family->Stop(), kIOReturnError);
+        EXPECT_EQ(bus.writes.size(), beforeFailedStop + 1U); // no mute after a refused stop
         bus.failWriteAddress = 0;
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
 }
 

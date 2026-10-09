@@ -6,6 +6,7 @@
 #include "../Duplex/FamilyStageWait.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../Session/SessionClock.hpp"
+#include "../../../Logging/Logging.hpp"
 #include <array>
 
 namespace ASFW::Audio::RME {
@@ -27,6 +28,10 @@ struct ClockStatus {
 // ff800.rs:113-174. All register values are little-endian quadlets.
 namespace Register {
 inline constexpr uint64_t kStatus = 0x801c0000ULL;
+// Same address, write side: one quadlet per playback data channel. 0 lets the
+// device fetch PCM from that channel, 1 mutes it (FFADO RME_FF_CHANNEL_MUTE_MASK,
+// fireface_def.h:86; Linux FORMER_REG_FETCH_PCM_FRAMES, ff-protocol-former.c:12).
+inline constexpr uint64_t kFetchMask = kStatus;
 inline constexpr uint64_t kFF400Init = 0x80100500ULL;
 inline constexpr uint64_t kFF400Start = 0x8010050cULL;
 inline constexpr uint64_t kFF400Stop = 0x80100504ULL;
@@ -38,6 +43,10 @@ inline constexpr uint64_t kFF800Start = 0x000200000028ULL;
 inline constexpr uint64_t kFF800Stop = 0x000200000034ULL;
 inline constexpr uint64_t kFF800Revision = 0x000200000100ULL;
 inline constexpr uint32_t kConfiguredSourceMask = 0x1c01;
+// Bit 0 of the configured source wins over the saved external selection in
+// bits 12:10; the device reports both together (Linux parse_clock_bits,
+// ff-protocol-former.c:53-55).
+inline constexpr uint32_t kConfiguredInternalFlag = 0x0001;
 }
 
 [[nodiscard]] constexpr uint32_t FirmwareMinimum(FirefaceModel model) noexcept {
@@ -96,8 +105,10 @@ public:
         if (*revision == 0 || *revision < FirmwareMinimum(model_)) return std::unexpected(kIOReturnUnsupported);
         auto status = ReadClockStatus();
         if (!status) return std::unexpected(status.error());
-        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k)
+        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k) {
+            LogClockRefusal("Configure", *status);
             return std::unexpected(kIOReturnNotReady);
+        }
 
         configured_ = true;
         caps_ = MakeCaps();
@@ -116,21 +127,19 @@ public:
             (!IsValidAssignedChannel(model_, channels_.hostToDeviceIsoChannel) ||
              !IsValidAssignedChannel(model_, channels_.deviceToHostIsoChannel)))
             return std::unexpected(kIOReturnBadArgument);
-        const uint32_t count = model_ == FirefaceModel::kFF800 ? 28U : 18U;
-        std::array<uint32_t, 28> zeros{};
-        if (const IOReturn kr = WriteWords(Register::kStatus,
-                std::span<const uint32_t>(zeros.data(), count)); kr != kIOReturnSuccess)
-            return std::unexpected(kr);
+        // The fetch mask is opened in Confirm(), after both host contexts run.
         const auto words = InitWords(model_, channels_.hostToDeviceIsoChannel, s800_);
+        // Cancelled before init reaches the bus: there is no device state to reset.
+        if (Cancelled()) return std::unexpected(kIOReturnAborted);
         initialized_ = true; // An uncertain init completion must be reset on rollback.
         if (const IOReturn kr = WriteWords(InitAddress(), words); kr != kIOReturnSuccess)
             return std::unexpected(kr);
         auto afterInit = ReadClockStatus();
         if (!afterInit) return std::unexpected(afterInit.error());
-        if (!afterInit->configured48k ||
-            (IsInternalConfigured(afterInit->configuredSource) && !afterInit->internalActive) ||
-            (IsExternalConfigured(afterInit->configuredSource) && !afterInit->externalLocked48k))
+        if (!ClockReady(*afterInit)) {
+            LogClockRefusal("AssignChannels", *afterInit);
             return std::unexpected(kIOReturnNotReady);
+        }
         if (model_ == FirefaceModel::kFF800) {
             // Device selects its transmit channel; the host binds it without an IRM claim.
             const uint64_t deadline = Session::UptimeMilliseconds() + 500U;
@@ -161,9 +170,7 @@ public:
         SyncGeneration();
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
-        const bool internal = IsInternalConfigured(s->configuredSource);
-        const bool healthy = s->configured48k &&
-            ((internal && s->internalActive) || (!internal && s->externalLocked48k));
+        const bool healthy = ClockReady(*s);
         return DuplexHealthResult{.generation = io_.Generation(),
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_,
             .sourceLocked = healthy, .clockReferenceHealthy = healthy,
@@ -187,6 +194,12 @@ public:
         SyncGeneration();
         auto h = ReadHealth(0);
         if (!h || !h->sourceLocked) return std::unexpected(h ? kIOReturnNotReady : h.error());
+        // Both host contexts run now. Let the device fetch PCM, as Linux does once
+        // its domain is ready (ff-stream.c:206-217) and FFADO right after start
+        // (fireface_hw.cpp:913). RME 3.41 instead writes this mask once before
+        // init (hwStart 0x3f05); a user's FF800 played only with this order.
+        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess)
+            return std::unexpected(kr);
         return DuplexConfirmResult{.generation = io_.Generation(), .channels = channels_,
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_, .status = h->status,
             .extStatus = h->extStatus};
@@ -197,10 +210,10 @@ public:
         if (clock.sampleRateHz != 48000U) return std::unexpected(kIOReturnUnsupported);
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
-        if (!s->configured48k ||
-            (IsInternalConfigured(s->configuredSource) && !s->internalActive) ||
-            (IsExternalConfigured(s->configuredSource) && !s->externalLocked48k))
+        if (!ClockReady(*s)) {
+            LogClockRefusal("ApplyClockIdle", *s);
             return std::unexpected(kIOReturnNotReady);
+        }
         return DuplexClockApplyResult{.generation = io_.Generation(),
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_};
     }
@@ -214,8 +227,11 @@ public:
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
             ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
-        if (kr == kIOReturnSuccess) { enabled_ = false; initialized_ = false; configured_ = false; }
-        return kr;
+        if (kr != kIOReturnSuccess) return kr;
+        enabled_ = false; initialized_ = false; configured_ = false;
+        // Stop first, then mute every channel (Linux finish_session,
+        // ff-stream.c:33-37; FFADO fireface_hw.cpp:949).
+        return WriteFetchMask(false);
     }
 
 private:
@@ -237,9 +253,27 @@ private:
     [[nodiscard]] uint64_t InitAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Init : Register::kFF400Init; }
     [[nodiscard]] uint64_t StartAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Start : Register::kFF400Start; }
     [[nodiscard]] bool IsInternalConfigured(uint32_t src) const noexcept {
-        return src == 1U;
+        return (src & Register::kConfiguredInternalFlag) != 0U;
     }
     [[nodiscard]] bool IsExternalConfigured(uint32_t src) const noexcept { return !IsInternalConfigured(src); }
+    [[nodiscard]] bool ClockReady(const ClockStatus& s) const noexcept {
+        return s.configured48k &&
+            (IsInternalConfigured(s.configuredSource) ? s.internalActive : s.externalLocked48k);
+    }
+    void LogClockRefusal(const char* stage, const ClockStatus& s) const noexcept {
+        ASFW_LOG(Audio, "[RME] clock not ready at %{public}s: status0=0x%08x status1=0x%08x "
+                 "configured=0x%04x active=0x%08x 48k=%d internalActive=%d externalLocked48k=%d",
+                 stage, s.q0, s.q1, s.configuredSource, s.activeSource, s.configured48k ? 1 : 0,
+                 s.internalActive ? 1 : 0, s.externalLocked48k ? 1 : 0);
+    }
+    // One quadlet per playback data channel: 0 fetches PCM, 1 mutes
+    // (Linux former_switch_fetching_mode, ff-protocol-former.c:87-119).
+    [[nodiscard]] IOReturn WriteFetchMask(bool fetch) {
+        std::array<uint32_t, 28> mask{};
+        mask.fill(fetch ? 0U : 1U);
+        const uint32_t count = model_ == FirefaceModel::kFF800 ? 28U : 18U;
+        return WriteWords(Register::kFetchMask, std::span<const uint32_t>(mask.data(), count));
+    }
     [[nodiscard]] AudioStreamRuntimeCaps MakeCaps() const noexcept {
         const uint32_t count = model_ == FirefaceModel::kFF800 ? 28U : 18U;
         return AudioStreamRuntimeCaps{.hostInputPcmChannels = count, .hostOutputPcmChannels = count,
