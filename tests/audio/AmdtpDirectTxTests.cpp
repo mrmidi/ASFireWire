@@ -844,6 +844,49 @@ TEST(AmdtpDirectTxTests, PayloadWriter96kCrossesPacketsAndHostRingWrap) {
     }
 }
 
+// The content peak covers what reached packet memory only: frames below the
+// finality frontier keep their armed silence and do not count. Taking it
+// resets it, so a silent interval after a loud one reads zero.
+TEST(AmdtpDirectTxTests, PayloadWriterPeakCountsOnlyWrittenSamples) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    std::array<std::array<uint8_t, 136>, 2> bytes{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        PreparedTxPacket packet{};
+        packet.packetIndex = 10 + i;
+        packet.isData = true;
+        packet.firstAudioFrame = 16 + i * 16;
+        packet.framesInPacket = 16;
+        packet.dbs = 2;
+        ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[i].data(), bytes[i].size()));
+    }
+    auto config = BlockingStereoConfig();
+    config.sampleRate = 96000;
+    config.framesPerDataPacket = 16;
+    config.maxPacketBytes = 136;
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+
+    // A 32-frame ring. Frames 16..31 sit in packet 10 (below the frontier,
+    // 11): a full-scale sample there must not count. Frames 32..47 (ring
+    // slots 0..15) are written: peak -0.5, at frame 40 = slot 8.
+    std::array<float, 64> ring{};
+    ring[16 * 2] = 1.0f;
+    ring[8 * 2 + 1] = -0.5f;
+    writer.WriteFloat32Interleaved({ring.data(), 16, 32, 32, 2}, 11);
+    ASSERT_EQ(writer.Counters().framesWritten.load(), 16U);
+    uint32_t word = 0;
+    EXPECT_EQ(writer.TakePeakWrittenQ24(&word), 4194303U);  // 0.5 of 2^23 - 1
+    EXPECT_EQ(word, PcmSlotCodec::EncodeFloat32(-0.5f, PcmSlotEncoding::Am824MBLA));
+
+    EXPECT_EQ(writer.TakePeakWrittenQ24(nullptr), 0U);
+    std::array<float, 64> silence{};
+    writer.WriteFloat32Interleaved({silence.data(), 32, 16, 32, 2}, 11);
+    EXPECT_EQ(writer.TakePeakWrittenQ24(nullptr), 0U);
+}
+
 TEST(AmdtpDirectTxTests, PayloadWriterCountsFramesWithoutPacket) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> timelineSlots{};

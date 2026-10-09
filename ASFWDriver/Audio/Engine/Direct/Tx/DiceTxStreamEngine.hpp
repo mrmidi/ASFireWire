@@ -110,6 +110,9 @@ public:
     [[nodiscard]] int64_t TakeMinFinalityMarginPackets() noexcept {
         return payloadWriter_.TakeMinFinalityMarginPackets();
     }
+    [[nodiscard]] uint32_t TakePeakWrittenQ24(uint32_t* word) noexcept {
+        return payloadWriter_.TakePeakWrittenQ24(word);
+    }
 
     AMDTP::AmdtpTxPolicy BuildTxPolicy(
         const ASFW::Isoch::Audio::AudioStreamTxPolicy& policy) const noexcept;
