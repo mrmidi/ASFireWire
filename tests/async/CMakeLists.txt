@@ -71,6 +71,15 @@ add_async_test(ATManagerHotAppendTests
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
 )
 
+add_async_test(ATCompletionScanTests
+    ATCompletionScanTests.cpp
+    "${ASFW_DRIVER_DIR}/Async/Engine/ATTrace.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Tx/DescriptorBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+)
+
 # AT Descriptor Tests
 add_async_test(ATDescriptorTests
     ATDescriptorTests.cpp
