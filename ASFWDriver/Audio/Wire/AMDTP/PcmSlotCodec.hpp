@@ -9,6 +9,7 @@ namespace ASFW::Protocols::Audio::AMDTP {
 class PcmSlotCodec final {
 public:
     [[nodiscard]] static int32_t Float32ToSigned24(float sample) noexcept;
+    [[nodiscard]] static int32_t Float32ToSigned32(float sample) noexcept;
 
     [[nodiscard]] static uint32_t EncodeFloat32(float sample,
                                                 PcmSlotEncoding encoding) noexcept;

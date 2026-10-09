@@ -1,3 +1,4 @@
+#include <limits>
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
@@ -97,6 +98,30 @@ TEST(AmdtpDirectTxTests, Int32EncodingUsesHighSigned24Bits) {
               0x407FFFFFu);
 }
 
+TEST(AmdtpDirectTxTests, Upper24LittleEndianCarriesFullFloatPrecision) {
+    // RME 3.41 clipOutputSamples (0x8d4) sends float x 2^31 as a full LE int32;
+    // the device uses the upper 24 bits. Low bits are kept, not zeroed.
+    using ASFW::Protocols::Audio::AMDTP::PcmSlotCodec;
+    using ASFW::Protocols::Audio::AMDTP::PcmSlotEncoding;
+    constexpr auto kEnc = PcmSlotEncoding::RawPcm24Upper24In32LE;
+    const auto wire = [](uint32_t encoded) {  // bytes as WriteBE32 puts them on the bus
+        return std::array<uint8_t, 4>{
+            static_cast<uint8_t>(encoded >> 24), static_cast<uint8_t>(encoded >> 16),
+            static_cast<uint8_t>(encoded >> 8), static_cast<uint8_t>(encoded)};
+    };
+    using B = std::array<uint8_t, 4>;
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeFloat32(0.5f, kEnc)), (B{0x00, 0x00, 0x00, 0x40}));
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeFloat32(-1.0f, kEnc)), (B{0x00, 0x00, 0x00, 0x80}));
+    // Largest float below 2^31: full scale in the upper 24 bits.
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeFloat32(1.0f, kEnc)), (B{0x80, 0xFF, 0xFF, 0x7F}));
+    // 2^-28 lies below 24-bit resolution; it survives as 8 in the low byte.
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeFloat32(0x1p-28f, kEnc)), (B{0x08, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(PcmSlotCodec::EncodeFloat32(std::numeric_limits<float>::quiet_NaN(), kEnc), 0U)
+        << "a NaN must not become a full-scale click";
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeInt32(0x12345678, kEnc)), (B{0x78, 0x56, 0x34, 0x12}));
+    EXPECT_EQ(wire(PcmSlotCodec::EncodeInt32(INT32_MAX, kEnc)), (B{0xFF, 0xFF, 0xFF, 0x7F}));
+}
+
 TEST(AmdtpDirectTxTests, Upper24LittleEndianCodecHasIndependentWireGoldens) {
     using ASFW::Protocols::Audio::AMDTP::PcmSlotCodec;
     using ASFW::Protocols::Audio::AMDTP::PcmSlotEncoding;
@@ -107,7 +132,7 @@ TEST(AmdtpDirectTxTests, Upper24LittleEndianCodecHasIndependentWireGoldens) {
     };
     EXPECT_EQ(wireBytes(PcmSlotCodec::EncodeInt32(INT32_MAX,
                       PcmSlotEncoding::RawPcm24Upper24In32LE)),
-              (std::array<uint8_t, 4>{0x00, 0xFF, 0xFF, 0x7F}));
+              (std::array<uint8_t, 4>{0xFF, 0xFF, 0xFF, 0x7F}));
     EXPECT_EQ(wireBytes(PcmSlotCodec::EncodeInt32(INT32_MIN,
                       PcmSlotEncoding::RawPcm24Upper24In32LE)),
               (std::array<uint8_t, 4>{0x00, 0x00, 0x00, 0x80}));
