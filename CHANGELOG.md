@@ -16,6 +16,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-beta.1] - 2026-10-09
+
+> One audio lifecycle for every device family, sample-rate switching for DICE and AV/C, a shared MOTU stack, and streams that stay running across Core Audio stop/start. Hardware-tested on a Saffire Pro 24 DSP (DICE), TerraTec Phase 88 and Apogee Duet (AV/C). MOTU support has not been tested on hardware.
+
+### Upgrade note
+
+- The bundle identifiers changed: the app is now `net.asfw.app` and the driver extension `net.asfw.driver` (previously `net.mrmidi.ASFW` and `net.mrmidi.ASFW.ASFWDriver`). macOS treats them as a different app and a different system extension. Uninstall the previous version's driver extension before installing this one.
+
+### Added
+
+- DICE: sample-rate switching across every rate the device reports in its clock capabilities, with each rate mode's channel layout taken from the device's extended application space (EAP). Core Audio shows the right channel count per rate; on the Pro 24 DSP that is 16 inputs at 44.1/48 kHz and 12 at 88.2/96 kHz. Rate changes run inside Core Audio's configuration window and roll back if the device does not confirm the new rate. (#179)
+- AV/C: sample-rate switching for devices that report several supported rates (Duet, Phase 88), applied in confirmed configuration transactions. Duet playback at 96 kHz confirmed clean on hardware. (#179)
+- MOTU: a shared stack for FireWire-only models: 828mk2, 896HD, Traveler, UltraLite and 8pre (protocol V2); 828mk3, 896mk3, UltraLite mk3 and Traveler mk3 (V3, FireWire); the original 828 and 896 (V1) behind a validation flag. Per-rate channel layouts, bandwidth sizing for packed PCM, and a clock-readiness check before streaming starts. USB and hybrid models are recognized but not enabled. Builds on contributor work in #114, #116 and #172. Not tested on hardware. (#179)
+- Audio: AV/C and DICE devices keep their isochronous streams running when Core Audio stops IO, as Apple's AppleFWAudio and the TCAT DICE drivers do. Switching outputs or restarting a player rejoins the running stream in milliseconds instead of re-negotiating with the device. A sample-rate change, an IO restart, a transport fault or driver stop release it. On the Phase 88 a 96 → 48 kHz switch settles in 2.2 s instead of 7.1 s; on the Pro 24 DSP a rejoin after 18 minutes idle took 1 ms. (#179, #180)
+- Diagnostics: an Audio Geometry view with rate-dependent stream geometry, transport depth, observed interrupt cadence, HAL buffers and a declared-latency preview. (#179)
+- Diagnostics: a `[TxContent]` line after each 5 s transmit heartbeat reports the peak sample written into packet memory and whether every frame landed in a packet. It separates "Core Audio sent silence" from "the device muted what we sent". (#180)
+- Audio Analyzer: visual contrast themes, light plot styling and non-destructive metering calibration. (#176)
+
+### Changed
+
+- Audio: one publication, recovery and teardown path (`AudioDeviceHost`) for DICE, AV/C, MOTU and RME devices replaces four per-family copies. Every decision is one `[AudioHost]` log line. MOTU now restarts its stream after a bus reset while streaming, as the other families do. (#179)
+- Bus: the first bus reset after start is always issued. (#175, contributed by @cube666999)
+- Driver: the PCI entitlement and controller matching follow the Developer ID profile; the driver extension uses the Hardened Runtime and the app the App Sandbox in Release builds.
+
+### Fixed
+
+- DICE: a stream started right after the device lost lock during a clock change (a cold start, a reinstall or a replug while set to another rate) came up silent. The device was locked to the stream and the packets carried audio, but its outputs stayed muted until the next start. The driver now follows such a start with one restart once the device has settled, as the TCAT driver does on the device's configuration-change notification. This was the Saffire "silent cold start". (#180)
+- DICE: a device that attached in a stale state no longer overwrites its 2x channel layout with the 1x one; every switch to 88.2/96 kHz used to roll back. (#179)
+- Audio: a sample-rate change after a bus reset no longer fails and leaves the device unable to start until replugged; a failed first read now keeps the previous rate. (#180)
+- Audio: unplugging a device while Core Audio plays no longer leaves Core Audio's IO loop spinning (about 60% CPU for minutes) and the driver objects unreleased; IO is stopped before the device is removed. Not yet confirmed on hardware. (#180)
+- Audio: unplugging a device while its stream was kept across a Core Audio stop released nothing; driver stop now releases it. Confirmed on the Phase 88. (#179)
+- AV/C: 96 kHz playback; the transmit path no longer scans the packet timeline once per sample. (#179)
+- MOTU: a rate switch across rate modes no longer latches "geometry changed"; a republish is compared with the configuration Core Audio holds now. (#179)
+- RME: Fireface 400 and 800 units that report their model ID in the unit directory instead of the root directory are matched.
+- Audio Analyzer: goniometer channel deflection.
+
+### Known issues
+
+- Saffire Pro 24 DSP: after a reinstall or replug while set to 96 kHz, the device can attach running at 96 kHz while its clock-select and stream registers describe the 48 kHz layout. The rate check treats that as unconfirmed and rolls back, which costs two extra clock changes before audio starts. Audio does start.
+- MOTU, DICE devices other than the Pro 24 DSP (including the two-stream Pro 40), and RME have not been tested with this release's lifecycle changes.
+- The driver-extension process lifetime after unplug, listed since 0.4.0-beta.2, is not confirmed resolved.
+
 ## [0.4.0-beta.4] - 2026-10-04
 
 > Fixes AV/C audio-device publication when the streaming plugs initially report different sample rates, and hardens CMP connection cleanup. Phase 88 startup and streaming were confirmed on hardware after these changes.

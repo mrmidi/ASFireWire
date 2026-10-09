@@ -154,6 +154,9 @@ jobs:
           cat >> NOTES.md <<EOF
           ## Install
 
+          Signed builds are available at **[asfw.net](https://www.asfw.net)** for now.
+          This GitHub release remains an unsigned tester bundle.
+
           Experimental prebuilt tester bundle — the app is unsigned until \`install.sh\` runs locally.
           The installer checks that SIP is disabled, ad-hoc signs the app and dext, and copies
           the result to \`/Applications\`.
