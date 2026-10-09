@@ -9,6 +9,7 @@
 // job and must show up as a declared golden-trace delta.
 
 #include "DiceFamilyDriver.hpp"
+#include "../../../Runtime/RateValidation.hpp"
 
 #include "../../../../Common/WireFormat.hpp"
 #include "../../../../Logging/Logging.hpp"
@@ -122,7 +123,7 @@ std::expected<DuplexPrepareResult, IOReturn> DiceFamilyDriver::Prepare(
     if (!busInfo_.GetLocalNodeID().IsValid()) {
         return std::unexpected(kIOReturnNotReady);
     }
-    if (!IsSupportedDiceClockConfiguration(clock)) {
+    if (!IsSupportedDiceClockConfiguration(clock, Runtime::kDiceHardwareBatch)) {
         return std::unexpected(kIOReturnUnsupported);
     }
     if (HasDeviceRestartState(session_)) {
@@ -285,7 +286,7 @@ std::expected<DuplexConfirmResult, IOReturn> DiceFamilyDriver::Confirm() {
 
 std::expected<DuplexClockApplyResult, IOReturn> DiceFamilyDriver::ApplyClock(
     const DiceClockConfiguration& clock) {
-    if (!IsSupportedDiceClockConfiguration(clock)) {
+    if (!IsSupportedDiceClockConfiguration(clock, Runtime::kDiceHardwareBatch)) {
         return std::unexpected(kIOReturnUnsupported);
     }
     if (!busInfo_.GetLocalNodeID().IsValid()) {
@@ -755,7 +756,8 @@ IOReturn DiceFamilyDriver::CompleteClockApply() {
         return Rollback(refreshStatus);
     }
 
-    session_.appliedClock = session_.desiredClock;
+    // RefreshRuntimeCaps records the achieved rate. CLOCK_ACCEPTED alone
+    // cannot replace that observation with the requested clock.
     // The owner stays ours: we hold it while the device is present.
     ClearRestartProgress(session_);
     flowMode_ = FlowMode::kNone;
@@ -901,8 +903,8 @@ IOReturn DiceFamilyDriver::CompleteConfirm(uint32_t notification, uint32_t statu
     session_.deviceRunning = true;
     session_.phase = DuplexRestartPhase::kRunning;
     session_.appliedClock = session_.desiredClock;
-    ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x ext=0x%08x",
-             IsSourceLocked(status) ? 1U : 0U, notification, status, extStatus);
+    ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x (%{public}s) ext=0x%08x",
+             IsSourceLocked(status) ? 1U : 0U, notification, status, ASFW::Logging::IOReturnName(status), extStatus);
     return kIOReturnSuccess;
 }
 
@@ -919,7 +921,7 @@ IOReturn DiceFamilyDriver::Rollback(IOReturn error) {
 
     const IOReturn stopStatus = StopSequence();
     if (stopStatus != kIOReturnSuccess) {
-        ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x after start failure 0x%x", stopStatus, error);
+        ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x (%{public}s) after start failure 0x%x", stopStatus, ASFW::Logging::IOReturnName(stopStatus), error);
     }
     flowMode_ = FlowMode::kNone;
     return error;

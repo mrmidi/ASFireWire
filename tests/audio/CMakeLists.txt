@@ -56,9 +56,13 @@ add_audio_test(Am824PayloadCodecTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
+# Shared MOTU model, framing and synthesis invariants.
+add_audio_test(MotuStackTests MotuStackTests.cpp)
+
 # MOTU Payload Codec and Device Timing Tests
 add_audio_test(MotuPayloadCodecTests
     MotuPayloadCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
@@ -85,8 +89,8 @@ add_audio_test(MotuV2RegisterTests
 )
 
 # MOTU Device Profile / Factory Identity Tests
-add_audio_test(MotuV2ProfileTests
-    MotuV2ProfileTests.cpp
+add_audio_test(MotuProfileTests
+    MotuProfileTests.cpp
 )
 
 # MOTU host channel <-> physical port tables
@@ -127,9 +131,9 @@ add_audio_test(MotuPayloadWriterTests
 # DeviceRegistry is linked because the protocol now takes a registry-issued route token
 # (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
 # to build a real registry entry. Mirrors tests/devices/DICETcatProtocolTests.
-add_audio_test(MotuV2ProtocolTests
-    MotuV2ProtocolTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuV2Protocol.cpp"
+add_audio_test(MotuProtocolTests
+    MotuProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
@@ -163,6 +167,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
+    AudioRuntime/WireRetentionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
 )
 
@@ -338,7 +343,7 @@ add_audio_test(DiceProfileTests
     DiceProfileTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -360,7 +365,7 @@ add_audio_test(DiceProfileEquivalenceTests
     DiceProfileEquivalenceTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -372,7 +377,7 @@ add_audio_test(DiceProfileEquivalenceTests
 set(ASFW_TIMING_PROFILE_SOURCES
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuV2Profile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
@@ -422,3 +427,6 @@ add_audio_test(ResolvedAudioConfigurationTests ResolvedAudioConfigurationTests.c
 add_audio_test(DeviceConfigurationStateMachineTests
     DeviceConfigurationStateMachineTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Runtime/Configuration/DeviceConfigurationStateMachine.cpp")
+
+add_audio_test(DiceMultirateValidationTests DiceMultirateValidationTests.cpp)
+target_compile_definitions(DiceMultirateValidationTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)

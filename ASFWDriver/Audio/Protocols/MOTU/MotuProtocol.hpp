@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuV2Protocol.hpp - Device protocol for MOTU protocol-v2 register devices.
+// MotuProtocol.hpp - Shared control adapter for MOTU FireWire devices.
 //
 // Thin adapter: all wire encoding/decoding lives in the pure codecs of
-// MotuV2Registers.hpp; this class owns only transport (async register IO against
+// MotuRegisters.hpp; this class owns only transport (async register IO against
 // kAddrBase + offset) and the cached device state those reads produce.
 //
 // Device-side streaming bring-up IS implemented here, through FamilyDriver.
@@ -14,7 +14,9 @@
 
 #pragma once
 
-#include "MotuV2Registers.hpp"
+#include "MotuRegisters.hpp"
+#include "MotuNotificationMailbox.hpp"
+#include "../../../Scheduling/ITimerScheduler.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
@@ -26,29 +28,31 @@
 
 namespace ASFW::Audio::Motu {
 
-/// Device clock state as reported by the clock status register (0x0b14).
+/// Device clock state (0x0b14, or original 828's 0x0b00).
 struct ClockStatus {
     uint32_t raw{0};
     uint32_t sampleRateHz{0};                ///< 0 when the rate index is unknown.
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
-/// MOTU protocol-v2 register device.
+/// Shared MOTU register adapter for FireWire-only V1, V2 and V3 models.
 ///
 /// Also serves as its own FamilyDriver: the audio session reaches every protocol
 /// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
 /// implement to be driven at all.
-class MotuV2Protocol final : public IDeviceProtocol, public FamilyDriver {
+class MotuProtocol final : public IDeviceProtocol, public FamilyDriver {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
 
-    MotuV2Protocol(Protocols::Ports::FireWireBusOps& busOps,
+    MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
                    Protocols::Ports::FireWireBusInfo& busInfo,
                    Discovery::DeviceRegistry& routeRegistry,
                    const Discovery::DeviceRouteToken& route,
                    uint32_t unitSwVersion,
-                   ::ASFW::IRM::IRMClient* irmClient = nullptr);
+                   ::ASFW::IRM::IRMClient* irmClient = nullptr,
+                   Scheduling::ITimerScheduler* timerScheduler = nullptr);
+    ~MotuProtocol() override;
 
     IOReturn Initialize() override;
     IOReturn Shutdown() override;
@@ -57,11 +61,16 @@ public:
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override;
 
-    /// Report the device's stream geometry. Before PrepareDuplex has run this answers
-    /// from the model's fixed chunk table rather than failing, so the nub can be
-    /// published before streaming -- see MotuAudioBackend::EnsureNubForGuid for why that
-    /// ordering matters.
+    void RebindNotifications(VoidCallback callback) override;
+
+    /// Read current clock and optical registers, then publish complete model
+    /// formations. Failed/reserved reads invalidate geometry; no fixed fallback.
+    void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override;
+
+    /// Authoritative geometry only after a completed read at a supported rate.
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override;
+    void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override;
 
     /// Port names in host channel order (MotuPortLayout.hpp). They come from the model's
     /// static table, so unlike DICE they are available before PrepareDuplex. Optical
@@ -74,14 +83,14 @@ public:
     //
     // MOTU v2 activates both directions in a single write to the iso-comm
     // control register, so the device-side choreography is only two registers:
-    // packet format first, then iso-comm (motu-stream.c:376-401,
+    // packet format first, then iso-comm (motu-stream.c:227-307,
     // snd_motu_stream_start_duplex). The host owns iso channel allocation and
     // hands the assignments in via AudioDuplexChannels.
     //
     // These hooks are only the register half. MOTU is duplex-always and recovers its
     // media clock from the host replaying the device's own cadence -- both the
     // data-blocks-per-packet sequence and the per-block SPH presentation times
-    // (motu-stream.c:205-207). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
+    // (motu-stream.c:289-291). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
     // captures the offsets on receive, MotuTxTiming stamps them back on transmit.
     //==========================================================================
 
@@ -106,6 +115,7 @@ public:
     // Each step starts the callback chain above and waits for it
     // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
+    [[nodiscard]] StartReadinessPolicy GetStartReadinessPolicy() const noexcept override;
     [[nodiscard]] IOReturn LoadGeometry() override;
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
@@ -163,6 +173,14 @@ private:
     /// Write the address-hi/address-lo pair as one logical operation. Both halves must
     /// land: the device only acts on a complete address, so a failed second write leaves
     /// it holding a half-updated value and the caller sees the failure.
+    [[nodiscard]] bool IsV3() const noexcept;
+    [[nodiscard]] bool IsV1() const noexcept { return unitSwVersion_ == 1 || unitSwVersion_ == 2; }
+    [[nodiscard]] Reg ClockRegister() const noexcept { return unitSwVersion_ == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2; }
+    void EnsureAsyncAddress(CompletionCallback callback);
+    void SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback);
+    [[nodiscard]] Reg OpticalRegister() const noexcept { return IsV1() ? ClockRegister() : IsV3() ? Reg::OpticalBanksV3 : Reg::InOutConfV2; }
+    void ReadOpticalGeometry(CompletionCallback callback);
+    void ReadDuplexConfirmation(ConfirmCallback callback);
     void WriteAsyncAddrPair(AsyncAddrValues values,
                             bool registered,
                             CompletionCallback callback);
@@ -186,12 +204,17 @@ private:
     /// through GetIRMClient(); the protocol only carries the handle.
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     const uint32_t unitSwVersion_;
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    std::shared_ptr<NotificationMailbox> notifications_;
+    uint64_t notificationAddress_{0};
+    Discovery::DeviceRouteToken route_;
     std::atomic<uint32_t> cachedSampleRateHz_{0};
     std::atomic<bool> asyncAddressRegistered_{false};
     bool initialized_{false};
+    std::atomic<bool> shuttingDown_{false};
 
-    // Iso channels the host assigned, latched by PrepareDuplex48k and consumed by
-    // ProgramTxAndEnableDuplex48k. Device-relative naming: RX is host->device
+    // Iso channels the host assigned, latched by PrepareDuplex and consumed by
+    // ProgramTxAndEnableDuplex. Device-relative naming: RX is host->device
     // (playback), TX is device->host (capture).
     std::atomic<uint8_t> deviceRxChannel_{0};
     std::atomic<uint8_t> deviceTxChannel_{0};
@@ -203,6 +226,11 @@ private:
     std::atomic<uint32_t> txPcmChunks_{0};
     std::atomic<uint32_t> rxPcmChunks_{0};
     std::atomic<uint32_t> preparedRateHz_{0};
+
+    // One atomic snapshot: low 32 bits are the optical register, bit 32
+    // proves a completed read. A reader cannot mix validity from one refresh
+    // with a raw register from the next refresh.
+    std::atomic<uint64_t> opticalSnapshot_{0};
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;

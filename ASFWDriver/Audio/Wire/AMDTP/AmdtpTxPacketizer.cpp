@@ -53,7 +53,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     }
     // FDF (AM824 SFC) must match the actual rate, not whatever the profile
     // defaulted (profiles hardcode the 48 kHz SFC 0x02).
-    config.fdf = geometry->fdf;
+    if (config.fmt == 0x10) config.fdf = geometry->fdf;
     if (config.dbs == 0) {
         config.dbs = static_cast<uint8_t>(config.pcmChannels + config.midiSlots);
     }
@@ -89,7 +89,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipConfig.dbs = config.dbs;
     cipConfig.fn = 0;
     cipConfig.qpc = 0;
-    cipConfig.sph = false;
+    cipConfig.sph = config.cipSph;
     cipConfig.fmt = config.fmt;
     cipConfig.fdf = config.fdf;
     cipConfig.noDataFdf =

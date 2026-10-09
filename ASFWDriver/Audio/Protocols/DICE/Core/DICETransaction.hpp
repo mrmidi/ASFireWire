@@ -7,6 +7,7 @@
 #pragma once
 
 #include "DICETypes.hpp"
+#include "DiceRateFormats.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../../../Common/WireFormat.hpp"
 #include <DriverKit/IOReturn.h>
@@ -53,6 +54,10 @@ public:
     /// Read TCAT extension sections layout from DICE device.
     /// @param callback   Callback with parsed extension sections
     void ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback);
+
+    // Non-mutating EAP discovery. Unknown/absent modes are never synthesized.
+    void ReadRateFormats(uint32_t deviceRateMask,
+                         std::function<void(IOReturn, DiceRateFormats)> callback);
     
     // ========================================================================
     // Capability Discovery

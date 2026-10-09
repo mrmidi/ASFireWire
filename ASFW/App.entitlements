@@ -3,13 +3,12 @@
 <plist version="1.0">
 <dict>
   <key>com.apple.security.app-sandbox</key>
-  <false/>
+  <true/>
   <key>com.apple.developer.system-extension.install</key>
   <true/>
   <key>com.apple.developer.driverkit.userclient-access</key>
   <array>
     <string>net.asfw.driver</string>
-    <string>net.asfw.driver:ASFWDriverUserClient</string>
   </array>
 </dict>
 </plist>

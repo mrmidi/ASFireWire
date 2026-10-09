@@ -6,9 +6,14 @@
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSAction.h>
 #include <cstdint>
+#include "Audio/Runtime/RemoteDeviceStopResult.hpp"
 
 class ASFWAudioNub : public IOService {
 public:
+    std::atomic<uint64_t> remoteStopResult{0};
+    void RecordRemoteDeviceStopResult(kern_return_t status) {
+        ASFW::Audio::Runtime::RemoteDeviceStopResult::Publish(remoteStopResult, status);
+    }
     virtual ~ASFWAudioNub() = default;
     void SetStreamMode(uint32_t) {}
     void SetGuid(uint64_t) {}
@@ -22,9 +27,15 @@ public:
     }
     void RequestTimingRecovery(uint64_t rxEpoch) { lastTimingRecoveryEpoch = rxEpoch; }
 
+    kern_return_t rpcStopResult{kIOReturnSuccess};
+    kern_return_t StopAudioStreamingOrRemoteResult() {
+        if (const auto terminal = ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(remoteStopResult))
+            return *terminal;
+        return StopAudioStreaming();
+    }
     kern_return_t StopAudioStreaming() {
         ++stopStreamingCalls;
-        return kIOReturnSuccess;
+        return rpcStopResult;
     }
     // Each registration records what it was given; the driver's stop passes null.
     kern_return_t RegisterTxPreparationAction(OSAction* action) { txPreparationAction = action; return kIOReturnSuccess; }

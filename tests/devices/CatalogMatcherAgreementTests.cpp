@@ -45,11 +45,12 @@ struct DeviceTestCase {
 };
 
 Discovery::DeviceIdentityEvidence MakeEvidence(
-    uint32_t rootVendorId,
-    uint32_t rootModelId,
+    std::optional<uint32_t> rootVendorId,
+    std::optional<uint32_t> rootModelId,
     std::optional<uint64_t> guid = std::nullopt,
     std::optional<uint32_t> unitSpecId = std::nullopt,
-    std::optional<uint32_t> unitVersion = std::nullopt) {
+    std::optional<uint32_t> unitVersion = std::nullopt,
+    std::optional<uint32_t> unitModelId = std::nullopt) {
     Discovery::DeviceIdentityEvidence ev{};
     ev.rootVendorId = rootVendorId;
     ev.rootModelId = rootModelId;
@@ -60,6 +61,7 @@ Discovery::DeviceIdentityEvidence MakeEvidence(
     unit.unitDirectoryOffset = 0x400;
     unit.specifierId = unitSpecId;
     unit.version = unitVersion;
+    unit.modelId = unitModelId;
     ev.units.push_back(unit);
     return ev;
 }
@@ -226,10 +228,10 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::Avc,
             .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedStartRatePinHz = 48000U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
             .expectedIrmChoosesAnyChannel = true,
-            .expectedStartRatePinHz = 48000U,
         },
         {
             .description = "M-Audio ProjectMix I/O (BeBoB, filtered command set)",
@@ -242,10 +244,10 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::Avc,
             .expectedBootstrap = Audio::ProbeBootstrap::BeBoBUnprobed,
             .expectedFilter = Discovery::AvcCommandFilterId::MAudioSpecialBeBoB,
+            .expectedStartRatePinHz = 48000U,
             .expectedForcedStreamMode = ForcedStreamMode::Blocking,
             .expectedStartShape = StreamStartShape::MAudioSpecial,
             .expectedIrmChoosesAnyChannel = true,
-            .expectedStartRatePinHz = 48000U,
         },
         // 12. M-Audio FireWire 1814 Bootloader
         {
@@ -342,6 +344,44 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .evidence = MakeEvidence(kRmeVendorId, kRmeRootModelId, std::nullopt,
                                      kRmeUnitSpecifierId,
                                      kRmeFireface800UnitVersion),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::RmeRegister,
+            .expectedProfileBuilder = ProfileBuilderId::RmeFireface800,
+            .expectedModelName = kRmeFireface800ModelName,
+            .expectedBackend = Audio::AudioBackendKind::RmeRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::RmeRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedChannelMask = kAnyIsoChannel,
+        },
+        // 19. RME Fireface 400 (real hardware Config ROM evidence: unit-directory model ID)
+        {
+            .description = "RME Fireface 400 (real hardware evidence: unit-directory model ID)",
+            .evidence = MakeEvidence(kRmeVendorId, std::nullopt, std::nullopt,
+                                     kRmeUnitSpecifierId,
+                                     kRmeFireface400UnitVersion,
+                                     kRmeModelId),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::RmeRegister,
+            .expectedProfileBuilder = ProfileBuilderId::RmeFireface400,
+            .expectedModelName = kRmeFireface400ModelName,
+            .expectedBackend = Audio::AudioBackendKind::RmeRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::RmeRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+            .expectedStartRatePinHz = 48000U,
+            .expectedForcedStreamMode = ForcedStreamMode::Blocking,
+            .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
+            .expectedChannelMask = 0xffU,
+        },
+        // 20. RME Fireface 800 (real hardware Config ROM evidence: unit-directory model ID)
+        {
+            .description = "RME Fireface 800 (real hardware evidence: unit-directory model ID)",
+            .evidence = MakeEvidence(kRmeVendorId, std::nullopt, std::nullopt,
+                                     kRmeUnitSpecifierId,
+                                     kRmeFireface800UnitVersion,
+                                     kRmeModelId),
             .expectedSupport = SupportDisposition::Supported,
             .expectedFamily = AudioFamilyProviderId::RmeRegister,
             .expectedProfileBuilder = ProfileBuilderId::RmeFireface800,
@@ -454,7 +494,7 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                 case AudioFamilyProviderId::MotuRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::MotuRegister);
                     EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::MotuRegister);
-                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuV2);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::MotuRegister);
                     break;
                 case AudioFamilyProviderId::RmeRegister:
                     EXPECT_EQ(*backend, Audio::AudioBackendKind::RmeRegister);

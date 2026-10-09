@@ -1,5 +1,5 @@
 #include "../Model/DiscoveredRuntimeCaps.hpp"
-#include "../Runtime/AvcRateValidation.hpp"
+#include "../Runtime/RateValidation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 
@@ -8,6 +8,7 @@
 #include "SessionClock.hpp"
 
 #include "../Protocols/IDeviceProtocol.hpp"
+#include "../Protocols/DeviceProtocolChoice.hpp"
 
 #include "../Core/AudioRuntimeRegistry.hpp"
 #include "../Core/AudioEndpointRuntime.hpp"
@@ -16,14 +17,28 @@
 #include "../../Logging/Logging.hpp"
 
 #include <utility>
+#include <algorithm>
 
 namespace ASFW::Audio::Session {
 
 namespace {
 
 [[nodiscard]] bool IsSupportedClockForRecord(const Discovery::DeviceRecord& record,
-                                             const AudioClockConfig& clock) noexcept {
+                                             const AudioClockConfig& clock, const IDeviceProtocol* protocol) noexcept {
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
+    if (protocol) {
+        if (const auto formations = protocol->RateFormations(); formations && !formations->empty()) {
+            AudioStreamRuntimeCaps current{};
+            (void)protocol->GetRuntimeAudioStreamCaps(current);
+            const bool dice = policy && ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice;
+            return std::any_of(formations->begin(), formations->end(), [&](const auto& formation) {
+                return Runtime::RateEnabled(formation, current.sampleRateHz, dice) && formation.sampleRateHz == clock.sampleRateHz;
+            });
+        }
+    }
+    if (Runtime::kDiceHardwareBatch && policy &&
+        ChooseAudioBackend(policy->plan) == AudioBackendKind::Dice)
+        return Encoding::AmdtpRateGeometryForSampleRate(clock.sampleRateHz).has_value();
     if (policy != nullptr &&
         (policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioFireWire1814 ||
          policy->plan.profileBuilder == DeviceProfiles::Audio::ProfileBuilderId::MAudioProjectMix)) {
@@ -140,7 +155,7 @@ IOReturn SessionScheduler::Attach(AudioClockConfig clock) noexcept {
     CancelPendingRestart();
     if (clock.sampleRateHz != 0) {
         const auto record = deps_.registry.SnapshotByGuid(guid_);
-        if (!record || !IsSupportedClockForRecord(*record, clock)) return kIOReturnUnsupported;
+        if (!record || !IsSupportedClockForRecord(*record, clock, deps_.runtime.FindShared(guid_).get())) return kIOReturnUnsupported;
     }
     return Submit([clock](Wanted& wanted, Actual& actual) {
         if (clock.sampleRateHz != 0) {
@@ -177,7 +192,7 @@ IOReturn SessionScheduler::ChangeClock(const AudioClockConfig& clock, DuplexRest
     if (!record) {
         return kIOReturnNotReady;
     }
-    if (!IsSupportedClockForRecord(*record, clock)) {
+    if (!IsSupportedClockForRecord(*record, clock, deps_.runtime.FindShared(guid_).get())) {
         return kIOReturnUnsupported;
     }
     if (IsRetired()) {
@@ -395,8 +410,8 @@ void SessionScheduler::FirePendingRestart(uint64_t generation) noexcept {
     }
     const IOReturn status = RunRestart(pending.reason, pending.observedRun);
     if (status != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio, "[Session] restart after quiet period failed GUID=%llx reason=%u kr=0x%x",
-                       guid_, static_cast<unsigned>(pending.reason), status);
+        ASFW_LOG_ERROR(Audio, "[Session] restart after quiet period failed GUID=%llx reason=%u kr=0x%x (%{public}s)",
+                       guid_, static_cast<unsigned>(pending.reason), status, ASFW::Logging::IOReturnName(status));
     }
 }
 
@@ -517,6 +532,8 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
     if (reconciling_) {
         // Another caller is reconciling; it loops until it has seen this edit.
         const uint64_t deadline = UptimeMilliseconds() + kWaitTimeoutMs;
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu completed=%llu phase=wait-reconcile",
+                 guid_, ticket, completed_);
         while (completed_ < ticket) {
             IOLockUnlock(lock_);
             if (TeardownRequested()) {
@@ -549,7 +566,13 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         wanted_.restartIsFault = false;
         IOLockUnlock(lock_);
 
+        const uint64_t reconcileBegin = UptimeMilliseconds();
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-begin attached=%u restart=%u clockDirty=%u",
+                 guid_, covering, snapshot.halAttached ? 1U : 0U,
+                 snapshot.restart ? 1U : 0U, snapshot.clockDirty ? 1U : 0U);
         const IOReturn status = Reconcile(snapshot);
+        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-end kr=0x%x (%{public}s) elapsedMs=%llu",
+                 guid_, covering, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - reconcileBegin);
 
         IOLockLock(lock_);
         // A rejected clock request must not survive as a future start target.
@@ -648,8 +671,8 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
                     status = deps_.host.StopAll();
                     ASFW_LOG(Audio,
                              "[Session] stop without a device GUID=%llx: host transport "
-                             "stopped (kr=0x%08x), no device traffic",
-                             guid_, status);
+                             "stopped (kr=0x%08x (%{public}s)), no device traffic",
+                             guid_, status, ASFW::Logging::IOReturnName(status));
                 }
                 Actual actual = before;
                 actual.needsStop = false;
@@ -693,9 +716,9 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
     }
     ASFW_LOG(Audio,
              "[Session] GUID=0x%016llx hal=%u clockDirty=%u restart=%u reason=%u action=%{public}s "
-             "-> 0x%08x state=%{public}s run=%llu %llums",
+             "-> 0x%08x (%{public}s) state=%{public}s run=%llu %llums",
              guid_, wanted.halAttached ? 1U : 0U, wanted.clockDirty ? 1U : 0U,
-             wanted.restart ? 1U : 0U, static_cast<unsigned>(wanted.restartReason), action, status,
+             wanted.restart ? 1U : 0U, static_cast<unsigned>(wanted.restartReason), action, status, ASFW::Logging::IOReturnName(status),
              ToString(after.state), after.run, UptimeMilliseconds() - startedMs);
     return status;
 }
@@ -705,9 +728,9 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     Actual actual = LoadActual();
 
     AudioClockConfig clock{.sampleRateHz = DefaultStartRate(record)};
-    if (IsSupportedClockForRecord(record, wanted.clock)) {
+    if (IsSupportedClockForRecord(record, wanted.clock, protocol.get())) {
         clock = wanted.clock;
-    } else if (IsSupportedClockForRecord(record, actual.appliedClock)) {
+    } else if (IsSupportedClockForRecord(record, actual.appliedClock, protocol.get())) {
         clock = actual.appliedClock;
     }
     ASFW_LOG(Audio,
@@ -796,7 +819,7 @@ IOReturn SessionScheduler::StopStreams(const Discovery::DeviceRecord& record,
         actual.needsStop = false;
     } else {
         actual.state = SessionState::Failed;
-        ASFW_LOG_ERROR(Audio, "[Session] stop failed kr=0x%08x GUID=0x%016llx", status, guid_);
+        ASFW_LOG_ERROR(Audio, "[Session] stop failed kr=0x%08x (%{public}s) GUID=0x%016llx", status, ASFW::Logging::IOReturnName(status), guid_);
     }
     actual.lastStatus = status;
     StoreActual(actual);

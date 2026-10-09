@@ -9,12 +9,13 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
-#include "../Protocols/Backends/AVCAudioBackend.hpp"
-#include "../Protocols/Backends/DiceAudioBackend.hpp"
-#include "../Protocols/Backends/MotuAudioBackend.hpp"
-#include "../Protocols/Backends/RmeAudioBackend.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Session/AudioSessions.hpp"
+#include "../Host/AudioDeviceHost.hpp"
+#include "../Host/AvcFamilyAdapter.hpp"
+#include "../Host/DiceFamilyAdapter.hpp"
+#include "../Host/MotuFamilyAdapter.hpp"
+#include "../Host/RmeFamilyAdapter.hpp"
 
 #include "../../Logging/Logging.hpp"
 
@@ -24,7 +25,7 @@
 #include <atomic>
 #include <cstdint>
 #include <optional>
-#include <unordered_set>
+#include <unordered_map>
 
 class IOService;
 
@@ -68,6 +69,8 @@ public:
         return sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
     }
     void HandleCycleInconsistent() noexcept;
+    // After async generation work has been aborted, before ROM discovery.
+    void HandleBusReset() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
@@ -80,17 +83,21 @@ public:
     // composition before device callbacks begin.
     void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept { sessions_.SetTimerScheduler(timer); }
     void HandleHostTimingLoss(uint64_t guid) noexcept;
-    [[nodiscard]] bool RequestMotuTimingRecovery(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
                                             uint32_t command, std::string& output) noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 
+#ifdef ASFW_HOST_TEST
+    [[nodiscard]] Host::AudioDeviceHost& HostForTesting() noexcept { return host_; }
+#endif
+
     /// Debug helper: return the GUID if exactly one audio nub is published.
     [[nodiscard]] std::optional<uint64_t> GetSinglePublishedGuid() const noexcept;
 
 private:
-    [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
+    // True when `guid`'s current policy names a family the host serves.
+    [[nodiscard]] bool ServedByHost(uint64_t guid) const noexcept;
     [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
                                                    bool generationInvalidated = false) noexcept;
 
@@ -105,16 +112,19 @@ private:
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
-    DiceAudioBackend dice_;
-    MotuAudioBackend motu_;
-    RmeAudioBackend rme_;
-    AVCAudioBackend avc_;
+    // Every family runs on the host (documentation/AUDIO_DEVICE_HOST.md §6).
+    // Adapters are declared before the host so they outlive its teardown.
+    Host::DiceFamilyAdapter diceAdapter_;
+    Host::RmeFamilyAdapter rmeAdapter_;
+    Host::AvcFamilyAdapter avcAdapter_;
+    Host::MotuFamilyAdapter motuAdapter_;
+    Host::AudioDeviceHost host_;
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};
     // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
     // that callback from re-entering a backend that now has no remote device.
-    std::unordered_set<uint64_t> remoteLostGuids_{};
+    std::unordered_map<uint64_t, IOReturn> remoteLostStopResults_{};
 };
 
 } // namespace ASFW::Audio

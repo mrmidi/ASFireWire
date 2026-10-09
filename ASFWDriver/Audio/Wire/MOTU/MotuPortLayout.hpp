@@ -40,7 +40,7 @@ using MotuPortMap = std::span<const MotuPort>;
 
 /// Wire geometry plus host channel order for one MOTU stream direction.
 struct MotuStreamLayout final {
-    /// PCM chunks per data block, as resolved by MotuV2Protocol::PrepareDuplex.
+    /// PCM chunks per data block, as resolved by MotuProtocol::PrepareDuplex.
     uint32_t pcmChunks{0};
     MotuPortMap ports{};
 };
@@ -102,6 +102,15 @@ inline constexpr MotuPort k828mk2Capture[] = {
     {"Mix Return L", 0}, {"Mix Return R", 1},
 };
 
+// PR #172 (858f0758), MotuPortLayout.hpp:111-117, Apache-2.0.
+// Main 10/11 verified; remaining labels intentionally do not claim physical ports.
+inline constexpr MotuPort k828mk3Playback[] = {
+    {"Main L",10}, {"Main R",11}, {"Output 3",2}, {"Output 4",3},
+    {"Output 5",4}, {"Output 6",5}, {"Output 7",6}, {"Output 8",7},
+    {"Output 9",8}, {"Output 10",9}, {"Output 11",0}, {"Output 12",1},
+    {"Output 13",12}, {"Output 14",13},
+};
+static_assert(IsChunkPermutation(k828mk3Playback));
 static_assert(IsChunkPermutation(kV2Playback));
 static_assert(IsChunkPermutation(kUltraLiteCapture));
 static_assert(IsChunkPermutation(k828mk2Capture));

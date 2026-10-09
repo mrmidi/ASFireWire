@@ -45,6 +45,7 @@ struct AmdtpStreamConfig final {
     uint8_t midiSlots{0};
 
     uint8_t fmt{0x10};
+    bool cipSph{false};
     uint8_t fdf{0x02};
 
     uint8_t framesPerDataPacket{8};
@@ -155,7 +156,7 @@ enum class AudioWireFormat : uint8_t {
     // MOTU protocol-v2: 3-byte PCM chunks from byte offset 10 of a data block, behind an
     // SPH quadlet and two message chunks. Not a quadlet-slot format, so the slot-based
     // encode/decode helpers do not apply -- see Audio/Wire/MOTU.
-    kMotuV2 = 2,
+    kMotuPacked = 2,
     /// Headerless RME-style signed 24-in-32 with significant bits at [31:8].
     kRawPcm24Upper24In32LE = 3,
 };

@@ -6,6 +6,7 @@
 #include "DICETcatProtocol.hpp"
 
 #include "../../Duplex/FamilyStageWait.hpp"
+#include "../../../Runtime/RateValidation.hpp"
 
 #include "../../../../Logging/Logging.hpp"
 
@@ -55,7 +56,8 @@ void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
 
 bool DICETcatProtocol::MakeDiceClockConfiguration(
     const AudioClockConfig& requested, DiceClockConfiguration& out) noexcept {
-    if (!IsSupportedAudioClockConfig(requested)) {
+    if (!IsSupportedAudioClockConfig(requested) &&
+        !(Runtime::kDiceHardwareBatch && DiceRateMode(requested.sampleRateHz))) {
         return false;
     }
     // The DICE adapter owns the register encoding: Linux selects the requested
@@ -96,12 +98,14 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
 }
 
 DICETcatProtocol::~DICETcatProtocol() {
+    if (rateFormatsLock_) IOLockFree(rateFormatsLock_);
     if (notificationRouter_) {
         notificationRouter_->Unregister(guid_, notifications_);
     }
 }
 
 IOReturn DICETcatProtocol::Initialize() {
+    if (!rateFormatsLock_) return kIOReturnNoMemory;
     if (!driver_) {
         driver_.emplace(deviceIo_, busInfo_, notifications_,
                         DICEBringupPolicy{
@@ -123,7 +127,7 @@ IOReturn DICETcatProtocol::Shutdown() {
         if (driver_->IsPrepared() || driver_->IsRunning()) {
             const IOReturn stopStatus = driver_->Stop();
             if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
-                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x", stopStatus);
+                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x (%{public}s)", stopStatus, ASFW::Logging::IOReturnName(stopStatus));
             }
         }
     }
@@ -132,6 +136,7 @@ IOReturn DICETcatProtocol::Shutdown() {
     sectionsLoaded_ = false;
     initialized_ = false;
     ResetRuntimeCaps();
+    PublishRateFormations({});
     return kIOReturnSuccess;
 }
 
@@ -167,6 +172,33 @@ void DICETcatProtocol::EnsureRuntimeStreamGeometry(VoidCallback callback) {
     EnsureRuntimeCapsLoaded(std::move(callback));
 }
 
+void DICETcatProtocol::ReadRateObservation(
+    std::function<void(IOReturn, RateHardwareObservation)> callback) {
+    if (!initialized_ || !sectionsLoaded_) { callback(kIOReturnNotReady, {}); return; }
+    diceReader_.ReadCapabilities([this, callback = std::move(callback)](
+        IOReturn status, DICECapabilities observed) mutable {
+        if (status != kIOReturnSuccess) { callback(status, {}); return; }
+        // The clock can move externally between GLOBAL and stream reads.
+        // Read it again: a mixed snapshot cannot authorize a HAL projection.
+        diceReader_.ReadGlobalState(sections_,
+            [this, observed, callback = std::move(callback)](IOReturn status, GlobalState after) mutable {
+                if (status != kIOReturnSuccess) { callback(status, {}); return; }
+                const bool stable = after.sampleRate == observed.global.sampleRate &&
+                    after.clockSelect == observed.global.clockSelect &&
+                    NominalRateHz(after.status) == after.sampleRate &&
+                    std::ranges::any_of(kDiceRateTable, [&](const auto& rate) {
+                        return rate.hz == after.sampleRate && rate.rateIndex ==
+                            ((after.clockSelect & ClockSelect::kRateMask) >> ClockSelect::kRateShift);
+                    });
+                const bool locked = (!runtimePolicy_.requireSourceLockAtConfirm || IsSourceLocked(after.status)) &&
+                    ((after.clockSelect & ClockSelect::kSourceMask) != static_cast<uint32_t>(ClockSource::ARX1) ||
+                     (IsArx1Locked(after.extStatus) && !HasArx1Slip(after.extStatus)));
+                callback(kIOReturnSuccess, {MakeDiceRuntimeCaps(after, observed.txStreams,
+                    observed.rxStreams, runtimePolicy_.exposeDeviceToHostToCoreAudio), stable && locked});
+            });
+    });
+}
+
 void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
     teardownCancel_ = cancel;
     if (driver_) {
@@ -184,6 +216,11 @@ IOReturn DICETcatProtocol::LoadGeometry() {
 }
 
 bool DICETcatProtocol::DeviceSupportsRate(uint32_t rateHz) const noexcept {
+    if (rateHz > 48000) {
+        const auto formations = RateFormations();
+        if (!formations || std::ranges::find(*formations, rateHz,
+            &Runtime::RateFormation::sampleRateHz) == formations->end()) return false;
+    }
     // TCAT refuses a rate outside CLOCK_CAPABILITIES before touching the device
     // (MidasFW SetNewSamplingRate). Before the first geometry read the mask is
     // unknown, and the request goes through as it always has.
@@ -356,8 +393,8 @@ std::expected<AudioDuplexChannels, IOReturn> DICETcatProtocol::AssignChannels(co
         return std::unexpected(kIOReturnNotReady);
     }
     if (const IOReturn status = driver_->AssignChannels(channels); status != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x",
-                       channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status);
+        ASFW_LOG_ERROR(DICE, "AssignChannels: refused d2h=%u h2d=%u kr=0x%x (%{public}s)",
+                       channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, status, ASFW::Logging::IOReturnName(status));
         return std::unexpected(status);
     }
     return channels;
@@ -513,7 +550,7 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
 
     diceReader_.ReadGeneralSections([this, callback = std::move(callback)](IOReturn status, GeneralSections sections) mutable {
         if (status != kIOReturnSuccess) {
-            ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x", status);
+            ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x (%{public}s)", status, ASFW::Logging::IOReturnName(status));
             callback(status);
             return;
         }
@@ -540,7 +577,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
         return;
     }
 
-    if (runtimeCapsValid_.load(std::memory_order_acquire)) {
+    if (runtimeCapsValid_.load(std::memory_order_acquire) && RateFormations()) {
         callback(kIOReturnSuccess);
         return;
     }
@@ -605,7 +642,27 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                     ASFW_LOG(DICE,
                                              "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
                                 }
-                                callback(kIOReturnSuccess);
+                                diceReader_.ReadRateFormats(caps.deviceRateMask,
+                                    [this, caps, callback = std::move(callback)](IOReturn status,
+                                                                                DiceRateFormats formats) mutable {
+                                        if (status == kIOReturnAborted || status == kIOReturnNoDevice ||
+                                            status == kIOReturnOffline) {
+                                            callback(status); return;
+                                        }
+                                        // EAP formats stand for every mode; the registers
+                                        // only for a device without EAP. A Pro 24 DSP found
+                                        // locked at 88.2 kHz with its 48 kHz layout
+                                        // (2026-10-08) used to overwrite the EAP 2x entry
+                                        // with 16 inputs, and every 2x switch rolled back.
+                                        formats = SelectPublishedFormats(status == kIOReturnSuccess,
+                                                                         formats, caps);
+                                        auto formations = DiceFormations(caps.deviceRateMask, formats,
+                                            runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                                        PublishRateFormations(
+                                            std::make_shared<const std::vector<Runtime::RateFormation>>(
+                                                std::move(formations)));
+                                        callback(kIOReturnSuccess);
+                                    });
                             });
                     });
             });
@@ -615,41 +672,8 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = tx.TotalPcmChannels(),
-        .hostOutputPcmChannels = rx.TotalPcmChannels(),
-        .deviceToHostAm824Slots = tx.TotalAm824Slots(),
-        .hostToDeviceAm824Slots = rx.TotalAm824Slots(),
-        .sampleRateHz = global.sampleRate,
-        .deviceRateMask = DiceDeviceRateMask(global.hasClockCaps, global.clockCaps),
-        .deviceToHostIsoChannel = tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
-        .hostToDeviceIsoChannel = rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
-    };
-
-    // Per-stream wire geometry from the DICE TX_NUMBER/RX_NUMBER headers. Stream
-    // count includes streams the device reports with iso=-1 (disabled) that the
-    // host must still arm for a multi-stream device such as the Venice F32
-    // (2×16). Mirrors DiceFamilyDriver's per-stream fill.
-    auto fillPerStream = [](const StreamConfig& sc,
-                            uint32_t& outCount,
-                            AudioStreamWireInfo* outStreams) noexcept {
-        const uint32_t count = (sc.numStreams < kMaxAudioStreamsPerDirection)
-                                   ? sc.numStreams
-                                   : kMaxAudioStreamsPerDirection;
-        outCount = count;
-        for (uint32_t i = 0; i < count; ++i) {
-            const auto& entry = sc.streams[i];
-            outStreams[i].isoChannel =
-                (entry.isoChannel >= 0 && entry.isoChannel <= 0x3F)
-                    ? static_cast<uint8_t>(entry.isoChannel)
-                    : AudioStreamWireInfo::kInvalidIsoChannel;
-            outStreams[i].pcmChannels = static_cast<uint16_t>(entry.pcmChannels);
-            outStreams[i].am824Slots = static_cast<uint16_t>(entry.Am824Slots());
-            outStreams[i].midiPorts = static_cast<uint16_t>(entry.midiPorts);
-        }
-    };
-    fillPerStream(tx, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
-    fillPerStream(rx, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams);
+    const auto caps = MakeDiceRuntimeCaps(global, tx, rx,
+        runtimePolicy_.exposeDeviceToHostToCoreAudio);
 
     // Per-channel device labels from the DICE TX/RX name sections, flattened
     // across streams in channel order. Written BEFORE CacheRuntimeCaps(caps)'s

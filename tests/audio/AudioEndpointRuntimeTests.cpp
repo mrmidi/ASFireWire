@@ -24,6 +24,7 @@ TEST(AudioEndpointRuntime, MissingConfigDoesNotPublishBinding) {
     ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     EXPECT_FALSE(runtime.CopyDirectAudioBinding(snapshot));
     EXPECT_FALSE(snapshot.valid);
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
 }
 
 TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
@@ -116,6 +117,11 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     EXPECT_EQ(snapshot.inputChannels, inputChannels);
     EXPECT_EQ(snapshot.sampleRateHz, sampleRateHz);
     EXPECT_EQ(snapshot.generation, generation);
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
+    snapshot.control->transmitTimingReady.store(1, std::memory_order_release);
+    EXPECT_TRUE(runtime.IsTransmitTimingReady());
+    snapshot.control->ResetForStart();
+    EXPECT_FALSE(runtime.IsTransmitTimingReady());
 
     outputMemory->release();
     inputMemory->release();
@@ -258,4 +264,32 @@ TEST(AudioEndpointRuntime, AvcRateAndWidthChangesKeepMemoryObjectsAndResetEpoch)
     EXPECT_EQ(returned.inputBase, prior.inputBase);
     EXPECT_EQ(returned.outputFrames, 12288U);
     EXPECT_EQ(returned.outputChannels, 4U);
+}
+
+TEST(AudioEndpointRuntime, PackedCaptureRetains34ChannelsAcrossRateChangesInOneAllocation) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    auto config = MakeDeviceConfig();
+    ASFW::Audio::Runtime::RateFormation low{};
+    low.sampleRateHz = 48000; low.protocolSupported = true; low.packedPcm = true;
+    low.capture = {{34,28}}; low.playback = {{30,25}};
+    auto high = low; high.sampleRateHz = 96000;
+    high.capture = {{26,22}}; high.playback = {{22,19}};
+    config.rateFormationCandidates = {low,high};
+    config.currentSampleRate = 48000; config.inputChannelCount = config.channelCount = 34;
+    config.outputChannelCount = 30; runtime.UpdateConfig(config);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(),kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot first{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(first)); EXPECT_EQ(first.inputChannels,34U);
+    config.currentSampleRate = 96000; config.inputChannelCount = config.channelCount = 26;
+    config.outputChannelCount = 22; runtime.UpdateConfig(config);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(),kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot second{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(second)); EXPECT_EQ(second.inputChannels,26U);
+    EXPECT_EQ(second.inputBase,first.inputBase);
+    config.currentSampleRate = 48000; config.inputChannelCount = config.channelCount = 34;
+    config.outputChannelCount = 30; runtime.UpdateConfig(config);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(),kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot last{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(last)); EXPECT_EQ(last.inputChannels,34U);
+    EXPECT_EQ(last.inputBase,first.inputBase);
 }

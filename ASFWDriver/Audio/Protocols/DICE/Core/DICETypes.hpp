@@ -536,13 +536,9 @@ inline constexpr DiceRateMapEntry kDiceRateTable[] = {
     {192000, RateCaps::k192000, ClockRateIndex::k192000},
 };
 
-/// Highest rate this build can STREAM. Announcing and streaming are separate:
-/// every rate the device supports is announced (DicePublishedRates), but only
-/// rates up to this ceiling may be selected. 1x rates (<=48k) keep the
-/// 8-frames-per-packet layout the rest of the stack assumes; 2x/4x change
-/// frames-per-packet and the device's stream layout, and are parked. Raising
-/// this is the switch that enables them -- see the TODO on
-/// DiceAudioBackend::RebuildEndpointForNewGeometry for everything else it needs.
+/// Legacy streaming ceiling for endpoints without a complete rate catalog.
+/// Catalog endpoints use RateValidation.hpp and confirmed rate formations;
+/// high rates require ASFW_DICE_MULTIRATE_VALIDATION during qualification.
 inline constexpr uint32_t kDiceMaxStreamingRateHz = 48000;
 
 /// True if this build can stream `rateHz` (announced or not).
@@ -647,8 +643,8 @@ constexpr uint32_t kDiceClockSelect48kInternal =
 /// within the HW-validated ceiling, and the CLOCK_SELECT rate index encodes
 /// that same rate. Generalizes the former 48k-internal-only placeholder.
 [[nodiscard]] inline bool IsSupportedDiceClockConfiguration(
-    const DiceClockConfiguration& clock) noexcept {
-    if (!DiceRateIsStreamable(clock.sampleRateHz)) {
+    const DiceClockConfiguration& clock, bool allowMultirate = false) noexcept {
+    if (!allowMultirate && !DiceRateIsStreamable(clock.sampleRateHz)) {
         return false;
     }
     if ((clock.clockSelect & ClockSelect::kSourceMask) !=

@@ -69,6 +69,8 @@ enum class DeviceDefinitionId : uint32_t {
     AvidMboxPro,
     /// An unlisted unit that passes the DICE identity rule (DiceIdentity.hpp).
     GenericDice,
+    Motu828, Motu896, Motu828mk3, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
+    MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -168,7 +170,12 @@ enum class ProfileBuilderId : uint16_t {
     GenericDice,
     /// The Weiss DACs: same wire policy as the INT202/203 (DiceWeissInt).
     WeissDac,
-    kLastValid = WeissDac,
+    Motu896hd,
+    MotuTraveler,
+    Motu8pre,
+    Motu828mk3,
+    Motu828, Motu896, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
+    kLastValid = MotuTravelerMk3,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -186,7 +193,7 @@ enum class ProtocolImplementationId : uint8_t {
     // 8 retired (BeBoBGeneric, reachable only through the retired builder);
     // the members below keep their numbers.
     BeBoBMAudioSpecial = 9,
-    MotuV2,
+    MotuRegister,
     RmeFireface,
     GenericAvc,
     kLastValid = GenericAvc,

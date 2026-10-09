@@ -95,12 +95,16 @@ settings:
 targets:
   ASFWDriver:
     type: com.apple.product-type.driver-extension
+    # The scheme's BuildableName comes from productName, not the PRODUCT_NAME
+    # setting; without this xcodegen writes ASFWDriver.dext into the scheme.
+    productName: net.asfw.driver
     platform: macOS
     sources:
       # Includes generic AvcControlMapping.hpp, graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.
+      # Includes the common MOTU register/profile, model table and SPH synthesizer.
       - path: ASFWDriver
         excludes:
           - "Info.plist"
@@ -131,20 +135,26 @@ targets:
           - "$(SRCROOT)/ASFWDriver/Audio/Model"
         # Expose complete AV/C rate formations in ordinary Xcode builds. DICE is unaffected.
         ASFW_AVC_MULTIRATE_VALIDATION: "1"
+        ASFW_DICE_MULTIRATE_VALIDATION: "1"
+        ASFW_MOTU_V1_VALIDATION: "0"
+        ASFW_MOTU_SYNTH_VALIDATION: "0"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"
+          - "ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)"
+          - "ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)"
+          - "ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.asfw.driver
         PRODUCT_BUNDLE_IDENTIFIER: net.asfw.driver
         AD_HOC_CODE_SIGNING_ALLOWED: YES
-        CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: F6YA6B56LR
         CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ASFWDriver/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: "ASFireWire Driver"
         CLANG_CXX_LANGUAGE_STANDARD: gnu++26
         CLANG_ENABLE_MODULES: YES
         EXCLUDED_SOURCE_FILE_NAMES: "*.md"
@@ -154,7 +164,7 @@ targets:
         LIBRARY_SEARCH_PATHS: "$(inherited)"
         OTHER_LDFLAGS: "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit"
         ARCHS: "x86_64 arm64e"
-        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_HARDENED_RUNTIME: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         RUN_CLANG_STATIC_ANALYZER: YES
         SKIP_INSTALL: YES
@@ -162,10 +172,13 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "0.4.0"
-        CURRENT_PROJECT_VERSION: 6
+        CURRENT_PROJECT_VERSION: 9
       configs:
         Debug:
+          CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.Debug.entitlements
           SWIFT_OPTIMIZATION_LEVEL: -Onone
+        Release:
+          CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.entitlements
 
   ASFW:
     type: application
@@ -187,16 +200,15 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: fwicons
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_ENTITLEMENTS: ASFW/App.entitlements
-        CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
-        CURRENT_PROJECT_VERSION: 6
+        CURRENT_PROJECT_VERSION: 9
         DEVELOPMENT_TEAM: F6YA6B56LR
-        ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
         ENABLE_USER_SELECTED_FILES: readonly
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ASFWDriver/Shared"
@@ -213,6 +225,13 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: ASFW/ASFW-Bridging-Header.h
         SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
         SWIFT_VERSION: "5.0"
+      configs:
+        Debug:
+          ENABLE_APP_SANDBOX: NO
+          CODE_SIGN_ENTITLEMENTS: ASFW/App.Debug.entitlements
+        Release:
+          ENABLE_APP_SANDBOX: YES
+          CODE_SIGN_ENTITLEMENTS: ASFW/App.entitlements
 
   ASFWTests:
     type: bundle.unit-test
@@ -235,7 +254,7 @@ targets:
         DEVELOPMENT_TEAM: F6YA6B56LR
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "26.0"
-        CURRENT_PROJECT_VERSION: 6
+        CURRENT_PROJECT_VERSION: 9
         MARKETING_VERSION: "1.0"
         STRING_CATALOG_GENERATE_SYMBOLS: NO
         SWIFT_APPROACHABLE_CONCURRENCY: YES

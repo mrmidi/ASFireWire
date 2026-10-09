@@ -5,7 +5,7 @@
 #include "DICEDuplexTestSupport.hpp"
 #include "Audio/Protocols/RME/FirefaceFamilyDriver.hpp"
 #include "Audio/Protocols/RME/FirefaceDeviceProtocol.hpp"
-#include "Audio/Protocols/Backends/RmeAudioBackend.hpp"
+#include "Audio/Host/RmeFamilyAdapter.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include <utility>
 
@@ -105,7 +105,7 @@ TEST(FirefaceIntegrationTests, PublicationConfigIsFixedDuplex48kWithoutMidi) {
     for (const auto [builder, channels] : {
              std::pair{ASFW::DeviceProfiles::Audio::ProfileBuilderId::RmeFireface400, 18U},
              std::pair{ASFW::DeviceProfiles::Audio::ProfileBuilderId::RmeFireface800, 28U}}) {
-        const auto config = ASFW::Audio::RmeAudioBackend::BuildNubConfig(record, builder, "RME");
+        const auto config = ASFW::Audio::Host::RmeFamilyAdapter::BuildNubConfig(record, builder, "RME");
         EXPECT_EQ(config.profileBuilderId, static_cast<uint32_t>(builder));
         EXPECT_EQ(config.inputChannelCount, channels);
         EXPECT_EQ(config.outputChannelCount, channels);

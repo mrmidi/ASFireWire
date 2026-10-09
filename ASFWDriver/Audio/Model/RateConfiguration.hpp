@@ -7,7 +7,7 @@ namespace ASFW::Audio::Model {
 // Resolve from retained descriptor formations, never by scaling channel counts.
 // This is a value copy; callers install it only with both directions quiesced.
 [[nodiscard]] inline std::expected<ASFWAudioDevice, Runtime::ConfigurationError>
-WithAvcRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
+WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
     const auto allocation = Runtime::MaximumFormationAllocation(prior.rateFormationCandidates,
         {ASFW::IsochTransport::kAllocatedFrameRingFrames, prior.outputChannelCount, prior.inputChannelCount, 0});
     if (!allocation) return std::unexpected(allocation.error());
@@ -28,7 +28,7 @@ WithAvcRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
         uint32_t offset = 0;
         for (const auto& stream : direction) {
             result.push_back({stream.pcmChannels, stream.dataBlockSize,
-                stream.midiSlots, offset, stream.pcmSlots});
+                stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots});
             offset += stream.pcmChannels;
         }
         return result;

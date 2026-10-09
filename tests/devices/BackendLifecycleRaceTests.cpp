@@ -6,15 +6,15 @@
 // publication-vs-teardown race conditions.
 
 #include <gtest/gtest.h>
+#include <net.asfw.driver/ASFWAudioNub.h>
 
 #include "Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Audio/Protocols/Backends/AVCAudioBackend.hpp"
-#include "Audio/Protocols/Backends/MotuAudioBackend.hpp"
-#include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
+#include "Audio/Host/AudioDeviceHost.hpp"
+#include "Audio/Host/DiceFamilyAdapter.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Discovery/DeviceRegistry.hpp"
@@ -38,8 +38,10 @@ using ASFW::Async::FWAddress;
 using ASFW::Async::IFireWireBus;
 using ASFW::Audio::AudioNubPublisher;
 using ASFW::Audio::AudioRuntimeRegistry;
-using ASFW::Audio::AVCAudioBackend;
-using ASFW::Audio::DiceAudioBackend;
+using ASFW::Audio::Host::AudioDeviceHost;
+using ASFW::Audio::Host::DiceFamilyAdapter;
+using ASFW::Audio::Host::HostEvent;
+using ASFW::Audio::Host::HostOutcome;
 using ASFW::Audio::IIsochDuplexHostTransport;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
@@ -124,8 +126,12 @@ struct TestFixture {
         }};
     AudioNubPublisher publisher{nullptr};
     ASFW::Audio::DICE::DiceNotificationRouter diceNotifications{registry};
-    AVCAudioBackend avc{publisher, registry, runtime, hostTransport, sessions, hardware};
-    DiceAudioBackend dice{publisher, registry, runtime, sessions, hardware, diceNotifications};
+    // DICE runs on the audio device host (AUDIO_DEVICE_HOST.md §6 E5). The
+    // adapter is declared first so it outlives the host's teardown.
+    DiceFamilyAdapter diceAdapter{diceNotifications};
+    AudioDeviceHost dice{publisher, registry, runtime, sessions, hostTransport};
+
+    TestFixture() { dice.Install(ASFW::Audio::AudioBackendKind::Dice, diceAdapter); }
 
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};
@@ -149,59 +155,8 @@ struct TestFixture {
     }
 };
 
-// Case 1: Concurrent teardown on AVCAudioBackend
-// Hold queued work open, start teardown A, invoke teardown B before releasing work.
-// Neither call must report completion before the drain finishes.
-TEST(BackendLifecycleRaceTests, AVCAudioBackendConcurrentTeardownWaitsForDrain) {
-    TestFixture f;
-    auto* queue = f.avc.WorkQueueForTesting();
-    ASSERT_NE(queue, nullptr);
-
-    std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
-
-    std::promise<void> drainStartedA;
-    std::promise<void> waitingB;
-
-    f.avc.SetOnTeardownDrainStartedHookForTesting([&] {
-        drainStartedA.set_value();
-    });
-    f.avc.SetOnSecondaryTeardownWaitingHookForTesting([&] {
-        waitingB.set_value();
-    });
-
-    auto futA = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown A has reached the work queue drain (and is blocked on queueLock)
-    drainStartedA.get_future().wait();
-
-    auto futB = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown B has entered the secondary wait loop
-    waitingB.get_future().wait();
-
-    // While queued work is held open, neither caller must have completed teardown
-    EXPECT_EQ(futA.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_EQ(futB.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_FALSE(f.avc.IsTeardownCompleteForTesting());
-
-    // Release queued work drain
-    queueLock.unlock();
-
-    // Both calls must now complete cleanly
-    EXPECT_EQ(futA.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(futB.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_TRUE(f.avc.IsTeardownCompleteForTesting());
-
-    f.avc.SetOnTeardownDrainStartedHookForTesting({});
-    f.avc.SetOnSecondaryTeardownWaitingHookForTesting({});
-}
-
-// Case 1 (DICE): Concurrent teardown on DiceAudioBackend
-TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain) {
+// Case 1 (DICE): Concurrent teardown of the host serving DICE
+TEST(BackendLifecycleRaceTests, DiceHostConcurrentTeardownWaitsForDrain) {
     TestFixture f;
     auto* queue = f.dice.WorkQueueForTesting();
     ASSERT_NE(queue, nullptr);
@@ -244,58 +199,8 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendConcurrentTeardownWaitsForDrain)
     f.dice.SetOnSecondaryTeardownWaitingHookForTesting({});
 }
 
-// Case 4: Publication versus Teardown on AVCAudioBackend
-// Pause publication after its admission check, run teardown concurrently, then release publication.
-// Teardown waits or publication is cancelled; no publication occurs after teardown completes.
-TEST(BackendLifecycleRaceTests, AVCAudioBackendPublicationPausedAfterAdmissionAbortsOnTeardown) {
-    TestFixture f;
-    const uint64_t guid = 0x0011223344556677ULL;
-    ASFW::Audio::Model::ASFWAudioDevice config{};
-    config.guid = guid;
-
-    std::promise<void> admitted;
-    std::promise<void> allowResume;
-    std::promise<void> teardownGateClosed;
-
-    f.avc.SetBeforePublishHookForTesting([&] {
-        admitted.set_value();
-        allowResume.get_future().wait();
-    });
-
-    f.avc.SetOnTeardownGateClosedHookForTesting([&] {
-        teardownGateClosed.set_value();
-    });
-
-    auto pubFut = std::async(std::launch::async, [&] {
-        f.avc.OnAudioConfigurationReady(guid, config);
-    });
-
-    admitted.get_future().wait();
-
-    auto teardownFut = std::async(std::launch::async, [&] {
-        f.avc.BeginTeardown();
-    });
-
-    // Wait until teardown has reached CloseAndWait, atomically closed the gate, and is waiting
-    teardownGateClosed.get_future().wait();
-    EXPECT_EQ(teardownFut.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-
-    // Resume publication: it observes stopping_ is now true and aborts
-    allowResume.set_value();
-
-    pubFut.wait();
-    teardownFut.wait();
-
-    // Verification: no nub was published after teardown finished
-    EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
-    EXPECT_EQ(f.avc.PublicationRejectCountForTesting(), 1u);
-
-    f.avc.SetBeforePublishHookForTesting({});
-    f.avc.SetOnTeardownGateClosedHookForTesting({});
-}
-
-// Case 4 (DICE): Publication versus Teardown on DiceAudioBackend
-TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionAbortsOnTeardown) {
+// Case 4 (DICE): Publication versus teardown on the host serving DICE
+TEST(BackendLifecycleRaceTests, DiceHostPublicationPausedAfterAdmissionAbortsOnTeardown) {
     TestFixture f;
     const uint64_t guid = 0x00130E0402004713ULL;
     f.SeedDiceDevice(guid);
@@ -314,7 +219,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
     });
 
     auto pubFut = std::async(std::launch::async, [&] {
-        f.dice.EnsureNubForGuidForTesting(guid);
+        f.dice.RefreshPublication(guid);
     });
 
     admitted.get_future().wait();
@@ -332,7 +237,7 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
     teardownFut.wait();
 
     EXPECT_EQ(f.publisher.GetNub(guid), nullptr);
-    EXPECT_GE(f.dice.PublicationRejectCountForTesting(), 1u);
+    EXPECT_GE(f.dice.OutcomeCount(HostEvent::Publish, HostOutcome::RefusedTeardown), 1u);
 
     f.dice.SetBeforePublishHookForTesting({});
     f.dice.SetOnTeardownGateClosedHookForTesting({});
@@ -340,24 +245,31 @@ TEST(BackendLifecycleRaceTests, DiceAudioBackendPublicationPausedAfterAdmissionA
 
 } // namespace
 
-TEST(BackendLifecycleRaceTests, MotuConcurrentTeardownWaitsForQueueAndRejectsRecovery) {
-    TestFixture f;
-    ASFW::Audio::MotuAudioBackend motu(f.publisher, f.registry, f.runtime, f.sessions, f.hardware);
-    auto* queue = motu.WorkQueueForTesting();
-    ASSERT_NE(queue, nullptr);
-    std::unique_lock<std::mutex> queueLock(queue->ExecutionMutexForTesting());
-    std::promise<void> draining;
-    std::promise<void> secondary;
-    motu.SetTeardownHooksForTesting([&] { draining.set_value(); }, [&] { secondary.set_value(); });
-    auto first = std::async(std::launch::async, [&] { motu.BeginTeardown(); });
-    draining.get_future().wait();
-    auto second = std::async(std::launch::async, [&] { motu.BeginTeardown(); });
-    secondary.get_future().wait();
-    EXPECT_EQ(first.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_EQ(second.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
-    EXPECT_FALSE(motu.QueueTimingRecovery(0x1234567800000001ULL));
-    queueLock.unlock();
-    EXPECT_EQ(first.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(second.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    motu.SetTeardownHooksForTesting({}, {});
+TEST(BackendLifecycleRaceTests, NubTerminationPreservesRemoteTransportResult) {
+    class PublishedNub final : public ASFWAudioNub {
+    public:
+        kern_return_t CopyProperties(OSDictionary** out) override {
+            *out = OSDictionary::withCapacity(8);
+            return *out ? kIOReturnSuccess : kIOReturnNoMemory;
+        }
+    };
+    class Provider final : public IOService {
+    public:
+        PublishedNub* nub = new PublishedNub();
+        ~Provider() override { nub->release(); }
+        kern_return_t Create(IOService*, const char*, IOService** out) override {
+            nub->retain(); // Creation reference; provider owns the service lifetime.
+            *out = nub;
+            return kIOReturnSuccess;
+        }
+    } provider;
+    AudioNubPublisher publisher{&provider};
+    constexpr uint64_t guid = 0x00130e0402004713ULL;
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    config.guid = guid;
+    ASSERT_TRUE(publisher.EnsureNub(guid, config, "late-stop-test"));
+    ASSERT_EQ(publisher.GetNub(guid), provider.nub);
+    publisher.TerminateNub(guid, "remote-device-lost", kIOReturnTimeout);
+    EXPECT_EQ(publisher.GetNub(guid), nullptr);
+    EXPECT_EQ(provider.nub->StopAudioStreamingOrRemoteResult(), kIOReturnTimeout);
 }

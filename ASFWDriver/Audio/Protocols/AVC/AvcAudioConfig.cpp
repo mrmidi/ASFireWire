@@ -1,6 +1,6 @@
-#include "../../Model/AvcRateConfiguration.hpp"
+#include "../../Model/RateConfiguration.hpp"
 #include "../BeBoB/MAudioSpecialFormation.hpp"
-#include "../../Runtime/AvcRateValidation.hpp"
+#include "../../Runtime/RateValidation.hpp"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
@@ -220,10 +220,10 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         config.currentSampleRate = kDefaultStartRateHz;
     config.sampleRates.clear();
     for (const auto& formation : config.rateFormationCandidates)
-        if (::ASFW::Audio::Runtime::AvcRateEnabled(formation, config.currentSampleRate))
+        if (::ASFW::Audio::Runtime::RateEnabled(formation, config.currentSampleRate))
             config.sampleRates.push_back(formation.sampleRateHz);
     if (config.sampleRates.empty()) return std::nullopt;
-    const auto initial = ::ASFW::Audio::Model::WithAvcRateFormation(config, config.currentSampleRate);
+    const auto initial = ::ASFW::Audio::Model::WithRateFormation(config, config.currentSampleRate);
     if (!initial) return std::nullopt;
     return *initial;
 }
@@ -280,7 +280,7 @@ std::optional<ASFWAudioDevice> BuildProfileOwnedAudioConfig(
         }
         config.sampleRates.clear();
         for (const auto& formation : config.rateFormationCandidates)
-            if (::ASFW::Audio::Runtime::AvcRateEnabled(formation, config.currentSampleRate))
+            if (::ASFW::Audio::Runtime::RateEnabled(formation, config.currentSampleRate))
                 config.sampleRates.push_back(formation.sampleRateHz);
     }
     return config;

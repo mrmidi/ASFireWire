@@ -196,6 +196,32 @@ public:
             ++extensionReadCount;
             const auto bytes = MakeExtensionSectionsWire();
             payload.assign(bytes.begin(), bytes.end());
+            if (rateEap) {
+                for (uint32_t i = 0; i < 9; ++i) {
+                    PutBe32(payload.data() + i * 8, (0x100 + i * 0x100) / 4);
+                    PutBe32(payload.data() + i * 8 + 4, 0x100 / 4);
+                }
+                PutBe32(payload.data() + 48, 0x10000 / 4);
+                PutBe32(payload.data() + 52, eapSectionSize / 4);
+            }
+        } else if (rateEap && address.addressHi == 0xFFFFU &&
+                   address.addressLo >= kExtensionBaseLo + 0x11000 &&
+                   address.addressLo < kExtensionBaseLo + 0x16000) {
+            const uint32_t relative = address.addressLo - kExtensionBaseLo - 0x11000;
+            const uint32_t mode = relative / 0x2000;
+            const uint32_t entry = relative % 0x2000;
+            eapReads.push_back(relative);
+            if (failEapEntry && entry != 0) {
+                callback(AsyncStatus::kTimeout, {}); return NextHandle();
+            }
+            if (entry == 0) {
+                PutBe32(payload.data(), oversizedEapCount ? 0xffffffffU : 1U);
+                PutBe32(payload.data() + 4, 1U);
+            } else {
+                const uint32_t captures[]{16, 12, 8};
+                PutBe32(payload.data(), entry == 8 ? captures[mode] : 8U);
+                PutBe32(payload.data() + 4, 1U);
+            }
         } else if (address.addressHi == 0xFFFFU &&
                    address.addressLo == (kAppSectionBaseLo + kEffectGeneralOffset) &&
                    length >= sizeof(uint32_t)) {
@@ -289,6 +315,11 @@ public:
     uint32_t extStatus_{0};
     uint32_t sampleRate_{48000};
     uint32_t notification_{0x20};
+    bool rateEap{false};
+    bool oversizedEapCount{false};
+    bool failEapEntry{false};
+    uint32_t eapSectionSize{0x6000};
+    std::vector<uint32_t> eapReads;
 
 private:
     AsyncHandle NextHandle() {
@@ -799,3 +830,101 @@ TEST(DiceLabelTests, SingleNameWithoutTerminator) {
 }
 
 } // namespace
+
+TEST(DiceRateFormatsTests, EapReadsAdvertisedModesAndUsesEntryStride) {
+    CountingFireWireBus bus;
+    bus.rateEap = true;
+    RouteState route;
+    ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::DICE::DICETransaction transaction(io);
+    ASFW::Audio::DICE::DiceRateFormats formats;
+    int callbacks = 0;
+    transaction.ReadRateFormats(0x1e, [&](IOReturn status, auto value) {
+        ++callbacks;
+        ASSERT_EQ(status, kIOReturnSuccess);
+        formats = std::move(value);
+    });
+    EXPECT_EQ(callbacks, 1);
+    ASSERT_TRUE(formats[0]);
+    ASSERT_TRUE(formats[1]);
+    EXPECT_FALSE(formats[2]);  // Not advertised: never probe the high mode.
+    EXPECT_EQ(formats[0]->capture.front().pcmChannels, 16);
+    EXPECT_EQ(formats[1]->capture.front().pcmChannels, 12);
+    EXPECT_EQ(formats[1]->playback.front().pcmChannels, 8);
+    EXPECT_EQ(formats[1]->capture.front().dataBlockSize, 13);
+    EXPECT_EQ(bus.eapReads, (std::vector<uint32_t>{0, 8, 8 + 0x10c, 0x2000, 0x2008, 0x2008 + 0x10c}));
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}
+
+TEST(DiceRateFormatsTests, FailedOrMalformedModeDoesNotPublishPartialCatalog) {
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        CountingFireWireBus bus;
+        bus.rateEap = true;
+        bus.oversizedEapCount = failure == 0;
+        bus.failEapEntry = failure == 1;
+        if (failure == 2) bus.eapSectionSize = 0x1008;
+        RouteState route;
+        ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+        ASFW::Audio::DICE::DICETransaction transaction(io);
+        int callbacks = 0;
+        transaction.ReadRateFormats(0x1e, [&](IOReturn status, auto formats) {
+            ++callbacks;
+            EXPECT_NE(status, kIOReturnSuccess);
+            for (const auto& mode : formats) EXPECT_FALSE(mode);
+        });
+        EXPECT_EQ(callbacks, 1);
+    }
+}
+
+TEST(DiceRateFormatsTests, UnknownNonEapModesAreNotInferredOrScaled) {
+    using namespace ASFW::Audio::DICE;
+    DiceRateFormats formats;
+    formats[0] = DiceModeFormat{{{8, 9, 1, {}}}, {{16, 17, 1, {}}}};
+    const auto candidates = DiceFormations(0x7f, formats);
+    ASSERT_EQ(candidates.size(), 3);
+    EXPECT_EQ(candidates[0].sampleRateHz, 32000);
+    EXPECT_EQ(candidates[2].sampleRateHz, 48000);
+    EXPECT_FALSE(candidates[2].hardwareValidated);
+    EXPECT_FALSE(DiceRateMode(12345));
+    std::array<uint8_t, 8> entry{};
+    PutBe32(entry.data(), 12);
+    PutBe32(entry.data() + 4, 8);
+    const auto stream = ParseDiceEapStream(entry);
+    ASSERT_TRUE(stream);
+    EXPECT_EQ(stream->midiPortCount, 8);
+    EXPECT_EQ(stream->dataBlockSize, 13); // Eight MIDI ports use one wire slot.
+    PutBe32(entry.data() + 4, 9);
+    EXPECT_FALSE(ParseDiceEapStream(entry));
+}
+
+TEST(DICETcatProtocolTests, RateObservationUsesFreshClockAndRejectsUnconfirmedSelection) {
+    CountingFireWireBus bus;
+    RouteState routeState;
+    DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    auto observe = [&] {
+        std::optional<ASFW::Audio::RateHardwareObservation> result;
+        protocol.ReadRateObservation([&](IOReturn status, auto observed) {
+            EXPECT_EQ(status, kIOReturnSuccess);
+            result = observed;
+        });
+        EXPECT_TRUE(result);
+        return result.value_or(ASFW::Audio::RateHardwareObservation{});
+    };
+    EXPECT_TRUE(observe().clockConfirmed);
+    bus.sampleRate_ = 96000;
+    bus.status_ = ASFW::Audio::DICE::StatusBits::kSourceLocked |
+        (ASFW::Audio::DICE::ClockRateIndex::k96000 << ASFW::Audio::DICE::StatusBits::kNominalRateShift);
+    // Status and actual rate changed, but CLOCK_SELECT still requests 48 kHz.
+    const auto mismatched = observe();
+    EXPECT_EQ(mismatched.caps.sampleRateHz, 96000);
+    EXPECT_FALSE(mismatched.clockConfirmed);
+    ASSERT_TRUE(ASFW::Audio::DICE::DiceClockSelectForRate(96000, ClockSource::Internal, bus.clockSelect_));
+    EXPECT_TRUE(observe().clockConfirmed);
+    bus.status_ &= ~ASFW::Audio::DICE::StatusBits::kSourceLocked;
+    EXPECT_FALSE(observe().clockConfirmed);
+    EXPECT_EQ(bus.writeCount, 0);
+    EXPECT_EQ(bus.lockCount, 0);
+}

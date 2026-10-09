@@ -280,6 +280,7 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     }
 
     d.busResetStartedCallback = [&ctx] {
+        if (ctx.audioCoordinator) ctx.audioCoordinator->HandleBusReset();
         ctx.dvCapture.HandleBusReset(ctx.isoch);
     };
 

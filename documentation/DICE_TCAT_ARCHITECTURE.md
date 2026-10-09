@@ -520,24 +520,39 @@ can be deleted.
   `assertedPlaybackStreams` until 2026-09-27, §2.9); latency from `AudioGeometryPolicy`. Capture
   visibility needed no scalar: the Weiss protocol already publishes
   `hostInputPcmChannels = 0`. Declared deltas are listed in §4.4.
-- **D — invalidate on rate change**, per discovery source (§2.5): EAP devices
-  read all modes once; register-only devices re-read after the switch, as
-  `RestartStreaming → PopulateDeviceStruct` does. Unblocks raising the ceiling.
-  **Deferred (2026-09-25)** to the ceiling raise. It cannot trigger below
-  2x rates, and verifying it needs 2x/4x hardware.
-  **Template landed (2026-09-25), following the TCAT kext, not Linux.**
-  Every `CLOCK_CAPABILITIES` rate is now announced (`DicePublishedRates`), as
-  `createNewAudioStream` does; picking one above `kDiceMaxStreamingRateHz`
-  (48 kHz) is refused before any bus traffic by `IsSupportedAudioClockConfig`:
-  in `ValidateSampleRate` (`ASFWAudioDevice.cpp`), before a configuration-change
-  window opens, and again in `ASFWAudioNub::RequestSampleRateChange`. CoreAudio
-  keeps its rate.
-  Devices start at `DiceInitialRate` (48 kHz when announced). The kext's
-  `CreateStreams` step is `DiceAudioBackend::RebuildEndpointForNewGeometry`, a
-  no-op called where a changed layout used to be refused silently; its TODO is
-  the design (kext call chain with addresses, the AudioDriverKit
-  configuration-change mapping, prerequisites, hardware test). Enabling high
-  rates = implement that function + the 2x wire, then raise the ceiling.
+- **D — immutable rate formations and confirmed configuration transactions.**
+  Implemented on `feature/dice-multirate` (2026-10-07), adapted to the current
+  shared configuration reducer rather than the former geometry-rebuild stub.
+  EAP CURRENT_CONFIG supplies low/middle/high stream formations without clock
+  probing. Register-only devices retain only their observed mode; unknown modes
+  are never inferred by scaling channels. Complete duplex catalog endpoints
+  publish only selectable rates, and use the neutral `ReadRateClockState`,
+  `ApplyRate`, and `InstallRateFormation` seam inside the host configuration
+  window. Readback confirms the clock, route incarnation/epoch/generation and
+  every stream's PCM/AM824 width before projecting the HAL graph. Failure follows
+  the existing configuration reducer's rollback/retained-state policy.
+
+  The production build enables `ASFW_DICE_MULTIRATE_VALIDATION=1`, removing
+  the 48 kHz admission ceiling for known catalog formations. This flag does
+  not set `hardwareValidated` on a formation; hardware qualification remains pending.
+  Devices with more than two playback streams, more than four capture streams,
+  or more than eight MIDI ports per stream are unsupported. Physical MIDI port
+  counts remain separate from their single multiplexed AM824 wire slot.
+  Playback-only endpoints that hide a physical capture stream (Weiss) retain
+  their legacy path: the shared formation contract still needs an independent
+  capture-visibility field before they can migrate safely.
+
+  Catalog discovery reads the EAP pointer table; rebuilding an absent catalog after an idle clock change also
+  rereads the live stream registers. Reviewed golden traces record these reads.
+
+  Batch verification: build with
+  `./build.sh --no-bump --set ASFW_DICE_MULTIRATE_VALIDATION=1`, then exercise every advertised known rate
+  in both directions, including 48→96→192→48 where supported, idle and running
+  changes, external clock changes, refusal/rollback, unplug and bus-reset
+  cancellation. Confirm mode-specific channel counts, MIDI ports, TX/RX packet
+  geometry and stable clocks. Use `/usr/bin/log show --last 20m --info --debug
+  --style compact --predicate 'eventMessage CONTAINS "[RateTxn]"'` for the
+  bounded transaction/readback trace. Hardware qualification remains pending.
 
 Doing C first is the tempting error: without A, deleting profile geometry only
 moves the constants, because `StartIO` still needs numbers from the host side.
@@ -596,3 +611,56 @@ Names, TX policy, framing constants and clock source did not move, and
    recorded device exhibits one, so this stays a hypothesis.
 4. **Extended channel-name layout.** Needs a device with stream `SIZE >= 326` to
    confirm whether the standard block is still populated on such a device.
+
+### Stop/reset diagnostics (2026-10-08)
+
+The reset callback quiesces local RX/TX contexts after generation-pinned async
+requests are aborted, before ROM discovery completes. It retains consumer and
+reservation ownership for session reconciliation; it sends no device-stop or
+IRM-release transactions from the interrupt queue. Stale-route cleanup uses
+reset invalidation rather than releasing old-generation resources.
+
+DICE stop quiesces host contexts, disables/disarms the device, then releases
+host IRM reservations. An unresolved device stop retains reservations for retry.
+The ordering was checked against Linux `dice-stream.c:465-466,478-486,587-605`;
+OHCI ACTIVE-clear remains the release barrier (`ohci.c:1361-1378`). The reviewed
+session golden changes contain only host stop ordering, with unchanged device
+register traffic.
+
+`[StopTrace]` records reset ownership, session ticket/reconcile begin/end,
+per-stage status and elapsed milliseconds, and RX/TX gate timeouts. Gate waits
+yield and time out after 100 one-millisecond sleeps, retaining bindings.
+Timeline epoch/observation writers use a nonblocking gate: a busy epoch returns
+zero without mutation, a busy observation is rejected, and StartIO refuses a
+failed epoch. Presentation-loss recovery retains its existing restart callback.
+
+Capture lifecycle and rate traces with:
+
+```sh
+/usr/bin/log show --last 20m --info --debug --style compact \
+  --predicate 'eventMessage CONTAINS "[StopTrace]" OR eventMessage CONTAINS "[RateTxn]" OR eventMessage CONTAINS "[Lifecycle]"'
+```
+
+Host validation: 2,946 cases (six existing skips); 299 targeted cases each under
+ASan/UBSan and TSan, including concurrent epoch writers and backend queue teardown.
+Existing DriverKit mocks were sufficient. These tests do not validate physical
+DMA, real DriverKit dispatch scheduling, or firmware clock changes. Hardware
+acceptance still requires 48↔44.1, advertised higher rates, streaming hot-unplug,
+and replug with OHCI attached. The previous realtime fail-safe remains a symptom,
+not proof of a process crash or proof that its root cause has been eliminated.
+
+Late stop after remote removal: the coordinator records the actual host-stop
+result, and publication stores it atomically on the specific nub before
+termination. `StopAudioStreaming` reads this result before resolving the parent,
+so clearing `parentDriver` in nub `Stop` does not erase successful cleanup.
+Audio callers use the LOCALONLY `StopAudioStreamingOrRemoteResult` bridge,
+which checks that result before issuing RPC: after service termination RPC
+itself can return `kIOReturnIPCError` (`0xe00002bf`) before the handler executes.
+This code is distinct from `kIOReturnNotReady` (`0xe00002d8`). Failed quiescence remains an error; an unpublished result
+never authorizes success. A replacement nub starts with an unpublished slot.
+`[StopTrace] owner=nub phase=late-remote-stop` records the terminal result.
+
+Audio lifecycle, rate transactions, session scheduling and DICE/isoch stop logs
+retain hexadecimal IOReturn values and append their original SDK constant names,
+e.g. `kr=0xe00002bf (kIOReturnIPCError)`. The shared `Logging::IOReturnName`
+helper is allocation-free and returns `unknown IOReturn` for unlisted values.

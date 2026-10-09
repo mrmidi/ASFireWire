@@ -7,7 +7,7 @@
 // assigned in array order (motu_avdevice.cpp:1839-1862).
 
 #include "Audio/Wire/MOTU/MotuPortLayout.hpp"
-#include "Audio/DriverKit/Config/MOTU/MotuV2Profile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 
 #include <gtest/gtest.h>
 

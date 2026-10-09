@@ -373,7 +373,7 @@ TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
 
     const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
 
-    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuV2);
+    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuPacked);
     EXPECT_EQ(profile.captureMotuPcmChunks, 14U);
     ASSERT_EQ(profile.captureMotuPorts.size(), 14U);
     EXPECT_EQ(profile.captureMotuPorts.data(), ASFW::Encoding::Motu::kUltraLiteCapture);

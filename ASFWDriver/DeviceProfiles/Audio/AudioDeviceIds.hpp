@@ -14,10 +14,12 @@
 
 namespace ASFW::DeviceProfiles::Audio {
 
-// RME former Fireface models share root model 0x101800 and are distinguished
-// by their unit version (Linux firewire/fireface/ff.c:185-200).
+// RME former Fireface models share model 0x101800 in the unit directory (or
+// root directory in legacy fixtures) and are distinguished by their unit version
+// (Linux firewire/fireface/ff.c:185-200, IEEE 1212 Unit Directory key 0x17).
 inline constexpr uint32_t kRmeVendorId = 0x000a35;
-inline constexpr uint32_t kRmeRootModelId = 0x101800;
+inline constexpr uint32_t kRmeModelId = 0x101800;
+inline constexpr uint32_t kRmeRootModelId = kRmeModelId;
 inline constexpr uint32_t kRmeUnitSpecifierId = kRmeVendorId;
 inline constexpr uint32_t kRmeFireface800UnitVersion = 0x000001;
 inline constexpr uint32_t kRmeFireface400UnitVersion = 0x000002;

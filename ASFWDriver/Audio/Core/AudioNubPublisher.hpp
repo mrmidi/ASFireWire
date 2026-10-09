@@ -40,6 +40,9 @@ public:
     /// Validate against the immutable endpoint snapshot. Unchanged configuration
     /// is a no-op; a mismatch latches restart rejection until nub termination.
     [[nodiscard]] bool IsGeometryChangeBlocked(uint64_t guid) const noexcept;
+    /// Latch "geometry changed" for a live endpoint whose new description was
+    /// compared against its committed configuration (Model::ClassifyAgainstCommitted).
+    void BlockGeometryChange(uint64_t guid, const char* sourceTag) noexcept;
 
     [[nodiscard]] bool RefreshNubProperties(uint64_t guid,
                                             const Model::ASFWAudioDevice& config,
@@ -49,7 +52,8 @@ public:
     [[nodiscard]] std::optional<uint64_t> GetSingleGuid() const noexcept;
 
     /// Terminate and forget a nub if present.
-    void TerminateNub(uint64_t guid, const char* reasonTag) noexcept;
+    void TerminateNub(uint64_t guid, const char* reasonTag,
+                      std::optional<IOReturn> remoteStopResult = std::nullopt) noexcept;
 
 private:
     [[nodiscard]] bool ReserveGuidLocked(uint64_t guid) noexcept;

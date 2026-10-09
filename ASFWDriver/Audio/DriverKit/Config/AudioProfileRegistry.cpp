@@ -5,7 +5,7 @@
 // Global profile registry dispatcher.
 
 #include "AudioProfileRegistry.hpp"
-#include "MOTU/MotuV2Profile.hpp"
+#include "MOTU/MotuProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
@@ -90,7 +90,7 @@ DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
                               .txEncoding = Encoding::AudioWireFormat::kAM824,
                               .preserveFdfInNoDataPackets = false}};
 // GenericDice's profile, and the registry's last resort for a nub whose
-// builder did not travel. DiceAudioBackend names the device from its identity,
+// builder did not travel. DiceFamilyAdapter names the device from its identity,
 // not from this profile.
 DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
                                  .txEncoding = Encoding::AudioWireFormat::kAM824,
@@ -104,9 +104,18 @@ AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
-MOTU::Profiles::MotuV2Profile gMotuUltraliteProfile{
+MOTU::Profiles::MotuProfile gMotu828mk3Profile{21};
+MOTU::Profiles::MotuProfile gMotu828Profile{1};
+MOTU::Profiles::MotuProfile gMotu896Profile{2};
+MOTU::Profiles::MotuProfile gMotu896mk3Profile{23};
+MOTU::Profiles::MotuProfile gMotuUltraliteMk3Profile{25};
+MOTU::Profiles::MotuProfile gMotuTravelerMk3Profile{27};
+MOTU::Profiles::MotuProfile gMotu896hdProfile{5};
+MOTU::Profiles::MotuProfile gMotuTravelerProfile{9};
+MOTU::Profiles::MotuProfile gMotu8preProfile{15};
+MOTU::Profiles::MotuProfile gMotuUltraliteProfile{
     DeviceProfiles::Audio::kMotuUltraliteSwVersion};
-MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
+MOTU::Profiles::MotuProfile gMotu828mk2Profile{
     DeviceProfiles::Audio::kMotu828mk2SwVersion};
 
 /// The DICE half, kept separate so DICE callers get the DICE profile without a
@@ -148,6 +157,15 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
         case Builder::MackieOnyx400F:
         case Builder::Motu828mk2:
         case Builder::MotuUltralite:
+        case Builder::Motu896hd:
+        case Builder::MotuTraveler:
+        case Builder::Motu8pre:
+        case Builder::Motu828mk3:
+        case Builder::Motu828:
+        case Builder::Motu896:
+        case Builder::Motu896mk3:
+        case Builder::MotuUltraliteMk3:
+        case Builder::MotuTravelerMk3:
         case Builder::GenericAvc:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
@@ -193,6 +211,15 @@ MOTU::Profiles::MotuV2Profile gMotu828mk2Profile{
             return &gMotu828mk2Profile;
         case Builder::MotuUltralite:
             return &gMotuUltraliteProfile;
+        case Builder::Motu896hd: return &gMotu896hdProfile;
+        case Builder::MotuTraveler: return &gMotuTravelerProfile;
+        case Builder::Motu8pre: return &gMotu8preProfile;
+        case Builder::Motu828mk3: return &gMotu828mk3Profile;
+        case Builder::Motu828: return &gMotu828Profile;
+        case Builder::Motu896: return &gMotu896Profile;
+        case Builder::Motu896mk3: return &gMotu896mk3Profile;
+        case Builder::MotuUltraliteMk3: return &gMotuUltraliteMk3Profile;
+        case Builder::MotuTravelerMk3: return &gMotuTravelerMk3Profile;
         case Builder::RmeFireface400:
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:

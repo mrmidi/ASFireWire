@@ -162,6 +162,13 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     ASSERT_NE(context, nullptr);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Running);
 
+    ASSERT_TRUE(context->AcquireRefillGateForTesting());
+    EXPECT_EQ(service.StopAll(), kIOReturnTimeout);
+    EXPECT_TRUE(context->NeedsQuiesce());
+    // Timeout must not clear a gate still owned by the dispatched refill.
+    EXPECT_FALSE(context->AcquireRefillGateForTesting());
+    context->ReleaseRefillGateForTesting();
+
     const Register32 controlSet = static_cast<Register32>(
         DMAContextHelpers::IsoXmitContextControlSet(0));
     hardware.SetTestRegister(controlSet, ASFW::Driver::ContextControl::kActive);

@@ -22,6 +22,8 @@
 #include <DriverKit/OSAction.iig>
 #include <atomic>
 #include <cstdint>
+#include <memory>
+namespace ASFW::Audio { struct RateHardwareObservation; }
 
 class ASFWDriver;
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
@@ -118,6 +120,8 @@ public:
 
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
+    void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
+    kern_return_t StopAudioStreamingOrRemoteResult() LOCALONLY;
 
     // Fire the registered DeviceClockChanged action (called by the DICE
     // backend when a health probe sees a healthy device at a foreign rate).
@@ -158,12 +162,12 @@ public:
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
     // Configuration-window calls only. The observation is read-only and
     // generation/incarnation bound; no cached rate is returned as evidence.
-    virtual kern_return_t ReadAvcClockState(uint64_t* outIncarnation,
+    virtual kern_return_t ReadRateClockState(uint64_t* outIncarnation,
         uint64_t* outRouteEpoch, uint32_t* outBusGeneration,
         uint32_t* outOutputRateHz, uint32_t* outInputRateHz);
-    virtual kern_return_t ApplyAvcRate(uint32_t sampleRateHz, uint64_t expectedIncarnation,
+    virtual kern_return_t ApplyRate(uint32_t sampleRateHz, uint64_t expectedIncarnation,
         uint64_t expectedRouteEpoch, uint32_t expectedBusGeneration);
-    virtual kern_return_t InstallAvcRateFormation(uint32_t sampleRateHz,
+    virtual kern_return_t InstallRateFormation(uint32_t sampleRateHz,
         uint64_t expectedIncarnation, uint64_t expectedRouteEpoch,
         uint32_t expectedBusGeneration);
 
@@ -190,6 +194,7 @@ public:
 };
 
 struct ASFWAudioNub_IVars {
+    std::atomic<uint64_t> remoteStopResult{0};
     IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
 
     // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
@@ -198,12 +203,13 @@ struct ASFWAudioNub_IVars {
     uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t currentSampleRateHz{48000};
-    bool avcObservationValid{false};
-    uint64_t avcObservedIncarnation{0};
-    uint64_t avcObservedRouteEpoch{0};
-    uint32_t avcObservedGeneration{0};
-    uint32_t avcObservedInputRate{0};
-    uint32_t avcObservedOutputRate{0};
+    bool rateObservationValid{false};
+    std::shared_ptr<ASFW::Audio::RateHardwareObservation> rateHardwareObservation;
+    uint64_t rateObservedIncarnation{0};
+    uint64_t rateObservedRouteEpoch{0};
+    uint32_t rateObservedGeneration{0};
+    uint32_t rateObservedInputRate{0};
+    uint32_t rateObservedOutputRate{0};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};

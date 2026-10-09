@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
-               BuildableName = "ASFWDriver.dext"
+               BuildableName = "net.asfw.driver.dext"
                BlueprintName = "ASFWDriver"
                ReferencedContainer = "container:ASFW.xcodeproj">
             </BuildableReference>
@@ -33,7 +33,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
-            BuildableName = "ASFWDriver.dext"
+            BuildableName = "net.asfw.driver.dext"
             BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>
@@ -58,7 +58,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
-            BuildableName = "ASFWDriver.dext"
+            BuildableName = "net.asfw.driver.dext"
             BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>
@@ -77,7 +77,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0EB9A8DA75D08971084A440A"
-            BuildableName = "ASFWDriver.dext"
+            BuildableName = "net.asfw.driver.dext"
             BlueprintName = "ASFWDriver"
             ReferencedContainer = "container:ASFW.xcodeproj">
          </BuildableReference>

@@ -107,6 +107,7 @@ CoreAudio / HAL
 | `Audio/Wire/` | Content framing: `IEC61883`, `CIP`, `AMDTP`, `AM824`, `RawPcm24In32`. Builds the CIP-headered stream handed to transport. CIP spans DV/MPEG/audio — **provisional home, not transport** |
 | `Audio/Runtime/` | Timing/buffer geometry: `HostClockAnchor`, `PlaybackRingRange` |
 | `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline` |
+| `Audio/Host/` | `AudioDeviceHost`: the one publication/recovery/teardown shell (queue `com.asfw.audio.host`, `[AudioHost]` log lines), plus one stateless `FamilyAdapter` per family (DICE, AV/C, MOTU, RME). See `documentation/AUDIO_DEVICE_HOST.md` |
 | `Audio/Engine/`, `Audio/Core/`, `Audio/Model/`, `Audio/Config/`, `Audio/Protocols/` | Engine wiring, runtime model, config |
 
 **Composition / cross-cutting:**
@@ -141,7 +142,7 @@ RX:  FireWire bus → OHCI IR DMA → IsochReceiveContext → directInputView_ w
 The **seam** is a `DirectBindingSource` / `directInputView_` view onto a shared
 `AudioTransportControlBlock` (in an `IOBufferMemoryDescriptor`), crossed through `Audio/Ports`
 interfaces. The two sides are **separate IOService objects on separate dispatch queues**
-(`ASFWDriver-Default`, `ASFWAudioNub-Default`, `com.asfw.audio.dice`). Lifetime across that
+(`ASFWDriver-Default`, `ASFWAudioNub-Default`, `com.asfw.audio.host`). Lifetime across that
 seam is delicate — see FW-60 (cross-service UAF/teardown crashes) for what goes wrong when
 the transport layer holds raw pointers into audio-owned memory.
 
@@ -287,6 +288,7 @@ Do not ask the user to run traces the agent can capture itself. Two real gotchas
 - **CRTP** for compile-time context role enforcement (AT Request vs AT Response, etc.).
 - **RAII** for all resources — IOLock wrappers, DMA buffers, etc.
 - **`std::span`** for non-owning array views; no raw pointer arithmetic unless interfacing with C APIs.
+- **Ranges** (DriverKit 27 libc++ ships `<ranges>` incl. `std::ranges::to`, `zip`, `join`). Prefer `std::ranges::` algorithms over iterator pairs everywhere. Use `std::views` pipelines (`| filter | transform`) only in cold list-to-list code (discovery, caps → rate/format lists, Config ROM walks): consume or materialise them (`std::ranges::to<std::vector>()`) in the same statement, never store a view in a member or capture one across an async callback (it references its source — the FW-60 lifetime class). No views in isoch/TX/RX hot loops (the HW-tested dext is a Debug build; each view layer is a call per element). If a dropped element needs a logged reason, write the loop with an explicit `continue` + log instead of a silent `filter`. Do not restyle working loops just to use ranges.
 - **`constexpr`/`static_assert`** for compile-time invariant checking — one wrong bit shift causes silent bus errors.
 - **Cite specs in comments** (e.g. `// OHCI §7.2.3`, `// IEC 61883-6 §6.2`) — see *Ground truth per question type*. Never invent a section number.
 

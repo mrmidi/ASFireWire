@@ -27,7 +27,8 @@
 #include "Audio/Core/AudioNubPublisher.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
-#include "Audio/Protocols/Backends/DiceAudioBackend.hpp"
+#include "Audio/Host/AudioDeviceHost.hpp"
+#include "Audio/Host/DiceFamilyAdapter.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
@@ -121,6 +122,12 @@ public:
 
 class FakeBindingSource final : public ::ASFW::Audio::Runtime::IDirectAudioBindingSource {
 public:
+    std::atomic<bool> timingReady{false};
+    std::atomic<uint32_t> readinessChecks{0};
+    bool IsTransmitTimingReady() noexcept override {
+        readinessChecks.fetch_add(1, std::memory_order_release);
+        return timingReady.load(std::memory_order_acquire);
+    }
     bool CopyDirectAudioBinding(::ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.generation = 1;
         out.valid = true;
@@ -315,6 +322,7 @@ public:
     std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override { return caps_; }
     ResourcePolicy GetResourcePolicy() const noexcept override { return resourcePolicy; }
     StopPolicy GetStopPolicy() const noexcept override { return stopPolicy; }
+    StartReadinessPolicy GetStartReadinessPolicy() const noexcept override { return readinessPolicy; }
     std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return postEnableDelay; }
 
     std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
@@ -403,6 +411,9 @@ public:
     std::vector<bool> healthLocked;
     ResourcePolicy resourcePolicy{};
     StopPolicy stopPolicy{};
+    StartReadinessPolicy readinessPolicy{};
+    std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> formations;
+    std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> RateFormations() const override { return formations; }
     std::optional<uint32_t> postEnableDelay{};
 
 private:
@@ -544,9 +555,12 @@ struct SessionRig {
         runtime.Insert(guid, protocol);
         bus.RouteNotificationsTo(notifications);
         if (IsDice()) {
-            // The real DICE backend listens, as in the driver: every DICE
-            // golden also shows which notifications it turns into restarts.
-            diceBackend.emplace(publisher, registry, runtime, sessions, hardware, notifications);
+            // The real host and DICE adapter listen, as in the driver: every
+            // DICE golden also shows which notifications they turn into
+            // restarts (AUDIO_DEVICE_HOST.md §6 E5).
+            diceAdapter.emplace(notifications);
+            deviceHost.emplace(publisher, registry, runtime, sessions, host);
+            deviceHost->Install(ASFW::Audio::AudioBackendKind::Dice, *diceAdapter);
         }
         bus.Trace().Clear();
     }
@@ -679,7 +693,9 @@ struct SessionRig {
     std::shared_ptr<IDeviceProtocol> protocol;
     ASFW::Audio::Session::AudioSessions sessions;
     ASFW::Audio::AudioNubPublisher publisher{nullptr};
-    std::optional<ASFW::Audio::DiceAudioBackend> diceBackend;
+    // The adapter outlives the host, whose teardown detaches it.
+    std::optional<ASFW::Audio::Host::DiceFamilyAdapter> diceAdapter;
+    std::optional<ASFW::Audio::Host::AudioDeviceHost> deviceHost;
 };
 
 } // namespace ASFW::Testing::Session

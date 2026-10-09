@@ -57,16 +57,16 @@ RUN_ANALYZER=false
 RUN_ASAN=false
 PVS_LOG="${BUILD_DIR}/PVS-Studio.log"
 PVS_JSON="${BUILD_DIR}/PVS-Studio.json"
-# When true, run only Swift/XCTest tests
 SWIFT_TEST_ONLY=false
-# When true, generate Swift code coverage
 SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
+ADHOC=false
 usage() {
   cat <<EOF
-Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
+Usage: $0 [--verbose] [--no-bump] [--adhoc] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
   --no-bump          Keep CURRENT_PROJECT_VERSION unchanged
+  --adhoc            Regenerate and build with ad-hoc signing (project.adhoc.yml)
   --test             Run C++ tests before building
   --test-only        Run C++ tests only (skip xcodebuild)
   --swift-test-only  Run Swift/XCTest tests only (skip main build)
@@ -91,6 +91,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --verbose) VERBOSE=true; shift;;
     --no-bump) NO_BUMP=true; shift;;
+    --adhoc) ADHOC=true; shift;;
     --test) RUN_TESTS=true; shift;;
     --test-only) TEST_ONLY=true; shift;;
     --swift-test-only) SWIFT_TEST_ONLY=true; shift;;
@@ -129,14 +130,18 @@ preflight() {
   # When running test-only we don't need xcodebuild or the Xcode project present.
   if ! $TEST_ONLY; then
     require_cmd xcodebuild
-    # The Xcode project is generated from project.yml (XcodeGen) and is NOT
+    # The Xcode project is generated from project.yml (or project.adhoc.yml) and is NOT
     # committed, so xcodegen is a hard build prerequisite. Regenerating also
     # picks up added/removed source files; output is deterministic, so this is
     # a no-op when nothing changed.
-    if [[ -f "project.yml" ]]; then
+    local spec="project.yml"
+    if $ADHOC; then
+      spec="project.adhoc.yml"
+    fi
+    if [[ -f "${spec}" ]]; then
       require_cmd xcodegen
-      log "Regenerating ${PROJECT_NAME}.xcodeproj from project.yml..."
-      xcodegen generate --quiet || { err "xcodegen generate failed"; exit 1; }
+      log "Regenerating ${PROJECT_NAME}.xcodeproj from ${spec}..."
+      xcodegen generate --spec "${spec}" --quiet || { err "xcodegen generate failed"; exit 1; }
     fi
     [[ -f "${PROJECT_NAME}.xcodeproj/project.pbxproj" ]] || { err "Run from project root (missing ${PROJECT_NAME}.xcodeproj)"; exit 1; }
   fi

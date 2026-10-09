@@ -160,6 +160,22 @@ TEST(AudioDriverTeardownTests, StopLeavesTheDriverFreeable) {
     EXPECT_EQ(driver->GetRetainCount(), 1);
 }
 
+// A wire kept across StopIO gets no StopIO on unplug, so Stop asks the device
+// to release it (Phase 88, 2026-10-08: unplug while retained logged no
+// release and no free() until it did).
+TEST(AudioDriverTeardownTests, StopReleasesAKeptWire) {
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    OSSharedPtr<ASFWAudioDevice> device{new ASFWAudioDevice(), OSNoRetain};
+    StartedGraph graph;
+    graph.AttachTo(*ivars, device);
+
+    StopAudioDriverGraph(*driver, *ivars);
+
+    EXPECT_EQ(device->keptWireReleaseRequests, 1U);
+    EXPECT_EQ(ivars->audioDevice.get(), nullptr);
+}
+
 // free() runs the same teardown after Stop already did; the second pass finds
 // nothing attached and detaches nothing twice.
 TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
@@ -194,4 +210,35 @@ TEST(AudioDriverTeardownTests, AvcStreamsDropOwnerBeforeGraphRemoval) {
     TearDownAudioGraph(*driver, *ivars);
     EXPECT_FALSE(input->owner); EXPECT_FALSE(output->owner);
     EXPECT_EQ(device->GetRetainCount(), 1);
+}
+
+TEST(RemoteDeviceStopResultTests, UnpublishedResultDoesNotAuthorizeLateStop) {
+    std::atomic<uint64_t> slot{0};
+    EXPECT_FALSE(ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(slot));
+}
+
+TEST(RemoteDeviceStopResultTests, ResultSurvivesDetachmentAndRepeatedStops) {
+    ASFWAudioNub nub;
+    nub.RecordRemoteDeviceStopResult(kIOReturnSuccess);
+    nub.rpcStopResult = kIOReturnIPCError; // Terminated service rejects RPC dispatch.
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnSuccess);
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnSuccess);
+    ASFWAudioNub replacement;
+    EXPECT_FALSE(ASFW::Audio::Runtime::RemoteDeviceStopResult::Read(replacement.remoteStopResult));
+}
+
+TEST(RemoteDeviceStopResultTests, FailedQuiescenceRemainsAFailureForLateStops) {
+    ASFWAudioNub nub;
+    for (const auto status : {kIOReturnTimeout, kIOReturnNotReady, kIOReturnDMAError}) {
+        nub.RecordRemoteDeviceStopResult(status);
+        EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), status);
+        EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), status);
+    }
+}
+
+TEST(RemoteDeviceStopResultTests, UnconfirmedStopStillPropagatesRpcFailure) {
+    ASFWAudioNub nub;
+    nub.rpcStopResult = kIOReturnIPCError;
+    EXPECT_EQ(nub.StopAudioStreamingOrRemoteResult(), kIOReturnIPCError);
+    EXPECT_EQ(nub.stopStreamingCalls, 1U);
 }

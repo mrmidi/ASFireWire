@@ -36,9 +36,9 @@ kern_return_t IsochDuplexHostTransport::AttachReceiveConsumer(
     if (!consumer) {
         return kIOReturnNoMemory;
     }
-    if (format.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuV2) {
+    if (format.wireFormat == ::ASFW::Encoding::AudioWireFormat::kMotuPacked) {
         motuRxCodecs_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxPayloadCodec>(
-            format.motuPcmChunks, format.motuPorts);
+            format.motuPcmChunks, format.motuPorts, format.motuV3, format.motuMessageChunks, format.motuPcmByteOffset);
         consumer->SetPayloadCodec(motuRxCodecs_[streamIndex].get());
 
         motuRxTimingObservers_[streamIndex] = std::make_unique<::ASFW::Audio::Wire::MotuRxTimingObserver>(
@@ -204,6 +204,14 @@ kern_return_t IsochDuplexHostTransport::StopAll() noexcept {
         reservations_.ReleaseAll();
     }
     return kIOReturnSuccess;
+}
+
+kern_return_t IsochDuplexHostTransport::QuiesceForBusReset() noexcept {
+    const auto receive = isoch_.StopReceive();
+    const auto transmit = isoch_.StopTransmit();
+    ASFW_LOG(Audio, "[StopTrace] owner=reset stage=local-contexts rx=0x%x (%{public}s) tx=0x%x (%{public}s) action=retain-session-ownership",
+             receive, ASFW::Logging::IOReturnName(receive), transmit, ASFW::Logging::IOReturnName(transmit));
+    return receive != kIOReturnSuccess ? receive : transmit;
 }
 
 kern_return_t IsochDuplexHostTransport::StopAllAfterBusReset() noexcept {

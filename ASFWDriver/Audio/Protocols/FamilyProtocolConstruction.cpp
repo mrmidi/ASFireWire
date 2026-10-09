@@ -13,7 +13,7 @@
 #include "Fireworks/FireworksProtocol.hpp"
 #include "BeBoB/Phase88MixerData.hpp"
 #include "BeBoB/MAudioSpecialProtocol.hpp"
-#include "MOTU/MotuV2Protocol.hpp"
+#include "MOTU/MotuProtocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
@@ -193,12 +193,12 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         // The protocol keeps the IRM client for its own use; the audio session
         // reserves the iso channels with the same client before programming
         // the device.
-        case ProtocolImplementationId::MotuV2:
+        case ProtocolImplementationId::MotuRegister:
             ASFW_LOG(Audio,
-                     "Creating MotuV2Protocol version=0x%06x node=0x%04x",
+                     "Creating MotuProtocol version=0x%06x node=0x%04x",
                      plan.unitVersion, nodeId);
-            return std::make_unique<Motu::MotuV2Protocol>(
-                busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient);
+            return std::make_unique<Motu::MotuProtocol>(
+                busOps, busInfo, routeRegistry, route, plan.unitVersion, irmClient, timerScheduler);
 
         case ProtocolImplementationId::RmeFireface: {
             const auto definition = plan.candidates.empty()

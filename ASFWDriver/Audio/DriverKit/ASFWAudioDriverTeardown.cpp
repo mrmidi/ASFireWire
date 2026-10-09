@@ -62,11 +62,25 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 }
 
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
+    // A wire kept across StopIO gets no StopIO on unplug: release it the way
+    // StopIO does, or the TX isoch resources and their mappings outlive the
+    // device (Phase 88 unplug while retained, 2026-10-08: no release, no free()).
+    if (ivars.audioDevice) {
+        (void)ivars.audioDevice->ReleaseKeptWireForDriverStop();
+    }
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    // A wire kept across StopIO (Runtime/WireRetention.hpp) still has its TX
+    // producer armed: stop it and wait out a pass in flight before the stream
+    // stops and the slabs go (TX_OWNERSHIP.md T6). Harmless when IO already
+    // stopped it.
+    ivars.runtime.txActive.store(false, std::memory_order_release);
+    if (ivars.txPreparationQueue) {
+        ivars.txPreparationQueue->DispatchSync(^{ });
+    }
     if (auto* nub = ivars.device.audioNub) {
-        const kern_return_t stopKr = nub->StopAudioStreaming();
+        const kern_return_t stopKr = nub->StopAudioStreamingOrRemoteResult();
         if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
+            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
         }
         (void)nub->RegisterTxPreparationAction(nullptr);
         (void)nub->RegisterZtsAnchorAction(nullptr);

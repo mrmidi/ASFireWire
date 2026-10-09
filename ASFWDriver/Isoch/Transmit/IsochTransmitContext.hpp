@@ -116,6 +116,12 @@ public:
     // Host tests stand in for the controller: they write OUTPUT_LAST status
     // into the slab to say which packets it finished.
     Tx::IsochTxDmaRing& RingForTesting() noexcept { return ring_; }
+    bool AcquireRefillGateForTesting() noexcept {
+        return !refillInProgress_.test_and_set(std::memory_order_acquire);
+    }
+    void ReleaseRefillGateForTesting() noexcept {
+        refillInProgress_.clear(std::memory_order_release);
+    }
 #endif
 
 private:
@@ -128,7 +134,7 @@ private:
     // ==========================================================================
     Tx::IsochTxDmaRing ring_{};
 
-    State state_{State::Unconfigured};
+    std::atomic<State> state_{State::Unconfigured};
     uint8_t channel_{0};
     FW::FwSpeed speed_{FW::FwSpeed::S400};
     uint8_t contextIndex_{0};

@@ -10,6 +10,12 @@
 
 namespace ASFW::Audio::Runtime {
 
+// Packed MOTU capture can carry 34 PCM channels in only 28 quadlets (both
+// ADAT banks at 1x). Host buffer/name capacity is distinct from the 32-slot
+// AM824 map and its bit masks. Linux motu-protocol-v3.c:209-239,274-281.
+inline constexpr uint32_t kMaxPackedPcmChannels = 34;
+inline constexpr uint32_t kMaxHostPcmChannels = kMaxPackedPcmChannels;
+
 // A formation describes one rate, not the shape observed at discovery time.
 // Protocol adapters supply these facts; generic code never scales ADAT widths.
 struct RateWireStream final {
@@ -17,6 +23,8 @@ struct RateWireStream final {
     uint32_t dataBlockSize{0};
     uint32_t midiSlots{0};
     Wire::PcmSlotMap pcmSlots{};
+    // DICE multiplexes up to eight physical ports into one AM824 slot.
+    uint32_t midiPortCount{0};
     friend bool operator==(const RateWireStream&, const RateWireStream&) = default;
 };
 
@@ -27,8 +35,16 @@ struct RateFormation final {
     std::vector<RateWireStream> capture;
     bool protocolSupported{false};
     bool hardwareValidated{false};
+    bool packedPcm{false}; // MOTU: 3-byte chunks, not PCM quadlet slots.
+    uint32_t packedCaptureMessageChunks{2};
+    uint32_t packedPlaybackMessageChunks{2};
     friend bool operator==(const RateFormation&, const RateFormation&) = default;
 };
+
+[[nodiscard]] inline uint32_t HostChannelLimit(std::span<const RateFormation> formations) noexcept {
+    return std::ranges::any_of(formations, &RateFormation::packedPcm)
+        ? kMaxPackedPcmChannels : Encoding::kMaxPcmChannels;
+}
 
 struct ConfigurationAllocation final {
     uint32_t frameCapacity{0};
@@ -77,10 +93,11 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
     if (!selected->protocolSupported) return std::unexpected(ConfigurationError::ProtocolUnsupported);
     if (!selected->hardwareValidated && validation != ConfigurationValidationPolicy::HardwareBatch)
         return std::unexpected(ConfigurationError::HardwareUnvalidated);
+    const auto channelLimit = selected->packedPcm ? kMaxPackedPcmChannels : Encoding::kMaxPcmChannels;
     if ((selected->mode != Encoding::StreamMode::kBlocking &&
          selected->mode != Encoding::StreamMode::kNonBlocking) ||
-        allocation.playbackChannelCapacity > Encoding::kMaxPcmChannels ||
-        allocation.captureChannelCapacity > Encoding::kMaxPcmChannels)
+        allocation.playbackChannelCapacity > channelLimit ||
+        allocation.captureChannelCapacity > channelLimit)
         return std::unexpected(ConfigurationError::InvalidFormation);
     const auto timing = ResolveTimingGeometry(rate, selected->mode, policy, allocation.frameCapacity);
     if (!timing) return std::unexpected(ConfigurationError::InvalidTiming);
@@ -91,18 +108,22 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
         return std::unexpected(ConfigurationError::InvalidFormation);
     if (selected->playback.empty() && selected->capture.empty())
         return std::unexpected(ConfigurationError::InvalidFormation);
-    const auto validateDirection = [&](const auto& streams, uint32_t capacity)
+    const auto validateDirection = [&](const auto& streams, uint32_t capacity, uint32_t messageChunks)
         -> std::expected<uint32_t, ConfigurationError> {
         uint32_t channels = 0;
         for (const auto& stream : streams) {
-            if (!stream.pcmChannels || stream.pcmChannels > Encoding::kMaxPcmChannels ||
+            if (!stream.pcmChannels || stream.pcmChannels > channelLimit ||
                 stream.dataBlockSize > Encoding::kMaxAmdtpDbs ||
                 stream.midiSlots > stream.dataBlockSize ||
-                stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
-                !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))
+                (selected->packedPcm
+                    ? (stream.midiSlots != 0 || !stream.pcmSlots.IsIdentity() ||
+                       messageChunks > 2 ||
+                       stream.dataBlockSize != 1 + ((messageChunks + stream.pcmChannels) * 3 + 3) / 4)
+                    : (stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
+                       !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))))
                 return std::unexpected(ConfigurationError::InvalidFormation);
             uint32_t used = 0;
-            for (uint32_t channel = 0; channel < stream.pcmChannels; ++channel) {
+            for (uint32_t channel = 0; !selected->packedPcm && channel < stream.pcmChannels; ++channel) {
                 const uint32_t bit = uint32_t{1} << stream.pcmSlots.SlotFor(channel);
                 if (used & bit) return std::unexpected(ConfigurationError::InvalidFormation);
                 used |= bit;
@@ -115,9 +136,9 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
         }
         return channels;
     };
-    const auto playback = validateDirection(selected->playback, allocation.playbackChannelCapacity);
+    const auto playback = validateDirection(selected->playback, allocation.playbackChannelCapacity, selected->packedPlaybackMessageChunks);
     if (!playback) return std::unexpected(playback.error());
-    const auto capture = validateDirection(selected->capture, allocation.captureChannelCapacity);
+    const auto capture = validateDirection(selected->capture, allocation.captureChannelCapacity, selected->packedCaptureMessageChunks);
     if (!capture) return std::unexpected(capture.error());
     return ResolvedAudioConfiguration{
         .revision = revision, .formation = *selected, .timing = *timing,
@@ -133,10 +154,11 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
 [[nodiscard]] inline std::expected<ConfigurationAllocation, ConfigurationError>
 MaximumFormationAllocation(std::span<const RateFormation> formations,
                            ConfigurationAllocation baseline) {
-    constexpr ConfigurationAllocation ceiling{49152, 32, 32, 4104};
     constexpr DeviceTimingPolicy probePolicy{64, 64, 128, 128};
     auto result = baseline;
     for (const auto& formation : formations) {
+        const auto limit = formation.packedPcm ? kMaxPackedPcmChannels : Encoding::kMaxPcmChannels;
+        const ConfigurationAllocation ceiling{49152, limit, limit, 4104};
         const auto resolved = ResolveAudioConfiguration(formation.sampleRateHz, formations,
             probePolicy, ceiling, 0, ConfigurationValidationPolicy::HardwareBatch);
         if (!resolved) return std::unexpected(resolved.error());

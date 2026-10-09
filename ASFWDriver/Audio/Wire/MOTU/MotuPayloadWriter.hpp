@@ -55,13 +55,14 @@ struct MotuPayloadWriterCounters final {
 
 struct MotuPayloadStreamConfig final {
     /// PCM chunks this direction carries per data block (fixed baseline plus any ADAT
-    /// extras), as resolved by MotuV2Protocol::PrepareDuplex.
+    /// extras), as resolved by MotuProtocol::PrepareDuplex.
     uint32_t pcmChunks{0};
     /// First host buffer channel this stream encodes, mirroring
     /// AmdtpStreamConfig::sourceChannelOffset.
     uint32_t sourceChannelOffset{0};
     /// Chunk behind each host channel; empty encodes in wire order.
     MotuPortMap ports{};
+    uint32_t pcmByteOffset{10};
 };
 
 class MotuPayloadWriter final : public ::ASFW::Audio::ITxPayloadWriter {

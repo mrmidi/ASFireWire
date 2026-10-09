@@ -24,6 +24,7 @@
 #include "../Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "../Audio/Protocols/Fireworks/EfcResponseMailbox.hpp"
+#include "../Audio/Protocols/MOTU/MotuNotificationMailbox.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 
@@ -181,6 +182,14 @@ private:
     ASFW::Audio::DICE::DiceNotificationRouter* router_;
 };
 
+class MotuLocalHandler final : public ILocalAddressHandler {
+public:
+    [[nodiscard]] const char* Name() const noexcept override { return "MOTU"; }
+    [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
+        return ASFW::Audio::Motu::Notifications::Handle(ctx);
+    }
+};
+
 // --- Fireworks: EFC response window (device -> host block writes) --------------
 // A Fireworks unit answers every EFC command by block-writing the response frame
 // to 0xECC0'8000'0000 in the host's address space (Linux fireworks_transaction.c
@@ -326,6 +335,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     }
     dispatch->AddHandler(std::make_unique<DiceLocalHandler>(d.diceNotifications.get()));
     dispatch->AddHandler(std::make_unique<FireworksEfcLocalHandler>());
+    dispatch->AddHandler(std::make_unique<MotuLocalHandler>());
     if (d.sbp2AddressSpaceManager) {
         dispatch->AddHandler(std::make_unique<Sbp2LocalHandler>(d.sbp2AddressSpaceManager.get()));
     }
@@ -334,7 +344,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     d.localRequestDispatch = dispatch;
 
     ASFW_LOG(Controller,
-             "✅ LocalRequestDispatch wired: %zu handlers (IRMResourceCSR/CSR/FCP/DICE/SBP2), tCodes 0x0/0x1/0x4/0x5/0x9",
+             "✅ LocalRequestDispatch wired: %zu handlers (IRMResourceCSR/CSR/FCP/DICE/MOTU/SBP2), tCodes 0x0/0x1/0x4/0x5/0x9",
              dispatch->HandlerCount());
 }
 

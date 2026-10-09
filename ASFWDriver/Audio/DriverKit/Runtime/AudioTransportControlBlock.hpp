@@ -556,6 +556,9 @@ struct AudioTransportControlBlock final {
     /// side, drained by the transmit engine on the audio side. Hosted here, next to its
     /// AM824 counterpart above, because this block is the lifetime-owned seam both
     /// services map; neither side may hold a pointer into the other's memory.
+    // Audio-owned producer publishes whether playback presentation timing has
+    // been acquired. The session reads it through the lifetime-owned binding port.
+    std::atomic<uint32_t> transmitTimingReady{0};
     ::ASFW::Encoding::Motu::MotuEventOffsetCache motuEventOffsets{};
     // Reset values only: StartIO stores ivars.device.timing's resolved delays.
     std::atomic<uint32_t> rxTransferDelayTicks{
@@ -699,6 +702,7 @@ struct AudioTransportControlBlock final {
         // Reset RX members
         rxSytCadence.Reset();
         rxSequenceReplay.Reset();
+        transmitTimingReady.store(0, std::memory_order_relaxed);
         motuEventOffsets.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);

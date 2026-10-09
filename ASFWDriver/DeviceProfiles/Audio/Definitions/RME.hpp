@@ -11,8 +11,12 @@
 namespace ASFW::DeviceProfiles::Audio::Definitions {
 
 // RME's former Fireface devices use an RME-specific unit specifier/version,
-// not the AV/C unit identity. These personas use a proprietary register
-// protocol, so AV/C/FCP remains blocked even after direct-register support.
+// not the AV/C unit identity. On real hardware (IEEE 1212 Unit Directory key 0x17),
+// model ID 0x101800 is published in the unit directory while root model ID is absent.
+// Clause 0 matches real hardware (unit directory model ID), Clause 1 provides
+// backwards compatibility for fixtures specifying root model ID.
+// These personas use a proprietary register protocol, so AV/C/FCP remains blocked
+// even after direct-register support.
 constexpr AudioDeviceDefinition RmeDefinition(DeviceDefinitionId id,
                                                uint32_t unitVersion,
                                                const char* modelName,
@@ -23,12 +27,17 @@ constexpr AudioDeviceDefinition RmeDefinition(DeviceDefinitionId id,
         .variantId = static_cast<uint32_t>(id),
         .clauses = {IdentityMatchClause{
                         .rootVendorId = MaskedValue32{kRmeVendorId},
-                        .rootModelId = MaskedValue32{kRmeRootModelId},
+                        .unitModelId = MaskedValue32{kRmeModelId},
                         .unitSpecifierId = MaskedValue32{kRmeUnitSpecifierId},
                         .unitVersion = MaskedValue32{unitVersion},
                     },
-                    IdentityMatchClause{}},
-        .clauseCount = 1,
+                    IdentityMatchClause{
+                        .rootVendorId = MaskedValue32{kRmeVendorId},
+                        .rootModelId = MaskedValue32{kRmeModelId},
+                        .unitSpecifierId = MaskedValue32{kRmeUnitSpecifierId},
+                        .unitVersion = MaskedValue32{unitVersion},
+                    }},
+        .clauseCount = 2,
         .family = AudioFamilyProviderId::RmeRegister,
         .probePolicy = ProbePolicyId::RmeRegister,
         .profileBuilder = builder,

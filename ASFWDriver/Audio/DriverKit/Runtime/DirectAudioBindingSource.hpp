@@ -39,8 +39,8 @@ struct DirectAudioBindingSnapshot {
 class IDirectAudioBindingSource {
 public:
     virtual ~IDirectAudioBindingSource() = default;
-    [[nodiscard]]
-    virtual bool CopyDirectAudioBinding(DirectAudioBindingSnapshot& out) noexcept = 0;
+    [[nodiscard]] virtual bool IsTransmitTimingReady() noexcept { return false; }
+    [[nodiscard]] virtual bool CopyDirectAudioBinding(DirectAudioBindingSnapshot& out) noexcept = 0;
 };
 
 } // namespace ASFW::Audio::Runtime

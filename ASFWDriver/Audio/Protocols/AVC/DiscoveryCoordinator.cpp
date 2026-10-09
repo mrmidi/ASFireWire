@@ -183,9 +183,9 @@ void DiscoveryCoordinator::Publish(uint64_t guid, const Model::ASFWAudioDevice& 
     const auto route = registry_.CurrentRoute(guid);
     if (!route) { Fail(guid, "publication-route-invalid"); return; }
     auto boundConfig = config;
-    boundConfig.avcRouteIncarnation = route->deviceIncarnation;
-    boundConfig.avcRouteEpoch = route->routeEpoch;
-    boundConfig.avcBusGeneration = route->generation.value;
+    boundConfig.rateRouteIncarnation = route->deviceIncarnation;
+    boundConfig.rateRouteEpoch = route->routeEpoch;
+    boundConfig.rateBusGeneration = route->generation.value;
     listener_->OnAVCAudioConfigurationReady(guid, boundConfig);
     publication_[guid] = Ready{};
     ASFW_LOG(Audio, "[AvcPublish] guid=%llx ready rate=%u in=%u out=%u", guid,

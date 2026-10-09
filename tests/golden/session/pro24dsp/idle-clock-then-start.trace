@@ -16,6 +16,14 @@ R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
 ## -> 0x00000000 streaming=0
 ## StartStreaming
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e00001a4 512 @s400
+R ffff.e00003a4 56 @s400
+R ffff.e00003dc 512 @s400
+R ffff.e00005dc 512 @s400
+R ffff.e00007dc 104 @s400
+R ffff.e0200000 72 @s400
 H begin
 R ffff.e0000000 40 @s400
 R ffff.e0000028 380 @s400
@@ -45,7 +53,6 @@ H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
 H reserve capture allowed=00000000ffffffff bw=564 -> ch=1
 H prepare rx ch=1 fmt=0 slots=17 pcm=0
 H prepare tx ch=0 sid=0 @s400
-R ffff.e0000000 40 @s400
 R ffff.e0000028 104 @s400
 R ffff.e0000028 104 @s400
 R ffff.e0000028 104 @s400

@@ -50,6 +50,12 @@ public:
     // waits 600 ms); the longer budget only delays a real failure.
     [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override { return 4000; }
 
+    // AV/C units keep their wire across CoreAudio StopIO, as AppleFWAudio does
+    // (its engine stop only notifies the stream readers/writers). The PHASE 88
+    // spends 4+ s in NO-DATA after a fresh start following a rate change; a
+    // teardown on each HAL retry restarted that warm-up (2026-10-08 log).
+    [[nodiscard]] bool RetainsWireAcrossStopIO() const noexcept override { return true; }
+
     [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override;
 };
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// MotuV2Protocol transport-adapter tests.
+// MotuProtocol transport-adapter tests.
 //
 // These pin the exact register traffic the protocol emits. The wire values were
 // confirmed against a real 828mkII on 2026-07-26: a clock status read returned
@@ -12,8 +12,9 @@
 
 #include <gtest/gtest.h>
 
-#include "Audio/Protocols/MOTU/MotuV2Protocol.hpp"
+#include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Discovery/DeviceRegistry.hpp"
+#include "tests/mocks/FakeTimerScheduler.hpp"
 
 #include <map>
 #include <optional>
@@ -29,7 +30,7 @@ using ASFW::Audio::Motu::ClockStatus;
 using ASFW::Audio::Motu::kAddrBase;
 using ASFW::Audio::Motu::kAsyncMessageRegionStart;
 using ASFW::Audio::Motu::ClockSourceV2;
-using ASFW::Audio::Motu::MotuV2Protocol;
+using ASFW::Audio::Motu::MotuProtocol;
 using ASFW::Audio::Motu::Reg;
 using ASFW::Audio::DuplexPrepareResult;
 using ASFW::Audio::DuplexStageResult;
@@ -70,6 +71,15 @@ public:
     std::vector<Write> writes;
     std::vector<uint32_t> reads;
     std::optional<uint32_t> readValue;
+    std::function<void(uint32_t, uint32_t)> onWrite;
+    bool deferWrites{false};
+    std::vector<std::function<void()>> deferredWrites;
+    void CompleteNextWrite() {
+        ASSERT_FALSE(deferredWrites.empty());
+        auto completion = std::move(deferredWrites.front());
+        deferredWrites.erase(deferredWrites.begin());
+        completion();
+    }
     /// Per-register replay, keyed by address low bits. Consulted before `readValue`, so a
     /// sequence touching several registers (duplex bring-up reads the optical config and
     /// the packet format) can give each one a distinct value.
@@ -112,7 +122,9 @@ public:
             (!isFirstWrite && failWritesAfterFirst != AsyncStatus::kSuccess)
                 ? failWritesAfterFirst
                 : writeStatus;
-        callback(status, {});
+        if (onWrite) onWrite(address.addressLo, value);
+        if (deferWrites) deferredWrites.push_back([callback = std::move(callback), status] { callback(status, {}); });
+        else callback(status, {});
         return AsyncHandle{1};
     }
 
@@ -141,11 +153,11 @@ constexpr uint32_t LowOf(Reg reg) {
 // Clock status
 //==============================================================================
 
-TEST(MotuV2ProtocolTests, DecodesTheClockStatusObservedOnHardware) {
+TEST(MotuProtocolTests, DecodesTheClockStatusObservedOnHardware) {
     RecordingBus bus;
     bus.readValue = 0x00000008U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<ClockStatus> observed;
     protocol.ReadClockStatus([&](IOReturn status, ClockStatus clock) {
@@ -164,11 +176,11 @@ TEST(MotuV2ProtocolTests, DecodesTheClockStatusObservedOnHardware) {
     EXPECT_EQ(protocol.CachedSampleRateHz(), 48000U);
 }
 
-TEST(MotuV2ProtocolTests, ReportsReadFailureAndLeavesCacheUnset) {
+TEST(MotuProtocolTests, ReportsReadFailureAndLeavesCacheUnset) {
     RecordingBus bus;
     bus.readStatus = AsyncStatus::kTimeout;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.ReadClockStatus([&](IOReturn s, ClockStatus) { status = s; });
@@ -182,12 +194,12 @@ TEST(MotuV2ProtocolTests, ReportsReadFailureAndLeavesCacheUnset) {
 // Sample rate write (read-modify-write)
 //==============================================================================
 
-TEST(MotuV2ProtocolTests, WritesRateWhilePreservingClockSource) {
+TEST(MotuProtocolTests, WritesRateWhilePreservingClockSource) {
     RecordingBus bus;
     // 48 kHz on an external ADAT clock: rate bits change, source bits must not.
     bus.readValue = 0x00000009U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.SetSampleRate(44100U, [&](IOReturn s) { status = s; });
@@ -200,11 +212,11 @@ TEST(MotuV2ProtocolTests, WritesRateWhilePreservingClockSource) {
     EXPECT_EQ(protocol.CachedSampleRateHz(), 44100U);
 }
 
-TEST(MotuV2ProtocolTests, SkipsTheWriteWhenTheRateAlreadyMatches) {
+TEST(MotuProtocolTests, SkipsTheWriteWhenTheRateAlreadyMatches) {
     RecordingBus bus;
     bus.readValue = 0x00000008U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.SetSampleRate(48000U, [&](IOReturn s) { status = s; });
@@ -214,11 +226,11 @@ TEST(MotuV2ProtocolTests, SkipsTheWriteWhenTheRateAlreadyMatches) {
     EXPECT_TRUE(bus.writes.empty());
 }
 
-TEST(MotuV2ProtocolTests, RejectsAnUnsupportedRateWithoutTouchingTheDevice) {
+TEST(MotuProtocolTests, RejectsAnUnsupportedRateWithoutTouchingTheDevice) {
     RecordingBus bus;
     bus.readValue = 0x00000008U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.SetSampleRate(32000U, [&](IOReturn s) { status = s; });
@@ -232,10 +244,10 @@ TEST(MotuV2ProtocolTests, RejectsAnUnsupportedRateWithoutTouchingTheDevice) {
 // Async message address registration / release
 //==============================================================================
 
-TEST(MotuV2ProtocolTests, RegistersAsyncAddressAsHiLoPair) {
+TEST(MotuProtocolTests, RegistersAsyncAddressAsHiLoPair) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     const uint64_t hostAddress = kAsyncMessageRegionStart + 0x20U;
     std::optional<IOReturn> status;
@@ -251,10 +263,10 @@ TEST(MotuV2ProtocolTests, RegistersAsyncAddressAsHiLoPair) {
     EXPECT_TRUE(protocol.HasRegisteredAsyncAddress());
 }
 
-TEST(MotuV2ProtocolTests, RejectsAddressOutsideTheDeviceAcceptedRegion) {
+TEST(MotuProtocolTests, RejectsAddressOutsideTheDeviceAcceptedRegion) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.RegisterAsyncMessageAddress(0xffc0U, 0x0000'1000'0000ULL,
@@ -266,10 +278,10 @@ TEST(MotuV2ProtocolTests, RejectsAddressOutsideTheDeviceAcceptedRegion) {
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
 }
 
-TEST(MotuV2ProtocolTests, ReleaseZeroesBothHalves) {
+TEST(MotuProtocolTests, ReleaseZeroesBothHalves) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.ReleaseAsyncMessageAddress([&](IOReturn s) { status = s; });
@@ -284,11 +296,11 @@ TEST(MotuV2ProtocolTests, ReleaseZeroesBothHalves) {
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
 }
 
-TEST(MotuV2ProtocolTests, DoesNotClaimRegistrationWhenTheSecondWriteFails) {
+TEST(MotuProtocolTests, DoesNotClaimRegistrationWhenTheSecondWriteFails) {
     RecordingBus bus;
     bus.failWritesAfterFirst = AsyncStatus::kTimeout;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.RegisterAsyncMessageAddress(0xffc0U, kAsyncMessageRegionStart,
@@ -299,20 +311,26 @@ TEST(MotuV2ProtocolTests, DoesNotClaimRegistrationWhenTheSecondWriteFails) {
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
 }
 
-TEST(MotuV2ProtocolTests, ShutdownReleasesOnlyWhenRegistered) {
+TEST(MotuProtocolTests, ShutdownReleasesOnlyWhenRegistered) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     // Nothing registered: shutdown must not poke the device.
     EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
     EXPECT_TRUE(bus.writes.empty());
 
-    protocol.RegisterAsyncMessageAddress(0xffc0U, kAsyncMessageRegionStart, nullptr);
+    std::optional<IOReturn> stoppedStatus;
+    protocol.RegisterAsyncMessageAddress(0xffc0U, kAsyncMessageRegionStart,
+        [&](auto result) { stoppedStatus = result; });
+    EXPECT_EQ(stoppedStatus, kIOReturnAborted);
+    EXPECT_TRUE(bus.writes.empty());
+    MotuProtocol registered(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    registered.RegisterAsyncMessageAddress(0xffc0U, kAsyncMessageRegionStart, nullptr);
     ASSERT_EQ(bus.writes.size(), 2U);
-    ASSERT_TRUE(protocol.HasRegisteredAsyncAddress());
+    ASSERT_TRUE(registered.HasRegisteredAsyncAddress());
 
-    EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
+    EXPECT_EQ(registered.Shutdown(), kIOReturnSuccess);
     ASSERT_EQ(bus.writes.size(), 4U);
     EXPECT_EQ(bus.writes[2].value, 0U);
     EXPECT_EQ(bus.writes[3].value, 0U);
@@ -362,7 +380,7 @@ ASFW::Audio::AudioDuplexChannels MakeChannels() {
 TEST(MotuV2DuplexTests, ExposesItselfAsFamilyDriver) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     ASFW::Audio::IDeviceProtocol& asProtocol = protocol;
     EXPECT_NE(asProtocol.AsFamilyDriver(), nullptr);
@@ -378,7 +396,7 @@ TEST(MotuV2DuplexTests, ReportsChunkGeometryThroughRuntimeCaps) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<DuplexPrepareResult> result;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -411,7 +429,7 @@ TEST(MotuV2DuplexTests, AdatOpticalAddsChunksToTheAffectedDirection) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<DuplexPrepareResult> result;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -422,10 +440,211 @@ TEST(MotuV2DuplexTests, AdatOpticalAddsChunksToTheAffectedDirection) {
     EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 14U);
 }
 
+//==============================================================================
+// Published geometry (E3a): the optical config is read ahead of publication
+// and the endpoint's counts come from it.
+//==============================================================================
+
+namespace {
+
+struct GeometryCase {
+    uint32_t inMode;
+    uint32_t outMode;
+    uint32_t inputChannels;   // capture (device->host)
+    uint32_t outputChannels;  // playback (host->device)
+};
+
+// Published rates (44.1/48 kHz) are rate mode 0: ADAT adds 8 chunks.
+constexpr GeometryCase kGeometryCases[] = {
+    {kOptNone, kOptNone, 14, 14},   {kOptNone, kOptAdat, 14, 22},
+    {kOptNone, kOptSpdif, 14, 14},  {kOptAdat, kOptNone, 22, 14},
+    {kOptAdat, kOptAdat, 22, 22},   {kOptAdat, kOptSpdif, 22, 14},
+    {kOptSpdif, kOptNone, 14, 14},  {kOptSpdif, kOptAdat, 14, 22},
+    {kOptSpdif, kOptSpdif, 14, 14},
+};
+
+}  // namespace
+
+TEST(MotuV2GeometryTests, EveryOpticalCombinationIsPublishedFromTheRegister) {
+    for (const GeometryCase& c : kGeometryCases) {
+        SCOPED_TRACE(testing::Message() << "in=" << c.inMode << " out=" << c.outMode);
+        RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+        bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(c.inMode, c.outMode);
+        RouteState routes;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+        std::optional<IOReturn> status;
+        protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+        ASSERT_TRUE(status.has_value());
+        EXPECT_EQ(*status, kIOReturnSuccess);
+        ASFW::Audio::AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.hostInputPcmChannels, c.inputChannels);
+        EXPECT_EQ(caps.hostOutputPcmChannels, c.outputChannels);
+        EXPECT_EQ(caps.deviceToHostPcmChunks, c.inputChannels);
+        EXPECT_EQ(caps.hostToDevicePcmChunks, c.outputChannels);
+        EXPECT_EQ(caps.sampleRateHz, 48000U);
+    }
+}
+
+// E7c: V2 registers its notification address first, as Linux does for every
+// model (motu-transaction.c), then reads. Those two writes are the only ones.
+TEST(MotuV2GeometryTests, ReadingGeometryRegistersNotificationsThenReadsClockAndOptical) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    // Publication reads both current clock and optical configuration.
+    ASSERT_EQ(bus.reads.size(), 2U);
+    EXPECT_EQ(bus.reads[0], LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(bus.reads[1], LowOf(Reg::InOutConfV2));
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::AsyncAddrHi));
+    EXPECT_EQ(bus.writes[1].addressLo, LowOf(Reg::AsyncAddrLo));
+    EXPECT_TRUE(protocol.HasRegisteredAsyncAddress());
+}
+
+TEST(MotuV2GeometryTests, BeforeAnyReadCapsAreUnavailable) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_TRUE(bus.reads.empty());
+}
+
+TEST(MotuV2GeometryTests, FailedReadReportsErrorWithoutGuessingCaps) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readStatus = AsyncStatus::kTimeout;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnTimeout);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+}
+
+TEST(MotuV2GeometryTests, FailedReReadDoesNotKeepTheEarlierAnswer) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    ASSERT_EQ(caps.hostInputPcmChannels, 22U);
+
+    bus.readStatus = AsyncStatus::kTimeout;
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_NE(*status, kIOReturnSuccess);
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+}
+
+TEST(MotuV2GeometryTests, ReservedOpticalEncodingRefusesCaps) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    std::optional<IOReturn> status;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, kIOReturnUnsupported);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    EXPECT_FALSE(protocol.GetRuntimeAudioStreamCaps(caps));
+}
+
+TEST(MotuV2GeometryTests, ARereadFollowsAnOpticalModeChange) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptSpdif);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 22U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 14U);
+}
+
+// Configure (PrepareDuplex) shares the arithmetic with the published description,
+// at every rate mode: at 2x (96 kHz) ADAT adds 4 chunks, not 8
+// (motu-protocol-v2.c:253-269), and the prepared geometry wins over the
+// published (1x) one while a duplex is prepared there.
+TEST(MotuV2GeometryTests, PrepareAtTwiceTheRateUsesTheFourChunkAdatExtra) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000018U;  // 96 kHz, internal
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+
+    std::optional<DuplexPrepareResult> result;
+    protocol.PrepareDuplex(MakeChannels(), ASFW::Audio::AudioClockConfig{.sampleRateHz = 96000U},
+                           [&](IOReturn, DuplexPrepareResult r) { result = r; });
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, 18U);
+    EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, 18U);
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 18U);
+    EXPECT_EQ(caps.sampleRateHz, 96000U);
+}
+
+TEST(MotuV2GeometryTests, PrepareAtPublishedRatesAgreesWithThePublishedCounts) {
+    for (const GeometryCase& c : kGeometryCases) {
+        SCOPED_TRACE(testing::Message() << "in=" << c.inMode << " out=" << c.outMode);
+        RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U;  // 48 kHz
+        bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(c.inMode, c.outMode);
+        bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
+        RouteState routes;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+        protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+        ASFW::Audio::AudioStreamRuntimeCaps published{};
+        ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(published));
+
+        std::optional<DuplexPrepareResult> result;
+        protocol.PrepareDuplex(MakeChannels(), kClock48k,
+                               [&](IOReturn, DuplexPrepareResult r) { result = r; });
+
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result->runtimeCaps.hostInputPcmChannels, published.hostInputPcmChannels);
+        EXPECT_EQ(result->runtimeCaps.hostOutputPcmChannels, published.hostOutputPcmChannels);
+    }
+}
+
 TEST(MotuV2DuplexTests, RejectsARateWithNoChunkLayoutWithoutTouchingTheDevice) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     // 192 kHz is mode 2, whose fixed chunk count is 0 for these models -- unsupported.
     std::optional<IOReturn> status;
@@ -442,7 +661,7 @@ TEST(MotuV2DuplexTests, HealthReportsLockedOnlyWhenTheClockWordDecodes) {
     RecordingBus bus;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<ASFW::Audio::DuplexHealthResult> health;
     protocol.ReadDuplexHealth([&](IOReturn status, ASFW::Audio::DuplexHealthResult r) {
@@ -460,7 +679,7 @@ TEST(MotuV2DuplexTests, HealthReportsUnlockedWhenTheClockReadFails) {
     RecordingBus bus;
     bus.readStatus = AsyncStatus::kTimeout;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<ASFW::Audio::DuplexHealthResult> health;
     protocol.ReadDuplexHealth(
@@ -482,7 +701,7 @@ TEST(MotuV2DuplexTests, SetAssignedChannelsOverridesTheProvisionalIsoChannels) {
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
@@ -509,7 +728,7 @@ TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -544,7 +763,7 @@ TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0x000000C0U; // both bits already set
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -556,7 +775,7 @@ TEST(MotuV2DuplexTests, PrepareClearsExcludeBitsWhenOpticalIsAdat) {
     EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode); // both exclude bits cleared
 }
 
-TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
+TEST(MotuV2DuplexTests, PrepareRejectsUndecodableOpticalGeometry) {
     RecordingBus bus;
     // PrepareDuplex now sets the device clock rate first, mirroring Linux's
     // snd_motu_stream_reserve_duplex (motu-stream.c:143-164), so the clock word must read back.
@@ -566,16 +785,15 @@ TEST(MotuV2DuplexTests, PrepareTreatsUndecodableOpticalConfigAsDifferedChunks) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(3U, 3U);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0x000000C0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
                            [&](IOReturn s, DuplexPrepareResult) { status = s; });
 
     ASSERT_TRUE(status.has_value());
-    EXPECT_EQ(*status, kIOReturnSuccess);
-    ASSERT_EQ(bus.writes.size(), 1U); // clock already at rate; only packet format written
-    EXPECT_EQ(bus.writes[0].value, kExpectedSpeedCode);
+    EXPECT_EQ(*status, kIOReturnUnsupported);
+    EXPECT_TRUE(bus.writes.empty());
 }
 
 TEST(MotuV2DuplexTests, PrepareMovesADeviceOffAMismatchedClockRate) {
@@ -590,7 +808,7 @@ TEST(MotuV2DuplexTests, PrepareMovesADeviceOffAMismatchedClockRate) {
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -611,7 +829,7 @@ TEST(MotuV2DuplexTests, PrepareReportsOpticalReadFailureWithoutWriting) {
     RecordingBus bus;
     bus.readStatus = AsyncStatus::kTimeout;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.PrepareDuplex(MakeChannels(), kClock48k,
@@ -631,7 +849,7 @@ TEST(MotuV2DuplexTests, EnableActivatesBothDirectionsWithTheirChannels) {
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
     bus.writes.clear();
@@ -652,7 +870,7 @@ TEST(MotuV2DuplexTests, EnableBeforePrepareIsRejectedAndWritesNothing) {
     RecordingBus bus;
     bus.readValue = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.ProgramTxAndEnableDuplex([&](IOReturn s, DuplexStageResult) { status = s; });
@@ -665,7 +883,7 @@ TEST(MotuV2DuplexTests, EnableBeforePrepareIsRejectedAndWritesNothing) {
 TEST(MotuV2DuplexTests, ProgramRxIsASuccessfulNoOpOnV2) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     std::optional<IOReturn> status;
     protocol.ProgramRx([&](IOReturn s, DuplexStageResult) { status = s; });
@@ -682,7 +900,7 @@ TEST(MotuV2DuplexTests, ConfirmAcceptsBothDirectionsOnTheExpectedChannels) {
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
@@ -700,7 +918,7 @@ TEST(MotuV2DuplexTests, ConfirmRejectsWhenTheDeviceReportsDifferentChannels) {
     // Activated, but on channels 1/2 rather than the 5/9 we asked for.
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC1C20000U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
@@ -718,7 +936,7 @@ TEST(MotuV2DuplexTests, ConfirmRejectsWhenOnlyOneDirectionIsActivated) {
     // RX activated on 5, TX channel right but its activation bit clear.
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5890000U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
@@ -738,7 +956,7 @@ TEST(MotuV2DuplexTests, StopDeactivatesBothDirectionsAndKeepsTheChannelFields) {
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
     protocol.ProgramTxAndEnableDuplex([](IOReturn, DuplexStageResult) {});
@@ -756,7 +974,7 @@ TEST(MotuV2DuplexTests, StopIsANoOpWhenDuplexWasNeverEnabled) {
     RecordingBus bus;
     bus.readValue = 0U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     EXPECT_EQ(protocol.StopDuplex(), kIOReturnSuccess);
     EXPECT_TRUE(bus.writes.empty());
@@ -767,16 +985,19 @@ TEST(MotuV2DuplexTests, StopIsANoOpWhenDuplexWasNeverEnabled) {
 // UltraLite enablement (unit version 0x0d)
 //==============================================================================
 
-TEST(MotuV2DuplexTests, UltraLiteWritesFetchingModeDuringPrepare) {
+TEST(MotuV2DuplexTests, UltraLiteDefersFetchingUntilHostStarted) {
     RecordingBus bus;
     bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
+    EXPECT_EQ(bus.writes.size(), 1U); // packet format only; no early fetching
+    bus.readValues[LowOf(Reg::IsocCommControl)] = ASFW::Audio::Motu::EncodeIsoCommStart(0, MakeChannels().hostToDeviceIsoChannel, MakeChannels().deviceToHostIsoChannel);
+    protocol.ConfirmDuplexStart([](IOReturn status, DuplexConfirmResult) { EXPECT_EQ(status, kIOReturnSuccess); });
     // The Spartan models need the fetch-enable write the 828mk2 skips
     // (motu-protocol-v2.c:190-225). At 48 kHz on an internal clock the model-specific bit
     // stays clear, so only bit 25 is set.
@@ -797,7 +1018,7 @@ TEST(MotuV2DuplexTests, The828mk2SkipsTheFetchingModeWrite) {
     bus.readValues[LowOf(Reg::PacketFormat)] = 0U;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
 
     protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
 
@@ -813,10 +1034,10 @@ TEST(MotuV2DuplexTests, The828mk2SkipsTheFetchingModeWrite) {
 // Channel labels
 //==============================================================================
 
-TEST(MotuV2ProtocolChannelLabelTests, UltraLiteNamesFollowHostChannelOrder) {
+TEST(MotuProtocolChannelLabelTests, UltraLiteNamesFollowHostChannelOrder) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
 
     std::vector<std::string> inNames;
     std::vector<std::string> outNames;
@@ -832,10 +1053,10 @@ TEST(MotuV2ProtocolChannelLabelTests, UltraLiteNamesFollowHostChannelOrder) {
     EXPECT_TRUE(bus.reads.empty());
 }
 
-TEST(MotuV2ProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
+TEST(MotuProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
     RecordingBus bus;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, /*896HD*/ 0x000005U);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, /*896HD*/ 0x000005U);
 
     std::vector<std::string> inNames;
     std::vector<std::string> outNames;
@@ -845,8 +1066,9 @@ TEST(MotuV2ProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
 TEST(MotuV2DuplexTests, FamilyDriverReadsHealthAndStatesEveryStep) {
     RecordingBus bus;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x00000008U; // 48 kHz, internal
+    bus.readValues[LowOf(Reg::InOutConfV2)] = 0;
     RouteState routes;
-    MotuV2Protocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
     ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
 
     EXPECT_EQ(family.LoadGeometry(), kIOReturnSuccess);
@@ -858,4 +1080,324 @@ TEST(MotuV2DuplexTests, FamilyDriverReadsHealthAndStatesEveryStep) {
     EXPECT_EQ(family.DisconnectPlayback(), kIOReturnUnsupported);
     EXPECT_EQ(family.DisconnectCapture(), kIOReturnUnsupported);
     EXPECT_EQ(family.BreakConnections(), kIOReturnUnsupported);
+}
+
+TEST(MotuV3Protocol, Current48kGeometryUsesBanksAndChangesNoClock) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0x101;
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x15);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    const auto caps = protocol.RuntimeCaps();
+    ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->sampleRateHz, 48000U);
+    EXPECT_EQ(caps->hostInputPcmChannels, 26U);
+    EXPECT_EQ(caps->hostOutputPcmChannels, 22U);
+    const auto formations = protocol.RateFormations();
+    ASSERT_TRUE(formations); ASSERT_EQ(formations->size(), 6U);
+    EXPECT_FALSE(formations->front().hardwareValidated);
+    const auto prepared = protocol.Configure(MakeChannels(), kClock48k);
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(bus.writes.size(), 3U); // address pair and format; no speculative rate writes
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::PacketFormat));
+    std::optional<IOReturn> changed;
+    protocol.SetSampleRate(96000, [&](auto s) { changed = s; });
+    EXPECT_EQ(changed, kIOReturnNotReady); // rate change needs a timeout scheduler
+    EXPECT_EQ(bus.writes.size(), 3U);
+}
+TEST(MotuV3Protocol, ArmStagesUseCapturedActivateAndStreamConfiguration) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0;
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0x5b59; // observed low half
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x15);
+    ASSERT_TRUE(protocol.Configure(MakeChannels(), kClock48k));
+    ASSERT_TRUE(protocol.ArmDeviceRx());
+    EXPECT_EQ(bus.writes.back().value, 0x80800000U);
+    ASSERT_TRUE(protocol.ArmDeviceTxAndEnable());
+    ASSERT_GE(bus.writes.size(), 4U);
+    EXPECT_EQ(bus.writes[bus.writes.size()-2].value & 0xffff, 0U);
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::StreamConfigV3));
+    EXPECT_EQ(bus.writes.back().value, 0x00120000U);
+}
+TEST(MotuV2DuplexTests, FetchWriteFailureIsPartOfConfirmAndStopRetriesARejectedWrite) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = 0;
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 13);
+    ASSERT_TRUE(protocol.Configure(MakeChannels(), kClock48k));
+    ASSERT_TRUE(protocol.ArmDeviceTxAndEnable());
+    bus.writeStatus = AsyncStatus::kTimeout;
+    EXPECT_FALSE(protocol.Confirm());
+    EXPECT_EQ(protocol.Stop(), kIOReturnTimeout);
+    bus.writeStatus = AsyncStatus::kSuccess;
+    bus.writes.clear();
+    EXPECT_EQ(protocol.Stop(), kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 2U); // mute completed, then deactivate completed
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(bus.writes[0].value & 0x02000000U, 0U);
+    EXPECT_EQ(bus.writes[1].addressLo, LowOf(Reg::IsocCommControl));
+}
+TEST(MotuV2GeometryTests, PublishedFormationsFollowCurrentRateAndEightPreWidths) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x18; // 96k internal
+    bus.readValues[LowOf(Reg::InOutConfV2)] = 0x500;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 15);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    const auto caps = protocol.RuntimeCaps();
+    ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->sampleRateHz, 96000U);
+    EXPECT_EQ(caps->hostInputPcmChannels, 18U);
+    EXPECT_EQ(caps->hostOutputPcmChannels, 14U);
+    const auto forms = protocol.RateFormations();
+    ASSERT_TRUE(forms); ASSERT_EQ(forms->size(), 4U);
+    EXPECT_EQ(forms->back().sampleRateHz, 96000U);
+    EXPECT_EQ(forms->back().capture.front().pcmChannels, 18U);
+    EXPECT_EQ(forms->back().capture.front().dataBlockSize, 16U);
+}
+
+TEST(MotuV1Protocol, Original828UsesSharedClockRegisterAndTrailingCaptureStatus) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0x41408004; // SPDIF input, ADAT output, 48k
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 1);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    auto caps = protocol.RuntimeCaps(); ASSERT_TRUE(caps);
+    EXPECT_EQ(caps->sampleRateHz, 48000U);
+    EXPECT_EQ(caps->hostInputPcmChannels, 10U); EXPECT_EQ(caps->hostOutputPcmChannels, 18U);
+    const auto formations = protocol.RateFormations(); ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 2U);
+    EXPECT_EQ(formations->front().capture[0].dataBlockSize, 10U);
+    EXPECT_EQ(formations->front().playback[0].dataBlockSize, 15U);
+    EXPECT_EQ(formations->front().packedCaptureMessageChunks, 2U);
+    EXPECT_EQ(formations->front().packedPlaybackMessageChunks, 0U);
+    std::optional<IOReturn> result;
+    protocol.SetSampleRate(44100, [&](auto status) { result = status; });
+    ASSERT_EQ(result, kIOReturnSuccess);
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::IsocCommControl));
+    EXPECT_EQ(bus.writes.back().value, 0x8000U); // upper command strobes cleared
+    bus.writes.clear();
+    protocol.SetSampleRate(96000, [&](auto status) { result = status; });
+    EXPECT_EQ(result, kIOReturnUnsupported); EXPECT_TRUE(bus.writes.empty());
+}
+TEST(MotuV1Protocol, Original896WithholdsUnresolvedDoubleRateAndPreservesOutputOnAtStop) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x83000008;
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 2);
+    ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    const auto formations = protocol.RateFormations(); ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 2U);
+    EXPECT_EQ(formations->back().sampleRateHz, 48000U);
+    EXPECT_EQ(formations->back().capture[0].pcmChannels, 18U);
+    EXPECT_EQ(formations->back().capture[0].dataBlockSize, 15U);
+    const auto prepared = protocol.Configure(MakeChannels(), {.sampleRateHz = 48000});
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(protocol.Stop(), kIOReturnSuccess);
+    ASSERT_GE(bus.writes.size(), 3U);
+    EXPECT_EQ(bus.writes[bus.writes.size()-2].value, 0x03000008U);
+    EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::IsocCommControl));
+}
+TEST(MotuV3Protocol, AllFireWireModelsPublishSixRatesAndOtherModelsRefuseInitialization) {
+    for (uint32_t version : {0x15U, 0x17U, 0x19U, 0x1bU}) {
+        RecordingBus bus; RouteState routes;
+        bus.readValues[LowOf(Reg::IsocCommControl)] = 0x1234;
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300; // current 96k
+        bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0;
+        bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, version);
+        ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+        ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+        ASSERT_EQ(protocol.RateFormations()->size(), 6U);
+        EXPECT_TRUE(protocol.Configure(MakeChannels(), {.sampleRateHz = 96000}));
+        EXPECT_TRUE(protocol.ArmDeviceTxAndEnable());
+        ASSERT_FALSE(bus.writes.empty());
+        EXPECT_EQ(bus.writes.back().value & 0xffffU, version == 0x15 ? 0U : 0x1234U);
+        // The observed 828mk3 48k-only word must not leak to other models/rates.
+        for (const auto& write : bus.writes) EXPECT_NE(write.addressLo, LowOf(Reg::StreamConfigV3));
+    }
+    for (uint32_t version : {0x30U, 0x33U, 0x35U, 0x37U, 0x39U, 0x45U}) {
+        RecordingBus bus; RouteState routes;
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, version);
+        EXPECT_EQ(protocol.Initialize(), kIOReturnUnsupported); EXPECT_TRUE(bus.writes.empty());
+    }
+}
+TEST(MotuV3Protocol, ClockChangeRequiresMatchingNotificationAndReadbackWithBoundedTimeout) {
+    using namespace ASFW::Audio::Motu;
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x1b, nullptr, &timer);
+    std::optional<IOReturn> result; int completions = 0;
+    protocol.SetSampleRate(96000, [&](auto status) { result = status; ++completions; });
+    ASSERT_EQ(bus.writes.size(), 3U); EXPECT_FALSE(result);
+    EXPECT_EQ(bus.writes.back().value, 0x300U);
+    const uint64_t address = kAsyncMessageRegionStart | bus.writes[1].value;
+    const std::array<uint8_t,4> clockChanged{0,0,0,2};
+    ASFW::Async::LocalRequestContext ctx{.destOffset = address, .sourceID = kNodeId,
+        .generation = routes.route.generation.value, .writePayload = clockChanged};
+    auto wrong = ctx; ++wrong.generation; (void)Notifications::Handle(wrong); EXPECT_FALSE(result);
+    wrong = ctx; ++wrong.sourceID; (void)Notifications::Handle(wrong); EXPECT_FALSE(result);
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300;
+    EXPECT_EQ(Notifications::Handle(ctx).rcode, ASFW::Async::ResponseCode::Complete);
+    ASSERT_EQ(result, kIOReturnSuccess); EXPECT_EQ(protocol.CachedSampleRateHz(), 96000U);
+    timer.Advance(4'000'000'000ULL); EXPECT_EQ(completions, 1);
+    result.reset();
+    protocol.SetSampleRate(192000, [&](auto status) { result = status; ++completions; });
+    EXPECT_FALSE(result); timer.Advance(4'000'000'000ULL);
+    EXPECT_EQ(result, kIOReturnTimeout); EXPECT_EQ(completions, 2);
+    (void)Notifications::Handle(ctx); EXPECT_EQ(completions, 2); // late event cannot revive timeout
+}
+// E7c: a notification no host-requested wait claims reaches the one observer.
+// Only V3 names CLK_CHANGED (0x2); V2 bits arrive unnamed; a stale route or a
+// foreign node never reaches it; a CLK_CHANGED claimed by the host's own clock
+// change is not forwarded.
+TEST(MotuV3Protocol, UnsolicitedNotificationsReachTheObserverOnlyWhenUnclaimed) {
+    using namespace ASFW::Audio::Motu;
+    struct Seen { uint64_t guid; uint32_t bits; bool clockChanged; };
+    static std::vector<Seen> seen;
+    seen.clear();
+    int context = 0;
+    Notifications::SetObserver(&context, [](void*, uint64_t guid, uint32_t bits, bool clockChanged) {
+        seen.push_back({guid, bits, clockChanged});
+    });
+
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x1b, nullptr, &timer);
+    protocol.SetSampleRate(96000, [](auto) {});
+    ASSERT_EQ(bus.writes.size(), 3U);
+    const uint64_t address = kAsyncMessageRegionStart | bus.writes[1].value;
+    const std::array<uint8_t,4> clockChanged{0,0,0,2};
+    ASFW::Async::LocalRequestContext ctx{.destOffset = address, .sourceID = kNodeId,
+        .generation = routes.route.generation.value, .writePayload = clockChanged};
+
+    // Claimed by the pending host clock change: not forwarded.
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300;
+    (void)Notifications::Handle(ctx);
+    EXPECT_TRUE(seen.empty());
+
+    // Front-panel change afterwards: forwarded, named.
+    (void)Notifications::Handle(ctx);
+    ASSERT_EQ(seen.size(), 1U);
+    EXPECT_EQ(seen[0].guid, routes.route.guid);
+    EXPECT_EQ(seen[0].bits, 2U);
+    EXPECT_TRUE(seen[0].clockChanged);
+
+    // An unnamed bit is forwarded with clockChanged=false.
+    const std::array<uint8_t,4> other{0,0,0,8};
+    auto otherCtx = ctx; otherCtx.writePayload = other;
+    (void)Notifications::Handle(otherCtx);
+    ASSERT_EQ(seen.size(), 2U);
+    EXPECT_FALSE(seen[1].clockChanged);
+
+    // Stale generation or a foreign node: dropped.
+    auto wrong = ctx; ++wrong.generation; (void)Notifications::Handle(wrong);
+    wrong = ctx; ++wrong.sourceID; (void)Notifications::Handle(wrong);
+    EXPECT_EQ(seen.size(), 2U);
+
+    // Unsubscribed: nothing more arrives.
+    Notifications::ClearObserver(&context);
+    (void)Notifications::Handle(ctx);
+    EXPECT_EQ(seen.size(), 2U);
+}
+
+TEST(MotuV2Protocol, NotificationsAreRegisteredAndForwardedUnnamed) {
+    using namespace ASFW::Audio::Motu;
+    static std::vector<bool> named;
+    named.clear();
+    int context = 0;
+    Notifications::SetObserver(&context, [](void*, uint64_t, uint32_t, bool clockChanged) {
+        named.push_back(clockChanged);
+    });
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn) {});
+    ASSERT_GE(bus.writes.size(), 2U);
+    ASSERT_EQ(bus.writes[1].addressLo, LowOf(Reg::AsyncAddrLo));
+    const std::array<uint8_t,4> bits{0,0,0,2};
+    (void)Notifications::Handle({.destOffset = kAsyncMessageRegionStart | bus.writes[1].value,
+        .sourceID = kNodeId, .generation = routes.route.generation.value, .writePayload = bits});
+    ASSERT_EQ(named.size(), 1U);
+    EXPECT_FALSE(named[0]) << "V2 names no clock-changed bit";
+    Notifications::ClearObserver(&context);
+}
+
+TEST(MotuV3Protocol, NotificationBeforeAckAndRouteCancellationAreSafe) {
+    using namespace ASFW::Audio::Motu;
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x100;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x19, nullptr, &timer);
+    int calls = 0; std::optional<IOReturn> result;
+    bus.onWrite = [&](uint32_t address, uint32_t value) {
+        if (address != LowOf(Reg::ClockStatusV2)) return;
+        bus.readValues[address] = value;
+        const std::array<uint8_t,4> changed{0,0,0,2};
+        (void)Notifications::Handle({.destOffset = kAsyncMessageRegionStart | bus.writes[1].value,
+            .sourceID = kNodeId, .generation = routes.route.generation.value, .writePayload = changed});
+    };
+    protocol.SetSampleRate(88200, [&](auto status) { result = status; ++calls; });
+    EXPECT_EQ(result, kIOReturnSuccess); EXPECT_EQ(calls, 1);
+    bus.onWrite = {}; result.reset();
+    protocol.SetSampleRate(192000, [&](auto status) { result = status; ++calls; });
+    EXPECT_FALSE(result);
+    auto updated = routes.route; ++updated.routeEpoch;
+    protocol.UpdateRuntimeContext(updated, nullptr);
+    EXPECT_EQ(result, kIOReturnAborted);
+    timer.Advance(4'000'000'000ULL); EXPECT_EQ(calls, 2);
+}
+
+TEST(MotuProtocolTests, ShutdownAddressReleaseCompletesAfterProtocolDestruction) {
+    RecordingBus bus; RouteState routes;
+    auto protocol = std::make_unique<MotuProtocol>(bus,bus,routes.registry,routes.route,3);
+    protocol->RegisterAsyncMessageAddress(0xffc0U,kAsyncMessageRegionStart,nullptr);
+    ASSERT_TRUE(protocol->HasRegisteredAsyncAddress()); bus.deferWrites = true;
+    EXPECT_EQ(protocol->Shutdown(),kIOReturnSuccess);
+    protocol.reset(); // both register IO completions must own their state
+    bus.CompleteNextWrite(); bus.CompleteNextWrite();
+    EXPECT_TRUE(bus.deferredWrites.empty()); ASSERT_EQ(bus.writes.size(),4U);
+    EXPECT_EQ(bus.writes[2].value,0U); EXPECT_EQ(bus.writes[3].value,0U);
+}
+
+TEST(MotuV3Protocol, ExplicitIdleRebindRestoresAddressWithoutGeometryOrStreaming) {
+    RecordingBus bus; RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x19);
+    std::optional<IOReturn> result;
+    protocol.RebindNotifications([&](auto status) { result = status; });
+    ASSERT_EQ(result, kIOReturnSuccess); ASSERT_TRUE(protocol.HasRegisteredAsyncAddress());
+    const auto originalAddressLow = bus.writes[1].value;
+    ASFW::Discovery::ConfigROM rom{};
+    rom.bib.guid = routes.route.guid; rom.gen = ASFW::FW::Generation{2}; rom.nodeId = kNodeId;
+    (void)routes.registry.UpsertFromROM(rom, ASFW::Discovery::LinkPolicy{});
+    protocol.UpdateRuntimeContext(*routes.registry.CurrentRoute(rom.bib.guid), nullptr);
+    EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
+    bus.writes.clear(); bus.reads.clear(); result.reset();
+    protocol.RebindNotifications([&](auto status) { result = status; });
+    ASSERT_EQ(result, kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::AsyncAddrHi));
+    EXPECT_EQ(bus.writes[1].value, originalAddressLow);
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_TRUE(protocol.HasRegisteredAsyncAddress());
+}
+TEST(MotuV3Protocol, ResetDuringRegistrationCannotPublishStaleRegisteredState) {
+    RecordingBus bus; RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, 0x19);
+    bus.deferWrites = true;
+    std::optional<IOReturn> result;
+    protocol.RebindNotifications([&](auto status) { result = status; });
+    bus.CompleteNextWrite(); // high completed; low still pending
+    auto newer = routes.route; ++newer.routeEpoch;
+    protocol.UpdateRuntimeContext(newer, nullptr);
+    bus.CompleteNextWrite();
+    EXPECT_EQ(result, kIOReturnOffline);
+    EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
 }

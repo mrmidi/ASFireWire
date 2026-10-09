@@ -43,6 +43,9 @@ public:
     // The transport must restart the streams while IO runs: ask the host for a
     // configuration change so StopIO -> StartIO rebuilds the TX queue.
     kern_return_t RequestIoRestart(uint32_t reason) LOCALONLY;
+    // Driver stop with a wire kept across StopIO: no StopIO will come, so
+    // release it here as StopIO would (stream stop, TX slabs, TX isoch).
+    kern_return_t ReleaseKeptWireForDriverStop() LOCALONLY;
     virtual kern_return_t PerformDeviceConfigurationChange(uint64_t change_action,
                                                            OSObject* in_change_info) override LOCALONLY;
     virtual kern_return_t AbortDeviceConfigurationChange(uint64_t change_action,
