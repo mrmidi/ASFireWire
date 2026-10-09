@@ -255,12 +255,54 @@ std::optional<IOReturn> SessionScheduler::RestartRefusal(DuplexRestartReason rea
 
 IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept {
     if (const auto refusal = RestartRefusal(reason, observedRun)) {
+        NoteRefusedDeviceReconfiguration(reason);
         return *refusal;
     }
     if (const uint32_t quietMs = RestartQuietPeriodMs(); quietMs != 0) {
         return DeferRestart(reason, observedRun, quietMs);
     }
     return RunRestart(reason, observedRun);
+}
+
+void SessionScheduler::NoteRefusedDeviceReconfiguration(DuplexRestartReason reason) noexcept {
+    // Only while CoreAudio has nothing attached (an idle clock change). A
+    // reconfiguration during our own clock change while streaming is that
+    // restart's own, as TCAT treats it (ignored inside RestartStreaming).
+    if (reason != DuplexRestartReason::kDeviceConfigChange || TeardownRequested() || IsRetired() ||
+        halAttached_.load(std::memory_order_acquire) ||
+        followUpPending_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (!deviceReconfigured_.exchange(true, std::memory_order_acq_rel)) {
+        ASFW_LOG(Audio, "[Session] device reconfigured while not streaming GUID=%llx; "
+                 "the next start is followed by one restart", guid_);
+    }
+}
+
+bool SessionScheduler::TakeFollowUpRestartDue() noexcept {
+    const bool wasFollowUp = followUpPending_.exchange(false, std::memory_order_acq_rel);
+    const bool reconfigured = deviceReconfigured_.exchange(false, std::memory_order_acq_rel);
+    if (!reconfigured || wasFollowUp) {
+        return false;
+    }
+    followUpPending_.store(true, std::memory_order_release);
+    return true;
+}
+
+void SessionScheduler::RequestFollowUpRestart(uint64_t run) noexcept {
+    // Only through the quiet period: a direct restart from inside the
+    // reconcile that just finished would queue behind itself.
+    const uint32_t quietMs = RestartQuietPeriodMs();
+    if (quietMs == 0) {
+        followUpPending_.store(false, std::memory_order_release);
+        ASFW_LOG(Audio, "[Session] follow-up restart skipped GUID=%llx: no quiet period", guid_);
+        return;
+    }
+    ASFW_LOG(Audio, "[Session] follow-up restart after a device reconfiguration GUID=%llx run=%llu",
+             guid_, run);
+    if (DeferRestart(DuplexRestartReason::kDeviceConfigChange, run, quietMs) != kIOReturnSuccess) {
+        followUpPending_.store(false, std::memory_order_release);
+    }
 }
 
 // While CoreAudio runs the streams, a restart underneath it would keep the
@@ -720,6 +762,9 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
              guid_, wanted.halAttached ? 1U : 0U, wanted.clockDirty ? 1U : 0U,
              wanted.restart ? 1U : 0U, static_cast<unsigned>(wanted.restartReason), action, status, ASFW::Logging::IOReturnName(status),
              ToString(after.state), after.run, UptimeMilliseconds() - startedMs);
+    if (followUpDue_.exchange(false, std::memory_order_acq_rel)) {
+        RequestFollowUpRestart(after.run);
+    }
     return status;
 }
 
@@ -777,6 +822,9 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
             actual.faultFailures = 0;
         }
         StoreActual(actual);
+        if (TakeFollowUpRestartDue()) {
+            followUpDue_.store(true, std::memory_order_release);
+        }
         return kIOReturnSuccess;
     }
 

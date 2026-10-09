@@ -243,6 +243,62 @@ TEST_F(DiceQuietPeriodTest, RestartOnAKeptWireIsHandedToTheHostAfterTheQuietPeri
     EXPECT_EQ(Snapshot().run, run);
 }
 
+// The device reported a stream-configuration change while nothing streamed
+// (an idle clock change), so its restart was refused. The next start is
+// followed by one restart after the quiet period, handed to the host. The
+// Pro 24 DSP came up locked to our stream and silent after such a start
+// until its streams were enabled again (hardware, 2026-10-09).
+TEST_F(DiceQuietPeriodTest, ReconfigurationWhileIdleRestartsOnceAfterTheNextStart) {
+    std::atomic<int> routed{0};
+    DuplexRestartReason routedReason{};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason reason) {
+        routedReason = reason;
+        routed.fetch_add(1);
+        return true;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    EXPECT_NE(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kDeviceConfigChange,
+                                          UINT64_MAX),
+              kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.Wait(399);
+    EXPECT_EQ(routed.load(), 0);
+    rig.Wait(1);
+    EXPECT_EQ(routed.load(), 1);
+    EXPECT_EQ(routedReason, DuplexRestartReason::kDeviceConfigChange);
+
+    // The host's StopIO -> StartIO: the device reports its configuration
+    // again during that start. It does not chain a second restart.
+    ASSERT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    (void)rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kDeviceConfigChange,
+                                      UINT64_MAX);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.Wait(1000);
+    EXPECT_EQ(routed.load(), 1);
+
+    // A later idle reconfiguration is a new one.
+    ASSERT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
+    (void)rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kDeviceConfigChange,
+                                      UINT64_MAX);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.Wait(400);
+    EXPECT_EQ(routed.load(), 2);
+}
+
+// A start with no reconfiguration before it is not followed by a restart.
+TEST_F(DiceQuietPeriodTest, StartWithoutReconfigurationIsNotFollowedByARestart) {
+    std::atomic<int> routed{0};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason) {
+        routed.fetch_add(1);
+        return true;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.Wait(1000);
+    EXPECT_EQ(routed.load(), 0);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+}
+
 TEST_F(SchedulerTest, DetachWithNothingRunningDoesNothing) {
     EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
     EXPECT_TRUE(rig.bus.Trace().Lines().empty());

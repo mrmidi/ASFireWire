@@ -111,11 +111,13 @@ public:
     }
 
     /// The wire carries CoreAudio IO now (fresh start or rejoin succeeded).
+    /// A pending IO restart survives it: one requested while the start was
+    /// finishing must still release the wire at the window's StopIO. Only a
+    /// release clears it.
     void OnStarted(uint32_t rateHz) noexcept {
         state_ = WireState::kLive;
         rateHz_ = rateHz;
         startTimeouts_ = 0;
-        ioRestartPending_ = false;
     }
 
     /// A start brought the wire up (or joined it) but the first timestamp did
