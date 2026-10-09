@@ -7,7 +7,9 @@
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../Session/SessionClock.hpp"
 #include "../../../Logging/Logging.hpp"
+#include <algorithm>
 #include <array>
+#include <optional>
 
 namespace ASFW::Audio::RME {
 
@@ -45,12 +47,29 @@ inline constexpr uint64_t kFF800Init = 0x00020000001cULL;
 inline constexpr uint64_t kFF800Start = 0x000200000028ULL;
 inline constexpr uint64_t kFF800Stop = 0x000200000034ULL;
 inline constexpr uint64_t kFF800Revision = 0x000200000100ULL;
+// Device settings in flash (FFADO fireface_def.h:108-126). The FF800 block is
+// readable directly; the FF400 one goes through a flash command: [flash
+// address, byte count] to kFF400FlashBlock, READ, then the bounce buffer.
+inline constexpr uint64_t kFF800FlashSettings = 0x0003000f0000ULL;
+inline constexpr uint32_t kFF400FlashSettings = 0x00060000U;  // a flash address, not a bus one
+inline constexpr uint64_t kFF400FlashBlock = 0x80100288ULL;
+inline constexpr uint64_t kFF400FlashReadBuffer = kFF400Revision;
+inline constexpr uint32_t kFF400FlashQuadletsPerRead = 32;  // fireface_flash.cpp:107
 inline constexpr uint32_t kConfiguredSourceMask = 0x1c01;
 // Bit 0 of the configured source wins over the saved external selection in
 // bits 12:10; the device reports both together (Linux parse_clock_bits,
 // ff-protocol-former.c:53-55).
 inline constexpr uint32_t kConfiguredInternalFlag = 0x0001;
 }
+
+// FFADO FF_device_flash_settings_t (fireface_def.h): the saved device settings.
+inline constexpr uint32_t kFlashSettingsQuadlets = 59;
+using FlashSettings = std::array<uint32_t, kFlashSettingsQuadlets>;
+
+// The only FF400 flash commands this driver sends. The same register also
+// takes WRITE (1) and ERASE (0xc/0xd/0xe) (fireface_def.h:135-140); those
+// values have no name here, so they cannot be sent.
+enum class FF400FlashCommand : uint32_t { kRead = 0x2, kGetRevision = 0xf };
 
 [[nodiscard]] constexpr uint32_t FirmwareMinimum(FirefaceModel model) noexcept {
     return model == FirefaceModel::kFF800 ? 0x24dU : 0x146U;
@@ -93,6 +112,8 @@ public:
         return p;
     }
     [[nodiscard]] StopPolicy GetStopPolicy() const noexcept override { return {.stopHostContextsBeforeDevice = true}; }
+    /// The settings block read by the last Configure, for diagnostics.
+    [[nodiscard]] const std::optional<FlashSettings>& LastFlashSettings() const noexcept { return lastFlashSettings_; }
     [[nodiscard]] std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return 5U; }
     void SetLinkSpeed(bool s800) noexcept { s800_ = s800; }
 
@@ -106,6 +127,7 @@ public:
         auto revision = ReadFirmwareRevision();
         if (!revision) return std::unexpected(revision.error());
         if (*revision == 0 || *revision < FirmwareMinimum(model_)) return std::unexpected(kIOReturnUnsupported);
+        LogSettingsDryRun();
         auto status = ReadClockStatus();
         if (!status) return std::unexpected(status.error());
         if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k) {
@@ -314,20 +336,102 @@ private:
     }
     [[nodiscard]] std::expected<uint32_t, IOReturn> ReadFirmwareRevision() {
         if (model_ == FirefaceModel::kFF800) return Read(Register::kFF800Revision);
-        if (IOReturn kr = WriteWords(Register::kFF400FlashCommand, std::array<uint32_t, 1>{0xf});
-            kr != kIOReturnSuccess) return std::unexpected(kr);
+        if (IOReturn kr = RunFF400FlashCommand(FF400FlashCommand::kGetRevision); kr != kIOReturnSuccess)
+            return std::unexpected(kr);
+        return Read(Register::kFF400Revision);
+    }
+    // Send a flash command and wait until the register reads 0 again: 25 polls
+    // 2 ms apart, as RME 3.41 Wait (0x6c0a) and FFADO wait_while_busy do.
+    [[nodiscard]] IOReturn RunFF400FlashCommand(FF400FlashCommand command) {
+        if (IOReturn kr = WriteWords(Register::kFF400FlashCommand,
+                std::array<uint32_t, 1>{static_cast<uint32_t>(command)}); kr != kIOReturnSuccess)
+            return kr;
         const uint64_t deadline = Session::UptimeMilliseconds() + 50U;
         while (Session::UptimeMilliseconds() < deadline) {
-            if (Cancelled()) return std::unexpected(kIOReturnAborted);
+            if (Cancelled()) return kIOReturnAborted;
             IOSleep(2);
             const uint64_t now = Session::UptimeMilliseconds();
             if (now >= deadline) break;
-            const uint32_t remaining = static_cast<uint32_t>(deadline - now);
-            auto busy = Read(Register::kFF400FlashStatus, remaining);
-            if (!busy) return std::unexpected(busy.error());
-            if (*busy == 0) return Read(Register::kFF400Revision);
+            auto busy = Read(Register::kFF400FlashStatus, static_cast<uint32_t>(deadline - now));
+            if (!busy) return busy.error();
+            if (*busy == 0) return kIOReturnSuccess;
         }
-        return std::unexpected(kIOReturnTimeout);
+        return kIOReturnTimeout;
+    }
+    struct BlockWords { std::array<uint32_t, 64> words{}; };
+    // Little-endian quadlets, like every Fireface register (FFADO
+    // ByteSwapFromDevice32, rme_avdevice.cpp:1160-1174).
+    [[nodiscard]] std::expected<BlockWords, IOReturn> ReadWords(uint64_t address, uint32_t count) {
+        if (Cancelled()) return std::unexpected(kIOReturnAborted);
+        if (count == 0 || count > BlockWords{}.words.size()) return std::unexpected(kIOReturnBadArgument);
+        const auto got = AwaitStage<BlockWords>([&](auto cb) {
+            const auto handle = io_.ReadBlock(Async::FWAddress{Async::FWAddress::AddressParts{
+                .addressHi = static_cast<uint16_t>(address >> 32), .addressLo = static_cast<uint32_t>(address)}},
+                count * 4U,
+                [cb = std::move(cb), count](Async::AsyncStatus s, std::span<const uint8_t> bytes) mutable {
+                    BlockWords out{};
+                    if (s == Async::AsyncStatus::kSuccess) {
+                        for (uint32_t i = 0; i < count && (i * 4U + 3U) < bytes.size(); ++i) {
+                            out.words[i] = static_cast<uint32_t>(bytes[i * 4U]) |
+                                (static_cast<uint32_t>(bytes[i * 4U + 1U]) << 8U) |
+                                (static_cast<uint32_t>(bytes[i * 4U + 2U]) << 16U) |
+                                (static_cast<uint32_t>(bytes[i * 4U + 3U]) << 24U);
+                        }
+                    }
+                    cb(Protocols::Ports::MapAsyncStatusToIOReturn(s), out);
+                });
+            (void)handle;
+        }, cancel_, 1500, 1);
+        if (!got) return std::unexpected(got.error());
+        if (!io_.IsRouteCurrent()) return std::unexpected(kIOReturnOffline);
+        return *got;
+    }
+    [[nodiscard]] std::expected<FlashSettings, IOReturn> ReadFlashSettings() {
+        FlashSettings settings{};
+        if (model_ == FirefaceModel::kFF800) {
+            auto block = ReadWords(Register::kFF800FlashSettings, kFlashSettingsQuadlets);
+            if (!block) return std::unexpected(block.error());
+            std::copy_n(block->words.begin(), kFlashSettingsQuadlets, settings.begin());
+            return settings;
+        }
+        for (uint32_t first = 0; first < kFlashSettingsQuadlets; first += Register::kFF400FlashQuadletsPerRead) {
+            const uint32_t count = std::min(Register::kFF400FlashQuadletsPerRead, kFlashSettingsQuadlets - first);
+            const std::array<uint32_t, 2> range{Register::kFF400FlashSettings + first * 4U, count * 4U};
+            if (IOReturn kr = WriteWords(Register::kFF400FlashBlock, range); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
+            if (IOReturn kr = RunFF400FlashCommand(FF400FlashCommand::kRead); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
+            auto block = ReadWords(Register::kFF400FlashReadBuffer, count);
+            if (!block) return std::unexpected(block.error());
+            std::copy_n(block->words.begin(), count, settings.begin() + first);
+        }
+        return settings;
+    }
+    // Dry run of the configuration upload (RME_FIREFACE_PLAN.md, item 3): log
+    // what the device has stored and what it reports, write nothing. A failure
+    // here never stops a start.
+    void LogSettingsDryRun() {
+        const char* model = model_ == FirefaceModel::kFF800 ? "FF800" : "FF400";
+        auto settings = ReadFlashSettings();
+        if (!settings) {
+            lastFlashSettings_.reset();
+            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: flash read failed kr=0x%08x",
+                     model, settings.error());
+        } else {
+            lastFlashSettings_ = *settings;
+            const auto& q = *settings;
+            for (uint32_t i = 0; i < kFlashSettingsQuadlets; i += 8) {
+                uint32_t w[8]{};
+                for (uint32_t j = 0; j < 8 && i + j < kFlashSettingsQuadlets; ++j) w[j] = q[i + j];
+                ASFW_LOG(Audio, "[RME] settings dry-run %{public}s flash q%02u: %08x %08x %08x %08x %08x %08x %08x %08x",
+                         model, i, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+            }
+        }
+        if (auto status = ReadWords(Register::kStatus, 4)) {
+            const auto& w = status->words;
+            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s status: %08x %08x %08x %08x",
+                     model, w[0], w[1], w[2], w[3]);
+        }
     }
     [[nodiscard]] std::expected<ClockStatus, IOReturn> ReadClockStatus() {
         auto q0 = Read(Register::kStatus); if (!q0) return std::unexpected(q0.error());
@@ -386,6 +490,7 @@ private:
     AudioDuplexChannels channels_{};
     AudioStreamRuntimeCaps caps_{};
     FW::Generation stateGeneration_{0};
+    std::optional<FlashSettings> lastFlashSettings_{};
 };
 
 } // namespace ASFW::Audio::RME
