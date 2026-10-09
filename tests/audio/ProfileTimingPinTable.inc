@@ -145,20 +145,20 @@
     {22, 96000, 59, 59, 128, 288},  // PreSonus FireStudio Project (DICE)
     {22, 176400, 119, 119, 320, 640},  // PreSonus FireStudio Project (DICE)
     {22, 192000, 119, 119, 320, 640},  // PreSonus FireStudio Project (DICE)
-    {23, 32000, 0, 0, 16, 16},  // RME Fireface 400 (48 kHz-only; declaration pinned across resolver rates)
-    {23, 44100, 0, 0, 16, 16},  // RME Fireface 400
-    {23, 48000, 0, 0, 16, 16},  // RME Fireface 400
-    {23, 88200, 0, 0, 16, 16},  // RME Fireface 400
-    {23, 96000, 0, 0, 16, 16},  // RME Fireface 400
-    {23, 176400, 0, 0, 16, 16},  // RME Fireface 400
-    {23, 192000, 0, 0, 16, 16},  // RME Fireface 400
-    {24, 32000, 0, 0, 16, 16},  // RME Fireface 800 (48 kHz-only; declaration pinned across resolver rates)
-    {24, 44100, 0, 0, 16, 16},  // RME Fireface 800
-    {24, 48000, 0, 0, 16, 16},  // RME Fireface 800
-    {24, 88200, 0, 0, 16, 16},  // RME Fireface 800
-    {24, 96000, 0, 0, 16, 16},  // RME Fireface 800
-    {24, 176400, 0, 0, 16, 16},  // RME Fireface 800
-    {24, 192000, 0, 0, 16, 16},  // RME Fireface 800
+    {23, 32000, 128, 128, 64, 64},  // RME Fireface 400 (48 kHz-only; MOTU's conservative values since 2026-10-09)
+    {23, 44100, 128, 128, 64, 64},  // RME Fireface 400
+    {23, 48000, 128, 128, 64, 64},  // RME Fireface 400
+    {23, 88200, 128, 128, 64, 64},  // RME Fireface 400
+    {23, 96000, 128, 128, 64, 64},  // RME Fireface 400
+    {23, 176400, 128, 128, 64, 64},  // RME Fireface 400
+    {23, 192000, 128, 128, 64, 64},  // RME Fireface 400
+    {24, 32000, 128, 128, 64, 64},  // RME Fireface 800 (48 kHz-only; MOTU's conservative values since 2026-10-09)
+    {24, 44100, 128, 128, 64, 64},  // RME Fireface 800
+    {24, 48000, 128, 128, 64, 64},  // RME Fireface 800
+    {24, 88200, 128, 128, 64, 64},  // RME Fireface 800
+    {24, 96000, 128, 128, 64, 64},  // RME Fireface 800
+    {24, 176400, 128, 128, 64, 64},  // RME Fireface 800
+    {24, 192000, 128, 128, 64, 64},  // RME Fireface 800
     {25, 32000, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)
     {25, 44100, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)
     {25, 48000, 29, 29, 48, 128},  // Avid Mbox Pro (DICE)

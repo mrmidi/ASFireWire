@@ -273,6 +273,17 @@ TEST(ResolvedStreamConfig, FirefaceProfilesUseExactHeaderlessPayloadGeometry) {
     }
 }
 
+TEST(ResolvedStreamConfig, FirefaceTimingMatchesTheOtherReplayDrivenFamily) {
+    // RME, like MOTU, is duplex-only and replays its transmit cadence from
+    // capture, so it declares MOTU's conservative values, not tuned ones.
+    using ASFW::Isoch::Audio::RME::Profiles::FirefaceProfile;
+    const FirefaceProfile profile{28U, "RME Fireface 800"};
+    EXPECT_EQ(profile.TxSafetyOffsetFrames(48000.0), 64U);
+    EXPECT_EQ(profile.RxSafetyOffsetFrames(48000.0), 64U);
+    EXPECT_EQ(profile.TxReportedLatencyFrames(48000.0), 128U);
+    EXPECT_EQ(profile.RxReportedLatencyFrames(48000.0), 128U);
+}
+
 TEST(ResolvedStreamConfigTests, DeviceSlotMapReachesPlaybackConfigAndRejectsOverflow) {
     F32ShapedProfile profile;
     ASFW::Isoch::Audio::ParsedWireStream wire{.pcmChannels = 2, .am824Slots = 3};

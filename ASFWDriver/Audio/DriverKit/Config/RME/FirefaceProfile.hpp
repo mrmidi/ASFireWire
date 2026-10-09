@@ -35,10 +35,13 @@ public:
         return TxClockSource::kRxReplayAfterBootstrap;
     }
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override { return {48000U}; }
-    [[nodiscard]] uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 16U; }
-    [[nodiscard]] uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 16U; }
-    [[nodiscard]] uint32_t TxReportedLatencyFrames(double) const noexcept override { return 0U; }
-    [[nodiscard]] uint32_t RxReportedLatencyFrames(double) const noexcept override { return 0U; }
+    // Duplex-only with the transmit cadence replayed from capture, like MOTU:
+    // declare MOTU's conservative values until hardware says otherwise
+    // (MotuProfile.cpp). Not tuned, and not the RME kext's numbers.
+    [[nodiscard]] uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 64U; }
+    [[nodiscard]] uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 64U; }
+    [[nodiscard]] uint32_t TxReportedLatencyFrames(double) const noexcept override { return 128U; }
+    [[nodiscard]] uint32_t RxReportedLatencyFrames(double) const noexcept override { return 128U; }
     [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override { return 2000U; }
 
 private:
