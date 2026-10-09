@@ -29,6 +29,10 @@ inline constexpr uint64_t kFF400FlashCommand = 0x80100520ULL;
 // RME_FF400_FLASH_STAT_OFS == RME_FF400_FLASH_CMD_OFS, fireface_def.h:58-59;
 // RME 3.41 Wait 0x6c0a polls 0x80100520 for 0).
 inline constexpr uint64_t kFF400FlashStatus = kFF400FlashCommand;
+// Flash busy wait: 25 polls 2 ms apart (RME 3.41 Wait 0x6c0a; FFADO
+// MAX_FLASH_BUSY_RETRIES and wait_while_busy(2), fireface_flash.cpp:33-62).
+inline constexpr uint32_t kFF400FlashPolls = 25;
+inline constexpr uint32_t kFF400FlashPollIntervalMs = 2;
 inline constexpr uint64_t kFF400Revision = 0x80100290ULL;
 inline constexpr uint64_t kFF800Init = 0x00020000001cULL;
 inline constexpr uint64_t kFF800Start = 0x000200000028ULL;

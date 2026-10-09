@@ -8,6 +8,8 @@
 #include "Audio/Host/RmeFamilyAdapter.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -319,6 +321,24 @@ TEST(FirefaceSequenceTests, FF400SequenceUsesCaptureShiftAndExactStopTuple) {
     const auto policy = family.GetResourcePolicy();
     EXPECT_EQ(policy.playback.allowedIsoChannels, 0xffU);
     EXPECT_EQ(policy.capture.allowedIsoChannels, 0xffU);
+}
+
+TEST(FirefaceSequenceTests, FF400FlashWaitCountsPollsNotWallClock) {
+    // RME 3.41 Wait (0x6c0a) and FFADO wait_while_busy (MAX_FLASH_BUSY_RETRIES 25,
+    // fireface_flash.cpp:33-62) poll a fixed number of times. A slow bus makes
+    // each poll take longer; it must not make the driver give up early.
+    FirefaceScriptBus bus; bus.revision = 0x146;
+    uint32_t busyReads = 4;
+    bus.flashStatus = 1;
+    bus.readHook = [&](uint64_t address) {
+        if (address != 0x80100520ULL || busyReads == 0) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));  // 4 x 15 ms > 50 ms
+        if (--busyReads == 0) bus.flashStatus = 0;
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    EXPECT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    EXPECT_NE(std::find(bus.reads.begin(), bus.reads.end(), 0x80100290ULL), bus.reads.end());
 }
 
 TEST(FirefaceSequenceTests, FF400RevisionPollsTheFlashCommandRegisterUntilIdle) {

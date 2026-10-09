@@ -281,19 +281,18 @@ private:
             return std::unexpected(kr);
         return Read(Register::kFF400Revision);
     }
-    // Send a flash command and wait until the register reads 0 again: 25 polls
-    // 2 ms apart, as RME 3.41 Wait (0x6c0a) and FFADO wait_while_busy do.
+    // Send a flash command and wait until the register reads 0 again. The wait
+    // counts polls, like RME 3.41 Wait (0x6c0a) and FFADO wait_while_busy: a
+    // slow bus or an oversleeping IOSleep makes it last longer, never give up
+    // early before the last read.
     [[nodiscard]] IOReturn RunFF400FlashCommand(FF400FlashCommand command) {
         if (IOReturn kr = WriteWords(Register::kFF400FlashCommand,
                 std::array<uint32_t, 1>{static_cast<uint32_t>(command)}); kr != kIOReturnSuccess)
             return kr;
-        const uint64_t deadline = Session::UptimeMilliseconds() + 50U;
-        while (Session::UptimeMilliseconds() < deadline) {
+        for (uint32_t poll = 0; poll < Register::kFF400FlashPolls; ++poll) {
             if (Cancelled()) return kIOReturnAborted;
-            IOSleep(2);
-            const uint64_t now = Session::UptimeMilliseconds();
-            if (now >= deadline) break;
-            auto busy = Read(Register::kFF400FlashStatus, static_cast<uint32_t>(deadline - now));
+            IOSleep(Register::kFF400FlashPollIntervalMs);
+            auto busy = Read(Register::kFF400FlashStatus);
             if (!busy) return busy.error();
             if (*busy == 0) return kIOReturnSuccess;
         }
