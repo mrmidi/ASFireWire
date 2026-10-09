@@ -206,7 +206,7 @@ targets:
         DEVELOPMENT_TEAM: F6YA6B56LR
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
-        ENABLE_USER_SELECTED_FILES: readonly
+        ENABLE_USER_SELECTED_FILES: readwrite
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         HEADER_SEARCH_PATHS:
