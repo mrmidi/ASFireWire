@@ -215,6 +215,34 @@ TEST_F(DiceQuietPeriodTest, TeardownCancelsPendingRestart) {
     EXPECT_EQ(Snapshot().run, run);
 }
 
+// A kept DICE wire leaves the session attached (StopIO never detaches it), so
+// a restart after the quiet period still goes to the host. The host's IO
+// restart is what releases a kept wire (ASFWAudioDevice::RequestIoRestart);
+// restarting in place would rebuild the streams under it.
+TEST_F(DiceQuietPeriodTest, RestartOnAKeptWireIsHandedToTheHostAfterTheQuietPeriod) {
+    std::atomic<int> routed{0};
+    DuplexRestartReason routedReason{};
+    rig.sessions.SetHostRestartRouter([&](uint64_t guid, DuplexRestartReason reason) {
+        EXPECT_EQ(guid, rig.guid);
+        routedReason = reason;
+        routed.fetch_add(1);
+        return true;
+    });
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const uint64_t run = Snapshot().run;
+    const size_t linesBefore = rig.bus.Trace().Lines().size();
+
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kDeviceConfigChange, run),
+              kIOReturnSuccess);
+    rig.Wait(399);
+    EXPECT_EQ(routed.load(), 0);
+    rig.Wait(1);
+    EXPECT_EQ(routed.load(), 1);
+    EXPECT_EQ(routedReason, DuplexRestartReason::kDeviceConfigChange);
+    EXPECT_EQ(rig.bus.Trace().Lines().size(), linesBefore);  // nothing rebuilt in place
+    EXPECT_EQ(Snapshot().run, run);
+}
+
 TEST_F(SchedulerTest, DetachWithNothingRunningDoesNothing) {
     EXPECT_EQ(rig.sessions.Detach(rig.guid), kIOReturnSuccess);
     EXPECT_TRUE(rig.bus.Trace().Lines().empty());
