@@ -148,6 +148,19 @@ TEST(WireRetention, OnlyARetainedWireNeedsReleaseOnInvalidation) {
     EXPECT_TRUE(w.MustReleaseOnInvalidation());
 }
 
+// An IO restart requested while a start is finishing must still release the
+// wire at the window's StopIO: a start does not swallow it. (The follow-up
+// restart after a DICE reconfiguration lands about when StartIO completes.)
+TEST(WireRetention, IoRestartRequestedDuringAStartSurvivesIt) {
+    WireRetention w;
+    w.OnIoRestartRequested();
+    w.OnStarted(k48k);
+    EXPECT_TRUE(w.IoRestartPending());
+    WireReleaseReason reason{};
+    EXPECT_EQ(w.PlanStop(true, true, &reason), WireStopPlan::kRelease);
+    EXPECT_EQ(reason, WireReleaseReason::kIoRestart);
+}
+
 TEST(WireRetention, ReleaseResetsEverything) {
     WireRetention w = RetainedAt(k48k);
     w.OnIoRestartRequested();

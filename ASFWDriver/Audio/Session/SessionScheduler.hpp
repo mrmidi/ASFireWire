@@ -213,6 +213,12 @@ private:
                                                          uint64_t observedRun) const noexcept;
     [[nodiscard]] IOReturn RunRestart(DuplexRestartReason reason, uint64_t observedRun) noexcept;
     [[nodiscard]] bool HandRestartToHost(DuplexRestartReason reason) noexcept;
+    // A device reconfiguration refused while nothing streamed (see
+    // deviceReconfigured_): remember it, unless it belongs to the follow-up.
+    void NoteRefusedDeviceReconfiguration(DuplexRestartReason reason) noexcept;
+    // After a successful start: whether a follow-up restart is due.
+    [[nodiscard]] bool TakeFollowUpRestartDue() noexcept;
+    void RequestFollowUpRestart(uint64_t run) noexcept;
     [[nodiscard]] IOReturn DeferRestart(DuplexRestartReason reason, uint64_t observedRun,
                                         uint32_t quietMs) noexcept;
     void ArmPendingTimer(uint32_t quietMs, uint64_t generation) noexcept;
@@ -254,6 +260,20 @@ private:
 
     std::atomic<bool> halAttached_{false};  // mirror of wanted_.halAttached for the routine
     std::atomic<bool> retired_{false};
+
+    // The device reported a stream-configuration change (DICE RX/TX_CFG_CHG)
+    // while nothing streamed, so its restart was refused. TCAT restarts
+    // streaming on it after a quiet period (NotificationWriteCallback ->
+    // RequestStreamingRestart); a start that followed such a reconfiguration
+    // left the Pro 24 DSP locked to our stream and silent until its streams
+    // were enabled again (hardware, 2026-10-09). So the next successful start
+    // is followed by one restart after the quiet period.
+    std::atomic<bool> deviceReconfigured_{false};
+    // That follow-up restart is in flight: a reconfiguration it reports
+    // itself does not chain another.
+    std::atomic<bool> followUpPending_{false};
+    // Set by StartStreams, taken after the reconcile logs its line.
+    std::atomic<bool> followUpDue_{false};
 };
 
 } // namespace ASFW::Audio::Session

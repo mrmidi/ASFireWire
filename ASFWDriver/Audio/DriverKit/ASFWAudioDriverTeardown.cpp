@@ -62,9 +62,22 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 }
 
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
-    // A wire kept across StopIO gets no StopIO on unplug: release it the way
-    // StopIO does, or the TX isoch resources and their mappings outlive the
-    // device (Phase 88 unplug while retained, 2026-10-08: no release, no free()).
+    // IO still running: the device left mid-stream. Stop it here, while the
+    // device is still attached. CoreAudio's own StopIO arrives after the
+    // device is removed below and no longer reaches it, so ADK's IO loop kept
+    // cycling with no timestamps (62% CPU for minutes) and neither the driver
+    // nor the nub was freed (Pro 24 DSP unplug while playing, 2026-10-09).
+    // super::StopDevice stops ADK's IO state and calls our StopIO.
+    if (ivars.audioDevice && ivars.runtime.isRunning.load(std::memory_order_acquire)) {
+        const uint32_t deviceId = ivars.audioDevice->GetObjectID();
+        ASFW_LOG(Audio, "ASFWAudioDriver: Stop() with IO running; stopping device %u first",
+                 deviceId);
+        (void)driver.StopDevice(deviceId, IOUserAudioStartStopFlags::None);
+    }
+    // A wire kept across StopIO (including by the stop just above) gets no
+    // StopIO on unplug: release it the way StopIO does, or the TX isoch
+    // resources and their mappings outlive the device (Phase 88 unplug while
+    // retained, 2026-10-08: no release, no free()).
     if (ivars.audioDevice) {
         (void)ivars.audioDevice->ReleaseKeptWireForDriverStop();
     }

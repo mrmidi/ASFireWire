@@ -82,6 +82,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t missedFinality = 0;
     int64_t minMarginPackets = INT64_MAX;
+    float peak = 0.0f;
+    uint32_t peakWord = 0;
 
     // Sequential frames share a packet. Avoid a full timeline scan for each
     // sample on the HAL IO thread (16 identical scans per packet at 96 kHz).
@@ -159,9 +161,14 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const float sample =
                 (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             const uint32_t slot = mapUsable ? playbackMap.SlotFor(ch) : ch;
-            WriteBE32(dest + slot * kBytesPerSlot,
-                      PcmSlotCodec::EncodeFloat32(
-                          sample, txPolicy_.hostToDevicePcmEncoding));
+            const uint32_t word =
+                PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
+            WriteBE32(dest + slot * kBytesPerSlot, word);
+            const float magnitude = sample < 0.0f ? -sample : sample;
+            if (magnitude > peak) {
+                peak = magnitude;
+                peakWord = word;
+            }
         }
         ++written;
     }
@@ -183,6 +190,18 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     }
     counters_.framesMissedFinality.fetch_add(missedFinality,
                                                     std::memory_order_relaxed);
+    if (peak > 0.0f) {
+        const uint32_t q24 = peak >= 1.0f ? 0x7FFFFFU
+                                          : static_cast<uint32_t>(peak * 8388607.0f);
+        uint32_t current = counters_.intervalPeakWrittenQ24.load(std::memory_order_relaxed);
+        while (q24 > current &&
+               !counters_.intervalPeakWrittenQ24.compare_exchange_weak(
+                   current, q24, std::memory_order_relaxed)) {
+        }
+        if (q24 > current) {
+            counters_.intervalPeakWord.store(peakWord, std::memory_order_relaxed);
+        }
+    }
 }
 
 const AmdtpPayloadWriterCounters& AmdtpPayloadWriter::Counters() const noexcept {

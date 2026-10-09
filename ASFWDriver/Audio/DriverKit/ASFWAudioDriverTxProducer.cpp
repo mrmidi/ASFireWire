@@ -1358,6 +1358,24 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     ivars->runtime.txFillMaxDurationTicks.exchange(
                         0, std::memory_order_relaxed)) / 1000,
                 boundedMargin <= kCommittedMarginDangerPackets ? " DANGER" : "");
+            // Content, for the silent-start investigation (the device locked
+            // to our stream and playing nothing): did CoreAudio's samples
+            // reach packet memory? Counters are cumulative for the stream;
+            // peakQ24 is this interval's largest written |sample| (24-bit),
+            // word its encoded slot. Primary stream only.
+            const auto& fill = ivars->runtime.txStreamEngine.PayloadWriterCounters();
+            uint32_t peakWord = 0;
+            const uint32_t peakQ24 = ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
+            ASFW_LOG(DirectAudio,
+                     "[TxContent] peakQ24=%u word=0x%08x written=%llu noPkt=%llu outside=%llu "
+                     "missed=%llu writeEnd=%llu filledEnd=%llu",
+                     peakQ24, peakWord,
+                     fill.framesWritten.load(std::memory_order_relaxed),
+                     fill.framesWithoutPacket.load(std::memory_order_relaxed),
+                     fill.framesOutsidePacket.load(std::memory_order_relaxed),
+                     fill.framesMissedFinality.load(std::memory_order_relaxed),
+                     directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                     directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
         }
 
         directControl->counters.txPreparationWakeRequests.store(

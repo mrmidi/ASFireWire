@@ -176,6 +176,44 @@ TEST(AudioDriverTeardownTests, StopReleasesAKeptWire) {
     EXPECT_EQ(ivars->audioDevice.get(), nullptr);
 }
 
+// Unplugged while CoreAudio plays: IO is still running when Stop() comes.
+// Stop it first, while the device is attached, then release the wire (the
+// stop keeps it) and only then remove the device. CoreAudio's own StopIO
+// arrives after removal and no longer reaches the device: ADK's IO loop then
+// spun at 62% CPU and nothing was freed (Pro 24 DSP, 2026-10-09).
+TEST(AudioDriverTeardownTests, StopWithIoRunningStopsTheDeviceBeforeRemovingIt) {
+    TeardownSequence() = 0;
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    OSSharedPtr<ASFWAudioDevice> device{new ASFWAudioDevice(), OSNoRetain};
+    device->objectId = 7;
+    StartedGraph graph;
+    graph.AttachTo(*ivars, device);
+    ivars->runtime.isRunning.store(true);
+
+    StopAudioDriverGraph(*driver, *ivars);
+
+    ASSERT_EQ(driver->stoppedDevices.size(), 1U);
+    EXPECT_EQ(driver->stoppedDevices[0], 7U);
+    EXPECT_LT(driver->stopDeviceAt, device->keptWireReleaseAt);
+    EXPECT_LT(device->keptWireReleaseAt, driver->removedAt);
+    EXPECT_EQ(ivars->audioDevice.get(), nullptr);
+}
+
+// IO already stopped (a kept wire, or never started): nothing to stop.
+TEST(AudioDriverTeardownTests, StopWithIoStoppedDoesNotStopTheDevice) {
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    OSSharedPtr<ASFWAudioDevice> device{new ASFWAudioDevice(), OSNoRetain};
+    StartedGraph graph;
+    graph.AttachTo(*ivars, device);
+
+    StopAudioDriverGraph(*driver, *ivars);
+
+    EXPECT_TRUE(driver->stoppedDevices.empty());
+    EXPECT_EQ(device->keptWireReleaseRequests, 1U);
+}
+
 // free() runs the same teardown after Stop already did; the second pass finds
 // nothing attached and detaches nothing twice.
 TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {

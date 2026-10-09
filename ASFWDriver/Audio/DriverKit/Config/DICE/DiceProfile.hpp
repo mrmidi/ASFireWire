@@ -65,6 +65,13 @@ public:
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double sampleRate) const noexcept override;
     [[nodiscard]] uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept override;
 
+    // DICE units keep their wire across CoreAudio StopIO, as the TCAT kexts do:
+    // streams run from StartDev's RestartStreaming to device removal, and the
+    // engine start/stop only zero the buffers and flip an engine-running flag
+    // (Saffire.kext 4.3.0 performAudioEngineStart @0x4c12, performAudioEngineStop
+    // @0x4e6a). Every TCAT kext does this; none branches per model.
+    [[nodiscard]] bool RetainsWireAcrossStopIO() const noexcept override { return true; }
+
     // Playback streams to insist on, or zero to take the device's count.
 
 private:

@@ -154,6 +154,25 @@ TEST(DiceProfileTests, DiceProfilesStateNoStreamGeometry) {
     }
 }
 
+// The TCAT kexts keep every DICE unit's streams running across the engine's
+// stop and start, with no per-model branch; so does every DICE profile.
+TEST(DiceProfileTests, EveryDiceProfileKeepsTheWireAcrossStopIO) {
+    size_t checked = 0;
+    for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
+        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
+        if (profile == nullptr) {
+            continue;
+        }
+        EXPECT_TRUE(profile->RetainsWireAcrossStopIO()) << "builder " << id;
+        ++checked;
+    }
+    EXPECT_GT(checked, 0U);
+    const auto* generic = AudioProfileRegistry::DiceProfileForBuilderId(
+        static_cast<uint32_t>(ProfileBuilderId::GenericDice));
+    ASSERT_NE(generic, nullptr);
+    EXPECT_TRUE(generic->RetainsWireAcrossStopIO());
+}
+
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     const auto* profile = FindDiceProfile(0x999999, 0x000001, 0x123456789ULL);
 
