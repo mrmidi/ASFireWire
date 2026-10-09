@@ -232,36 +232,30 @@ public:
      */
 
     /**
-     * \brief Scan for completed descriptors and extract completion status.
+     * \brief Return the next completed packet at the ring head, in order.
      *
-     * Walks the descriptor ring from head index, checking xferStatus field
-     * for hardware completion. Extracts event code, timestamp, and tLabel
-     * on first completed descriptor found.
+     * \return TxCompletion if the head packet completed, std::nullopt if none ready
      *
-     * \return TxCompletion if descriptor completed, std::nullopt if none ready
-     *
-     * **OHCI Completion Detection (§7.1.5.2)**
-     * Hardware writes xferStatus field when descriptor completes. A non-zero
-     * xferStatus[15:0] indicates completion (contains event code and ack code).
+     * **OHCI Completion Detection (1.2 draft §7.1.5.2)**
+     * The controller writes ContextControl[15:0] into the completed packet's
+     * OUTPUT_LAST* descriptor only. A packet with payload is an
+     * OUTPUT_MORE-Immediate header (2 blocks) plus an OUTPUT_LAST (1 block), so
+     * its status is two blocks after the header; a header-only packet is one
+     * OUTPUT_LAST-Immediate.
      *
      * **Scan Algorithm**
      * 1. Lock context (serialize with SubmitChain)
-     * 2. Load head index (atomic acquire)
-     * 3. If head == tail, ring is empty → return nullopt
-     * 4. Read descriptor at head index
-     * 5. If xferStatus == 0, descriptor not yet completed → return nullopt
-     * 6. Extract event code from xferStatus[4:0]
-     * 7. Extract timestamp from timeStamp field
-     * 8. If OUTPUT_LAST_Immediate, extract tLabel from packet header
-     * 9. Advance head index: (head + N) % capacity, where N = descriptor block count
-     * 10. Unlock context, return TxCompletion
+     * 2. If head == tail, ring is empty → return nullopt
+     * 3. Locate the head packet's header and its OUTPUT_LAST*; read that status
+     * 4. Zero status on a running context: still in flight → return nullopt and
+     *    wait (Linux ohci.c:1550-1552). On a stopped context it will never be
+     *    sent: release the whole packet and keep scanning
+     * 5. Decode event/ack/timeStamp from the OUTPUT_LAST*, tLabel from the header
+     * 6. Release the packet's blocks, advance head, return TxCompletion
      *
      * **Apple Pattern**
-     * ChannelBundle::ScanNextATReqCompletion():
-     * - Checks xferStatus != 0 for completion
-     * - Extracts ack code and event code from status word
-     * - Extracts tLabel from packet header for response matching
-     * - Advances completion cursor
+     * AppleFWOHCI_AsyncTransmit::checkForCompletedElements reads the status of
+     * descriptor block count-1, the packet's OUTPUT_LAST*.
      *
      * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently with SubmitChain().
@@ -306,8 +300,10 @@ private:
         size_t capacity{0};
         size_t headIndex{0};
         size_t tailIndex{0};
-        HW::OHCIDescriptor* desc{nullptr};
-        bool isImmediate{false};
+        HW::OHCIDescriptor* header{nullptr};  ///< First block of the packet at the head
+        HW::OHCIDescriptor* desc{nullptr};    ///< The packet's OUTPUT_LAST*: holds its status
+        uint8_t packetBlocks{0};              ///< 16-byte blocks the packet occupies
+        bool isImmediate{false};              ///< The header is an *-Immediate descriptor
         uint16_t xferStatus{0};
         uint8_t eventCodeRaw{0};
         uint8_t ackCount{0};
@@ -349,12 +345,8 @@ private:
                                               size_t capacity) noexcept;
     [[nodiscard]] bool LoadScanState(ScanState& state) noexcept;
     void FetchScanDescriptor(const ScanState& state) noexcept;
-    void HandlePendingDescriptor(const ScanState& state) noexcept;
-    [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
-                                            uint32_t& commandPtrAddr,
-                                            uint32_t& headIOVA,
-                                            bool& isRunning,
-                                            bool& isActive) noexcept;
+    /// True when the head packet was released (or completed meanwhile) and the scan should go on.
+    [[nodiscard]] bool ReleaseUnsentPacketIfStopped(const ScanState& state) noexcept;
     [[nodiscard]] bool DecodeCompletionState(ScanState& state) const noexcept;
     void ClearDescriptorBlocks(size_t headIndex, uint8_t blocks, size_t capacity) noexcept;
     void StopIfRingDrained(const char* scopeTag, size_t newHead, bool logWhenNotEmpty) noexcept;
@@ -614,7 +606,11 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         }
 
         if (state.xferStatus == 0) {
-            HandlePendingDescriptor(state);
+            // In flight: wait here, in order, as Linux does (ohci.c:1550-1552).
+            // A stopped context will never send it; release it and go on.
+            if (ReleaseUnsentPacketIfStopped(state)) {
+                continue;
+            }
             unlock();
             return std::nullopt;
         }
@@ -624,23 +620,13 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             return std::nullopt;
         }
 
-        const uint8_t blocksConsumed = (state.key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
-        if (state.command != HW::OHCIDescriptor::kCmdOutputLast) {
-            ClearDescriptorBlocks(state.headIndex, blocksConsumed, state.capacity);
-            const size_t newHead = (state.headIndex + blocksConsumed) % state.capacity;
-            ring_->SetHead(newHead);
-            ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (non-OUTPUT_LAST, %u blocks)",
-                        state.headIndex, newHead, blocksConsumed);
-            StopIfRingDrained("ScanCompletion (non-OUTPUT_LAST)", newHead, false);
-            continue;
-        }
-
+        const uint8_t blocksConsumed = state.packetBlocks;
         LogCompletionTelemetry(state);
         const uint8_t tLabel = ExtractCompletionTLabel(state);
         ClearDescriptorBlocks(state.headIndex, blocksConsumed, state.capacity);
         const size_t newHead = (state.headIndex + blocksConsumed) % state.capacity;
         ring_->SetHead(newHead);
-        ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (OUTPUT_LAST, %u blocks)",
+        ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (%u blocks)",
                     state.headIndex, newHead, blocksConsumed);
         StopIfRingDrained("ScanCompletion", newHead, true);
 
@@ -809,12 +795,33 @@ bool ATContextBase<Derived, Tag>::LoadScanState(ScanState& state) noexcept {
         return false;
     }
 
-    state.desc = ring_->At(state.headIndex);
+    state.header = ring_->At(state.headIndex);
+    if (!state.header) {
+        return false;
+    }
+    state.isImmediate = HW::IsImmediate(*state.header);
+
+    // The controller writes status only into the packet's OUTPUT_LAST*
+    // descriptor (OHCI 1.2 draft §7.1.5.2; Table 7-2 gives OUTPUT_MORE-Immediate
+    // no xferStatus). A header with payload is OUTPUT_MORE-Immediate (2 blocks)
+    // followed by OUTPUT_LAST (1 block, DescriptorBuilder.cpp:571-578), so its
+    // status is two blocks on. Apple reads block count-1
+    // (AppleFWOHCI_AsyncTransmit::checkForCompletedElements); Linux reads `last`
+    // (ohci.c:1550).
+    const uint8_t headerCommand = static_cast<uint8_t>(
+        ((state.header->control >> HW::OHCIDescriptor::kControlHighShift) >>
+         HW::OHCIDescriptor::kCmdShift) & 0xF);
+    if (state.isImmediate && headerCommand == HW::OHCIDescriptor::kCmdOutputMore) {
+        state.packetBlocks = 3;
+        state.desc = ring_->At((state.headIndex + 2) % state.capacity);
+    } else {
+        state.packetBlocks = state.isImmediate ? 2 : 1;
+        state.desc = state.header;
+    }
     if (!state.desc) {
         return false;
     }
 
-    state.isImmediate = HW::IsImmediate(*state.desc);
     FetchScanDescriptor(state);
     state.xferStatus = HW::AT_xferStatus(*state.desc);
     return true;
@@ -823,9 +830,12 @@ bool ATContextBase<Derived, Tag>::LoadScanState(ScanState& state) noexcept {
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) noexcept {
     if (dmaManager_) {
-        dmaManager_->FetchRange(state.desc,
+        dmaManager_->FetchRange(state.header,
                                 state.isImmediate ? sizeof(HW::OHCIDescriptorImmediate)
                                                   : sizeof(HW::OHCIDescriptor));
+        if (state.desc != state.header) {
+            dmaManager_->FetchRange(state.desc, sizeof(HW::OHCIDescriptor));
+        }
     }
 
     if (DMAMemoryManager::IsTracingEnabled()) {
@@ -835,42 +845,30 @@ void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) no
 }
 
 template<typename Derived, ContextRole Tag>
-void ATContextBase<Derived, Tag>::HandlePendingDescriptor(const ScanState& state) noexcept {
-    uint32_t commandPtrAddr = 0;
-    uint32_t headIOVA = 0;
-    bool isRunning = false;
-    bool isActive = false;
-    if (!IsOrphanedDescriptor(state, commandPtrAddr, headIOVA, isRunning, isActive)) {
-        return;
+bool ATContextBase<Derived, Tag>::ReleaseUnsentPacketIfStopped(const ScanState& state) noexcept {
+    // While the context runs, a zero-status head is in flight. CommandPtr cannot
+    // prove otherwise: an idle context leaves it on the packet that just
+    // finished (OHCI Table 3-4), and a pipelining one on the furthest fetched
+    // block while earlier packets are still out (§7.7).
+    const uint32_t controlReg = this->ReadControl();
+    const bool isRunning = (controlReg & kContextControlRunBit) != 0;
+    const bool isActive = (controlReg & kContextControlActiveBit) != 0;
+    if (isRunning || isActive) {
+        return false;
     }
 
-    ASFW_LOG_V3(Async,
-                "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d)",
-                state.headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0);
+    // Status may have landed between the status read and the control read.
+    FetchScanDescriptor(state);
+    if (HW::AT_xferStatus(*state.desc) != 0) {
+        return true;  // rescan: it completed
+    }
 
-    const uint8_t blocks = state.isImmediate ? 2 : 1;
-    ClearDescriptorBlocks(state.headIndex, blocks, state.capacity);
-    const size_t newHead = (state.headIndex + blocks) % state.capacity;
+    ClearDescriptorBlocks(state.headIndex, state.packetBlocks, state.capacity);
+    const size_t newHead = (state.headIndex + state.packetBlocks) % state.capacity;
     ring_->SetHead(newHead);
-    ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks)",
-                state.headIndex, newHead, blocks);
-}
-
-template<typename Derived, ContextRole Tag>
-bool ATContextBase<Derived, Tag>::IsOrphanedDescriptor(const ScanState& state,
-                                                       uint32_t& commandPtrAddr,
-                                                       uint32_t& headIOVA,
-                                                       bool& isRunning,
-                                                       bool& isActive) noexcept {
-    const uint32_t commandPtr = this->ReadCommandPtr();
-    headIOVA = ring_->CommandPtrWordTo(state.desc, 0) & 0xFFFFFFF0u;
-    commandPtrAddr = commandPtr & 0xFFFFFFF0u;
-
-    const uint32_t controlReg = this->ReadControl();
-    isRunning = (controlReg & kContextControlRunBit) != 0;
-    isActive = (controlReg & kContextControlActiveBit) != 0;
-    return (!isRunning && !isActive) ||
-           (commandPtrAddr != headIOVA && commandPtrAddr != 0);
+    ASFW_LOG_V3(Async, "ScanCompletion: context stopped, released unsent packet head %zu→%zu (%u blocks)",
+                state.headIndex, newHead, state.packetBlocks);
+    return true;
 }
 
 template<typename Derived, ContextRole Tag>
@@ -961,19 +959,11 @@ void ATContextBase<Derived, Tag>::StopIfRingDrained(const char* scopeTag,
 
 template<typename Derived, ContextRole Tag>
 uint8_t ATContextBase<Derived, Tag>::ExtractCompletionTLabel(const ScanState& state) const noexcept {
-    if (state.key == HW::OHCIDescriptor::kKeyImmediate) {
-        auto* immDesc = reinterpret_cast<HW::OHCIDescriptorImmediate*>(state.desc);
-        return HW::ExtractTLabel(immDesc);
+    // The tLabel is in the packet header, the immediate data of the first block.
+    if (!state.isImmediate) {
+        return 0xFF;
     }
-
-    const size_t headerIndex = (state.headIndex + state.capacity - 2) % state.capacity;
-    auto* headerDesc = ring_->At(headerIndex);
-    if (headerDesc && HW::IsImmediate(*headerDesc)) {
-        auto* immHeader = reinterpret_cast<HW::OHCIDescriptorImmediate*>(headerDesc);
-        return HW::ExtractTLabel(immHeader);
-    }
-
-    return 0xFF;
+    return HW::ExtractTLabel(reinterpret_cast<HW::OHCIDescriptorImmediate*>(state.header));
 }
 
 template<typename Derived, ContextRole Tag>

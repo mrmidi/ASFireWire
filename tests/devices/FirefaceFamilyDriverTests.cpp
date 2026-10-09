@@ -7,6 +7,9 @@
 #include "Audio/Protocols/RME/FirefaceDeviceProtocol.hpp"
 #include "Audio/Host/RmeFamilyAdapter.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include <algorithm>
+#include <chrono>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -25,10 +28,30 @@ public:
         else if (key == 0x801c0000ULL) value = status0;
         else if (key == 0x801c0004ULL) value = status1;
         else if (key == 0x801c0008ULL) value = captureWord;
-        else if (key == 0x80100524ULL) value = flashStatus;
+        // FF400 flash status reads back on the command register itself
+        // (FFADO fireface_def.h:58-59,123-124; RME 3.41 Wait 0x6c0a polls 0x80100520).
+        else if (key == 0x80100520ULL) value = flashStatus;
+        else if (key == 0x80100524ULL) value = 0xdeadbeefU; // a different register: never 0
         else if (key == 0x80100290ULL) value = revision;
         if (key == failReadAddress) { callback(AsyncStatus::kHardwareError, {}); return {}; }
         if (readHook) readHook(key);
+        if (length > 4) {  // block reads: flash settings and the status block
+            std::vector<uint8_t> block;
+            const auto put = [&block](uint32_t w) {
+                for (int b = 0; b < 4; ++b) block.push_back(static_cast<uint8_t>(w >> (8 * b)));
+            };
+            if (key == 0x0003000f0000ULL) {
+                for (uint32_t i = 0; i < length / 4; ++i) put(flashImage[i]);
+            } else if (key == 0x80100290ULL) {
+                const uint32_t first = (ff400FlashAddr - 0x00060000U) / 4;
+                for (uint32_t i = 0; i < length / 4; ++i) put(flashImage[first + i]);
+            } else if (key == 0x801c0000ULL) {
+                put(status0); put(status1); put(captureWord); put(status3);
+            }
+            block.resize(length, 0);
+            callback(AsyncStatus::kSuccess, std::span<const uint8_t>(block.data(), block.size()));
+            return {};
+        }
         std::array<uint8_t, 4> bytes{static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
             static_cast<uint8_t>(value >> 16), static_cast<uint8_t>(value >> 24)};
         if (deferRead) { deferRead = false; delayed = std::move(callback); delayedBytes = bytes; }
@@ -40,6 +63,10 @@ public:
         writes.push_back({address.addressHi, address.addressLo, {bytes.begin(), bytes.end()}});
         const uint64_t key = (static_cast<uint64_t>(address.addressHi) << 32) | address.addressLo;
         if (key == failWriteAddress) { callback(AsyncStatus::kHardwareError, {}); return {}; }
+        if (key == 0x80100288ULL && bytes.size() == 8) {  // FF400 flash address + length latch
+            ff400FlashAddr = static_cast<uint32_t>(bytes[0]) | (bytes[1] << 8) |
+                             (bytes[2] << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+        }
         callback(AsyncStatus::kSuccess, {});
         return {};
     }
@@ -53,6 +80,16 @@ public:
     Generation GetGeneration() const override { return Generation{1}; }
     NodeId GetLocalNodeID() const override { return NodeId{0}; }
     void DeliverDelayed() { if (delayed) { auto cb=std::move(delayed); cb(AsyncStatus::kSuccess, delayedBytes); } }
+    // A recognisable settings image: quadlet i of the block holds 0x5e770000 | i.
+    static constexpr uint32_t FlashWord(uint32_t i) noexcept { return 0x5e770000U | i; }
+    // Not a valid settings image: decodes to an error at the first field read.
+    std::array<uint32_t, 64> flashImage = [] {
+        std::array<uint32_t, 64> image{};
+        for (uint32_t i = 0; i < image.size(); ++i) image[i] = FlashWord(i);
+        return image;
+    }();
+    uint32_t ff400FlashAddr{0};
+    uint32_t status3{0};
     uint32_t revision{0x24d};
     uint32_t status0{0x01c00000};
     uint32_t status1{0x00000007};
@@ -67,6 +104,19 @@ public:
     InterfaceCompletionCallback delayed;
     std::array<uint8_t, 4> delayedBytes{};
 };
+
+std::vector<uint8_t> MuteMask(uint32_t channels) {
+    std::vector<uint8_t> bytes(channels * 4U, 0);
+    for (uint32_t i = 0; i < channels; ++i) bytes[i * 4U] = 1; // LE quadlet value 1
+    return bytes;
+}
+
+void ExpectStopThenMute(const FirefaceScriptBus& bus, uint32_t stopLo, uint32_t channels) {
+    ASSERT_GE(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[bus.writes.size() - 2].lo, stopLo);
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, MuteMask(channels));
+}
 
 TEST(FirefaceIntegrationTests, Non48kAdmissionReturnsBeforeAnyRegisterTraffic) {
     FirefaceScriptBus bus;
@@ -123,6 +173,33 @@ TEST(FirefaceIntegrationTests, PublicationConfigIsFixedDuplex48kWithoutMidi) {
     }
 }
 
+TEST(FirefaceIntegrationTests, PublicationNamesEveryChannelInWireOrder) {
+    // RME 3.41 channel-name tables (gChannelNames_FF400_in/out at 0x8020/0x8140,
+    // FF800 at 0x8260/0x8420); FFADO addDirPorts has the same order: analog,
+    // phones (playback), S/PDIF, ADAT.
+    ASFW::Discovery::DeviceRecord record{};
+    using ASFW::DeviceProfiles::Audio::ProfileBuilderId;
+    using ASFW::Audio::Host::RmeFamilyAdapter;
+    const auto ff400 = RmeFamilyAdapter::BuildNubConfig(record, ProfileBuilderId::RmeFireface400, "RME");
+    ASSERT_EQ(ff400.inputChannelNames.size(), 18U);
+    ASSERT_EQ(ff400.outputChannelNames.size(), 18U);
+    EXPECT_EQ(ff400.inputChannelNames[0], "Mic/Line 1");
+    EXPECT_EQ(ff400.inputChannelNames[2], "Inst/Line 3");
+    EXPECT_EQ(ff400.inputChannelNames[8], "SPDIF L");
+    EXPECT_EQ(ff400.inputChannelNames[17], "ADAT 8");
+    EXPECT_EQ(ff400.outputChannelNames[6], "Phones 7");
+    EXPECT_EQ(ff400.outputChannelNames[9], "SPDIF R");
+    const auto ff800 = RmeFamilyAdapter::BuildNubConfig(record, ProfileBuilderId::RmeFireface800, "RME");
+    ASSERT_EQ(ff800.inputChannelNames.size(), 28U);
+    ASSERT_EQ(ff800.outputChannelNames.size(), 28U);
+    EXPECT_EQ(ff800.inputChannelNames[0], "Analog 1");
+    EXPECT_EQ(ff800.inputChannelNames[9], "Mic 10");
+    EXPECT_EQ(ff800.inputChannelNames[10], "SPDIF L");
+    EXPECT_EQ(ff800.inputChannelNames[27], "ADAT 16");
+    EXPECT_EQ(ff800.outputChannelNames[8], "Phones 9");
+    EXPECT_EQ(ff800.outputChannelNames[12], "ADAT 1");
+}
+
 TEST(FirefaceRegisterTests, RegisterTupleUsesLittleEndianWithoutChangingBigEndianWriter) {
     RecordingFireWireBus bus;
     RouteState routeState;
@@ -167,22 +244,24 @@ TEST(FirefaceSequenceTests, FF800UsesActualReservedPlaybackAndDeviceSelectedCapt
     auto assigned = family.AssignChannels(channels);
     ASSERT_TRUE(assigned);
     EXPECT_EQ(assigned->deviceToHostIsoChannel, 6);
-    ASSERT_EQ(bus.writes.size(), 2U);
-    EXPECT_EQ(bus.writes[0].hi, 0U);
-    EXPECT_EQ(bus.writes[0].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[0].bytes, std::vector<uint8_t>(28U * 4U, 0));
-    EXPECT_EQ(bus.writes[1].hi, 2U);
-    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
-    EXPECT_EQ(bus.writes[1].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 3,0xe0,0,0, 0x1c,0x08,0,0}));
+    ASSERT_EQ(bus.writes.size(), 1U); // init only: the fetch mask stays closed until Confirm
+    EXPECT_EQ(bus.writes[0].hi, 2U);
+    EXPECT_EQ(bus.writes[0].lo, 0x1cU);
+    EXPECT_EQ(bus.writes[0].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 3,0xe0,0,0, 0x1c,0x08,0,0}));
     ASSERT_TRUE(family.ArmDeviceTxAndEnable());
     EXPECT_EQ(bus.writes.back().lo, 0x28U);
     EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0x1c,0x08,0,0x80}));
+    ASSERT_TRUE(family.Confirm());
+    EXPECT_EQ(bus.writes.back().hi, 0U);
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, std::vector<uint8_t>(28U * 4U, 0)); // fetch every channel
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x34U);
-    EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0,0,0,0, 0,0,0,0, 0,0,0,0}));
-    ASSERT_EQ(bus.writes.size(), 4U); // no mixer or clock-source writes
-    EXPECT_EQ(bus.writes[2].hi, 2U);
+    ASSERT_EQ(bus.writes.size(), 5U); // init, start, fetch, stop, mute; no mixer or clock-source writes
     EXPECT_EQ(bus.writes[3].hi, 2U);
+    EXPECT_EQ(bus.writes[3].lo, 0x34U);
+    EXPECT_EQ(bus.writes[3].bytes, (std::vector<uint8_t>{0,0,0,0, 0,0,0,0, 0,0,0,0}));
+    EXPECT_EQ(bus.writes[4].lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes[4].bytes, MuteMask(28U)); // stop first, then mute
 }
 
 TEST(FirefaceSequenceTests, FF800S400TupleDoesNotSetTheS800Flag) {
@@ -192,9 +271,9 @@ TEST(FirefaceSequenceTests, FF800S400TupleDoesNotSetTheS800Flag) {
     ASFW::Audio::AudioDuplexChannels channels{}; channels.hostToDeviceIsoChannel = 1;
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     ASSERT_TRUE(family.AssignChannels(channels));
-    EXPECT_EQ(bus.writes[1].hi, 0x0002U);
-    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
-    EXPECT_EQ(bus.writes[1].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 1,0xe0,0,0, 28,0,0,0}));
+    EXPECT_EQ(bus.writes[0].hi, 0x0002U);
+    EXPECT_EQ(bus.writes[0].lo, 0x1cU);
+    EXPECT_EQ(bus.writes[0].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 1,0xe0,0,0, 28,0,0,0}));
 }
 
 TEST(FirefaceSequenceTests, FF400RejectsOutOfRangeChannelBeforeAnyStreamingWrites) {
@@ -221,24 +300,168 @@ TEST(FirefaceSequenceTests, FF400SequenceUsesCaptureShiftAndExactStopTuple) {
     channels.hostToDeviceIsoChannel = 2;
     channels.deviceToHostIsoChannel = 5;
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
-    ASSERT_EQ(bus.writes.size(), 1U); // FF400 get_revision command only.
+    ASSERT_EQ(bus.writes.size(), 5U); // get_revision, then the flash settings dry-run read
     EXPECT_EQ(bus.writes[0].lo, 0x80100520U);
     ASSERT_TRUE(family.AssignChannels(channels));
-    ASSERT_EQ(bus.writes.size(), 3U);
-    EXPECT_EQ(bus.writes[1].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[1].bytes, std::vector<uint8_t>(18U * 4U, 0));
-    EXPECT_EQ(bus.writes[2].lo, 0x80100500U);
-    EXPECT_EQ(bus.writes[2].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 2,0x90,0,0, 0x12,0,0,0}));
+    ASSERT_EQ(bus.writes.size(), 6U);
+    EXPECT_EQ(bus.writes[5].lo, 0x80100500U);
+    EXPECT_EQ(bus.writes[5].bytes, (std::vector<uint8_t>{0x80,0xbb,0,0, 2,0x90,0,0, 0x12,0,0,0}));
     ASSERT_TRUE(family.ArmDeviceTxAndEnable());
     EXPECT_EQ(bus.writes.back().lo, 0x8010050cU);
     EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0xb2,0,0,0x80}));
+    ASSERT_TRUE(family.Confirm());
+    EXPECT_EQ(bus.writes.back().lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes.back().bytes, std::vector<uint8_t>(18U * 4U, 0));
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x80100504U);
-    EXPECT_EQ(bus.writes.back().bytes, (std::vector<uint8_t>{0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0}));
+    ASSERT_EQ(bus.writes.size(), 10U); // revision + flash read + init + start + fetch + stop + mute only
+    EXPECT_EQ(bus.writes[8].lo, 0x80100504U);
+    EXPECT_EQ(bus.writes[8].bytes, (std::vector<uint8_t>{0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0}));
+    EXPECT_EQ(bus.writes[9].lo, 0x801c0000U);
+    EXPECT_EQ(bus.writes[9].bytes, MuteMask(18U));
     const auto policy = family.GetResourcePolicy();
     EXPECT_EQ(policy.playback.allowedIsoChannels, 0xffU);
     EXPECT_EQ(policy.capture.allowedIsoChannels, 0xffU);
-    ASSERT_EQ(bus.writes.size(), 5U); // get_revision + fetch + init + start + stop only
+}
+
+TEST(FirefaceSequenceTests, FF400FlashWaitCountsPollsNotWallClock) {
+    // RME 3.41 Wait (0x6c0a) and FFADO wait_while_busy (MAX_FLASH_BUSY_RETRIES 25,
+    // fireface_flash.cpp:33-62) poll a fixed number of times. A slow bus makes
+    // each poll take longer; it must not make the driver give up early.
+    FirefaceScriptBus bus; bus.revision = 0x146;
+    uint32_t busyReads = 4;
+    bus.flashStatus = 1;
+    bus.readHook = [&](uint64_t address) {
+        if (address != 0x80100520ULL || busyReads == 0) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));  // 4 x 15 ms > 50 ms
+        if (--busyReads == 0) bus.flashStatus = 0;
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    EXPECT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    EXPECT_NE(std::find(bus.reads.begin(), bus.reads.end(), 0x80100290ULL), bus.reads.end());
+}
+
+TEST(FirefaceSequenceTests, FF400RevisionPollsTheFlashCommandRegisterUntilIdle) {
+    FirefaceScriptBus bus; bus.revision = 0x146;
+    uint32_t busyReads = 2;
+    bus.flashStatus = 1;
+    bus.readHook = [&](uint64_t address) {
+        if (address == 0x80100520ULL && busyReads > 0 && --busyReads == 0) bus.flashStatus = 0;
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    EXPECT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto reads = bus.reads;
+    EXPECT_EQ(std::count(reads.begin(), reads.end(), 0x80100524ULL), 0);
+    const auto revisionRead = std::find(reads.begin(), reads.end(), 0x80100290ULL);
+    ASSERT_NE(revisionRead, reads.end());
+    EXPECT_EQ(std::count(reads.begin(), revisionRead, 0x80100520ULL), 3) // busy, busy, idle
+        << "the revision is read only after the command register reads 0";
+}
+
+namespace {
+std::vector<uint8_t> LeWords(std::initializer_list<uint32_t> words) {
+    std::vector<uint8_t> out;
+    for (const uint32_t w : words)
+        for (int b = 0; b < 4; ++b) out.push_back(static_cast<uint8_t>(w >> (8 * b)));
+    return out;
+}
+void ExpectFlashImage(const ASFW::Audio::RME::FirefaceFamilyDriver& family) {
+    const auto& settings = family.LastFlashSettings();
+    ASSERT_TRUE(settings.has_value());
+    for (uint32_t i = 0; i < settings->size(); ++i)
+        EXPECT_EQ((*settings)[i], FirefaceScriptBus::FlashWord(i)) << "quadlet " << i;
+}
+} // namespace
+
+TEST(FirefaceFlashTests, FF800ReadsTheSettingsBlockWithoutWritingAnything) {
+    // FFADO read_flash: the FF800 settings are a plain block read at
+    // 0x3000f0000 (fireface_def.h:117, fireface_flash.cpp:96-103).
+    FirefaceScriptBus bus; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    EXPECT_NE(std::find(bus.reads.begin(), bus.reads.end(), 0x0003000f0000ULL), bus.reads.end());
+    EXPECT_TRUE(bus.writes.empty()) << "a dry run writes nothing to an FF800";
+    ExpectFlashImage(family);
+}
+
+TEST(FirefaceFlashTests, FF400ProgramsAddressAndLengthThenReadsTheBounceBuffer) {
+    // FFADO read_flash FF400 path (fireface_flash.cpp:105-121): [addr, bytes] to
+    // 0x80100288, READ (2) to 0x80100520, wait idle, read 0x80100290; 32 quadlets
+    // per pass, so the 59-quadlet block takes two passes.
+    FirefaceScriptBus bus; bus.revision = 0x146; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    ASSERT_EQ(bus.writes.size(), 5U);
+    EXPECT_EQ(bus.writes[1].lo, 0x80100288U);
+    EXPECT_EQ(bus.writes[1].bytes, LeWords({0x00060000U, 128U}));
+    EXPECT_EQ(bus.writes[2].lo, 0x80100520U);
+    EXPECT_EQ(bus.writes[2].bytes, LeWords({0x2U}));
+    EXPECT_EQ(bus.writes[3].bytes, LeWords({0x00060080U, 108U}));
+    EXPECT_EQ(bus.writes[4].bytes, LeWords({0x2U}));
+    ExpectFlashImage(family);
+}
+
+TEST(FirefaceFlashTests, FF400FlashCommandRegisterOnlyEverSeesReadOrRevision) {
+    // 0x80100520 also takes WRITE (1) and ERASE (0xc/0xd/0xe) (fireface_def.h:135-140).
+    FirefaceScriptBus bus; bus.revision = 0x146; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
+    ASSERT_TRUE(family.AssignChannels(channels));
+    ASSERT_TRUE(family.ArmDeviceTxAndEnable());
+    ASSERT_TRUE(family.Confirm());
+    EXPECT_EQ(family.Stop(), kIOReturnSuccess);
+    for (const auto& w : bus.writes) {
+        if (w.lo != 0x80100520U) continue;
+        EXPECT_TRUE(w.bytes == LeWords({0x2U}) || w.bytes == LeWords({0xfU}));
+    }
+}
+
+TEST(FirefaceFlashTests, DryRunRefusesAnImageItCannotDecodeAndStillStarts) {
+    FirefaceScriptBus bus; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto& dryRun = family.LastSettingsDryRun();
+    ASSERT_TRUE(dryRun.decodeError.has_value());
+    EXPECT_EQ(dryRun.decodeError->quadlet, ASFW::Audio::RME::FlashField::kSpdifInputMode);
+    EXPECT_FALSE(dryRun.config.has_value());
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(FirefaceFlashTests, DryRunComputesTheConfigurationAndComparesItWithStatusWithoutWriting) {
+    namespace F = ASFW::Audio::RME::FlashField;
+    FirefaceScriptBus bus; RouteState route;
+    bus.flashImage.fill(0);
+    bus.flashImage[F::kSpdifInputMode] = 1;        // coaxial
+    bus.flashImage[F::kSyncReference] = 3;         // word clock
+    bus.flashImage[F::kOutputLevel] = 2;           // high gain
+    bus.flashImage[F::kPlugSelect0] = 1;           // input 7 front
+    bus.flashImage[F::kInstrumentPlugSelect] = 1;  // input 1 front
+    bus.flashImage[F::kSampleRate] = 48000;
+    bus.status1 = 0x00001007U;  // internal, saved word-clock reference, 48 kHz
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto& dryRun = family.LastSettingsDryRun();
+    ASSERT_FALSE(dryRun.decodeError.has_value());
+    ASSERT_TRUE(dryRun.config.has_value());
+    EXPECT_EQ(*dryRun.config, (ASFW::Audio::RME::ConfigWords{0x00000408U, 0x00000B30U, 0x8000101FU}));
+    ASSERT_TRUE(dryRun.status.has_value());
+    EXPECT_TRUE(dryRun.status->Matches());
+    EXPECT_TRUE(bus.writes.empty()) << "a dry run never writes the configuration register";
+}
+
+TEST(FirefaceFlashTests, AFailedFlashReadNeverBlocksTheStart) {
+    FirefaceScriptBus bus; bus.failReadAddress = 0x0003000f0000ULL; RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    EXPECT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    EXPECT_FALSE(family.LastFlashSettings().has_value());
 }
 
 TEST(FirefaceSequenceTests, FirmwareZeroOldAndReadFailureAreRejectedBeforeInit) {
@@ -254,7 +477,7 @@ TEST(FirefaceSequenceTests, FirmwareZeroOldAndReadFailureAreRejectedBeforeInit) 
 }
 
 TEST(FirefaceSequenceTests, FF400FirmwareGateRejectsZeroOldAndAsyncReadErrors) {
-    for (const auto [revision, fail] : {std::pair<uint32_t,uint64_t>{0,0}, {0x145,0}, {0x146,0x80100524ULL}, {0x146,0x80100290ULL}}) {
+    for (const auto [revision, fail] : {std::pair<uint32_t,uint64_t>{0,0}, {0x145,0}, {0x146,0x80100520ULL}, {0x146,0x80100290ULL}}) {
         FirefaceScriptBus bus; bus.revision = revision; bus.failReadAddress = fail;
         RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
         ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
@@ -271,12 +494,30 @@ TEST(FirefaceSequenceTests, ExternalSourceRequiresSelectedActiveLocked48Clock) {
     RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
     ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
     EXPECT_FALSE(family.Configure({}, {.sampleRateHz = 48000}));
-    ASSERT_EQ(bus.writes.size(), 1U);
-    EXPECT_EQ(bus.writes.front().lo, 0x80100520U); // Revision query only; no fetch/init/mixer writes.
+    for (const auto& w : bus.writes)  // flash protocol only; no fetch/init/mixer writes
+        EXPECT_TRUE(w.lo == 0x80100520U || w.lo == 0x80100288U) << std::hex << w.lo;
 
     bus.status0 = 0x01000000U | 0x20000000U | 0x40000000U | 0x06000000U;
     ASFW::Audio::RME::FirefaceFamilyDriver locked(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
     EXPECT_TRUE(locked.Configure({}, {.sampleRateHz = 48000}));
+}
+
+TEST(FirefaceSequenceTests, InternalFlagWinsOverSavedExternalSelection) {
+    // The device keeps the saved external choice (bits 12:10) while bit 0 selects
+    // internal clock; Linux parse_clock_bits tests bit 0 first.
+    for (const uint32_t savedExternal : {0x0400U, 0x0c00U, 0x1000U, 0x1800U}) {
+        FirefaceScriptBus bus;
+        bus.status1 = savedExternal | 0x1U | 0x6U; // internal, 48 kHz
+        bus.status0 = 0x01c00000U;                 // active source: internal
+        RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+        ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+        ASFW::Audio::AudioDuplexChannels channels{};
+        ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000})) << std::hex << savedExternal;
+        ASSERT_TRUE(family.AssignChannels(channels)) << std::hex << savedExternal;
+        const auto health = family.ReadHealth(0);
+        ASSERT_TRUE(health);
+        EXPECT_TRUE(health->sourceLocked) << std::hex << savedExternal;
+    }
 }
 
 TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation) {
@@ -294,7 +535,7 @@ TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation
     // Sanitized CI can add scheduling overhead to the 500 ms polling deadline.
     EXPECT_LT(elapsed, 750U);
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
-    EXPECT_EQ(bus.writes.back().lo, 0x34U); // assignment timeout resets the partially configured device
+    ExpectStopThenMute(bus, 0x34U, 28U); // assignment timeout resets the partially configured device
 
     FirefaceScriptBus cancelBus; RouteState cancelRoute;
     ProtocolRegisterIO cancelIo(cancelBus, cancelBus, cancelRoute.registry, cancelRoute.route);
@@ -331,7 +572,7 @@ TEST(FirefaceSequenceTests, NewRouteGenerationDiscardsOldInitStateAndReinitializ
     ASFW::Audio::AudioDuplexChannels channels{};
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     ASSERT_TRUE(family.AssignChannels(channels));
-    ASSERT_EQ(bus.writes.size(), 2U);
+    ASSERT_EQ(bus.writes.size(), 1U);
 
     route.registry.InvalidateLiveMappingsForBusReset();
     ::ASFW::Discovery::ConfigROM rom{};
@@ -346,9 +587,8 @@ TEST(FirefaceSequenceTests, NewRouteGenerationDiscardsOldInitStateAndReinitializ
     ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
     auto assigned = family.AssignChannels(channels);
     ASSERT_TRUE(assigned);
-    ASSERT_EQ(bus.writes.size(), 4U);
-    EXPECT_EQ(bus.writes[2].lo, 0x801c0000U);
-    EXPECT_EQ(bus.writes[3].lo, 0x1cU);
+    ASSERT_EQ(bus.writes.size(), 2U);
+    EXPECT_EQ(bus.writes[1].lo, 0x1cU);
 }
 
 TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBoundaries) {
@@ -369,11 +609,13 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         std::unique_ptr<ASFW::Audio::RME::FirefaceFamilyDriver> ownedFamily;
         makeFamily(bus, route, io, owned, family, ownedFamily);
         ASSERT_TRUE(family->Configure(channels, {.sampleRateHz=48000}));
+        ASSERT_TRUE(family->AssignChannels(channels));
+        ASSERT_TRUE(family->ArmDeviceTxAndEnable());
         bus.failWriteAddress = 0x801c0000ULL;
-        EXPECT_FALSE(family->AssignChannels(channels));
-        EXPECT_EQ(bus.writes.size(), 1U); // failed fetch is not followed by init or stop traffic
+        EXPECT_FALSE(family->Confirm()); // a fetch mask the device refused fails the start
+        bus.failWriteAddress = 0;
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
-        EXPECT_EQ(bus.writes.size(), 1U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -384,7 +626,7 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         bus.failWriteAddress = 0x00020000001cULL;
         EXPECT_FALSE(family->AssignChannels(channels));
         EXPECT_EQ(family->Stop(), kIOReturnSuccess); // uncertain init completion is reset
-        EXPECT_EQ(bus.writes.back().lo, 0x34U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -396,7 +638,7 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         bus.failWriteAddress = 0x000200000028ULL;
         EXPECT_FALSE(family->ArmDeviceTxAndEnable());
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
-        EXPECT_EQ(bus.writes.back().lo, 0x34U);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
     {
         FirefaceScriptBus bus; RouteState route; ProtocolRegisterIO* io{};
@@ -407,9 +649,12 @@ TEST(FirefaceSequenceTests, FailedFetchInitStartAndStopWritesHaveSafeRollbackBou
         ASSERT_TRUE(family->AssignChannels(channels));
         ASSERT_TRUE(family->ArmDeviceTxAndEnable());
         bus.failWriteAddress = 0x000200000034ULL;
+        const size_t beforeFailedStop = bus.writes.size();
         EXPECT_EQ(family->Stop(), kIOReturnError);
+        EXPECT_EQ(bus.writes.size(), beforeFailedStop + 1U); // no mute after a refused stop
         bus.failWriteAddress = 0;
         EXPECT_EQ(family->Stop(), kIOReturnSuccess);
+        ExpectStopThenMute(bus, 0x34U, 28U);
     }
 }
 

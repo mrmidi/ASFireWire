@@ -49,13 +49,11 @@ public:
                                   (static_cast<uint32_t>(blockBytes[offset + 1]) << 8U) |
                                   (static_cast<uint32_t>(blockBytes[offset + 2]) << 16U) |
                                   (static_cast<uint32_t>(blockBytes[offset + 3]) << 24U);
-            const uint32_t raw24 = word >> 8U;
-            const int32_t sample = (raw24 & 0x00800000U) != 0
-                                       ? static_cast<int32_t>(raw24) - 0x01000000
-                                       : static_cast<int32_t>(raw24);
-            destination[ch] = sample <= -8388608
-                                  ? -1.0f
-                                  : static_cast<float>(sample) / 8388607.0f;
+            // The low byte carries device housekeeping, not audio. Scale as
+            // RME 3.41 convertInputSamples (0x974): (int32)(word & ~0xff) * 2^-31,
+            // the inverse of the transmit scale.
+            const auto sample = static_cast<int32_t>(word & 0xFFFFFF00U);
+            destination[ch] = static_cast<float>(sample) * (1.0f / 2147483648.0f);
         }
     }
 

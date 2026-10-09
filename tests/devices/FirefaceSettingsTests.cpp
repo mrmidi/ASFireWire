@@ -1,0 +1,253 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 ASFireWire Project
+//
+// Fireface settings: flash block -> typed settings -> configuration register.
+// Expected quadlets are worked out by hand from the bit table documented in
+// FirefaceSettings.cpp, not produced by the code under test.
+
+#include "Audio/Protocols/RME/FirefaceSettings.hpp"
+
+#include <gtest/gtest.h>
+
+namespace {
+
+using namespace ASFW::Audio::RME;
+namespace F = FlashField;
+
+// A valid image: every field the encoder reads holds a defined value.
+FlashSettings BaseImage(FirefaceModel model) {
+    FlashSettings q{};
+    q.fill(0);
+    q[F::kSpdifInputMode] = 1;    // coaxial
+    q[F::kClockMode] = 0;         // master
+    q[F::kSyncReference] = 3;     // word clock
+    q[F::kSpdifOutputMode] = 0;   // coaxial
+    q[F::kInputLevel] = 0;        // low gain
+    q[F::kOutputLevel] = 2;       // high gain
+    q[F::kSampleRate] = 48000;
+    if (model == FirefaceModel::kFF800) {
+        q[F::kPlugSelect0] = 1;       // input 7 front
+        q[F::kPlugSelect1] = 0;       // input 8 rear
+        q[F::kInstrumentPlugSelect] = 1;  // input 1 front
+    }
+    return q;
+}
+
+ConfigWords Encode(FirefaceModel model, const FlashSettings& image) {
+    const auto settings = DecodeFlashSettings(model, image);
+    EXPECT_TRUE(settings.has_value());
+    return settings ? EncodeConfig(model, *settings) : ConfigWords{};
+}
+
+TEST(FirefaceSettingsTests, FF800BaseImageEncodesToHandDerivedQuadlets) {
+    const auto config = Encode(FirefaceModel::kFF800, BaseImage(FirefaceModel::kFF800));
+    // q0: input low gain 0x8, output high gain 0x400.
+    EXPECT_EQ(config[0], 0x00000408U);
+    // q1: output high gain 0x10, input 7 front 0x20, input 8 rear 0x100,
+    // input 1 front without filter 0x800, drive off 0x200.
+    EXPECT_EQ(config[1], 0x00000B30U);
+    // q2: master 0x1, word clock 0x1000, rates 0x1e, drop-and-stop 0x80000000.
+    EXPECT_EQ(config[2], 0x8000101FU);
+}
+
+TEST(FirefaceSettingsTests, FF800PhantomPowerBitsPerInput) {
+    const std::pair<uint32_t, uint32_t> cases[] = {
+        {F::kPhantom0, 0x001U},  // input 7
+        {F::kPhantom1, 0x080U},  // input 8
+        {F::kPhantom2, 0x002U},  // input 9
+        {F::kPhantom3, 0x100U},  // input 10
+    };
+    const uint32_t base = Encode(FirefaceModel::kFF800, BaseImage(FirefaceModel::kFF800))[0];
+    for (const auto& [field, bit] : cases) {
+        auto image = BaseImage(FirefaceModel::kFF800);
+        image[field] = 1;
+        EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[0], base | bit) << "field " << field;
+    }
+}
+
+TEST(FirefaceSettingsTests, FF400SettingsEncodeToHandDerivedQuadlets) {
+    auto q = BaseImage(FirefaceModel::kFF400);
+    q[F::kSpdifInputMode] = 0;       // optical
+    q[F::kSpdifOutputEmphasis] = 1;
+    q[F::kSpdifOutputProfessional] = 1;
+    q[F::kClockMode] = 1;            // autosync
+    q[F::kSpdifOutputNonAudio] = 1;
+    q[F::kSyncReference] = 0;        // ADAT1
+    q[F::kSpdifOutputMode] = 1;      // optical
+    q[F::kInputLevel] = 2;           // +4 dBu
+    q[F::kOutputLevel] = 0;          // -10 dBV
+    q[F::kPlugSelect0] = 2;          // FF400: phones -10 dBV
+    q[F::kPhantom0] = 1;             // input 1
+    q[F::kPhantom2] = 1;             // FF400: input 3 pad
+    q[F::kFuzz] = 1;                 // FF400: input 3 instrument
+    q[F::kFilter] = 1;               // FF400: input 4 instrument
+    q[F::kWordClockSingleSpeed] = 1;
+    const auto config = Encode(FirefaceModel::kFF400, q);
+    // q0: phantom 1 0x1, pad 3 0x100, phones -10 dBV 0x10000, input +4 dBu 0x10,
+    // output -10 dBV 0x1000, instrument 4 0x4, instrument 3 0x200.
+    EXPECT_EQ(config[0], 0x00011315U);
+    // q1: input +4 dBu 0x2, output -10 dBV 0x8. Nothing else on an FF400.
+    EXPECT_EQ(config[1], 0x0000000AU);
+    // q2: S/PDIF pro 0x20, emphasis 0x40, non-audio 0x80, optical out 0x100,
+    // optical in 0x200, word clock 1x 0x2000, rates 0x1e, drop-and-stop
+    // 0x80000000, MIDI to address 0 0x04000000. Autosync: no master bit.
+    EXPECT_EQ(config[2], 0x840023FEU);
+}
+
+TEST(FirefaceSettingsTests, WordClockSingleSpeedFollowsTheSetting) {
+    auto image = BaseImage(FirefaceModel::kFF800);
+    EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[2] & 0x2000U, 0U)
+        << "FFADO sets this bit unconditionally (assignment for comparison); the RME driver does not";
+    image[F::kWordClockSingleSpeed] = 1;
+    EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[2] & 0x2000U, 0x2000U);
+}
+
+TEST(FirefaceSettingsTests, SyncReferenceBitsFollowTheVendorDriver) {
+    const std::pair<uint32_t, uint32_t> cases[] = {
+        {0, 0x0000U}, {1, 0x0400U}, {2, 0x0C00U}, {3, 0x1000U}, {4, 0x1400U}};
+    for (const auto model : {FirefaceModel::kFF400, FirefaceModel::kFF800}) {
+        for (const auto& [code, bits] : cases) {
+            auto image = BaseImage(model);
+            image[F::kSyncReference] = code;
+            EXPECT_EQ(Encode(model, image)[2] & 0x1C00U, bits) << "code " << code;
+        }
+    }
+}
+
+TEST(FirefaceSettingsTests, FF800Input1JackAndSpeakerEmulation) {
+    struct Case { uint32_t jack; uint32_t filter; uint32_t q1Bits; uint32_t q0Bit; };
+    const Case cases[] = {
+        {1, 0, 0x800, 0x0},  // front
+        {1, 1, 0x400, 0x4},  // front, speaker emulation
+        {0, 0, 0x004, 0x0},  // rear
+        {2, 1, 0x404, 0x4},  // front and rear, speaker emulation
+    };
+    for (const auto& c : cases) {
+        auto image = BaseImage(FirefaceModel::kFF800);
+        image[F::kInstrumentPlugSelect] = c.jack;
+        image[F::kFilter] = c.filter;
+        const auto config = Encode(FirefaceModel::kFF800, image);
+        EXPECT_EQ(config[1] & 0xC04U, c.q1Bits) << "jack " << c.jack << " filter " << c.filter;
+        EXPECT_EQ(config[0] & 0x4U, c.q0Bit);
+    }
+}
+
+TEST(FirefaceSettingsTests, FF800LimiterIsDisabledOnlyWithTheFrontInstrumentInput) {
+    auto image = BaseImage(FirefaceModel::kFF800);
+    image[F::kLimiterOff] = 1;
+    EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[2] & 0x10000U, 0x10000U);
+    image[F::kInstrumentPlugSelect] = 0;  // rear
+    EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[2] & 0x10000U, 0U);
+    image = BaseImage(FirefaceModel::kFF800);  // limiter on, front
+    EXPECT_EQ(Encode(FirefaceModel::kFF800, image)[2] & 0x10000U, 0U);
+}
+
+TEST(FirefaceSettingsTests, FF800DriveSelectsTheFpgaOrTheCpldBit) {
+    auto image = BaseImage(FirefaceModel::kFF800);
+    image[F::kFuzz] = 1;
+    const auto on = Encode(FirefaceModel::kFF800, image);
+    EXPECT_EQ(on[0] & 0x200U, 0x200U);
+    EXPECT_EQ(on[1] & 0x200U, 0U);
+    const auto off = Encode(FirefaceModel::kFF800, BaseImage(FirefaceModel::kFF800));
+    EXPECT_EQ(off[0] & 0x200U, 0U);
+    EXPECT_EQ(off[1] & 0x200U, 0x200U);
+}
+
+TEST(FirefaceSettingsTests, FF400QuadletOneCarriesOnlyLevelBits) {
+    auto image = BaseImage(FirefaceModel::kFF400);
+    image[F::kFuzz] = 0;
+    image[F::kFilter] = 0;
+    image[F::kInstrumentPlugSelect] = 2;  // meaningless on an FF400; must not leak
+    for (const uint32_t in : {0U, 1U, 2U}) {
+        for (const uint32_t out : {0U, 1U, 2U}) {
+            image[F::kInputLevel] = in;
+            image[F::kOutputLevel] = out;
+            EXPECT_EQ(Encode(FirefaceModel::kFF400, image)[1] & ~0x1BU, 0U);
+        }
+    }
+}
+
+TEST(FirefaceSettingsTests, LevelCodesMapToBothControlBits) {
+    // Flash codes: input low 0 / +4 dBu 2 / -10 dBV 1; output high 2 / +4 dBu 1 / -10 dBV 0.
+    struct Case { uint32_t field; uint32_t code; uint32_t q0; uint32_t q1; };
+    const Case cases[] = {
+        {F::kInputLevel, 0, 0x008, 0x0}, {F::kInputLevel, 2, 0x010, 0x2},
+        {F::kInputLevel, 1, 0x020, 0x3},
+        {F::kOutputLevel, 2, 0x400, 0x10}, {F::kOutputLevel, 1, 0x800, 0x18},
+        {F::kOutputLevel, 0, 0x1000, 0x08},
+    };
+    for (const auto& c : cases) {
+        auto image = BaseImage(FirefaceModel::kFF400);
+        image[c.field] = c.code;
+        const auto config = Encode(FirefaceModel::kFF400, image);
+        const uint32_t q0Mask = c.field == F::kInputLevel ? 0x38U : 0x1C00U;
+        const uint32_t q1Mask = c.field == F::kInputLevel ? 0x03U : 0x18U;
+        EXPECT_EQ(config[0] & q0Mask, c.q0) << "field " << c.field << " code " << c.code;
+        EXPECT_EQ(config[1] & q1Mask, c.q1) << "field " << c.field << " code " << c.code;
+    }
+}
+
+TEST(FirefaceSettingsTests, DecodeRefusesUnsetOrUnknownValues) {
+    struct Case { FirefaceModel model; uint32_t field; uint32_t value; };
+    const Case cases[] = {
+        {FirefaceModel::kFF800, F::kPhantom0, 0xffffffffU},  // not set in flash
+        {FirefaceModel::kFF800, F::kPhantom3, 2U},           // phantom must be exactly 0 or 1
+        {FirefaceModel::kFF400, F::kPhantom2, 7U},           // FF400 pad slot
+        {FirefaceModel::kFF800, F::kSyncReference, 5U},
+        {FirefaceModel::kFF800, F::kPlugSelect1, 3U},
+        {FirefaceModel::kFF400, F::kPlugSelect0, 3U},        // FF400 phones level
+        {FirefaceModel::kFF400, F::kInputLevel, 3U},
+    };
+    for (const auto& c : cases) {
+        auto image = BaseImage(c.model);
+        image[c.field] = c.value;
+        const auto decoded = DecodeFlashSettings(c.model, image);
+        ASSERT_FALSE(decoded.has_value()) << "field " << c.field;
+        EXPECT_EQ(decoded.error().quadlet, c.field);
+        EXPECT_EQ(decoded.error().value, c.value);
+    }
+}
+
+TEST(FirefaceSettingsTests, FF400IgnoresFF800OnlyFields) {
+    auto image = BaseImage(FirefaceModel::kFF400);
+    image[F::kInstrumentPlugSelect] = 0xffffffffU;
+    image[F::kPlugSelect1] = 0xffffffffU;
+    image[F::kLimiterOff] = 0xffffffffU;
+    EXPECT_TRUE(DecodeFlashSettings(FirefaceModel::kFF400, image).has_value());
+}
+
+TEST(FirefaceSettingsTests, ChannelLimitOutOfRangeMeansAllChannels) {
+    // FFADO read_device_flash_settings coerces it (fireface_flash.cpp:294-297).
+    auto image = BaseImage(FirefaceModel::kFF800);
+    image[F::kChannelLimit] = 9;
+    const auto decoded = DecodeFlashSettings(FirefaceModel::kFF800, image);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->channelLimit, ChannelLimit::kAllChannels);
+    image[F::kChannelLimit] = 1;
+    EXPECT_EQ(DecodeFlashSettings(FirefaceModel::kFF800, image)->channelLimit, ChannelLimit::kNoAdat2);
+}
+
+TEST(FirefaceSettingsTests, StatusComparisonMapsTheTimecodeReference) {
+    auto image = BaseImage(FirefaceModel::kFF800);
+    image[F::kSyncReference] = 4;  // TCO: config 0x1400, status 0x1800
+    const auto config = Encode(FirefaceModel::kFF800, image);
+    EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF800, config, 0x00001807U).Matches());
+    EXPECT_FALSE(CompareWithStatus(FirefaceModel::kFF800, config, 0x00001407U).Matches());
+
+    auto ff400 = BaseImage(FirefaceModel::kFF400);
+    ff400[F::kSyncReference] = 4;  // LTC: 0x1400 in both registers
+    EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF400,
+                                  Encode(FirefaceModel::kFF400, ff400), 0x00001407U).Matches());
+}
+
+TEST(FirefaceSettingsTests, StatusComparisonCoversTheMirroredFieldsOnly) {
+    const auto config = Encode(FirefaceModel::kFF800, BaseImage(FirefaceModel::kFF800));
+    // Master + word clock in status; rate bits 0x1e and unrelated bits are ignored.
+    EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF800, config, 0x00001007U).Matches());
+    EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF800, config, 0x0040101FU).Matches());
+    const auto emphasis = CompareWithStatus(FirefaceModel::kFF800, config, 0x00001047U);
+    EXPECT_FALSE(emphasis.Matches());
+    EXPECT_EQ(emphasis.expected ^ emphasis.reported, 0x40U);
+}
+
+} // namespace

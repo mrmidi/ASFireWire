@@ -13,6 +13,7 @@
 #pragma once
 
 #include "FamilyAdapter.hpp"
+#include "../Protocols/RME/FirefaceChannelNames.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 namespace ASFW::Audio::Host {
@@ -49,8 +50,8 @@ public:
         const Discovery::DeviceRecord& record,
         DeviceProfiles::Audio::ProfileBuilderId builder,
         const char* name) {
-        const uint32_t channels = builder == DeviceProfiles::Audio::ProfileBuilderId::RmeFireface800
-                                      ? 28U : 18U;
+        const bool ff800 = builder == DeviceProfiles::Audio::ProfileBuilderId::RmeFireface800;
+        const uint32_t channels = ff800 ? 28U : 18U;
         Model::ASFWAudioDevice config{};
         config.guid = record.guid;
         config.vendorId = record.vendorId;
@@ -70,6 +71,11 @@ public:
         config.playbackStreams.push_back({.pcmChannels = channels, .am824Slots = channels,
                                           .midiPorts = 0, .channelOffset = 0});
         config.resolvedGeometryRequired = true;
+        const auto names = [](const auto& table) {
+            return std::vector<std::string>(table.begin(), table.end());
+        };
+        config.inputChannelNames = ff800 ? names(RME::kFF800InputNames) : names(RME::kFF400InputNames);
+        config.outputChannelNames = ff800 ? names(RME::kFF800OutputNames) : names(RME::kFF400OutputNames);
         return config;
     }
 };

@@ -31,6 +31,13 @@ add_device_test(DiceFamilyDriverTests
 add_device_test(FirefaceFamilyDriverTests
     FirefaceFamilyDriverTests.cpp
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/RME/FirefaceSettings.cpp"
+)
+
+# Fireface settings flash decode and configuration-register encode (pure, no bus).
+add_device_test(FirefaceSettingsTests
+    FirefaceSettingsTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/RME/FirefaceSettings.cpp"
 )
 
 # Generic audio duplex IRM stream reservations and channel geometry tests

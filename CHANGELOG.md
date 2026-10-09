@@ -16,6 +16,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> RME Fireface fixes from the first Fireface 800 hardware report, and an async completion fix that affects every device. Software-tested; the RME changes have not been run on a Fireface by the maintainers, and the Fireface 400 has not run at all.
+
+### Fixed
+
+- Async: block writes, block-read responses and lock requests complete as soon as the controller reports them. The completion scan read a packet's status from its first descriptor instead of its last, so such a packet could wait for a later one or time out. Affects every device; found from a Fireface 800 report.
+- RME Fireface: the internal clock is no longer refused when an external source is still saved as the sync reference.
+- RME Fireface: the card is told to fetch playback audio once both streams run, and to stop after streaming stops. With this, a contributor's Fireface 800 played audio on outputs 1/2 at 48 kHz.
+- RME Fireface 400: a start no longer times out reading the firmware revision (the wrong flash status register was polled).
+- RME Fireface: playback sends full 32-bit samples, and capture is scaled to match.
+
+### Changed
+
+- RME Fireface: safety offsets and reported latency use the same conservative values as MOTU (64/64 and 128/128 frames) instead of 16/16/0/0. Latency is not tuned yet.
+
+### Added
+
+- RME Fireface: channel names (Analog, Mic, Phones, S/PDIF, ADAT) for the Fireface 400 and 800.
+- RME Fireface: every start logs the settings stored in the card and the configuration the driver would send (`[RME] settings dry-run`). Nothing is written yet, so the HOST LED stays red.
+
 ## [0.5.0-beta.1] - 2026-10-09
 
 > One audio lifecycle for every device family, sample-rate switching for DICE and AV/C, a shared MOTU stack, and streams that stay running across Core Audio stop/start. Hardware-tested on a Saffire Pro 24 DSP (DICE), TerraTec Phase 88 and Apogee Duet (AV/C). MOTU support has not been tested on hardware.

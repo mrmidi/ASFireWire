@@ -11,6 +11,8 @@ namespace ASFW::Protocols::Audio::AMDTP {
 
 namespace {
 constexpr float kScale24 = 8388607.0f; // 2^23 - 1
+constexpr float kScale32 = 2147483648.0f;      // 2^31
+constexpr float kMaxBelowScale32 = 2147483520.0f;  // largest float below 2^31
 
 [[nodiscard]] constexpr uint32_t ByteSwap32(uint32_t v) noexcept {
     return ((v & 0x000000FFu) << 24) |
@@ -29,6 +31,17 @@ int32_t PcmSlotCodec::Float32ToSigned24(float sample) noexcept {
     const float scaled = sample * kScale24;
     return (scaled >= 0.0f) ? static_cast<int32_t>(scaled + 0.5f)
                             : static_cast<int32_t>(scaled - 0.5f);
+}
+
+int32_t PcmSlotCodec::Float32ToSigned32(float sample) noexcept {
+    // Float x 2^31, truncated: the RME 3.41 conversion (clipOutputSamples
+    // 0x8d4). INT32_MAX is not a float, so +1.0 saturates at 0x7FFFFF80. Branch-
+    // free selects, no libm; a NaN encodes as silence, not a full-scale click.
+    float scaled = sample * kScale32;
+    scaled = scaled > kMaxBelowScale32 ? kMaxBelowScale32 : scaled;
+    scaled = scaled < -kScale32 ? -kScale32 : scaled;
+    scaled = sample != sample ? 0.0f : scaled;
+    return static_cast<int32_t>(scaled);
 }
 
 uint32_t PcmSlotCodec::EncodeAm824MBLA(float sample) noexcept {
@@ -52,9 +65,9 @@ uint32_t PcmSlotCodec::EncodeRawSigned24In32LE(float sample) noexcept {
 }
 
 uint32_t PcmSlotCodec::EncodeRawPcm24Upper24In32LE(float sample) noexcept {
-    const uint32_t upperAligned =
-        static_cast<uint32_t>(Float32ToSigned24(sample)) << 8U;
-    return ByteSwap32(upperAligned);
+    // The device reads the upper 24 bits; the whole 32-bit value is sent, as
+    // the RME driver does.
+    return ByteSwap32(static_cast<uint32_t>(Float32ToSigned32(sample)));
 }
 
 uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noexcept {
@@ -86,7 +99,7 @@ uint32_t PcmSlotCodec::EncodeInt32(
     case PcmSlotEncoding::RawSigned24In32LE:
         return ByteSwap32(static_cast<uint32_t>(signed24));
     case PcmSlotEncoding::RawPcm24Upper24In32LE:
-        return ByteSwap32(static_cast<uint32_t>(signed24) << 8U);
+        return ByteSwap32(static_cast<uint32_t>(sample));  // full precision
     case PcmSlotEncoding::Am824MBLA:
         break;
     }

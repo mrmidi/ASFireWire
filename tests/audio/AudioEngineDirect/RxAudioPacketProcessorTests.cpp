@@ -461,6 +461,25 @@ TEST(RxAudioPacketProcessorTests, HeaderlessUpper24LEDecodesAndIgnoresLowByte) {
     EXPECT_NEAR(fixture.inputBuffer[kSlots + 1], 0.0f, 1e-6f);
 }
 
+TEST(RxAudioPacketProcessorTests, HeaderlessUpper24LEScalesLikeTheVendorDriver) {
+    // RME 3.41 convertInputSamples (0x974): (int32)(word & 0xffffff00) * 2^-31,
+    // the exact inverse of the transmit scale.
+    Fixture fixture;
+    RxAudioPacketProcessor processor(fixture.writer);
+    ASFW::Audio::Wire::RawPcm24Upper24In32LEPayloadCodec codec(2);
+    std::array<uint8_t, kIsochHeaderBytes + 8> packet{};
+    const std::array<uint8_t, 8> samples{
+        0x5A, 0x00, 0x00, 0x40,   // 0x40000000 + housekeeping low byte -> 0.5
+        0x00, 0x00, 0x00, 0xC0};  // 0xC0000000 -> -0.5
+    std::copy(samples.begin(), samples.end(), packet.begin() + kIsochHeaderBytes);
+    const auto result = processor.ProcessPacket(
+        packet.data(), packet.size(), 0, 2, codec, 0, true, {}, false,
+        ASFW::Encoding::AudioPacketFraming::kHeaderless);
+    ASSERT_EQ(result.framesDecoded, 1U);
+    EXPECT_EQ(fixture.inputBuffer[0], 0.5f);
+    EXPECT_EQ(fixture.inputBuffer[1], -0.5f);
+}
+
 TEST(RxAudioPacketProcessorTests, HeaderlessRejectsPartialChannelFrame) {
     Fixture fixture;
     RxAudioPacketProcessor processor(fixture.writer);
