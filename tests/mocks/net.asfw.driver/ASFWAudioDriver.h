@@ -12,6 +12,7 @@
 #include <DriverKit/OSAction.h>
 #include <AudioDriverKit/AudioDriverKit.h>
 
+#include "ASFWAudioDevice.h"
 #include "ASFWAudioNub.h"
 
 #include <cstdint>
@@ -33,9 +34,20 @@ public:
     // IOUserAudioDriver::RemoveObject: records what the graph teardown detaches.
     kern_return_t RemoveObject(OSObject* object) {
         removedObjects.push_back(object);
+        if (removedAt == 0) removedAt = ++TeardownSequence();
         return kIOReturnSuccess;
     }
     std::vector<OSObject*> removedObjects;
+    uint32_t removedAt{0};
+
+    // IOUserAudioDriver::StopDevice: records the IO stop the teardown issues.
+    kern_return_t StopDevice(uint32_t objectId, IOUserAudioStartStopFlags) {
+        stoppedDevices.push_back(objectId);
+        stopDeviceAt = ++TeardownSequence();
+        return kIOReturnSuccess;
+    }
+    std::vector<uint32_t> stoppedDevices;
+    uint32_t stopDeviceAt{0};
 
     void ZtsAnchorReady_Impl(ASFWAudioDriver_ZtsAnchorReady_Args);
     void TxPreparationReady_Impl(ASFWAudioDriver_TxPreparationReady_Args);

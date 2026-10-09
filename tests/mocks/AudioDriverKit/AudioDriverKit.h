@@ -37,6 +37,12 @@ struct IOUserAudioStreamBasicDescription {
     uint32_t mReserved{0};
 };
 
+// AudioDriverKitTypes.h: how IO is starting or stopping.
+enum class IOUserAudioStartStopFlags : uint64_t {
+    None = 0,
+    Prewarm = (1ULL << 0),
+};
+
 class IOUserAudioStream;
 
 class IOUserAudioDevice {
@@ -62,7 +68,10 @@ public:
 
     [[nodiscard]] virtual uint32_t GetZeroTimestampPeriod() const { return zeroTimestampPeriod; }
 
+    [[nodiscard]] uint32_t GetObjectID() const { return objectId; }
+
     uint32_t zeroTimestampPeriod{0};
+    uint32_t objectId{2};
 };
 
 class IOUserAudioStream : public OSObject {
