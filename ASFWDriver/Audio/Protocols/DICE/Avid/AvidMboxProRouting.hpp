@@ -103,24 +103,49 @@ inline constexpr uint16_t kRouterEntries[] = {
 inline constexpr uint32_t kRouterEntryCount =
     static_cast<uint32_t>(sizeof(kRouterEntries) / sizeof(kRouterEntries[0]));
 
-// The mixer coefficients that came with that capture. Without them the MIXo
-// path carries silence and nothing reaches the outputs, which is exactly how
-// an earlier experiment was misread as "the mixer path does not work".
-// Index is output * 18 + input; unity is 0x4000.
+// Mixer coefficients. Without them the MIXo path carries silence and nothing
+// reaches the outputs, which is exactly how an earlier experiment was misread
+// as "the mixer path does not work".
+//
+// Index is output * 18 + input; unity is 0x4000. Mixer inputs 8-15 are host
+// playback channels 1-8 (the 0xb028..0xb72f router entries above).
+//
+// The capture these started from summed every playback channel into line outs
+// 1-2 - at assorted gains, with channel 1 on both sides and channel 2 only on
+// the right - so anything sent to lines 3-6 also appeared on the main
+// monitors and no output could serve as an independent send. That is the
+// monitor bus of Avid's panel, adjustable there and fixed here. This layout
+// is the one a host without a control panel can use: one playback channel per
+// line output, and a mix of everything on the headphones.
+//
+// Cells that must stay silent are written as explicit zeros. The device keeps
+// whatever its factory map or an earlier program left - on a cold start the
+// factory map feeds the analog inputs to the S/PDIF outputs and the S/PDIF
+// input to the monitor bus under the front-panel knob - so writing only the
+// non-zero cells would leave that content summed in.
 using MixerCoefficient = TCAT::DiceStartupMixerCell;
 inline constexpr MixerCoefficient kStartupMixerCoefficients[] = {
-    // Outputs 0-1: the stereo mix, inputs 8-16 at assorted gains.
-    {8, 0x0abb}, {9, 0x12b7}, {10, 0x12b7}, {11, 0x12b7},
-    {12, 0x12b7}, {13, 0x12b7}, {14, 0x10d4}, {15, 0x10d4},
-    {16, 0x19f2},
-    {26, 0x0abb}, {27, 0x12b7}, {28, 0x12b7}, {29, 0x12b7},
-    {30, 0x12b7}, {31, 0x12b7}, {32, 0x10d4}, {33, 0x10d4},
-    {34, 0x19f2},
-    // Outputs 2-7: straight passes at unity.
-    {46, 0x4000}, {65, 0x4000}, {84, 0x4000}, {103, 0x4000},
+    // Line outs 1-6: one playback channel each, at unity.
+    {8, 0x4000},    // out 0  <- playback 1
+    {27, 0x4000},   // out 1  <- playback 2
+    {46, 0x4000},   // out 2  <- playback 3
+    {65, 0x4000},   // out 3  <- playback 4
+    {84, 0x4000},   // out 4  <- playback 5
+    {103, 0x4000},  // out 5  <- playback 6
+    // S/PDIF: playback 7-8 at unity.
     {122, 0x4000}, {141, 0x4000},
-    // Outputs 8-11: the capture sends, also unity.
-    {152, 0x4000}, {171, 0x4000}, {190, 0x4000}, {209, 0x4000},
+    // Headphones A (outs 8-9) and B (outs 10-11): every playback channel, odd
+    // channels left and even right, each at -12 dB so four cannot clip.
+    {152, 0x1000}, {154, 0x1000}, {156, 0x1000}, {158, 0x1000},
+    {171, 0x1000}, {173, 0x1000}, {175, 0x1000}, {177, 0x1000},
+    {188, 0x1000}, {190, 0x1000}, {192, 0x1000}, {194, 0x1000},
+    {207, 0x1000}, {209, 0x1000}, {211, 0x1000}, {213, 0x1000},
+    // Silence what these outputs could otherwise still carry.
+    {6, 0}, {9, 0}, {10, 0}, {11, 0}, {12, 0},
+    {13, 0}, {14, 0}, {15, 0}, {16, 0},
+    {25, 0}, {26, 0}, {28, 0}, {29, 0}, {30, 0},
+    {31, 0}, {32, 0}, {33, 0}, {34, 0},
+    {108, 0}, {127, 0},
 };
 inline constexpr uint32_t kStartupMixerCoefficientCount =
     static_cast<uint32_t>(sizeof(kStartupMixerCoefficients) /
