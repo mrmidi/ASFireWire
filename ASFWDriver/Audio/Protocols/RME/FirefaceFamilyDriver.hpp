@@ -242,54 +242,13 @@ private:
     // One cold-path line per start stage, decoded for remote reports; the raw
     // words stay in the line so a wrong label cannot hide anything.
     void LogClockStatus(const char* stage, const ClockStatus& s) const noexcept {
+        const DecodedStatus d = DecodeStatus(s.q0, s.q1);
         ASFW_LOG(Audio, "[RME] clock %{public}s: ready=%d mode=%{public}s rate=%u "
-                 "syncRef=%{public}s wclk=%{public}s spdif=%{public}s adat1=%{public}s "
-                 "adat2=%{public}s status0=0x%08x status1=0x%08x",
-                 stage, ClockReady(s) ? 1 : 0,
-                 IsInternalConfigured(s.configuredSource) ? "internal" : ConfiguredSourceName(s.configuredSource),
-                 ConfiguredRateHz(s.q1), SyncReferenceName(s.q0),
-                 InputState(s.q0, 0x40000000U, 0x20000000U), InputState(s.q0, 0x00100000U, 0x00040000U),
-                 InputState(s.q0, 0x00000400U, 0x00001000U), InputState(s.q0, 0x00000800U, 0x00002000U),
-                 s.q0, s.q1);
-    }
-    // status1 bits 12:10 while bit 0 is clear (Linux parse_clock_bits,
-    // ff-protocol-former.c:31-40).
-    [[nodiscard]] static const char* ConfiguredSourceName(uint32_t src) noexcept {
-        switch (src & 0x1c00U) {
-        case 0x0000U: return "adat1";
-        case 0x0400U: return "adat2";
-        case 0x0c00U: return "spdif";
-        case 0x1000U: return "word-clock";
-        case 0x1800U: return "ltc";
-        default: return "unknown";
-        }
-    }
-    // status1 bits 4:1; 0 when unknown (Linux parse_clock_bits, ff-protocol-former.c:20-30).
-    [[nodiscard]] static uint32_t ConfiguredRateHz(uint32_t q1) noexcept {
-        switch (q1 & 0x1eU) {
-        case 0x02U: return 32000;  case 0x00U: return 44100;  case 0x06U: return 48000;
-        case 0x0aU: return 64000;  case 0x08U: return 88200;  case 0x0eU: return 96000;
-        case 0x12U: return 128000; case 0x10U: return 176400; case 0x16U: return 192000;
-        default: return 0;
-        }
-    }
-    // status0 bits 24:22, meaningful only for a slave (FFADO fireface_def.h:323-329).
-    [[nodiscard]] static const char* SyncReferenceName(uint32_t q0) noexcept {
-        switch (q0 & 0x01c00000U) {
-        case 0x00000000U: return "adat1";
-        case 0x00400000U: return "adat2";
-        case 0x00c00000U: return "spdif";
-        case 0x01000000U: return "word-clock";
-        case 0x01400000U: return "tco";
-        case 0x01800000U: return "none";
-        default: return "unknown";
-        }
-    }
-    // Input lock/sync bits per FFADO fireface_def.h:270-289. Linux
-    // dump_sync_status puts the S/PDIF lock at 0x00080000 (FFADO: SR0_OVER).
-    [[nodiscard]] static const char* InputState(uint32_t q0, uint32_t lock, uint32_t sync) noexcept {
-        if ((q0 & lock) == 0) return "none";
-        return (q0 & sync) != 0 ? "sync" : "lock";
+                 "syncRef=%{public}s syncRate=%u wclk=%{public}s spdif=%{public}s "
+                 "adat1=%{public}s adat2=%{public}s status0=0x%08x status1=0x%08x",
+                 stage, ClockReady(s) ? 1 : 0, Name(d.configured), d.configuredRateHz,
+                 Name(d.syncReference), d.syncRateHz, Name(d.wordClock), Name(d.spdif),
+                 Name(d.adat1), Name(d.adat2), s.q0, s.q1);
     }
     // One quadlet per playback data channel: 0 fetches PCM, 1 mutes
     // (Linux former_switch_fetching_mode, ff-protocol-former.c:87-119).
@@ -481,7 +440,7 @@ private:
         auto q1 = Read(Register::kStatus + 4); if (!q1) return std::unexpected(q1.error());
         ClockStatus s{.configuredSource = *q1 & Register::kConfiguredSourceMask,
                       .activeSource = *q0 & 0x01c00000U, .q0 = *q0, .q1 = *q1};
-        s.configured48k = (*q1 & 0x1eU) == 0x06U;
+        s.configured48k = DecodeStatus(*q0, *q1).configuredRateHz == 48000U;
         if (IsInternalConfigured(s.configuredSource)) return s;
         uint32_t expectedActive = 0xffffffffU;
         if (s.configuredSource == 0x1000U) expectedActive = 0x01000000U;

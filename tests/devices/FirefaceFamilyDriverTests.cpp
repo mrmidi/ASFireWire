@@ -62,6 +62,7 @@ public:
                           FwSpeed, InterfaceCompletionCallback callback) override {
         writes.push_back({address.addressHi, address.addressLo, {bytes.begin(), bytes.end()}});
         const uint64_t key = (static_cast<uint64_t>(address.addressHi) << 32) | address.addressLo;
+        if (writeHook) writeHook(key);
         if (key == failWriteAddress) { callback(AsyncStatus::kHardwareError, {}); return {}; }
         if (key == 0x80100288ULL && bytes.size() == 8) {  // FF400 flash address + length latch
             ff400FlashAddr = static_cast<uint32_t>(bytes[0]) | (bytes[1] << 8) |
@@ -100,6 +101,7 @@ public:
     uint64_t failReadAddress{0};
     uint64_t failWriteAddress{0};
     std::function<void(uint64_t)> readHook;
+    std::function<void(uint64_t)> writeHook;
     bool deferRead{false};
     std::vector<Write> writes;
     std::vector<uint64_t> reads;
@@ -582,6 +584,40 @@ TEST(FirefaceSequenceTests, InternalClockStillRequires48kConfigured) {
     const auto assigned = family.AssignChannels(channels);
     ASSERT_FALSE(assigned);
     EXPECT_EQ(assigned.error(), kIOReturnNotReady);
+}
+
+TEST(FirefaceSequenceTests, FieldFF800StartsFromItsRealFlashAndStatus) {
+    // Replays the FF800 field log of 2026-10-10: its flash block, its status
+    // before init, and what it reported after init (48 kHz, transmit channel 1).
+    FirefaceScriptBus bus;
+    bus.flashImage.fill(0);
+    bus.flashImage[4] = 1; bus.flashImage[9] = 3; bus.flashImage[29] = 2; bus.flashImage[30] = 1;
+    bus.flashImage[36] = 1; bus.flashImage[38] = 1; bus.flashImage[43] = 0xac44;
+    bus.status0 = 0x040014b0U; bus.status1 = 0x88001001U;
+    bus.captureWord = 0xffffffffU; bus.status3 = 0xffffffffU;
+    bus.writeHook = [&bus](uint64_t key) {
+        if (key == 0x00020000001cULL) {  // FF800 init
+            bus.status0 = 0x060014c0U; bus.status1 = 0x88001007U; bus.captureWord = 1;
+        }
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASFW::Audio::AudioDuplexChannels channels{};
+
+    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
+    const auto& dryRun = family.LastSettingsDryRun();
+    ASSERT_TRUE(dryRun.config.has_value());
+    EXPECT_EQ(*dryRun.config, (ASFW::Audio::RME::ConfigWords{0x00000914U, 0x0000035eU, 0x8000101fU}));
+    ASSERT_TRUE(dryRun.status.has_value());
+    EXPECT_TRUE(dryRun.status->Matches());
+
+    const auto assigned = family.AssignChannels(channels);
+    ASSERT_TRUE(assigned) << "the field log failed here with kIOReturnNotReady";
+    EXPECT_EQ(assigned->deviceToHostIsoChannel, 1U);
+    ASSERT_TRUE(family.ArmDeviceTxAndEnable());
+    ASSERT_TRUE(family.Confirm());
+    for (const auto& w : bus.writes)
+        EXPECT_NE(w.lo, 0xfc88f014U) << "the configuration is not written yet";
 }
 
 TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation) {

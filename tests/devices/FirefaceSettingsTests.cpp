@@ -351,4 +351,57 @@ TEST(FirefaceSettingsTests, FieldFF800StatusMirrorMatchesBeforeAndAfterInit) {
         EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF800, config, status1).Matches()) << std::hex << status1;
 }
 
+
+// Status goldens: the card's own words from the same field log. Expected values
+// follow FFADO fireface_def.h:270-351 and Linux dump_sync_status
+// (ff-protocol-former.c:159-255); the front-panel LEDs have not checked them yet.
+TEST(FirefaceStatusTests, FieldFF800StatusBeforeInit) {
+    const auto d = DecodeStatus(0x040014b0U, 0x88001001U);
+    EXPECT_EQ(d.configured, ClockSource::kInternal);
+    EXPECT_EQ(d.configuredRateHz, 44100U);          // the saved rate, before our init
+    EXPECT_EQ(d.syncReference, ClockSource::kAdat1);  // bits 24:22 = 0; unused by a master
+    EXPECT_EQ(d.syncRateHz, 44100U);                // bits 28:25 = 0x04000000
+    EXPECT_EQ(d.wordClock, LockState::kNone);
+    EXPECT_EQ(d.spdif, LockState::kNone);
+    EXPECT_EQ(d.adat1, LockState::kSync);           // 0x400 lock + 0x1000 sync
+    EXPECT_EQ(d.adat2, LockState::kNone);
+}
+
+TEST(FirefaceStatusTests, FieldFF800StatusAfterInit) {
+    for (const uint32_t status1 : {0x88001007U, 0xa8001007U}) {
+        const auto d = DecodeStatus(0x060014c0U, status1);
+        EXPECT_EQ(d.configured, ClockSource::kInternal) << std::hex << status1;
+        EXPECT_EQ(d.configuredRateHz, 48000U);
+        EXPECT_EQ(d.syncRateHz, 48000U);
+        EXPECT_EQ(d.adat1, LockState::kSync);
+        EXPECT_EQ(d.wordClock, LockState::kNone);
+    }
+}
+
+TEST(FirefaceStatusTests, ConfiguredSourceComesFromBit0ThenBits12To10) {
+    EXPECT_EQ(DecodeStatus(0, 0x1001U).configured, ClockSource::kInternal);  // bit 0 wins
+    EXPECT_EQ(DecodeStatus(0, 0x0000U).configured, ClockSource::kAdat1);
+    EXPECT_EQ(DecodeStatus(0, 0x0400U).configured, ClockSource::kAdat2);
+    EXPECT_EQ(DecodeStatus(0, 0x0c00U).configured, ClockSource::kSpdif);
+    EXPECT_EQ(DecodeStatus(0, 0x1000U).configured, ClockSource::kWordClock);
+    EXPECT_EQ(DecodeStatus(0, 0x1800U).configured, ClockSource::kTimecode);
+    EXPECT_EQ(DecodeStatus(0, 0x1400U).configured, ClockSource::kUnknown);  // no such status code
+    EXPECT_EQ(DecodeStatus(0, 0x0006U).configuredRateHz, 48000U);
+    EXPECT_EQ(DecodeStatus(0, 0x001eU).configuredRateHz, 0U);
+}
+
+TEST(FirefaceStatusTests, SyncReferenceAndInputLocks) {
+    EXPECT_EQ(DecodeStatus(0x00c00000U, 0).syncReference, ClockSource::kSpdif);
+    EXPECT_EQ(DecodeStatus(0x01000000U, 0).syncReference, ClockSource::kWordClock);
+    EXPECT_EQ(DecodeStatus(0x01400000U, 0).syncReference, ClockSource::kTimecode);
+    EXPECT_EQ(DecodeStatus(0x01800000U, 0).syncReference, ClockSource::kNone);
+    EXPECT_EQ(DecodeStatus(0x01c00000U, 0).syncReference, ClockSource::kUnknown);
+    EXPECT_EQ(DecodeStatus(0x40000000U, 0).wordClock, LockState::kLock);
+    EXPECT_EQ(DecodeStatus(0x60000000U, 0).wordClock, LockState::kSync);
+    EXPECT_EQ(DecodeStatus(0x20000000U, 0).wordClock, LockState::kNone);  // sync without lock
+    EXPECT_EQ(DecodeStatus(0x00100000U, 0).spdif, LockState::kLock);
+    EXPECT_EQ(DecodeStatus(0x00140000U, 0).spdif, LockState::kSync);
+    EXPECT_EQ(DecodeStatus(0x00002800U, 0).adat2, LockState::kSync);
+}
+
 } // namespace
