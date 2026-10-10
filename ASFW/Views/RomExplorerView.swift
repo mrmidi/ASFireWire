@@ -10,92 +10,12 @@ import SwiftUI
 struct ROMExplorerView: View {
     @ObservedObject var viewModel: RomExplorerViewModel
 
-    @State private var selectedNodeId: UInt8?
-    @State private var autoRefreshEnabled = false
-    @State private var autoRefreshTimer: Timer?
     @State private var showAdvancedBIB = false
     @State private var treeSelectionID: String?
 
     var body: some View {
-        HSplitView {
-            sidebar
-                .frame(minWidth: 260, idealWidth: 300)
-
-            detail
-                .frame(minWidth: 520)
-        }
-        .navigationTitle("ROM Explorer")
-        .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                Toggle("Auto-refresh", isOn: $autoRefreshEnabled)
-                    .toggleStyle(.switch)
-                    .onChange(of: autoRefreshEnabled) { _, enabled in
-                        enabled ? startAutoRefresh() : stopAutoRefresh()
-                    }
-
-                Toggle("Interpreted", isOn: $viewModel.showInterpreted)
-                    .help("Filter the tree to common/known Config ROM keys")
-            }
-        }
-        .onAppear {
-            viewModel.refreshAvailableNodes()
-            selectedNodeId = viewModel.selectedNode?.nodeId
-        }
-        .onDisappear {
-            stopAutoRefresh()
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Nodes")
-                    .font(.headline)
-                    .padding(.leading, 12)
-                Spacer()
-                Button {
-                    viewModel.refreshTopology()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .padding(.trailing, 12)
-            }
-            .frame(height: 44)
-            .background(Color(nsColor: .controlBackgroundColor))
-
-            Divider()
-
-            if viewModel.availableNodes.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "network")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("No topology nodes available")
-                        .foregroundStyle(.secondary)
-                    Button("Refresh Topology") {
-                        viewModel.refreshTopology()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else {
-                List(viewModel.availableNodes, id: \.nodeId, selection: $selectedNodeId) { node in
-                    ROMNodeRow(node: node,
-                               isSelected: selectedNodeId == node.nodeId,
-                               hasCachedROM: viewModel.selectedNode?.nodeId == node.nodeId && viewModel.rom != nil)
-                        .tag(node.nodeId)
-                }
-                .listStyle(.sidebar)
-                .onChange(of: selectedNodeId) { _, newValue in
-                    let node = viewModel.availableNodes.first(where: { $0.nodeId == newValue })
-                    viewModel.selectNode(node)
-                    if node != nil {
-                        viewModel.loadROMFromSelectedNodeCache()
-                    }
-                }
-            }
-        }
+        detail
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var detail: some View {
@@ -141,21 +61,11 @@ struct ROMExplorerView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let node = viewModel.selectedNode {
-                    Text("Node \(node.nodeId)")
-                        .font(.headline)
-                    Text("\(node.speedDescription), \(Int(node.portCount)) ports")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("ROM Details")
-                        .font(.headline)
-                    Text("Select a node from the left")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text("Config ROM")
+                .font(.headline)
+            Toggle("Interpreted", isOn: $viewModel.showInterpreted)
+                .help("Filter the tree to common/known Config ROM keys")
+                .toggleStyle(.checkbox)
 
             Spacer()
 
@@ -209,61 +119,6 @@ struct ROMExplorerView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
     }
 
-    private func startAutoRefresh() {
-        stopAutoRefresh()
-        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            Task { @MainActor in
-                viewModel.refreshAvailableNodes()
-                if viewModel.selectedNode != nil {
-                    viewModel.loadROMFromSelectedNodeCache()
-                }
-            }
-        }
-    }
-
-    private func stopAutoRefresh() {
-        autoRefreshTimer?.invalidate()
-        autoRefreshTimer = nil
-    }
-}
-
-private struct ROMNodeRow: View {
-    let node: TopologyNode
-    let isSelected: Bool
-    let hasCachedROM: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(node.linkActive ? Color.green : Color.gray)
-                .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text("Node \(node.nodeId)")
-                        .font(.headline)
-                    if node.isRoot {
-                        Image(systemName: "crown.fill")
-                            .foregroundStyle(.orange)
-                            .help("Root node")
-                    }
-                }
-
-                Text("S\(node.maxSpeedMbps) • \(node.portCount) ports")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if hasCachedROM {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                    .help("ROM currently displayed")
-            }
-        }
-        .padding(.vertical, 3)
-    }
 }
 
 private struct ROMExplorerTabsView: View {

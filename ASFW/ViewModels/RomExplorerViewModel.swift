@@ -39,6 +39,7 @@ final class RomExplorerViewModel: ObservableObject {
     @Published var availableNodes: [TopologyNode] = []
 
     // Reference to connector for driver ROM reading
+    private var requestID = UUID()
     private var connector: ASFWDriverConnector?
     private var topologyViewModel: TopologyViewModel?
 
@@ -89,19 +90,23 @@ final class RomExplorerViewModel: ObservableObject {
     }
 
     func selectNode(_ node: TopologyNode?) {
+        // Invalidate pending cache reads/parses before changing their target.
+        requestID = UUID()
         selectedNode = node
-        if node == nil {
-            rom = nil
-            error = nil
-            statusMessage = nil
-            selection = nil
-            showBusInfo = false
-        }
+        rom = nil
+        error = nil
+        statusMessage = nil
+        selection = nil
+        showBusInfo = false
+        isLoading = false
+        liveReadState = .idle
     }
 
     // MARK: - File Loading
 
     func open(url: URL) {
+        let request = UUID()
+        requestID = request
         isLoading = true
         error = nil
         statusMessage = "Parsing ROM file..."
@@ -112,6 +117,7 @@ final class RomExplorerViewModel: ObservableObject {
             do {
                 let romTree = try RomParser.parse(fileURL: url)
                 DispatchQueue.main.async {
+                    guard self?.requestID == request else { return }
                     self?.rom = romTree
                     self?.error = nil
                     self?.selection = nil
@@ -121,6 +127,7 @@ final class RomExplorerViewModel: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    guard self?.requestID == request else { return }
                     self?.rom = nil
                     self?.error = String(describing: error)
                     self?.statusMessage = nil
@@ -150,6 +157,8 @@ final class RomExplorerViewModel: ObservableObject {
             return
         }
 
+        let request = UUID()
+        requestID = request
         isLoading = true
         error = nil
         statusMessage = "Checking ROM cache for node \(node.nodeId)..."
@@ -161,6 +170,7 @@ final class RomExplorerViewModel: ObservableObject {
             guard let self else { return }
             guard let result = connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
                 DispatchQueue.main.async {
+                    guard self.requestID == request else { return }
                     self.isLoading = false
                     self.liveReadState = .idle
                     self.rom = nil
@@ -170,12 +180,14 @@ final class RomExplorerViewModel: ObservableObject {
                 return
             }
             DispatchQueue.main.async {
+                guard self.requestID == request else { return }
                 let staleSuffix = result.isExactGenerationMatch
                     ? ""
                     : " (stale cache gen \(result.resolvedGeneration), requested gen \(gen))"
                 self.parseAndPublishROM(data: result.data,
                                         sourceType: .driver,
-                                        statusMessage: "ROM loaded from cache (\(result.data.count) bytes)\(staleSuffix)")
+                                        statusMessage: "ROM loaded from cache (\(result.data.count) bytes)\(staleSuffix)",
+                                        request: request)
             }
         }
     }
@@ -194,6 +206,12 @@ final class RomExplorerViewModel: ObservableObject {
             return
         }
 
+        guard let generation = topologyGeneration else {
+            error = "Topology generation unknown. Refresh the bus and try again."
+            return
+        }
+        let request = UUID()
+        requestID = request
         isLoading = true
         error = nil
         statusMessage = "Initiating ROM read for node \(nodeId)..."
@@ -204,7 +222,7 @@ final class RomExplorerViewModel: ObservableObject {
         switch status {
         case .initiated:
             statusMessage = "ROM read initiated. Waiting for driver to cache the ROM..."
-            pollForROM(nodeId: nodeId, remainingRetries: 12)
+            pollForROM(nodeId: nodeId, generation: generation, request: request, remainingRetries: 12)
         case .alreadyInProgress:
             isLoading = false
             liveReadState = .idle
@@ -216,14 +234,15 @@ final class RomExplorerViewModel: ObservableObject {
         }
     }
 
-    private func pollForROM(nodeId: UInt8, remainingRetries: Int) {
+    private func pollForROM(nodeId: UInt8, generation: UInt16, request: UUID, remainingRetries: Int) {
+        guard requestID == request else { return }
         guard remainingRetries > 0 else {
             isLoading = false
             liveReadState = .idle
             statusMessage = "Timed out waiting for ROM read completion"
             return
         }
-        guard let connector, let gen = topologyGeneration else {
+        guard let connector, topologyGeneration == generation else {
             isLoading = false
             liveReadState = .idle
             error = "Topology generation unavailable while polling ROM read"
@@ -235,30 +254,33 @@ final class RomExplorerViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
-            if let result = connector.getConfigROM(nodeId: nodeId, generation: gen) {
+            if let result = connector.getConfigROM(nodeId: nodeId, generation: generation) {
                 DispatchQueue.main.async {
+                    guard self.requestID == request else { return }
                     if result.isExactGenerationMatch {
                         self.parseAndPublishROM(data: result.data,
                                                 sourceType: .driver,
-                                                statusMessage: "ROM read complete (\(result.data.count) bytes)")
+                                                statusMessage: "ROM read complete (\(result.data.count) bytes)",
+                                                request: request)
                     } else {
                         self.statusMessage = "Waiting for fresh ROM read... saw stale cache from gen \(result.resolvedGeneration)"
-                        self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
+                        self.pollForROM(nodeId: nodeId, generation: generation, request: request, remainingRetries: remainingRetries - 1)
                     }
                 }
             } else {
                 DispatchQueue.main.async {
-                    self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
+                    self.pollForROM(nodeId: nodeId, generation: generation, request: request, remainingRetries: remainingRetries - 1)
                 }
             }
         }
     }
 
-    private func parseAndPublishROM(data: Data, sourceType: SourceType, statusMessage: String) {
+    private func parseAndPublishROM(data: Data, sourceType: SourceType, statusMessage: String, request: UUID) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let romTree = try RomParser.parse(data: data)
                 DispatchQueue.main.async {
+                    guard self?.requestID == request else { return }
                     self?.rom = romTree
                     self?.sourceType = sourceType
                     self?.error = nil
@@ -270,6 +292,7 @@ final class RomExplorerViewModel: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    guard self?.requestID == request else { return }
                     self?.rom = nil
                     self?.error = "Failed to parse Config ROM: \(error.localizedDescription)"
                     self?.isLoading = false

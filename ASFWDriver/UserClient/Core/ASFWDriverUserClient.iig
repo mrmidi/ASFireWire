@@ -29,7 +29,7 @@ public:
         kMethodClearHistory            = 4,
         kMethodGetSelfIDCapture        = 5,
         kMethodGetTopologySnapshot     = 6,
-        kMethodPing                    = 7,
+    // Selector 7 retired (GUI health check).
         kMethodAsyncRead               = 8,
         kMethodAsyncWrite              = 9,
         kMethodRegisterStatusListener  = 10,

@@ -19,11 +19,14 @@ class DebugViewModel: ObservableObject {
     @Published var asyncInProgress: Bool = false
     @Published var sharedStatus: DriverStatus?
     @Published var topologyCache: TopologySnapshot?
+    @Published var discoveredDevices: [ASFWDriverConnector.FWDeviceInfo] = []
     @Published var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
 
     let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
     private var driverViewModel: DriverViewModel?
     private let statusFetchQueue = DispatchQueue(label: "net.asfw.app.debug.fetch", qos: .userInitiated)
+    private var inventoryRequestID = UUID()
+    private var isRefreshingInventory = false
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -33,9 +36,15 @@ class DebugViewModel: ObservableObject {
                 self?.isConnected = connected
                 self?.driverViewModel?.updateDriverConnection(connected)
                 if !connected {
+                    self?.inventoryRequestID = UUID()
+                    self?.isRefreshingInventory = false
                     self?.sharedStatus = nil
+                    self?.topologyCache = nil
+                    self?.discoveredDevices = []
+                    self?.avcUnits = []
                 } else {
                     self?.fetchDriverVersion()
+                    self?.fetchLatestSnapshots()
                 }
             }
             .store(in: &cancellables)
@@ -90,7 +99,6 @@ class DebugViewModel: ObservableObject {
     
     func manualRefresh() {
         fetchLatestSnapshots()
-        fetchAVCUnits()
     }
 
     private func handleStatusUpdate(_ status: DriverStatus) {
@@ -105,16 +113,39 @@ class DebugViewModel: ObservableObject {
     }
 
     private func fetchLatestSnapshots() {
+        refreshDiscovery()
         statusFetchQueue.async { [weak self] in
             guard let self = self else { return }
             let status = self.connector.getControllerStatus()
             let history = self.connector.getBusResetHistory(startIndex: 0, count: 10) ?? []
-            let topology = self.connector.getTopologySnapshot()
             Task { @MainActor in
+                guard self.isConnected else { return }
                 self.controllerStatus = status
                 self.busResetHistory = history
-                self.topologyCache = topology
             }
+        }
+    }
+
+    var hasAVCDevice: Bool {
+        guard isConnected else { return false }
+        let registeredGUIDs = avcUnits.map(\.guid)
+        return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices).contains {
+            $0.isAVCDevice(registeredGUIDs: registeredGUIDs)
+        }
+    }
+
+    var hasDICEDevice: Bool {
+        guard isConnected else { return false }
+        return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices)
+            .contains { $0.isDICEDevice }
+    }
+
+    var hasDuetDevice: Bool {
+        guard isConnected else { return false }
+        return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices).contains { item in
+            guard let device = item.device else { return false }
+            return device.vendorId == ASFWDriverConnector.duetVendorID &&
+                device.modelId == ASFWDriverConnector.duetModelID
         }
     }
 
@@ -147,16 +178,28 @@ class DebugViewModel: ObservableObject {
         }
     }
 
-    func fetchAVCUnits() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let units = self.connector.getAVCUnits() ?? []
+    /// One cache-only inventory refresh for navigation and the bus inspector.
+    func refreshDiscovery() {
+        guard isConnected, !isRefreshingInventory else { return }
+        isRefreshingInventory = true
+        let request = UUID()
+        inventoryRequestID = request
+        statusFetchQueue.async { [weak self] in
+            guard let self else { return }
+            let topology = self.connector.getTopologySnapshot()
+            let devices = self.connector.getDiscoveredDevices()
+            let units = self.connector.getAVCUnits()
             Task { @MainActor in
-                self.avcUnits = units
+                guard self.inventoryRequestID == request else { return }
+                self.isRefreshingInventory = false
+                guard self.isConnected else { return }
+                self.topologyCache = topology
+                self.discoveredDevices = devices ?? []
+                self.avcUnits = units ?? []
             }
         }
     }
-    
+
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
         return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }

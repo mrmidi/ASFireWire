@@ -38,7 +38,11 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         var recoverySuggestion: String? {
             switch self {
             case .replacementVersionNotNewer:
+                #if DEBUG
                 return "Turn off “Require a newer build” for local development, or build without --no-bump to increment CFBundleVersion."
+                #else
+                return "Install a newer ASFW build. Release builds only replace a driver with a higher build number."
+                #endif
             case .orphanedDriverServer, .driverDidNotDetach:
                 return "Quit ASFW and reboot before installing the new build. Do not delete files from /Library/SystemExtensions manually."
             case .driverDidNotAttach:

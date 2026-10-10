@@ -15,7 +15,7 @@ final class ASFWDriverConnector: ObservableObject {
         case clearHistory = 4
         case getSelfIDCapture = 5
         case getTopologySnapshot = 6
-        case ping = 7
+        // Selector 7 retired (GUI health check).
         case asyncRead = 8
         case asyncWrite = 9
         case registerStatusListener = 10

@@ -3,7 +3,7 @@ import SwiftUI
 struct DuetControlView: View {
     @StateObject private var viewModel: DuetControlViewModel
 
-    private let faderLabels = ["In 1", "In 2", "Str 1", "Str 2"]
+    private let faderLabels = ["Input 1", "Input 2", "Playback 1", "Playback 2"]
 
     init(connector: ASFWDriverConnector) {
         _viewModel = StateObject(wrappedValue: DuetControlViewModel(connector: connector))
@@ -32,7 +32,9 @@ struct DuetControlView: View {
                         .font(.callout)
                 }
             }
-            .padding()
+            .frame(maxWidth: 860, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .navigationTitle("Duet")
         .onAppear {
@@ -101,6 +103,7 @@ struct DuetControlView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
 
                 HStack(alignment: .top, spacing: 20) {
                     ForEach(Array(faderLabels.enumerated()), id: \.offset) { pair in
@@ -112,7 +115,7 @@ struct DuetControlView: View {
                                       range: Double(DuetMixerParams.gainMin)...Double(DuetMixerParams.gainMax))
                     }
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } label: {
             Label("Mixer", systemImage: "slider.vertical.3")
@@ -139,7 +142,7 @@ struct DuetControlView: View {
                             }
                             .frame(maxWidth: 150)
 
-                            Picker("XLR", selection: Binding(
+                            Picker("XLR mode", selection: Binding(
                                 get: { viewModel.inputParams.xlrNominalLevels[channel] },
                                 set: { viewModel.setInputXlrNominalLevel(channel: channel, level: $0) }
                             )) {
@@ -149,14 +152,14 @@ struct DuetControlView: View {
                             }
                             .frame(maxWidth: 150)
 
-                            Toggle("48V", isOn: Binding(
+                            Toggle("48 V", isOn: Binding(
                                 get: { viewModel.inputParams.phantomPowerings[channel] },
                                 set: { viewModel.setInputPhantom(channel: channel, enabled: $0) }
                             ))
                             .toggleStyle(.switch)
-                            .frame(maxWidth: 90)
+                            .help("Phantom power")
 
-                            Toggle("Polarity", isOn: Binding(
+                            Toggle("Invert polarity", isOn: Binding(
                                 get: { viewModel.inputParams.polarities[channel] },
                                 set: { viewModel.setInputPolarity(channel: channel, inverted: $0) }
                             ))
@@ -229,13 +232,13 @@ private struct VerticalFader: View {
                 .foregroundStyle(.secondary)
 
             Slider(value: $value, in: range, step: 1)
-                .frame(height: 140)
+                .frame(width: 140, height: 24)
                 .rotationEffect(.degrees(-90))
                 .frame(width: 36, height: 140)
 
             Text(label)
                 .font(.caption)
         }
-        .frame(width: 64)
+        .frame(width: 90)
     }
 }

@@ -90,7 +90,8 @@ struct DriverExtensionHealthPolicyTests {
         ))
     }
 
-    @Test func replacementVersionGuardIsOptIn() {
+    @Test func replacementVersionGuardMatchesBuildConfiguration() {
+        #if DEBUG
         #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
             existing: "2",
             replacement: "2",
@@ -101,6 +102,14 @@ struct DriverExtensionHealthPolicyTests {
             replacement: "2",
             requireNewerBuild: false
         ))
+        #else
+        #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "2", replacement: "2", requireNewerBuild: false
+        ) == false)
+        #expect(DriverExtensionVersionPolicy.replacementIsAllowed(
+            existing: "3", replacement: "2", requireNewerBuild: false
+        ) == false)
+        #endif
         #expect(!DriverExtensionVersionPolicy.replacementIsAllowed(
             existing: "2",
             replacement: "2",

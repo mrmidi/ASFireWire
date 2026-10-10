@@ -74,6 +74,7 @@ struct OverviewView: View {
                         .disabled(viewModel.isBusy)
                     }
 
+                    #if DEBUG
                     Divider()
 
                     Toggle(isOn: $requireNewerBuild) {
@@ -87,6 +88,7 @@ struct OverviewView: View {
                     .toggleStyle(.switch)
                     .disabled(viewModel.isBusy)
                     .help("When enabled, ASFW rejects an equal or older build during installation.")
+                    #endif
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))

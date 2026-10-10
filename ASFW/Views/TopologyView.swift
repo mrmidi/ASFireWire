@@ -9,33 +9,11 @@ import SwiftUI
 
 struct TopologyView: View {
     @ObservedObject var viewModel: TopologyViewModel
-    @State private var selectedNode: TopologyNode?
+    @Binding var selectedNodeID: UInt8?
     @State private var showSelfIDDetail = false
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header with refresh controls
-            HStack {
-                Text("Topology & Self-ID")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Spacer()
-                
-                if viewModel.isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 16, height: 16)
-                }
-                
-                Button(action: { viewModel.refresh() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-            }
-            .padding()
-            .background(Color(NSColor.controlBackgroundColor))
-            
             if let error = viewModel.error {
                 ContentUnavailableView(
                     "No Topology Data",
@@ -86,20 +64,6 @@ struct TopologyView: View {
     private func topologySummaryCard(_ topology: TopologySnapshot) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Bus Generation")
-                    Spacer()
-                    Text("\(topology.generation)")
-                        .fontWeight(.semibold)
-                }
-                
-                HStack {
-                    Text("Node Count")
-                    Spacer()
-                    Text("\(topology.nodeCount)")
-                        .fontWeight(.semibold)
-                }
-                
                 if let rootId = topology.rootNodeId {
                     HStack {
                         Text("Root Node")
@@ -258,7 +222,7 @@ struct TopologyView: View {
                             parentLinkSpeed: nil,
                             topology: topology,
                             children: children,
-                            selectedNode: $selectedNode
+                            selectedNodeID: $selectedNodeID
                         )
                     }
                 }
@@ -278,9 +242,9 @@ struct TopologyView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(topology.nodes) { node in
                         nodeRow(node, topology: topology)
-                            .background(selectedNode?.nodeId == node.nodeId ? Color.accentColor.opacity(0.1) : Color.clear)
+                            .background(selectedNodeID == node.nodeId ? Color.accentColor.opacity(0.1) : Color.clear)
                             .cornerRadius(4)
-                            .onTapGesture { selectedNode = node }
+                            .onTapGesture { selectedNodeID = node.nodeId }
                     }
                 }
                 .padding(.top, 4)
@@ -401,7 +365,7 @@ private struct TopologyTreeNodeView: View {
     /// Used to break cycles in malformed/stale topology adjacency so recursion
     /// can't run away and overflow the stack.
     var ancestors: Set<UInt8> = []
-    @Binding var selectedNode: TopologyNode?
+    @Binding var selectedNodeID: UInt8?
 
     /// Children, excluding any that are already ancestors (back-edge / cycle).
     private var childList: [TopologyNode] {
@@ -425,7 +389,7 @@ private struct TopologyTreeNodeView: View {
                                 topology: topology,
                                 children: children,
                                 ancestors: ancestors.union([node.nodeId]),
-                                selectedNode: $selectedNode
+                                selectedNodeID: $selectedNodeID
                             )
                         }
                     }
@@ -476,10 +440,10 @@ private struct TopologyTreeNodeView: View {
             }
         }
         .padding(.vertical, 2)
-        .background(selectedNode?.nodeId == node.nodeId ? Color.accentColor.opacity(0.12) : Color.clear)
+        .background(selectedNodeID == node.nodeId ? Color.accentColor.opacity(0.12) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
-        .onTapGesture { selectedNode = node }
+        .onTapGesture { selectedNodeID = node.nodeId }
     }
 
     private var accentColor: Color {

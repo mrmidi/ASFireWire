@@ -71,17 +71,14 @@ extension ASFWDriverConnector {
             return nil
         }
 
-        updateDuetCachedState(guid: guid) { snapshot in
-            snapshot.knobState = knob ?? snapshot.knobState
-            snapshot.outputParams = output ?? snapshot.outputParams
-            snapshot.inputParams = input ?? snapshot.inputParams
-            snapshot.mixerParams = mixer ?? snapshot.mixerParams
-            snapshot.displayParams = display ?? snapshot.displayParams
-            snapshot.firmwareID = firmware ?? snapshot.firmwareID
-            snapshot.hardwareID = hardware ?? snapshot.hardwareID
-        }
-
-        return getDuetCachedState(guid: guid)
+        // A refresh reports only values actually read in this attempt. Retaining
+        // old fields here made a partial failure look like a successful live read.
+        let snapshot = DuetStateSnapshot(knobState: knob, outputParams: output,
+                                         inputParams: input, mixerParams: mixer,
+                                         displayParams: display, firmwareID: firmware,
+                                         hardwareID: hardware, updatedAt: Date())
+        setDuetCachedState(guid: guid, snapshot: snapshot)
+        return snapshot
     }
 
     func getDuetKnobState(guid: UInt64, timeoutMs: UInt32 = 15_000) -> DuetKnobState? {

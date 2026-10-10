@@ -420,7 +420,13 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              "ASFWAudioDriver: ADK object ids device=%u",
              ivars.audioDevice->GetObjectID());
 
-    auto name = OSSharedPtr(OSString::withCString(ivars.device.deviceName), OSNoRetain);
+    // Label every published Core Audio device at the common graph boundary.
+    // Keep the underlying model name and persistent device/model UIDs intact.
+    constexpr char driverNameSuffix[] = " — ASFW";
+    char displayName[sizeof(ivars.device.deviceName) + sizeof(driverNameSuffix)]{};
+    strlcpy(displayName, ivars.device.deviceName, sizeof(displayName));
+    strlcat(displayName, driverNameSuffix, sizeof(displayName));
+    auto name = OSSharedPtr(OSString::withCString(displayName), OSNoRetain);
     if (!name) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create device name string");
         return kIOReturnNoMemory;
