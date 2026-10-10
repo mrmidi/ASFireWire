@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Async: block writes, block-read responses and lock requests complete as soon as the controller reports them. The completion scan read a packet's status from its first descriptor instead of its last, so such a packet could wait for a later one or time out. Affects every device; found from a Fireface 800 report.
+- Async: the transmit ring no longer stalls for good after it wraps. When a packet did not fit at the end of the ring it was placed at the start, but the completion scan stepped onto the unused slots at the end and waited there forever; from then on no request could be sent (FCP control, connection cleanup). The scan now follows the controller's branch to the next packet. Exposed by the completion fix above.
+- Async: a request that could not be queued no longer keeps its transaction label. Repeated failures could use up all 64 labels, after which nothing could be sent.
+- Async: the transmit ring always keeps one slot free. A completely full ring read as empty, so its outstanding packets would never have been retired.
 - RME Fireface: the internal clock is no longer refused when an external source is still saved as the sync reference.
 - RME Fireface: a card running on its internal clock can start. Every start was refused with "clock not ready": the check also required a status field that only applies when the card follows an external clock. Found from a second Fireface 800 report.
 - RME Fireface: the card is told to fetch playback audio once both streams run, and to stop after streaming stops. With this, a contributor's Fireface 800 played audio on outputs 1/2 at 48 kHz.

@@ -30,7 +30,8 @@ struct OHCIDescriptor;
 //   - DMAMemoryManager (dmaManager_): publishes cachelines and resolves Virt→IOVA.
 // Invariants:
 //   - ReserveBlocks(N) returns a contiguous region fully inside the free window or
-//     kInvalidRingIndex; it never wraps across live descriptors.
+//     kInvalidRingIndex; it never wraps across live descriptors, and never ends on
+//     the head (head == tail reads as empty, so one slot always stays free).
 //   - Immediate-only packets consume two descriptor blocks (OHCIDescriptorImmediate)
 //     and emit OUTPUT_LAST + BranchAlways + branchWord==0 to mark EOL.
 //   - Header+payload packets reserve exactly three blocks: immediate header (OUTPUT_MORE,
