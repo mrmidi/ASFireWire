@@ -29,7 +29,6 @@ struct ClockStatus {
     uint32_t q0{0};
     uint32_t q1{0};
     bool configured48k{false};
-    bool internalActive{false};
     bool externalLocked48k{false};
 };
 
@@ -68,13 +67,14 @@ public:
         auto revision = ReadFirmwareRevision();
         if (!revision) return std::unexpected(revision.error());
         if (*revision == 0 || *revision < FirmwareMinimum(model_)) return std::unexpected(kIOReturnUnsupported);
-        LogSettingsDryRun();
+        // Once per device: the flash does not change between start attempts, and
+        // repeating ~13 lines per retry pushed a field log's history out of the ring.
+        if (!lastDryRun_.flash) LogSettingsDryRun();
         auto status = ReadClockStatus();
         if (!status) return std::unexpected(status.error());
-        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k) {
-            LogClockRefusal("Configure", *status);
+        LogClockStatus("configure", *status);
+        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k)
             return std::unexpected(kIOReturnNotReady);
-        }
 
         configured_ = true;
         caps_ = MakeCaps();
@@ -102,10 +102,8 @@ public:
             return std::unexpected(kr);
         auto afterInit = ReadClockStatus();
         if (!afterInit) return std::unexpected(afterInit.error());
-        if (!ClockReady(*afterInit)) {
-            LogClockRefusal("AssignChannels", *afterInit);
-            return std::unexpected(kIOReturnNotReady);
-        }
+        LogClockStatus("after-init", *afterInit);
+        if (!ClockReady(*afterInit)) return std::unexpected(kIOReturnNotReady);
         if (model_ == FirefaceModel::kFF800) {
             // Device selects its transmit channel; the host binds it without an IRM claim.
             const uint64_t deadline = Session::UptimeMilliseconds() + 500U;
@@ -121,10 +119,13 @@ public:
                     channels_.deviceToHostIsoChannel = channel;
                     channels_.captureIsoChannels[0] = channel;
                     caps_.deviceToHostIsoChannel = channel;
+                    ASFW_LOG(Audio, "[RME] FF800 started: device transmits on channel %u, "
+                             "host transmits on channel %u", channel, channels_.hostToDeviceIsoChannel);
                     return channels_;
                 }
                 IOSleep(5);
             }
+            ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms");
             return std::unexpected(kIOReturnTimeout);
         }
         if (requested.hostToDeviceIsoChannel > 7 || requested.deviceToHostIsoChannel > 7)
@@ -137,6 +138,10 @@ public:
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
         const bool healthy = ClockReady(*s);
+        if (!lastHealthy_ || *lastHealthy_ != healthy) {  // edges only: health is polled
+            LogClockStatus(healthy ? "health-ok" : "health-lost", *s);
+            lastHealthy_ = healthy;
+        }
         return DuplexHealthResult{.generation = io_.Generation(),
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_,
             .sourceLocked = healthy, .clockReferenceHealthy = healthy,
@@ -164,8 +169,11 @@ public:
         // its domain is ready (ff-stream.c:206-217) and FFADO right after start
         // (fireface_hw.cpp:913). RME 3.41 instead writes this mask once before
         // init (hwStart 0x3f05); a user's FF800 played only with this order.
-        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess)
+        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "[RME] fetch mask open failed kr=0x%08x", kr);
             return std::unexpected(kr);
+        }
+        ASFW_LOG(Audio, "[RME] streaming confirmed: fetch mask open, device plays host audio");
         return DuplexConfirmResult{.generation = io_.Generation(), .channels = channels_,
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_, .status = h->status,
             .extStatus = h->extStatus};
@@ -177,7 +185,7 @@ public:
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
         if (!ClockReady(*s)) {
-            LogClockRefusal("ApplyClockIdle", *s);
+            LogClockStatus("apply-clock", *s);
             return std::unexpected(kIOReturnNotReady);
         }
         return DuplexClockApplyResult{.generation = io_.Generation(),
@@ -193,8 +201,9 @@ public:
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
             ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
-        if (kr != kIOReturnSuccess) return kr;
-        enabled_ = false; initialized_ = false; configured_ = false;
+        if (kr != kIOReturnSuccess) { ASFW_LOG(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
+        ASFW_LOG(Audio, "[RME] stopped");
+        enabled_ = false; initialized_ = false; configured_ = false; lastHealthy_.reset();
         // Stop first, then mute every channel (Linux finish_session,
         // ff-stream.c:33-37; FFADO fireface_hw.cpp:949).
         return WriteFetchMask(false);
@@ -222,15 +231,65 @@ private:
         return (src & Register::kConfiguredInternalFlag) != 0U;
     }
     [[nodiscard]] bool IsExternalConfigured(uint32_t src) const noexcept { return !IsInternalConfigured(src); }
+    // A master needs nothing from status0: its sync-reference field only names
+    // what a slave follows. Linux parse_clock_bits (ff-protocol-former.c:54) and
+    // FFADO SR1_CLOCK_MODE_MASTER test status1 bit 0 alone; RME 3.41 hwGetRate
+    // (0x7c05) never reads 0x01c00000 as internal either.
     [[nodiscard]] bool ClockReady(const ClockStatus& s) const noexcept {
         return s.configured48k &&
-            (IsInternalConfigured(s.configuredSource) ? s.internalActive : s.externalLocked48k);
+            (IsInternalConfigured(s.configuredSource) || s.externalLocked48k);
     }
-    void LogClockRefusal(const char* stage, const ClockStatus& s) const noexcept {
-        ASFW_LOG(Audio, "[RME] clock not ready at %{public}s: status0=0x%08x status1=0x%08x "
-                 "configured=0x%04x active=0x%08x 48k=%d internalActive=%d externalLocked48k=%d",
-                 stage, s.q0, s.q1, s.configuredSource, s.activeSource, s.configured48k ? 1 : 0,
-                 s.internalActive ? 1 : 0, s.externalLocked48k ? 1 : 0);
+    // One cold-path line per start stage, decoded for remote reports; the raw
+    // words stay in the line so a wrong label cannot hide anything.
+    void LogClockStatus(const char* stage, const ClockStatus& s) const noexcept {
+        ASFW_LOG(Audio, "[RME] clock %{public}s: ready=%d mode=%{public}s rate=%u "
+                 "syncRef=%{public}s wclk=%{public}s spdif=%{public}s adat1=%{public}s "
+                 "adat2=%{public}s status0=0x%08x status1=0x%08x",
+                 stage, ClockReady(s) ? 1 : 0,
+                 IsInternalConfigured(s.configuredSource) ? "internal" : ConfiguredSourceName(s.configuredSource),
+                 ConfiguredRateHz(s.q1), SyncReferenceName(s.q0),
+                 InputState(s.q0, 0x40000000U, 0x20000000U), InputState(s.q0, 0x00100000U, 0x00040000U),
+                 InputState(s.q0, 0x00000400U, 0x00001000U), InputState(s.q0, 0x00000800U, 0x00002000U),
+                 s.q0, s.q1);
+    }
+    // status1 bits 12:10 while bit 0 is clear (Linux parse_clock_bits,
+    // ff-protocol-former.c:31-40).
+    [[nodiscard]] static const char* ConfiguredSourceName(uint32_t src) noexcept {
+        switch (src & 0x1c00U) {
+        case 0x0000U: return "adat1";
+        case 0x0400U: return "adat2";
+        case 0x0c00U: return "spdif";
+        case 0x1000U: return "word-clock";
+        case 0x1800U: return "ltc";
+        default: return "unknown";
+        }
+    }
+    // status1 bits 4:1; 0 when unknown (Linux parse_clock_bits, ff-protocol-former.c:20-30).
+    [[nodiscard]] static uint32_t ConfiguredRateHz(uint32_t q1) noexcept {
+        switch (q1 & 0x1eU) {
+        case 0x02U: return 32000;  case 0x00U: return 44100;  case 0x06U: return 48000;
+        case 0x0aU: return 64000;  case 0x08U: return 88200;  case 0x0eU: return 96000;
+        case 0x12U: return 128000; case 0x10U: return 176400; case 0x16U: return 192000;
+        default: return 0;
+        }
+    }
+    // status0 bits 24:22, meaningful only for a slave (FFADO fireface_def.h:323-329).
+    [[nodiscard]] static const char* SyncReferenceName(uint32_t q0) noexcept {
+        switch (q0 & 0x01c00000U) {
+        case 0x00000000U: return "adat1";
+        case 0x00400000U: return "adat2";
+        case 0x00c00000U: return "spdif";
+        case 0x01000000U: return "word-clock";
+        case 0x01400000U: return "tco";
+        case 0x01800000U: return "none";
+        default: return "unknown";
+        }
+    }
+    // Input lock/sync bits per FFADO fireface_def.h:270-289. Linux
+    // dump_sync_status puts the S/PDIF lock at 0x00080000 (FFADO: SR0_OVER).
+    [[nodiscard]] static const char* InputState(uint32_t q0, uint32_t lock, uint32_t sync) noexcept {
+        if ((q0 & lock) == 0) return "none";
+        return (q0 & sync) != 0 ? "sync" : "lock";
     }
     // One quadlet per playback data channel: 0 fetches PCM, 1 mutes
     // (Linux former_switch_fetching_mode, ff-protocol-former.c:87-119).
@@ -423,10 +482,7 @@ private:
         ClockStatus s{.configuredSource = *q1 & Register::kConfiguredSourceMask,
                       .activeSource = *q0 & 0x01c00000U, .q0 = *q0, .q1 = *q1};
         s.configured48k = (*q1 & 0x1eU) == 0x06U;
-        if (IsInternalConfigured(s.configuredSource)) {
-            s.internalActive = s.activeSource == 0x01c00000U;
-            return s;
-        }
+        if (IsInternalConfigured(s.configuredSource)) return s;
         uint32_t expectedActive = 0xffffffffU;
         if (s.configuredSource == 0x1000U) expectedActive = 0x01000000U;
         else if (s.configuredSource == 0x0c00U) expectedActive = 0x00c00000U;
@@ -475,6 +531,7 @@ private:
     AudioStreamRuntimeCaps caps_{};
     FW::Generation stateGeneration_{0};
     SettingsDryRun lastDryRun_{};
+    std::optional<bool> lastHealthy_;  // last logged health, for edge-only logging
 };
 
 } // namespace ASFW::Audio::RME
