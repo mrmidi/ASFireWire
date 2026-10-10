@@ -4,6 +4,7 @@
 // Must be included at end of AsyncCommand.hpp (templates require header-only definition)
 
 #include "../AsyncSubsystem.hpp"
+#include "../Contexts/ATRequestContext.hpp"
 #include "../Track/Tracking.hpp"
 #include "../Tx/PacketBuilder.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
@@ -12,6 +13,7 @@
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ASFW::Async {
@@ -51,6 +53,10 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
         return AsyncHandle{0};
     }
     
+    // Every return before successful posting must undo RegisterTx. No deadline
+    // exists yet, so otherwise a failed allocation leaks a label indefinitely.
+    UnpostedRegistrationGuard registration{subsys.GetTracking(), handle};
+
     // Step 4: Extract transaction label from handle
     auto labelOpt = subsys.GetTracking()->GetLabelFromHandle(handle);
     if (!labelOpt.has_value()) {
@@ -135,6 +141,15 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     if (!chain.first) {
         ASFW_LOG_ERROR(Async, "Command submit failed: BuildTransactionChain returned null for handle=0x%x",
                        handle.value);
+        uint32_t headerWords[5]{};
+        std::memcpy(headerWords, headerBuffer, std::min(headerSize, sizeof(headerWords)));
+        ASFW_LOG_ERROR(Async,
+            "[ATSubmitHex] handle=0x%x headerBytes=%zu payloadBytes=%u payloadIOVA=0x%llx header=%08x %08x %08x %08x %08x",
+            handle.value, headerSize, payloadLen, payloadIOVA,
+            headerWords[0], headerWords[1], headerWords[2], headerWords[3], headerWords[4]);
+        if (auto* context = subsys.ResolveAtRequestContext()) {
+            context->DumpAdmissionFailure("descriptor-allocation");
+        }
         return AsyncHandle{0};
     }
     
@@ -162,6 +177,7 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     const uint64_t now = subsys.GetCurrentTimeUsec();
     constexpr uint64_t kDefaultTimeoutUsec = 500'000;  // 500ms per attempt
     subsys.GetTracking()->OnTxPosted(handle, now, kDefaultTimeoutUsec);
+    registration.MarkPosted();
     
     // Step 11: Attach payload to PayloadRegistry (if non-null)
     // Convert unique_ptr to shared_ptr before attaching to registry (consumes unique_ptr)

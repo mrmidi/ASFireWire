@@ -198,6 +198,22 @@ public:
         return AsyncHandle{static_cast<uint32_t>(label) + 1};
     }
 
+    // Submission never reached hardware: release its registration without a
+    // callback. The caller receives an invalid handle and owns admission failure.
+    [[nodiscard]] bool ReleaseUnposted(AsyncHandle handle) noexcept {
+        if (!txnMgr_ || !labelAllocator_ || !lock_ || handle.value == 0 || handle.value > 64) return false;
+        const TLabel label{static_cast<uint8_t>(handle.value - 1)};
+        ::IOLockLock(lock_);
+        bool unposted = false;
+        txnMgr_->WithTransaction(label, [&](Transaction* txn) {
+            unposted = txn && txn->state() == TransactionState::Submitted && txn->deadlineUs() == 0;
+        });
+        auto transaction = unposted ? txnMgr_->Extract(label) : nullptr;
+        if (transaction) labelAllocator_->Free(label.value);
+        ::IOLockUnlock(lock_);
+        return transaction != nullptr;
+    }
+
     [[nodiscard]] std::optional<uint8_t> GetLabelFromHandle(AsyncHandle handle) const {
         if (!txnMgr_ || !lock_) {
             return std::nullopt;
@@ -436,6 +452,27 @@ private:
 
     // Phase 2.0: Transaction infrastructure (required)
     std::unique_ptr<TransactionCompletionHandler> txnHandler_;
+};
+
+/// Gives back a registration that never reached the controller when the scope
+/// ends, unless MarkPosted() ran after OnTxPosted. Submit() holds one per
+/// admission, so every early return releases its label.
+template <typename TrackingT>
+class UnpostedRegistrationGuard {
+public:
+    UnpostedRegistrationGuard(TrackingT* tracking, AsyncHandle handle) noexcept
+        : tracking_(tracking), handle_(handle) {}
+    ~UnpostedRegistrationGuard() {
+        if (tracking_ && !posted_) (void)tracking_->ReleaseUnposted(handle_);
+    }
+    UnpostedRegistrationGuard(const UnpostedRegistrationGuard&) = delete;
+    UnpostedRegistrationGuard& operator=(const UnpostedRegistrationGuard&) = delete;
+    void MarkPosted() noexcept { posted_ = true; }
+
+private:
+    TrackingT* tracking_;
+    AsyncHandle handle_;
+    bool posted_{false};
 };
 
 } // namespace ASFW::Async

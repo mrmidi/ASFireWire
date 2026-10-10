@@ -4,6 +4,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <type_traits>
@@ -265,6 +267,8 @@ public:
      *       from interrupt handler or timer callback.
      */
     [[nodiscard]] std::optional<TxCompletion> ScanCompletion() noexcept;
+    // Error-only hex evidence; independent of verbosity/packet hex settings.
+    void DumpAdmissionFailure(const char* reason) noexcept;
 
     /**
      * \brief Get descriptor ring for diagnostics.
@@ -330,6 +334,7 @@ private:
     IOLock* submitLock_{nullptr};
 
     /// Diagnostics: RUN cleared by StopIfRingDrained() (completion side), count + last time.
+    std::atomic<size_t> lastFailureHead_{std::numeric_limits<size_t>::max()};
     std::atomic<uint32_t> drainStops_{0};
     std::atomic<uint64_t> lastDrainStopNs_{0};
 
@@ -348,6 +353,7 @@ private:
     /// True when the head packet was released (or completed meanwhile) and the scan should go on.
     [[nodiscard]] bool ReleaseUnsentPacketIfStopped(const ScanState& state) noexcept;
     [[nodiscard]] bool DecodeCompletionState(ScanState& state) const noexcept;
+    [[nodiscard]] size_t NextPacketHead(const ScanState& state) const noexcept;
     void ClearDescriptorBlocks(size_t headIndex, uint8_t blocks, size_t capacity) noexcept;
     void StopIfRingDrained(const char* scopeTag, size_t newHead, bool logWhenNotEmpty) noexcept;
     [[nodiscard]] uint8_t ExtractCompletionTLabel(const ScanState& state) const noexcept;
@@ -623,8 +629,9 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         const uint8_t blocksConsumed = state.packetBlocks;
         LogCompletionTelemetry(state);
         const uint8_t tLabel = ExtractCompletionTLabel(state);
+        const size_t newHead = NextPacketHead(state);
         ClearDescriptorBlocks(state.headIndex, blocksConsumed, state.capacity);
-        const size_t newHead = (state.headIndex + blocksConsumed) % state.capacity;
+        lastFailureHead_.store(std::numeric_limits<size_t>::max(), std::memory_order_relaxed);
         ring_->SetHead(newHead);
         ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (%u blocks)",
                     state.headIndex, newHead, blocksConsumed);
@@ -782,6 +789,7 @@ size_t ATContextBase<Derived, Tag>::CommitSubmittedChain(
     const DescriptorBuilder::DescriptorChain& chain,
     size_t capacity) noexcept {
     const size_t newTail = (chain.lastRingIndex + 1) % capacity;
+    if (ring_->IsEmpty()) ring_->SetHead(chain.firstRingIndex);
     ring_->SetTail(newTail);
     ring_->SetPrevLastBlocks(chain.TotalBlocks());
     return newTail;
@@ -863,8 +871,8 @@ bool ATContextBase<Derived, Tag>::ReleaseUnsentPacketIfStopped(const ScanState& 
         return true;  // rescan: it completed
     }
 
+    const size_t newHead = NextPacketHead(state);
     ClearDescriptorBlocks(state.headIndex, state.packetBlocks, state.capacity);
-    const size_t newHead = (state.headIndex + state.packetBlocks) % state.capacity;
     ring_->SetHead(newHead);
     ASFW_LOG_V3(Async, "ScanCompletion: context stopped, released unsent packet head %zu→%zu (%u blocks)",
                 state.headIndex, newHead, state.packetBlocks);
@@ -903,6 +911,55 @@ bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const 
     state.key = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
     state.timeStamp = HW::AT_timeStamp(*state.desc);
     return true;
+}
+
+template<typename Derived, ContextRole Tag>
+size_t ATContextBase<Derived, Tag>::NextPacketHead(const ScanState& state) const noexcept {
+    // Follow the submitted DMA chain across allocator wrap padding, as Linux
+    // ohci.c:1153-1168 does. Arithmetic alone can land on an unsubmitted slot.
+    const uint32_t branch = state.desc->branchWord;
+    if ((branch & 0xFu) != 0) {
+        if (const auto next = ring_->IndexFromIOVA(branch)) {
+            return *next;
+        }
+    }
+    return (state.headIndex + state.packetBlocks) % state.capacity;
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::DumpAdmissionFailure(const char* reason) noexcept {
+    if (!ring_ || !hw_ || ring_->Capacity() == 0) return;
+    if (submitLock_) IOLockLock(submitLock_);
+    const size_t head = ring_->Head();
+    // One bounded snapshot per stuck head, re-enabled by successful completion.
+    if (lastFailureHead_.exchange(head, std::memory_order_relaxed) == head) {
+        if (submitLock_) IOLockUnlock(submitLock_);
+        return;
+    }
+    const size_t capacity = ring_->Capacity();
+    const uint32_t control = this->ReadControl();
+    const uint32_t commandPtr = this->ReadCommandPtr();
+    ASFW_LOG_ERROR(Async,
+        "[ATAdmission] ctx=%{public}s reason=%{public}s head=%zu tail=%zu cap=%zu ctrl=0x%08x cmdPtr=0x%08x run=%u active=%u dead=%u",
+        Tag::kContextName, reason, head, ring_->Tail(), capacity, control, commandPtr,
+        (control & kContextControlRunBit) != 0, (control & kContextControlActiveBit) != 0,
+        (control & kContextControlDeadBit) != 0);
+    const auto dump = [&](const char* position, size_t index) {
+        const auto* descriptor = ring_->At(index);
+        if (!descriptor) return;
+        if (dmaManager_) dmaManager_->FetchRange(descriptor, sizeof(*descriptor));
+        uint32_t words[4]{};
+        std::memcpy(words, descriptor, sizeof(words));
+        ASFW_LOG_ERROR(Async,
+            "[ATAdmissionHex] ctx=%{public}s %{public}s idx=%zu iova=0x%08x q0=%08x q1=%08x q2=%08x q3=%08x",
+            Tag::kContextName, position, index, ring_->CommandPtrWordTo(descriptor, 0),
+            words[0], words[1], words[2], words[3]);
+    };
+    for (size_t i = 0; i < 5; ++i) dump("head", (head + capacity - 2 + i) % capacity);
+    if (const auto index = ring_->IndexFromIOVA(commandPtr)) {
+        dump("cmdPtr", *index);
+    }
+    if (submitLock_) IOLockUnlock(submitLock_);
 }
 
 template<typename Derived, ContextRole Tag>

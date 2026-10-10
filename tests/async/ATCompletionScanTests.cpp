@@ -85,7 +85,8 @@ protected:
     // Block write request: OUTPUT_MORE-Immediate header (2 blocks) + OUTPUT_LAST payload.
     Packet SubmitBlockWrite(uint8_t tLabel) {
         const size_t cap = ring_.Capacity();
-        const size_t idx = ring_.Tail();
+        // DescriptorBuilder::ReserveBlocks keeps all three blocks contiguous.
+        const size_t idx = cap - ring_.Tail() < 3 ? 0 : ring_.Tail();
         auto* first = ring_.At(idx);
         auto* last = ring_.At((idx + 2) % cap);
         std::memset(first, 0, 2 * sizeof(HW::OHCIDescriptor));
@@ -149,6 +150,35 @@ protected:
 
     uint32_t txid_{0};
 };
+
+TEST_F(ATCompletionScanTest, EmptyRingWrapStartsAtAllocatedPacketNotEndPadding) {
+    ring_.SetHead(63);
+    ring_.SetTail(63);
+    const auto packet = SubmitBlockWrite(5);
+    ASSERT_EQ(packet.startIndex, 0u);
+    Retire(packet);
+    SetContext(kContextControlRunBit, packet);
+    const auto completed = Drain();
+    ASSERT_EQ(completed.size(), 1u);
+    EXPECT_EQ(completed[0].tLabel, 5u);
+    EXPECT_EQ(ring_.Head(), ring_.Tail());
+}
+
+TEST_F(ATCompletionScanTest, HotAppendAcrossWrapRetiresLinkedPacketNotEndPadding) {
+    ring_.SetHead(61);
+    ring_.SetTail(61);
+    const auto first = SubmitQuadletWrite(4); // ends at 63, leaving one unused block
+    const auto wrapped = SubmitBlockWrite(5);
+    ASSERT_EQ(wrapped.startIndex, 0u);
+    Retire(first);
+    Retire(wrapped);
+    SetContext(kContextControlRunBit, wrapped);
+    const auto completed = Drain();
+    ASSERT_EQ(completed.size(), 2u);
+    EXPECT_EQ(completed[0].tLabel, 4u);
+    EXPECT_EQ(completed[1].tLabel, 5u);
+    EXPECT_EQ(ring_.Head(), ring_.Tail());
+}
 
 TEST_F(ATCompletionScanTest, BlockWriteCompletesFromItsOutputLastStatus) {
     const Packet write = SubmitBlockWrite(5);
