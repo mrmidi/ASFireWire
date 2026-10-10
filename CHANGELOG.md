@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> RME Fireface fixes from the first Fireface 800 hardware report, and an async completion fix that affects every device. Software-tested; the RME changes have not been run on a Fireface by the maintainers, and the Fireface 400 has not run at all.
+> RME Fireface fixes from two Fireface 800 hardware reports, async transmit fixes that affect every device, and a reorganised app. Software-tested; the RME changes have not been run on a Fireface by the maintainers, and the Fireface 400 has not run at all.
 
 ### Fixed
 
@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - RME Fireface: safety offsets and reported latency use the same conservative values as MOTU (64/64 and 128/128 frames) instead of 16/16/0/0. Latency is not tuned yet.
+- App: the sidebar is grouped (General, Devices & Audio, Video, Reports, Support, Advanced Tools), and a Bus Inspector replaces the separate device discovery view. Advanced tools are behind a setting that is off by default in release builds.
+- Core Audio device names end in " — ASFW" (for example "RME Fireface 800 — ASFW"), so they are easy to tell apart from other drivers. Device UIDs are unchanged, so existing app and DAW settings keep their device.
+- Release builds of the driver extension are built for x86_64 and arm64 (Debug builds keep arm64e). Not yet verified on an installed Release build.
+
+### Removed
+
+- App: the ping view, and the driver's ping selector behind it.
 
 ### Added
 
