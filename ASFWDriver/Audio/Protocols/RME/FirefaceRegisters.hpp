@@ -48,7 +48,7 @@ inline constexpr uint64_t kFF400FlashReadBuffer = kFF400Revision;
 inline constexpr uint32_t kFF400FlashQuadletsPerRead = 32;  // fireface_flash.cpp:107
 // Configuration register, 3 quadlets, write-only (FFADO RME_FF800_CONF_REG /
 // RME_FF400_CONF_REG; RME 3.41 Fireface_InitHardware 0x6728 writes the same).
-// Only logged by the settings dry run so far; nothing writes it yet.
+// Written by FirefaceFamilyDriver::WriteConfig before every init.
 inline constexpr uint64_t kFF800Config = 0x0000fc88f014ULL;
 inline constexpr uint64_t kFF400Config = 0x80100514ULL;
 inline constexpr uint32_t kConfiguredSourceMask = 0x1c01;

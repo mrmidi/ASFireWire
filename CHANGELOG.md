@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Async: block writes, block-read responses and lock requests complete as soon as the controller reports them. The completion scan read a packet's status from its first descriptor instead of its last, so such a packet could wait for a later one or time out. Affects every device; found from a Fireface 800 report.
 - RME Fireface: the internal clock is no longer refused when an external source is still saved as the sync reference.
+- RME Fireface: a card running on its internal clock can start. Every start was refused with "clock not ready": the check also required a status field that only applies when the card follows an external clock. Found from a second Fireface 800 report.
 - RME Fireface: the card is told to fetch playback audio once both streams run, and to stop after streaming stops. With this, a contributor's Fireface 800 played audio on outputs 1/2 at 48 kHz.
 - RME Fireface 400: a start no longer times out reading the firmware revision (the wrong flash status register was polled).
 - RME Fireface: playback sends full 32-bit samples, and capture is scaled to match.
@@ -33,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - RME Fireface: channel names (Analog, Mic, Phones, S/PDIF, ADAT) for the Fireface 400 and 800.
-- RME Fireface: every start logs the settings stored in the card and the configuration the driver would send (`[RME] settings dry-run`). Nothing is written yet, so the HOST LED stays red.
+- RME Fireface: before every start the driver sends the card the settings saved in its flash (phantom power, levels, inputs, S/PDIF, sync reference), as RME's and FFADO's drivers do, with the clock always set to internal (master). Nothing is sent when the flash cannot be read or decoded. Logged as `[RME] settings`, `[RME] config` and `[RME] config readback`. This should also turn the HOST LED off.
+- RME Fireface: start, stop and clock lock changes are logged with the card's clock state decoded (`[RME] clock`), for diagnosing remote reports.
 
 ## [0.5.0-beta.1] - 2026-10-09
 

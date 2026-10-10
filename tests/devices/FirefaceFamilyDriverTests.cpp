@@ -437,7 +437,7 @@ TEST(FirefaceFlashTests, DryRunRefusesAnImageItCannotDecodeAndStillStarts) {
     EXPECT_TRUE(bus.writes.empty());
 }
 
-TEST(FirefaceFlashTests, DryRunComputesTheConfigurationAndComparesItWithStatusWithoutWriting) {
+TEST(FirefaceFlashTests, ConfigComesFromTheFlashMatchesTheStatusMirrorAndIsWritten) {
     namespace F = ASFW::Audio::RME::FlashField;
     FirefaceScriptBus bus; RouteState route;
     bus.flashImage.fill(0);
@@ -457,7 +457,10 @@ TEST(FirefaceFlashTests, DryRunComputesTheConfigurationAndComparesItWithStatusWi
     EXPECT_EQ(*dryRun.config, (ASFW::Audio::RME::ConfigWords{0x00000408U, 0x00000B30U, 0x8000101FU}));
     ASSERT_TRUE(dryRun.status.has_value());
     EXPECT_TRUE(dryRun.status->Matches());
-    EXPECT_TRUE(bus.writes.empty()) << "a dry run never writes the configuration register";
+    ASSERT_EQ(bus.writes.size(), 1U) << "only the configuration register is written";
+    EXPECT_EQ(bus.writes[0].hi, 0x0000U);
+    EXPECT_EQ(bus.writes[0].lo, 0xfc88f014U);
+    EXPECT_EQ(bus.writes[0].bytes, LeWords({0x00000408U, 0x00000B30U, 0x8000101FU}));
 }
 
 TEST(FirefaceFlashTests, DryRunRunsOncePerDeviceSoRetriesDoNotFloodTheLogRing) {
@@ -484,6 +487,62 @@ TEST(FirefaceFlashTests, DryRunRetriesAfterAFailedFlashRead) {
     bus.failReadAddress = 0;
     ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
     EXPECT_TRUE(family.LastFlashSettings().has_value());
+}
+
+// A decodable image: every field the decoder reads holds a defined value.
+void LoadValidFlash(FirefaceScriptBus& bus) {
+    bus.flashImage.fill(0);
+    bus.flashImage[ASFW::Audio::RME::FlashField::kSpdifInputMode] = 1;
+    bus.flashImage[ASFW::Audio::RME::FlashField::kSampleRate] = 48000;
+}
+
+TEST(FirefaceFlashTests, ConfigWriteForcesClockMasterOverASavedAutosync) {
+    FirefaceScriptBus bus; RouteState route;
+    LoadValidFlash(bus);
+    bus.flashImage[ASFW::Audio::RME::FlashField::kClockMode] = 1;  // autosync
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    ASSERT_EQ(bus.writes.size(), 1U);
+    ASSERT_EQ(bus.writes[0].lo, 0xfc88f014U);
+    ASSERT_EQ(bus.writes[0].bytes.size(), 12U);
+    EXPECT_EQ(bus.writes[0].bytes[8] & 0x1U, 0x1U) << "quadlet 2 bit 0: clock master";
+    const auto& upload = family.LastSettingsDryRun();
+    ASSERT_TRUE(upload.config.has_value());
+    EXPECT_EQ((*upload.config)[2] & 0x1U, 0U) << "the flash itself still says autosync";
+}
+
+TEST(FirefaceFlashTests, FF400WritesItsOwnConfigRegister) {
+    FirefaceScriptBus bus; bus.revision = 0x146; RouteState route;
+    LoadValidFlash(bus);
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF400, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    const auto config = std::ranges::find_if(bus.writes, [](const auto& w) { return w.lo == 0x80100514U; });
+    ASSERT_NE(config, bus.writes.end());
+    EXPECT_EQ(config->bytes.size(), 12U);
+    EXPECT_EQ(config->bytes[8] & 0x1U, 0x1U);
+    EXPECT_FALSE(std::ranges::any_of(bus.writes, [](const auto& w) { return w.lo == 0xfc88f014U; }));
+}
+
+TEST(FirefaceFlashTests, AFailedConfigWriteNeverBlocksTheStart) {
+    FirefaceScriptBus bus; RouteState route;
+    LoadValidFlash(bus);
+    bus.failWriteAddress = 0x0000fc88f014ULL;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    ASSERT_TRUE(family.AssignChannels({}));
+    EXPECT_FALSE(family.LastSettingsDryRun().written.has_value()) << "a failed write is not reported as written";
+}
+
+TEST(FirefaceFlashTests, AnUndecodableFlashWritesNoConfig) {
+    FirefaceScriptBus bus; RouteState route;  // default image: not a settings block
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASSERT_TRUE(family.Configure({}, {.sampleRateHz = 48000}));
+    ASSERT_TRUE(family.AssignChannels({}));
+    EXPECT_FALSE(std::ranges::any_of(bus.writes, [](const auto& w) { return w.lo == 0xfc88f014U; }));
 }
 
 TEST(FirefaceFlashTests, AFailedFlashReadNeverBlocksTheStart) {
@@ -616,8 +675,15 @@ TEST(FirefaceSequenceTests, FieldFF800StartsFromItsRealFlashAndStatus) {
     EXPECT_EQ(assigned->deviceToHostIsoChannel, 1U);
     ASSERT_TRUE(family.ArmDeviceTxAndEnable());
     ASSERT_TRUE(family.Confirm());
-    for (const auto& w : bus.writes)
-        EXPECT_NE(w.lo, 0xfc88f014U) << "the configuration is not written yet";
+    // Her configuration, written once and before init (FFADO init_hardware
+    // writes it before streaming starts).
+    const auto config = std::ranges::find_if(bus.writes, [](const auto& w) { return w.lo == 0xfc88f014U; });
+    const auto init = std::ranges::find_if(bus.writes, [](const auto& w) { return w.hi == 0x2U && w.lo == 0x1cU; });
+    ASSERT_NE(config, bus.writes.end());
+    ASSERT_NE(init, bus.writes.end());
+    EXPECT_LT(config, init);
+    EXPECT_EQ(config->bytes, LeWords({0x00000914U, 0x0000035eU, 0x8000101fU}));
+    EXPECT_EQ(std::ranges::count_if(bus.writes, [](const auto& w) { return w.lo == 0xfc88f014U; }), 1);
 }
 
 TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation) {
