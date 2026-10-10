@@ -250,4 +250,105 @@ TEST(FirefaceSettingsTests, StatusComparisonCoversTheMirroredFieldsOnly) {
     EXPECT_EQ(emphasis.expected ^ emphasis.reported, 0x40U);
 }
 
+
+// A real FF800 settings block, read by the driver from 0x3_000f0000 in a field
+// log (2026-10-10). Non-zero: q4 q9 q29 q30 q36 q38 q43.
+FlashSettings FieldFF800Image() {
+    FlashSettings q{};
+    q.fill(0);
+    q[4] = 0x00000001U;
+    q[9] = 0x00000003U;
+    q[29] = 0x00000002U;
+    q[30] = 0x00000001U;
+    q[36] = 0x00000001U;
+    q[38] = 0x00000001U;
+    q[43] = 0x0000ac44U;
+    return q;
+}
+
+// The inverse of the decoder, written from FFADO write_device_flash_settings
+// (fireface_flash.cpp): settings copy back to their quadlets with the flash
+// codes of fireface_def.h:409-441, everything else stays zero (memset). Test
+// only: the driver never writes the flash.
+FlashSettings FfadoFlashFromSettings(const FirefaceSettings& s) {
+    FlashSettings q{};
+    q.fill(0);
+    q[F::kPhantom0] = s.phantom[0];
+    q[F::kPhantom1] = s.phantom[1];
+    q[F::kPhantom2] = s.phantom[2];
+    q[F::kPhantom3] = s.phantom[3];
+    q[F::kSpdifInputMode] = s.spdifInputOptical ? 0 : 1;          // COAX 1, OPTICAL 0
+    q[F::kSpdifOutputEmphasis] = s.spdifOutputEmphasis;
+    q[F::kSpdifOutputProfessional] = s.spdifOutputProfessional;
+    q[F::kClockMode] = s.clockMaster ? 0 : 1;                     // MASTER 0, AUTOSYNC 1
+    q[F::kSpdifOutputNonAudio] = s.spdifOutputNonAudio;
+    q[F::kSyncReference] = static_cast<uint32_t>(s.syncReference);  // ADAT1 0 .. WORDCLOCK 3, TCO 4
+    q[F::kSpdifOutputMode] = s.spdifOutputOptical ? 1 : 0;
+    q[F::kChannelLimit] = static_cast<uint32_t>(s.channelLimit);
+    q[F::kInputLevel] = s.inputLevel == InputLevel::kLowGain ? 0 : s.inputLevel == InputLevel::kPlus4dBu ? 2 : 1;
+    q[F::kOutputLevel] = s.outputLevel == OutputLevel::kHighGain ? 2 : s.outputLevel == OutputLevel::kPlus4dBu ? 1 : 0;
+    q[F::kFilter] = s.ff800SpeakerEmulation;
+    q[F::kFuzz] = s.ff800Drive;
+    // p12db_an[0]: set only when the limiter is off and input 1 is the front jack.
+    q[F::kLimiterOff] = (!s.ff800Limiter && s.ff800Input1 == JackSelect::kFront) ? 1 : 0;
+    q[F::kSampleRate] = s.sampleRateHz;
+    q[F::kWordClockSingleSpeed] = s.wordClockSingleSpeed;
+    const auto plug = [](JackSelect j) { return j == JackSelect::kRear ? 0U : j == JackSelect::kFront ? 1U : 2U; };
+    q[F::kInstrumentPlugSelect] = plug(s.ff800Input1);
+    q[F::kPlugSelect0] = plug(s.ff800Input7);
+    q[F::kPlugSelect1] = plug(s.ff800Input8);
+    return q;
+}
+
+TEST(FirefaceSettingsTests, FieldFF800ImageDecodesToItsSavedSettings) {
+    // Expected values read off the FFADO flash codes, not the decoder.
+    const auto s = DecodeFlashSettings(FirefaceModel::kFF800, FieldFF800Image());
+    ASSERT_TRUE(s.has_value());
+    EXPECT_TRUE(s->clockMaster);                                   // q7 0
+    EXPECT_EQ(s->syncReference, SyncReference::kWordClock);        // q9 3
+    EXPECT_FALSE(s->spdifInputOptical);                            // q4 1 = coaxial
+    EXPECT_FALSE(s->spdifOutputOptical);                           // q10 0 = coaxial
+    EXPECT_EQ(s->inputLevel, InputLevel::kPlus4dBu);               // q29 2
+    EXPECT_EQ(s->outputLevel, OutputLevel::kPlus4dBu);             // q30 1
+    EXPECT_EQ(s->phantom, (std::array<bool, 4>{false, false, false, true}));  // q36: input 10
+    EXPECT_TRUE(s->ff800SpeakerEmulation);                         // q38 1
+    EXPECT_FALSE(s->ff800Drive);                                   // q39 0
+    EXPECT_TRUE(s->ff800Limiter);                                  // q49 0
+    EXPECT_EQ(s->ff800Input1, JackSelect::kRear);                  // q37 0
+    EXPECT_EQ(s->ff800Input7, JackSelect::kRear);                  // q31 0
+    EXPECT_EQ(s->ff800Input8, JackSelect::kRear);                  // q32 0
+    EXPECT_FALSE(s->wordClockSingleSpeed);                         // q46 0
+    EXPECT_EQ(s->sampleRateHz, 44100U);                            // q43 0xac44
+}
+
+TEST(FirefaceSettingsTests, FieldFF800ImageRoundTripsThroughFfadoWriteRules) {
+    // Every quadlet must come back: a mismatch is a field the decoder drops or
+    // a value code it reads differently from FFADO.
+    const auto image = FieldFF800Image();
+    const auto s = DecodeFlashSettings(FirefaceModel::kFF800, image);
+    ASSERT_TRUE(s.has_value());
+    const auto back = FfadoFlashFromSettings(*s);
+    for (uint32_t i = 0; i < kFlashSettingsQuadlets; ++i)
+        EXPECT_EQ(back[i], image[i]) << "flash q" << i;
+}
+
+TEST(FirefaceSettingsTests, FieldFF800ImageConfigMatchesFfadoBitTable) {
+    // Worked out from FFADO set_hardware_params and fireface_def.h:153-264:
+    // q0: phantom 10 CR0_BIT08 0x100 | input +4 dBu FPGA_CTRL1 0x10 |
+    //     output +4 dBu FPGA_CTRL_1 0x800 | filter CR0_BIT02 0x4         = 0x914
+    // q1: input +4 dBu CPLD 0x2 | output +4 dBu CPLD 0x18 | input 7 rear 0x40 |
+    //     input 8 rear 0x100 | input 1 rear 0x4 | drive off 0x200        = 0x35e
+    // q2: master 0x1 | word clock REF2 0x1000 | rates 0x1e | drop-and-stop
+    //     0x80000000 = 0x8000101f. FFADO itself would add 0x2000 (its
+    //     word_clock_single_speed '=' bug); the card reports 0x2000 clear.
+    const auto config = Encode(FirefaceModel::kFF800, FieldFF800Image());
+    EXPECT_EQ(config, (ConfigWords{0x00000914U, 0x0000035eU, 0x8000101fU}));
+}
+
+TEST(FirefaceSettingsTests, FieldFF800StatusMirrorMatchesBeforeAndAfterInit) {
+    const auto config = Encode(FirefaceModel::kFF800, FieldFF800Image());
+    for (const uint32_t status1 : {0x88001001U, 0x88001007U, 0xa8001007U})
+        EXPECT_TRUE(CompareWithStatus(FirefaceModel::kFF800, config, status1).Matches()) << std::hex << status1;
+}
+
 } // namespace
