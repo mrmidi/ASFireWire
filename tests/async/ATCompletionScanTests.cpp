@@ -18,6 +18,8 @@
 #include <vector>
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "ASFWDriver/Async/Contexts/ATRequestContext.hpp"
 #include "ASFWDriver/Async/Engine/ATManager.hpp"
 #include "ASFWDriver/Async/Tx/DescriptorBuilder.hpp"
@@ -85,7 +87,8 @@ protected:
     // Block write request: OUTPUT_MORE-Immediate header (2 blocks) + OUTPUT_LAST payload.
     Packet SubmitBlockWrite(uint8_t tLabel) {
         const size_t cap = ring_.Capacity();
-        const size_t idx = ring_.Tail();
+        // DescriptorBuilder::ReserveBlocks keeps all three blocks contiguous.
+        const size_t idx = cap - ring_.Tail() < 3 ? 0 : ring_.Tail();
         auto* first = ring_.At(idx);
         auto* last = ring_.At((idx + 2) % cap);
         std::memset(first, 0, 2 * sizeof(HW::OHCIDescriptor));
@@ -149,6 +152,105 @@ protected:
 
     uint32_t txid_{0};
 };
+
+TEST_F(ATCompletionScanTest, EmptyRingWrapStartsAtAllocatedPacketNotEndPadding) {
+    ring_.SetHead(63);
+    ring_.SetTail(63);
+    const auto packet = SubmitBlockWrite(5);
+    ASSERT_EQ(packet.startIndex, 0u);
+    Retire(packet);
+    SetContext(kContextControlRunBit, packet);
+    const auto completed = Drain();
+    ASSERT_EQ(completed.size(), 1u);
+    EXPECT_EQ(completed[0].tLabel, 5u);
+    EXPECT_EQ(ring_.Head(), ring_.Tail());
+}
+
+TEST_F(ATCompletionScanTest, HotAppendAcrossWrapRetiresLinkedPacketNotEndPadding) {
+    ring_.SetHead(61);
+    ring_.SetTail(61);
+    const auto first = SubmitQuadletWrite(4); // ends at 63, leaving one unused block
+    const auto wrapped = SubmitBlockWrite(5);
+    ASSERT_EQ(wrapped.startIndex, 0u);
+    Retire(first);
+    Retire(wrapped);
+    SetContext(kContextControlRunBit, wrapped);
+    const auto completed = Drain();
+    ASSERT_EQ(completed.size(), 2u);
+    EXPECT_EQ(completed[0].tLabel, 4u);
+    EXPECT_EQ(completed[1].tLabel, 5u);
+    EXPECT_EQ(ring_.Head(), ring_.Tail());
+}
+
+// A ring reads as empty when head == tail (RingHelpers::IsEmpty), so an
+// allocation may never end exactly on the head: a full ring would read as
+// empty, the scan would retire nothing, and the next submission would move the
+// head past every outstanding packet. The builder needs a slab-backed DMA
+// manager to translate descriptor addresses, so the ring is carved from it.
+class ATRingAllocationTest : public ::testing::Test {
+protected:
+    HardwareInterface hw_{};
+    DMAMemoryManager dma_{};
+    DescriptorRing ring_{};
+    std::unique_ptr<DescriptorBuilder> builder_;
+
+    void SetUp() override {
+        constexpr size_t kNumDescriptors = 64;
+        ASSERT_TRUE(dma_.Initialize(hw_, 64 * 1024));
+        auto region = dma_.AllocateRegion(kNumDescriptors * sizeof(HW::OHCIDescriptor));
+        ASSERT_TRUE(region.has_value());
+        auto* descriptors = reinterpret_cast<HW::OHCIDescriptor*>(region->virtualBase);
+        ASSERT_TRUE(ring_.Initialize(std::span<HW::OHCIDescriptor>{descriptors, kNumDescriptors}));
+        ASSERT_TRUE(ring_.Finalize(region->deviceBase));
+        builder_ = std::make_unique<DescriptorBuilder>(ring_, dma_);
+    }
+
+    DescriptorBuilder::DescriptorChain BuildQuadlet() {
+        const std::array<uint8_t, 16> header{};
+        return builder_->BuildTransactionChain(header.data(), header.size(), 0, 0, false, 0);
+    }
+};
+
+TEST_F(ATRingAllocationTest, FixtureBuildsIntoAnEmptyRing) {
+    // The instrument: an empty ring must accept a packet at its tail.
+    ring_.SetHead(5);
+    ring_.SetTail(5);
+    const auto chain = BuildQuadlet();
+    ASSERT_FALSE(chain.Empty());
+    EXPECT_EQ(chain.firstRingIndex, 5u);
+}
+
+TEST_F(ATRingAllocationTest, ContiguousAllocationMayNotEndOnTheHead) {
+    ring_.SetHead(10);
+    ring_.SetTail(8);  // exactly two free slots before the head
+    EXPECT_TRUE(BuildQuadlet().Empty());
+}
+
+TEST_F(ATRingAllocationTest, AllocationToTheEndMayNotEndOnAHeadAtZero) {
+    ring_.SetHead(0);
+    ring_.SetTail(62);  // the packet would end at 64 == 0 == head
+    EXPECT_TRUE(BuildQuadlet().Empty());
+}
+
+TEST_F(ATRingAllocationTest, WrappedAllocationMayNotEndOnTheHead) {
+    ring_.SetHead(2);
+    ring_.SetTail(63);  // one slot left at the end; wrapping to 0..1 ends at the head
+    EXPECT_TRUE(BuildQuadlet().Empty());
+}
+
+TEST_F(ATRingAllocationTest, AllocationsThatLeaveOneSlotFreeSucceed) {
+    ring_.SetHead(3);
+    ring_.SetTail(63);
+    const auto wrapped = BuildQuadlet();
+    ASSERT_FALSE(wrapped.Empty());
+    EXPECT_EQ(wrapped.firstRingIndex, 0u);
+
+    ring_.SetHead(0);
+    ring_.SetTail(61);
+    const auto atEnd = BuildQuadlet();
+    ASSERT_FALSE(atEnd.Empty());
+    EXPECT_EQ(atEnd.firstRingIndex, 61u);
+}
 
 TEST_F(ATCompletionScanTest, BlockWriteCompletesFromItsOutputLastStatus) {
     const Packet write = SubmitBlockWrite(5);

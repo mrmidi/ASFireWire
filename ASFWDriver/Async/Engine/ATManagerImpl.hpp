@@ -344,6 +344,11 @@ void ATManager<ContextT, RingT, RoleTag>::PublishChain_(const DescriptorChain& c
 template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::UpdateRingTail_(const DescriptorChain& chain) {
     const size_t newTail = (chain.lastRingIndex + 1) % ring().Capacity();
+    // The allocator may skip the final one/two slots to keep a packet contiguous.
+    // When arming an empty ring, the first live packet is the allocation start.
+    if (ring().IsEmpty()) {
+        ring().SetHead(chain.firstRingIndex);
+    }
     ring().SetTail(newTail);
     // DescriptorRing::LocatePreviousLast() walks back TotalBlocks() (2 = immediate
     // only, 3 = immediate header + payload) from the tail to find the previous

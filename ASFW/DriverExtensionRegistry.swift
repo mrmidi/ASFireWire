@@ -74,14 +74,20 @@ struct DriverExtensionVersionPolicy {
     static func replacementIsAllowed(existing: String,
                                      replacement: String,
                                      requireNewerBuild: Bool) -> Bool {
+        #if DEBUG
         guard requireNewerBuild else { return true }
+        #endif
         return replacementIsNewer(existing: existing, replacement: replacement)
     }
 }
 
 enum DriverInstallSettings {
     static let requireNewerBuildKey = "asfw.driver.require-newer-build"
+    #if DEBUG
     static let defaultRequireNewerBuild = false
+    #else
+    static let defaultRequireNewerBuild = true
+    #endif
 }
 
 enum DriverExtensionRegistryInspector {

@@ -16,12 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> RME Fireface fixes from the first Fireface 800 hardware report, and an async completion fix that affects every device. Software-tested; the RME changes have not been run on a Fireface by the maintainers, and the Fireface 400 has not run at all.
+> RME Fireface fixes from two Fireface 800 hardware reports, async transmit fixes that affect every device, and a reorganised app. Software-tested; the RME changes have not been run on a Fireface by the maintainers, and the Fireface 400 has not run at all.
 
 ### Fixed
 
 - Async: block writes, block-read responses and lock requests complete as soon as the controller reports them. The completion scan read a packet's status from its first descriptor instead of its last, so such a packet could wait for a later one or time out. Affects every device; found from a Fireface 800 report.
+- Async: the transmit ring no longer stalls for good after it wraps. When a packet did not fit at the end of the ring it was placed at the start, but the completion scan stepped onto the unused slots at the end and waited there forever; from then on no request could be sent (FCP control, connection cleanup). The scan now follows the controller's branch to the next packet. Exposed by the completion fix above.
+- Async: a request that could not be queued no longer keeps its transaction label. Repeated failures could use up all 64 labels, after which nothing could be sent.
+- Async: the transmit ring always keeps one slot free. A completely full ring read as empty, so its outstanding packets would never have been retired.
 - RME Fireface: the internal clock is no longer refused when an external source is still saved as the sync reference.
+- RME Fireface: a card running on its internal clock can start. Every start was refused with "clock not ready": the check also required a status field that only applies when the card follows an external clock. Found from a second Fireface 800 report.
 - RME Fireface: the card is told to fetch playback audio once both streams run, and to stop after streaming stops. With this, a contributor's Fireface 800 played audio on outputs 1/2 at 48 kHz.
 - RME Fireface 400: a start no longer times out reading the firmware revision (the wrong flash status register was polled).
 - RME Fireface: playback sends full 32-bit samples, and capture is scaled to match.
@@ -29,11 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - RME Fireface: safety offsets and reported latency use the same conservative values as MOTU (64/64 and 128/128 frames) instead of 16/16/0/0. Latency is not tuned yet.
+- App: the sidebar is grouped (General, Devices & Audio, Video, Reports, Support, Advanced Tools), and a Bus Inspector replaces the separate device discovery view. Advanced tools are behind a setting that is off by default in release builds.
+- Core Audio device names end in " — ASFW" (for example "RME Fireface 800 — ASFW"), so they are easy to tell apart from other drivers. Device UIDs are unchanged, so existing app and DAW settings keep their device.
+- Release builds of the driver extension are built for x86_64 and arm64 (Debug builds keep arm64e). Not yet verified on an installed Release build.
+
+### Removed
+
+- App: the ping view, and the driver's ping selector behind it.
 
 ### Added
 
 - RME Fireface: channel names (Analog, Mic, Phones, S/PDIF, ADAT) for the Fireface 400 and 800.
-- RME Fireface: every start logs the settings stored in the card and the configuration the driver would send (`[RME] settings dry-run`). Nothing is written yet, so the HOST LED stays red.
+- RME Fireface: before every start the driver sends the card the settings saved in its flash (phantom power, levels, inputs, S/PDIF, sync reference), as RME's and FFADO's drivers do, with the clock always set to internal (master). Nothing is sent when the flash cannot be read or decoded. Logged as `[RME] settings`, `[RME] config` and `[RME] config readback`. This should also turn the HOST LED off.
+- RME Fireface: start, stop and clock lock changes are logged with the card's clock state decoded (`[RME] clock`), for diagnosing remote reports.
 
 ## [0.5.0-beta.1] - 2026-10-09
 

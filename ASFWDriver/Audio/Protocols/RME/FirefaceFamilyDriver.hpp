@@ -15,12 +15,15 @@
 
 namespace ASFW::Audio::RME {
 
-// What the last Configure found for the configuration upload (dry run).
+// What Configure read from the flash, what the flash encodes to, and what was
+// last written to the configuration register.
 struct SettingsDryRun {
     std::optional<FlashSettings> flash;
     std::optional<FlashDecodeError> decodeError;
-    std::optional<ConfigWords> config;
+    std::optional<FirefaceSettings> settings;
+    std::optional<ConfigWords> config;      // the flash as saved
     std::optional<StatusComparison> status;
+    std::optional<ConfigWords> written;     // the flash with the clock forced to master
 };
 
 struct ClockStatus {
@@ -29,7 +32,6 @@ struct ClockStatus {
     uint32_t q0{0};
     uint32_t q1{0};
     bool configured48k{false};
-    bool internalActive{false};
     bool externalLocked48k{false};
 };
 
@@ -68,13 +70,20 @@ public:
         auto revision = ReadFirmwareRevision();
         if (!revision) return std::unexpected(revision.error());
         if (*revision == 0 || *revision < FirmwareMinimum(model_)) return std::unexpected(kIOReturnUnsupported);
-        LogSettingsDryRun();
+        // Once per device: the flash does not change between start attempts, and
+        // repeating ~13 lines per retry pushed a field log's history out of the ring.
+        if (!lastDryRun_.flash) LoadFlashSettings();
+        if (const IOReturn kr = WriteConfig(); kr != kIOReturnSuccess) return std::unexpected(kr);
         auto status = ReadClockStatus();
         if (!status) return std::unexpected(status.error());
-        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k) {
-            LogClockRefusal("Configure", *status);
-            return std::unexpected(kIOReturnNotReady);
+        LogClockStatus("configure", *status);
+        if (lastDryRun_.written) {
+            const auto mirror = CompareWithStatus(model_, *lastDryRun_.written, status->q1);
+            ASFW_LOG(Audio, "[RME] config readback: status mirror expected=%08x reported=%08x -> %{public}s",
+                     mirror.expected, mirror.reported, mirror.Matches() ? "match" : "MISMATCH");
         }
+        if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k)
+            return std::unexpected(kIOReturnNotReady);
 
         configured_ = true;
         caps_ = MakeCaps();
@@ -102,10 +111,8 @@ public:
             return std::unexpected(kr);
         auto afterInit = ReadClockStatus();
         if (!afterInit) return std::unexpected(afterInit.error());
-        if (!ClockReady(*afterInit)) {
-            LogClockRefusal("AssignChannels", *afterInit);
-            return std::unexpected(kIOReturnNotReady);
-        }
+        LogClockStatus("after-init", *afterInit);
+        if (!ClockReady(*afterInit)) return std::unexpected(kIOReturnNotReady);
         if (model_ == FirefaceModel::kFF800) {
             // Device selects its transmit channel; the host binds it without an IRM claim.
             const uint64_t deadline = Session::UptimeMilliseconds() + 500U;
@@ -121,10 +128,13 @@ public:
                     channels_.deviceToHostIsoChannel = channel;
                     channels_.captureIsoChannels[0] = channel;
                     caps_.deviceToHostIsoChannel = channel;
+                    ASFW_LOG(Audio, "[RME] FF800 started: device transmits on channel %u, "
+                             "host transmits on channel %u", channel, channels_.hostToDeviceIsoChannel);
                     return channels_;
                 }
                 IOSleep(5);
             }
+            ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms");
             return std::unexpected(kIOReturnTimeout);
         }
         if (requested.hostToDeviceIsoChannel > 7 || requested.deviceToHostIsoChannel > 7)
@@ -137,6 +147,10 @@ public:
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
         const bool healthy = ClockReady(*s);
+        if (!lastHealthy_ || *lastHealthy_ != healthy) {  // edges only: health is polled
+            LogClockStatus(healthy ? "health-ok" : "health-lost", *s);
+            lastHealthy_ = healthy;
+        }
         return DuplexHealthResult{.generation = io_.Generation(),
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_,
             .sourceLocked = healthy, .clockReferenceHealthy = healthy,
@@ -164,8 +178,11 @@ public:
         // its domain is ready (ff-stream.c:206-217) and FFADO right after start
         // (fireface_hw.cpp:913). RME 3.41 instead writes this mask once before
         // init (hwStart 0x3f05); a user's FF800 played only with this order.
-        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess)
+        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "[RME] fetch mask open failed kr=0x%08x", kr);
             return std::unexpected(kr);
+        }
+        ASFW_LOG(Audio, "[RME] streaming confirmed: fetch mask open, device plays host audio");
         return DuplexConfirmResult{.generation = io_.Generation(), .channels = channels_,
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_, .status = h->status,
             .extStatus = h->extStatus};
@@ -177,7 +194,7 @@ public:
         auto s = ReadClockStatus();
         if (!s) return std::unexpected(s.error());
         if (!ClockReady(*s)) {
-            LogClockRefusal("ApplyClockIdle", *s);
+            LogClockStatus("apply-clock", *s);
             return std::unexpected(kIOReturnNotReady);
         }
         return DuplexClockApplyResult{.generation = io_.Generation(),
@@ -193,8 +210,9 @@ public:
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
             ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
-        if (kr != kIOReturnSuccess) return kr;
-        enabled_ = false; initialized_ = false; configured_ = false;
+        if (kr != kIOReturnSuccess) { ASFW_LOG(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
+        ASFW_LOG(Audio, "[RME] stopped");
+        enabled_ = false; initialized_ = false; configured_ = false; lastHealthy_.reset();
         // Stop first, then mute every channel (Linux finish_session,
         // ff-stream.c:33-37; FFADO fireface_hw.cpp:949).
         return WriteFetchMask(false);
@@ -217,20 +235,30 @@ private:
     }
     [[nodiscard]] bool Cancelled() const noexcept { return cancel_ && cancel_->load(std::memory_order_acquire); }
     [[nodiscard]] uint64_t InitAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Init : Register::kFF400Init; }
+    [[nodiscard]] uint64_t ConfigAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Config : Register::kFF400Config; }
     [[nodiscard]] uint64_t StartAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Start : Register::kFF400Start; }
     [[nodiscard]] bool IsInternalConfigured(uint32_t src) const noexcept {
         return (src & Register::kConfiguredInternalFlag) != 0U;
     }
     [[nodiscard]] bool IsExternalConfigured(uint32_t src) const noexcept { return !IsInternalConfigured(src); }
+    // A master needs nothing from status0: its sync-reference field only names
+    // what a slave follows. Linux parse_clock_bits (ff-protocol-former.c:54) and
+    // FFADO SR1_CLOCK_MODE_MASTER test status1 bit 0 alone; RME 3.41 hwGetRate
+    // (0x7c05) never reads 0x01c00000 as internal either.
     [[nodiscard]] bool ClockReady(const ClockStatus& s) const noexcept {
         return s.configured48k &&
-            (IsInternalConfigured(s.configuredSource) ? s.internalActive : s.externalLocked48k);
+            (IsInternalConfigured(s.configuredSource) || s.externalLocked48k);
     }
-    void LogClockRefusal(const char* stage, const ClockStatus& s) const noexcept {
-        ASFW_LOG(Audio, "[RME] clock not ready at %{public}s: status0=0x%08x status1=0x%08x "
-                 "configured=0x%04x active=0x%08x 48k=%d internalActive=%d externalLocked48k=%d",
-                 stage, s.q0, s.q1, s.configuredSource, s.activeSource, s.configured48k ? 1 : 0,
-                 s.internalActive ? 1 : 0, s.externalLocked48k ? 1 : 0);
+    // One cold-path line per start stage, decoded for remote reports; the raw
+    // words stay in the line so a wrong label cannot hide anything.
+    void LogClockStatus(const char* stage, const ClockStatus& s) const noexcept {
+        const DecodedStatus d = DecodeStatus(s.q0, s.q1);
+        ASFW_LOG(Audio, "[RME] clock %{public}s: ready=%d mode=%{public}s rate=%u "
+                 "syncRef=%{public}s syncRate=%u wclk=%{public}s spdif=%{public}s "
+                 "adat1=%{public}s adat2=%{public}s status0=0x%08x status1=0x%08x",
+                 stage, ClockReady(s) ? 1 : 0, Name(d.configured), d.configuredRateHz,
+                 Name(d.syncReference), d.syncRateHz, Name(d.wordClock), Name(d.spdif),
+                 Name(d.adat1), Name(d.adat2), s.q0, s.q1);
     }
     // One quadlet per playback data channel: 0 fetches PCM, 1 mutes
     // (Linux former_switch_fetching_mode, ff-protocol-former.c:87-119).
@@ -350,14 +378,14 @@ private:
     // Dry run of the configuration upload: read what the card stored, compute
     // the 3 quadlets that would restore it, compare the fields the status
     // quadlet mirrors, and log it all. Writes nothing; a failure never stops a
-    // start. Log lines start "[RME] settings dry-run".
-    void LogSettingsDryRun() {
+    // start. Log lines start "[RME] settings".
+    void LoadFlashSettings() {
         const bool ff800 = model_ == FirefaceModel::kFF800;
         const char* model = ff800 ? "FF800" : "FF400";
         lastDryRun_ = {};
         auto flash = ReadFlashSettings();
         if (!flash) {
-            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: flash read failed kr=0x%08x",
+            ASFW_LOG(Audio, "[RME] settings %{public}s: flash read failed kr=0x%08x",
                      model, flash.error());
         } else {
             lastDryRun_.flash = *flash;
@@ -365,7 +393,7 @@ private:
             for (uint32_t i = 0; i < kFlashSettingsQuadlets; i += 8) {
                 uint32_t w[8]{};
                 for (uint32_t j = 0; j < 8 && i + j < kFlashSettingsQuadlets; ++j) w[j] = q[i + j];
-                ASFW_LOG(Audio, "[RME] settings dry-run %{public}s flash q%02u: %08x %08x %08x %08x %08x %08x %08x %08x",
+                ASFW_LOG(Audio, "[RME] settings %{public}s flash q%02u: %08x %08x %08x %08x %08x %08x %08x %08x",
                          model, i, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
             }
         }
@@ -373,7 +401,7 @@ private:
         if (auto status = ReadWords(Register::kStatus, 4)) {
             const auto& w = status->words;
             status1 = w[1];
-            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s status: %08x %08x %08x %08x",
+            ASFW_LOG(Audio, "[RME] settings %{public}s status: %08x %08x %08x %08x",
                      model, w[0], w[1], w[2], w[3]);
         }
         if (!lastDryRun_.flash) return;
@@ -381,12 +409,13 @@ private:
         const auto settings = DecodeFlashSettings(model_, *lastDryRun_.flash);
         if (!settings) {
             lastDryRun_.decodeError = settings.error();
-            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: flash q%02u = 0x%08x is unset or unknown; "
+            ASFW_LOG(Audio, "[RME] settings %{public}s: flash q%02u = 0x%08x is unset or unknown; "
                      "no configuration computed", model, settings.error().quadlet, settings.error().value);
             return;
         }
         const auto& s = *settings;
-        ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: clock=%{public}s sync=%{public}s "
+        lastDryRun_.settings = s;
+        ASFW_LOG(Audio, "[RME] settings %{public}s: clock=%{public}s sync=%{public}s "
                  "spdif-in=%{public}s spdif-out=%{public}s in=%{public}s out=%{public}s "
                  "word-clock-1x=%d channels=%{public}s rate=%u",
                  model, s.clockMaster ? "master" : "autosync", Name(s.syncReference),
@@ -394,27 +423,54 @@ private:
                  Name(s.inputLevel), Name(s.outputLevel), s.wordClockSingleSpeed ? 1 : 0,
                  Name(s.channelLimit), s.sampleRateHz);
         if (ff800) {
-            ASFW_LOG(Audio, "[RME] settings dry-run FF800: phantom7-10=%d%d%d%d input1=%{public}s "
+            ASFW_LOG(Audio, "[RME] settings FF800: phantom7-10=%d%d%d%d input1=%{public}s "
                      "input7=%{public}s input8=%{public}s speaker-emulation=%d drive=%d limiter=%d",
                      s.phantom[0], s.phantom[1], s.phantom[2], s.phantom[3], Name(s.ff800Input1),
                      Name(s.ff800Input7), Name(s.ff800Input8), s.ff800SpeakerEmulation ? 1 : 0,
                      s.ff800Drive ? 1 : 0, s.ff800Limiter ? 1 : 0);
         } else {
-            ASFW_LOG(Audio, "[RME] settings dry-run FF400: phantom1-2=%d%d pad3-4=%d%d instrument3-4=%d%d "
+            ASFW_LOG(Audio, "[RME] settings FF400: phantom1-2=%d%d pad3-4=%d%d instrument3-4=%d%d "
                      "phones=%{public}s", s.phantom[0], s.phantom[1], s.ff400Pad[0], s.ff400Pad[1],
                      s.ff400Instrument[0], s.ff400Instrument[1], Name(s.ff400Phones));
         }
         const ConfigWords config = EncodeConfig(model_, s);
         lastDryRun_.config = config;
-        ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: would write 0x%llx <- %08x %08x %08x (not written)",
-                 model, ff800 ? Register::kFF800Config : Register::kFF400Config, config[0], config[1], config[2]);
+        ASFW_LOG(Audio, "[RME] settings %{public}s: flash encodes %08x %08x %08x",
+                 model, config[0], config[1], config[2]);
         if (status1) {
             const auto comparison = CompareWithStatus(model_, config, *status1);
             lastDryRun_.status = comparison;
-            ASFW_LOG(Audio, "[RME] settings dry-run %{public}s: status mirror expected=%08x reported=%08x "
+            ASFW_LOG(Audio, "[RME] settings %{public}s: status mirror expected=%08x reported=%08x "
                      "mask=%08x -> %{public}s", model, comparison.expected, comparison.reported,
                      comparison.mask, comparison.Matches() ? "match" : "MISMATCH");
         }
+    }
+
+    // Uploads the flash settings with the clock forced to master, before init.
+    // FFADO init_hardware writes the flash-derived configuration before any
+    // streaming (fireface_hw.cpp:83-105); RME 3.41 Fireface_InitHardware writes
+    // it too. Forcing master is ASFW policy for now, not reference behaviour.
+    // Written on every start: idempotent, and it survives a device power cycle.
+    // Best effort: without decodable flash settings nothing is written, and a
+    // failed write never blocks the start; teardown and a stale route still do.
+    [[nodiscard]] IOReturn WriteConfig() {
+        const char* model = model_ == FirefaceModel::kFF800 ? "FF800" : "FF400";
+        lastDryRun_.written.reset();
+        if (!lastDryRun_.settings) {
+            ASFW_LOG(Audio, "[RME] config %{public}s: not written, no decodable flash settings", model);
+            return kIOReturnSuccess;
+        }
+        FirefaceSettings s = *lastDryRun_.settings;
+        const bool forced = !s.clockMaster;
+        s.clockMaster = true;
+        const ConfigWords words = EncodeConfig(model_, s);
+        const IOReturn kr = WriteWords(ConfigAddress(), words);
+        ASFW_LOG(Audio, "[RME] config %{public}s: wrote 0x%llx <- %08x %08x %08x clock=master%{public}s kr=0x%08x",
+                 model, ConfigAddress(), words[0], words[1], words[2],
+                 forced ? " (forced; flash says autosync)" : "", kr);
+        if (kr == kIOReturnSuccess) lastDryRun_.written = words;
+        if (kr == kIOReturnAborted || kr == kIOReturnOffline) return kr;
+        return kIOReturnSuccess;
     }
 
     [[nodiscard]] std::expected<ClockStatus, IOReturn> ReadClockStatus() {
@@ -422,11 +478,8 @@ private:
         auto q1 = Read(Register::kStatus + 4); if (!q1) return std::unexpected(q1.error());
         ClockStatus s{.configuredSource = *q1 & Register::kConfiguredSourceMask,
                       .activeSource = *q0 & 0x01c00000U, .q0 = *q0, .q1 = *q1};
-        s.configured48k = (*q1 & 0x1eU) == 0x06U;
-        if (IsInternalConfigured(s.configuredSource)) {
-            s.internalActive = s.activeSource == 0x01c00000U;
-            return s;
-        }
+        s.configured48k = DecodeStatus(*q0, *q1).configuredRateHz == 48000U;
+        if (IsInternalConfigured(s.configuredSource)) return s;
         uint32_t expectedActive = 0xffffffffU;
         if (s.configuredSource == 0x1000U) expectedActive = 0x01000000U;
         else if (s.configuredSource == 0x0c00U) expectedActive = 0x00c00000U;
@@ -475,6 +528,7 @@ private:
     AudioStreamRuntimeCaps caps_{};
     FW::Generation stateGeneration_{0};
     SettingsDryRun lastDryRun_{};
+    std::optional<bool> lastHealthy_;  // last logged health, for edge-only logging
 };
 
 } // namespace ASFW::Audio::RME

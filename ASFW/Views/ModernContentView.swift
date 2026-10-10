@@ -18,8 +18,10 @@ struct ModernContentView: View {
     @StateObject private var avcReportStore: AvcReportStore
     @StateObject private var avcUnitsStore: AvcUnitsStore
     @StateObject private var mcpVM: ASFWMCPControlViewModel
+    @State private var publishedAudioDevices: [AudioWrapperDevice] = []
     @State private var selectedSection: SidebarSection? = .overview
-    @State private var loggingPreset: LoggingPreset = .standard
+    @AppStorage(AdvancedToolsSettings.storageKey)
+    private var showAdvancedTools = AdvancedToolsSettings.defaultEnabled
     @AppStorage(DriverInstallSettings.requireNewerBuildKey)
     private var requireNewerBuild = DriverInstallSettings.defaultRequireNewerBuild
 
@@ -43,14 +45,11 @@ struct ModernContentView: View {
 
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
-        case devices = "Device Discovery"
+        case busInspector = "Bus Inspector"
         case avcUnits = "AV/C Units"
         case avcCommands = "AV/C Commands"
-        case ping = "Ping"
         case controller = "Controller Status"
         case async = "Async Commands"
-        case topology = "Topology & Self-ID"
-        case romExplorer = "ROM Explorer"
         case audioTelemetry = "Audio Telemetry"
         case audioGeometry = "Audio Geometry"
         case dvCapture = "DV Capture"
@@ -60,9 +59,8 @@ struct ModernContentView: View {
         case mcpSettings = "MCP Control"
         case audio = "Core Audio"
         case audioAnalyzer = "Audio Analyzer"
-        case saffire = "Saffire"
         case duet = "Duet"
-        case diagnostics = "1394 Diagnostics"
+        case diagnostics = "Driver Report"
         case diceReport = "DICE Report"
         case avcReport = "AV/C Report"
 
@@ -71,14 +69,11 @@ struct ModernContentView: View {
         var systemImage: String {
             switch self {
             case .overview: return "info.circle"
-            case .devices: return "externaldrive.connected.to.line.below"
+            case .busInspector: return "network"
             case .avcUnits: return "music.note"
             case .avcCommands: return "command"
-            case .ping: return "waveform.path"
             case .controller: return "cpu"
             case .async: return "bolt.horizontal.circle"
-            case .topology: return "network"
-            case .romExplorer: return "memorychip"
             case .audioTelemetry: return "waveform.path.ecg"
             case .audioGeometry: return "slider.horizontal.3"
             case .dvCapture: return "video.fill"
@@ -88,7 +83,6 @@ struct ModernContentView: View {
             case .mcpSettings: return "point.3.connected.trianglepath.dotted"
             case .audio: return "hifispeaker.fill"
             case .audioAnalyzer: return "waveform"
-            case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
             case .diceReport: return "doc.text.magnifyingglass"
@@ -96,19 +90,66 @@ struct ModernContentView: View {
             }
         }
 
-        var isEnabled: Bool { true }
+        var group: SidebarGroup {
+            switch self {
+            case .overview: .general
+            case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
+            case .dvCapture: .video
+            case .diagnostics, .diceReport, .avcReport: .reports
+            case .logs, .loggingSettings: .support
+            default: .advanced
+            }
+        }
+
+        var requiresAdvancedTools: Bool { group == .advanced }
     }
     
+    private var visibleSections: [SidebarSection] {
+        SidebarSection.allCases.filter { section in
+            guard showAdvancedTools || !section.requiresAdvancedTools else { return false }
+            switch section {
+            case .avcUnits, .avcCommands, .avcReport: return debugVM.hasAVCDevice
+            case .diceReport: return debugVM.hasDICEDevice
+            case .duet: return debugVM.hasDuetDevice
+            case .audioAnalyzer, .audioTelemetry, .audioGeometry:
+                return !publishedAudioDevices.isEmpty
+            default: return true
+            }
+        }
+    }
+
+    private func refreshPublishedAudioDevices() {
+        publishedAudioDevices = AudioSystem.shared.devices.filter {
+            ASFWAudioObserverClient.guid(fromDeviceUID: $0.uid) != nil
+        }
+    }
+
     var body: some View {
         NavigationSplitView {
-            // Sidebar
-            List(SidebarSection.allCases, selection: $selectedSection) { section in
-                Label(section.rawValue, systemImage: section.systemImage)
-                    .tag(section)
-                    .foregroundColor(.primary)
+            List(selection: $selectedSection) {
+                ForEach(SidebarGroup.allCases) { group in
+                    let sections = visibleSections.filter { $0.group == group }
+                    if !sections.isEmpty {
+                        Section(group.rawValue) {
+                            ForEach(sections) { section in
+                                Label(section.rawValue, systemImage: section.systemImage)
+                                    .tag(section)
+                            }
+                        }
+                    }
+                }
             }
-            .navigationTitle("ASFW Driver")
+            .navigationTitle("ASFW")
             .listStyle(.sidebar)
+            .safeAreaInset(edge: .bottom) {
+                Toggle("Show Advanced Tools", isOn: $showAdvancedTools)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+                    .help("Show technical inspection and command tools. Logging is configured separately.")
+            }
         } detail: {
             // Detail view
             Group {
@@ -116,22 +157,16 @@ struct ModernContentView: View {
                 case .overview:
                     OverviewView(viewModel: driverVM,
                                  requireNewerBuild: $requireNewerBuild)
-                case .devices:
-                    DeviceDiscoveryView(viewModel: debugVM)
+                case .busInspector:
+                    BusInspectorView(debugViewModel: debugVM, topologyViewModel: topologyVM, romViewModel: romExplorerVM)
                 case .avcUnits:
-                    AvcUnitsView(store: avcUnitsStore, connector: debugVM.connector, developerTools: loggingPreset == .debug)
+                    AvcUnitsView(store: avcUnitsStore, connector: debugVM.connector, developerTools: showAdvancedTools)
                 case .avcCommands:
                     AVCCommandView(viewModel: debugVM)
-                case .ping:
-                    PingView(viewModel: debugVM)
                 case .controller:
                     ControllerDetailView(viewModel: debugVM)
                 case .async:
                     CommandsView(viewModel: debugVM)
-                case .topology:
-                    TopologyView(viewModel: topologyVM)
-                case .romExplorer:
-                    ROMExplorerView(viewModel: romExplorerVM)
                 case .audioTelemetry:
                     AudioTelemetryView(connector: debugVM.connector)
                 case .audioGeometry:
@@ -143,19 +178,17 @@ struct ModernContentView: View {
                 case .logs:
                     SystemLogsView(connector: debugVM.connector)
                 case .loggingSettings:
-                    LoggingSettingsView(connector: debugVM.connector)
+                    LoggingSettingsView(connector: debugVM.connector, showAdvancedControls: showAdvancedTools)
                 case .mcpSettings:
                     MCPSettingsView(viewModel: mcpVM)
                 case .audio:
                     AudioDebugView()
                 case .audioAnalyzer:
-                    AudioAnalyzerView()
-                case .saffire:
-                    SaffireMixerView(connector: debugVM.connector)
+                    AudioAnalyzerView(devices: publishedAudioDevices, refresh: refreshPublishedAudioDevices)
                 case .duet:
                     DuetControlView(connector: debugVM.connector)
                 case .diagnostics:
-                    DiagnosticsView(store: diagnosticsStore)
+                    DiagnosticsView(store: diagnosticsStore, showAdvancedTools: showAdvancedTools)
                 case .diceReport:
                     DiceReportView(store: diceReportStore)
                 case .avcReport:
@@ -194,18 +227,6 @@ struct ModernContentView: View {
                     }
                     }
                 
-                ToolbarItem(placement: .automatic) {
-                    Picker("Logging", selection: $loggingPreset) {
-                        ForEach(LoggingPreset.allCases) { preset in
-                            Text(preset.rawValue).tag(preset)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 160)
-                    .onChange(of: loggingPreset) { _, newValue in
-                        applyLoggingPreset(newValue)
-                    }
-                }
             }
         }
         .onAppear {
@@ -213,7 +234,6 @@ struct ModernContentView: View {
             debugVM.connect()
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
-            loadLoggingPreset()
             if mcpVM.isEnabled {
                 Task { await mcpVM.start() }
             }
@@ -223,56 +243,29 @@ struct ModernContentView: View {
             debugVM.disconnect()
             topologyVM.stopAutoRefresh()
         }
+        .task {
+            // Discovery can finish after the bus status notification. Poll its cached
+            // inventory globally so AV/C navigation also updates while on Overview.
+            while !Task.isCancelled {
+                debugVM.refreshDiscovery()
+                refreshPublishedAudioDevices()
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            }
+        }
+        .onChange(of: debugVM.topologyCache?.generation) { _, _ in
+            topologyVM.refresh()
+        }
+        .onChange(of: visibleSections) { _, sections in
+            if let selectedSection, !sections.contains(selectedSection) {
+                self.selectedSection = .overview
+            }
+        }
         .onChange(of: topologyVM.topology?.generation) { _, _ in
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
         }
     }
     
-    enum LoggingPreset: String, CaseIterable, Identifiable {
-        case standard = "Standard"
-        case debug = "Debug"
-        var id: String { rawValue }
-    }
-    
-    private func applyLoggingPreset(_ preset: LoggingPreset) {
-        let connector = debugVM.connector
-        guard connector.isConnected else { return }
-        
-        DispatchQueue.global(qos: .userInitiated).async {
-            switch preset {
-            case .standard:
-                _ = connector.setAsyncVerbosity(1)
-                _ = connector.setIsochTelemetryLogging(enabled: false)
-                _ = connector.setHexDumps(enabled: false)
-            case .debug:
-                _ = connector.setAsyncVerbosity(4)
-                _ = connector.setIsochTelemetryLogging(enabled: true)
-                _ = connector.setHexDumps(enabled: true)
-            }
-        }
-    }
-    
-    private func loadLoggingPreset() {
-        let connector = debugVM.connector
-        // We can try to load even if not fully connected yet, but it might fail.
-        // The connector handles isConnected check internally for methods usually, 
-        // but getLogConfig checks isConnected.
-        // We'll retry a bit later if needed or just rely on user interaction.
-        // For now, just try.
-        
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let config = connector.getLogConfig() {
-                DispatchQueue.main.async {
-                    if config.asyncVerbosity >= 4 && config.hexDumpsEnabled && config.isochVerbosity >= 3 {
-                        self.loggingPreset = .debug
-                    } else {
-                        self.loggingPreset = .standard
-                    }
-                }
-            }
-        }
-    }
 }
 
 struct AsyncCommandView: View {

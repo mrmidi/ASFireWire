@@ -18,8 +18,6 @@
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
-#include <cstdio>
-#include <cstring>
 
 namespace ASFW::UserClient {
 
@@ -129,39 +127,6 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
 
-    return kIOReturnSuccess;
-}
-
-kern_return_t StatusHandler::Ping(IOUserClientMethodArguments* args) {
-    if (!args) {
-        return kIOReturnBadArgument;
-    }
-
-    using namespace ASFW::Driver;
-
-    auto* controller = GetControllerCorePtr(driver_);
-    if (!controller) {
-        return kIOReturnNotReady;
-    }
-
-    // Touch metrics subsystem to ensure readiness
-    const auto& busMetrics = controller->Metrics().BusReset();
-
-    char message[64];
-    int written =
-        std::snprintf(message, sizeof(message), "pong (resets=%u)", busMetrics.resetCount);
-    if (written < 0) {
-        return kIOReturnError;
-    }
-
-    const size_t payloadSize = static_cast<size_t>(written) + 1; // include null terminator
-    OSData* data = OSData::withBytes(message, static_cast<uint32_t>(payloadSize));
-    if (!data) {
-        return kIOReturnNoMemory;
-    }
-
-    args->structureOutput = data;
-    args->structureOutputDescriptor = nullptr;
     return kIOReturnSuccess;
 }
 

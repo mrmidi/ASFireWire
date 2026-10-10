@@ -41,6 +41,66 @@ using namespace ASFW::Async;
 
 } // namespace
 
+TEST(AsyncBusContract, UnpostedAdmissionRollbackDoesNotExhaustLabelsOrCallCompletion) {
+    DummyCompletionQueue queue;
+    LabelAllocator allocator;
+    allocator.Reset();
+    TransactionManager manager;
+    ASSERT_TRUE(manager.Initialize());
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+    unsigned callbacks = 0;
+    TxMetadata metadata{};
+    metadata.generation = 1;
+    metadata.callback = [&](AsyncHandle, AsyncStatus, uint8_t, std::span<const uint8_t>) { ++callbacks; };
+    // More failures than the complete label pool: none was posted or had a timeout.
+    for (unsigned attempt = 0; attempt < 128; ++attempt) {
+        const auto handle = tracking.RegisterTx(metadata);
+        ASSERT_TRUE(handle);
+        ASSERT_TRUE(tracking.ReleaseUnposted(handle));
+        EXPECT_EQ(manager.Count(), 0u);
+        EXPECT_FALSE(allocator.HasAnyLabelsInUse());
+    }
+    EXPECT_EQ(callbacks, 0u);
+    const auto posted = tracking.RegisterTx(metadata);
+    ASSERT_TRUE(posted);
+    tracking.OnTxPosted(posted, 100, 500000);
+    EXPECT_FALSE(tracking.ReleaseUnposted(posted));
+    EXPECT_EQ(manager.Count(), 1u);
+    EXPECT_TRUE(allocator.HasAnyLabelsInUse());
+    tracking.CancelAllAndFreeLabels();
+}
+
+TEST(AsyncBusContract, AdmissionGuardReleasesUnlessMarkedPosted) {
+    DummyCompletionQueue queue;
+    LabelAllocator allocator;
+    allocator.Reset();
+    TransactionManager manager;
+    ASSERT_TRUE(manager.Initialize());
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+    unsigned callbacks = 0;
+    TxMetadata metadata{};
+    metadata.generation = 1;
+    metadata.callback = [&](AsyncHandle, AsyncStatus, uint8_t, std::span<const uint8_t>) { ++callbacks; };
+    {   // an early return in Submit(): the guard goes out of scope unposted
+        const auto handle = tracking.RegisterTx(metadata);
+        ASSERT_TRUE(handle);
+        UnpostedRegistrationGuard guard{&tracking, handle};
+    }
+    EXPECT_EQ(manager.Count(), 0u);
+    EXPECT_FALSE(allocator.HasAnyLabelsInUse());
+    {   // the normal path: posted, then marked
+        const auto handle = tracking.RegisterTx(metadata);
+        ASSERT_TRUE(handle);
+        UnpostedRegistrationGuard guard{&tracking, handle};
+        tracking.OnTxPosted(handle, 100, 500000);
+        guard.MarkPosted();
+    }
+    EXPECT_EQ(manager.Count(), 1u);
+    EXPECT_TRUE(allocator.HasAnyLabelsInUse());
+    EXPECT_EQ(callbacks, 0u);
+    tracking.CancelAllAndFreeLabels();
+}
+
 TEST(AsyncBusContract, Cancel_TransactionHandle_FiresExactlyOnceWithAborted) {
     DummyCompletionQueue dummyQueue;
 

@@ -16,12 +16,9 @@ SCHEME_NAME="ASFW"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 # Empty by default so each target's own ARCHS (project.yml) governs.
 #
-# Pinning the destination to arm64 silently overrides the DriverKit target's
-# required "x86_64 arm64e": a plain-arm64 dext has no LC_MAIN entry point and
-# kernelmanagerd rejects it on hardware attach with OS_REASON_EXEC / ENOEXEC.
-# See CLAUDE.md, "DriverKit Architecture on Apple Silicon". Note arm64e is not a
-# valid -destination arch, so this cannot be fixed by changing the default --
-# the constraint has to be absent.
+# Leave the destination architecture unset so the DriverKit target can use
+# "x86_64 arm64e" for Debug and "x86_64 arm64" for Release. Pinning it to arm64
+# would override the Debug ABI; arm64e is not a valid -destination arch.
 ARCH_NAME="${ARCH_NAME:-}"
 BUILD_DIR="${BUILD_DIR:-./build}"
 DERIVED="${BUILD_DIR}/DerivedData"
@@ -80,8 +77,8 @@ Usage: $0 [--verbose] [--no-bump] [--adhoc] [--scheme NAME] [--config CONFIG] [-
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
   --config CONFIG    Override configuration (default: ${CONFIGURATION})
   --arch ARCH        Pin the xcodebuild destination arch (default: unset, so each
-                     target's ARCHS from project.yml applies -- the DriverKit
-                     target needs arm64e, which is not a valid destination arch)
+                     target's ARCHS from project.yml applies -- Debug DriverKit
+                     uses arm64e, which is not a valid destination arch)
   --set KEY=VALUE    Append an xcodebuild build setting (repeatable)
   --derived PATH     Set DerivedData path (default: ${DERIVED})
 EOF

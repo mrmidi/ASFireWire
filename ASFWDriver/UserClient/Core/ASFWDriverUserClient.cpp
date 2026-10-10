@@ -30,7 +30,7 @@ enum {
     kMethodGetSelfIDCapture = 5,
     // 6 (kMethodGetTopologySnapshot) retired: topology now served via the
     // diagnostics ABI (kMethodDiagGetTopology / ASFWDiagTopology).
-    kMethodPing = 7,
+    // Selector 7 retired (GUI health check).
     kMethodAsyncRead = 8,
     kMethodAsyncWrite = 9,
     kMethodRegisterStatusListener = 10,
@@ -155,8 +155,6 @@ MethodDispatchResult DispatchStatusMethods(ASFW::UserClient::UserClientRuntimeSt
     switch (selector) {
     case kMethodGetControllerStatus:
         return runtimeState.Status().GetControllerStatus(arguments);
-    case kMethodPing:
-        return runtimeState.Status().Ping(arguments);
     case kMethodRegisterStatusListener:
         return runtimeState.Status().RegisterStatusListener(arguments, &userClient);
     case kMethodCopyStatusSnapshot:

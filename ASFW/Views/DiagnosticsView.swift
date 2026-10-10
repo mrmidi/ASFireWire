@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 struct DiagnosticsView: View {
     @ObservedObject var store: DiagnosticsStore
+    var showAdvancedTools = false
     @State private var showingClearConfirmation = false
     @State private var copyFeedbackText = "Copy Report"
     @State private var copyFeedbackIcon = "doc.on.doc"
@@ -18,9 +19,13 @@ struct DiagnosticsView: View {
         VStack(spacing: 0) {
             // Header Bar
             HStack(spacing: 12) {
-                Text("1394 Diagnostics Cockpit")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Driver Report")
                     .font(.title2)
                     .fontWeight(.semibold)
+                    Text("Refresh, then copy or save this report to share with support.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 
                 Spacer()
                 
@@ -36,13 +41,15 @@ struct DiagnosticsView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(store.isRefreshing || store.isClearingTrace)
                 
-                Button(action: { showingClearConfirmation = true }) {
-                    Label("Clear Trace", systemImage: "trash")
+                if showAdvancedTools {
+                    Button(action: { showingClearConfirmation = true }) {
+                        Label("Clear Trace", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(store.isRefreshing || store.isClearingTrace)
+                    .tint(.red)
                 }
-                .buttonStyle(.bordered)
-                .disabled(store.isRefreshing || store.isClearingTrace)
-                .tint(.red)
-                
+
                 Button(action: copyReportToPasteboard) {
                     Label(copyFeedbackText, systemImage: copyFeedbackIcon)
                 }

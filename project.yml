@@ -172,12 +172,15 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "0.5.0"
-        CURRENT_PROJECT_VERSION: 17
+        CURRENT_PROJECT_VERSION: 19
       configs:
         Debug:
           CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.Debug.entitlements
           SWIFT_OPTIMIZATION_LEVEL: -Onone
         Release:
+          # Distribution builds use the standard Apple Silicon ABI; Debug keeps arm64e.
+          ARCHS: "x86_64 arm64"
+          ONLY_ACTIVE_ARCH: NO
           CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.entitlements
 
   ASFW:
@@ -202,7 +205,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ASFW/App.entitlements
         CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
-        CURRENT_PROJECT_VERSION: 17
+        CURRENT_PROJECT_VERSION: 19
         DEVELOPMENT_TEAM: F6YA6B56LR
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
@@ -254,7 +257,7 @@ targets:
         DEVELOPMENT_TEAM: F6YA6B56LR
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "26.0"
-        CURRENT_PROJECT_VERSION: 17
+        CURRENT_PROJECT_VERSION: 19
         MARKETING_VERSION: "1.0"
         STRING_CATALOG_GENERATE_SYMBOLS: NO
         SWIFT_APPROACHABLE_CONCURRENCY: YES

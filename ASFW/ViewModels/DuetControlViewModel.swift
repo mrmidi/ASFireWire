@@ -8,6 +8,8 @@ final class DuetControlViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var infoMessage: String?
 
+    @Published private(set) var hasInputState = false
+    @Published private(set) var hasMixerState = false
     @Published var duetGUID: UInt64?
 
     @Published var outputParams: DuetOutputParams = DuetOutputParams()
@@ -23,6 +25,7 @@ final class DuetControlViewModel: ObservableObject {
 
     private let connector: ASFWDriverConnector
     private var cancellables = Set<AnyCancellable>()
+    private var refreshRequestID = UUID()
     private var pendingMixerWrite: DispatchWorkItem?
     private var pendingInputGainWrite: DispatchWorkItem?
     private let inputWriteQueue = DispatchQueue(label: "net.asfw.app.Duet.input-write", qos: .userInitiated)
@@ -43,6 +46,12 @@ final class DuetControlViewModel: ObservableObject {
                 if connected {
                     self.refresh()
                 } else {
+                    self.refreshRequestID = UUID()
+                    self.isLoading = false
+                    self.hasInputState = false
+                    self.hasMixerState = false
+                    self.pendingMixerWrite?.cancel()
+                    self.pendingInputGainWrite?.cancel()
                     self.duetGUID = nil
                     self.errorMessage = "Driver not connected"
                 }
@@ -67,6 +76,9 @@ final class DuetControlViewModel: ObservableObject {
             return
         }
 
+        guard !isLoading, !isApplying else { return }
+        let requestID = UUID()
+        refreshRequestID = requestID
         isLoading = true
         errorMessage = nil
         infoMessage = nil
@@ -76,7 +88,10 @@ final class DuetControlViewModel: ObservableObject {
 
             guard let guid = self.connector.getFirstDuetUnitGUID() else {
                 DispatchQueue.main.async {
+                    guard self.refreshRequestID == requestID, self.isConnected else { return }
                     self.isLoading = false
+                    self.hasInputState = false
+                    self.hasMixerState = false
                     self.duetGUID = nil
                     self.errorMessage = "No Apogee Duet AV/C unit found"
                 }
@@ -84,37 +99,27 @@ final class DuetControlViewModel: ObservableObject {
             }
 
             let snapshot = self.connector.refreshDuetState(guid: guid)
-            let cached = self.connector.getDuetCachedState(guid: guid)
-            let state = snapshot ?? cached
-
             DispatchQueue.main.async {
+                guard self.refreshRequestID == requestID, self.isConnected else { return }
                 self.isLoading = false
-                self.duetGUID = guid
-
-                guard let state else {
-                    self.errorMessage = "Failed to read Duet state"
-                    return
-                }
-
-                if let output = state.outputParams {
-                    self.outputParams = output
-                }
-                if let input = state.inputParams {
-                    self.inputParams = input
-                }
-                if let mixer = state.mixerParams {
-                    self.mixerParams = mixer
-                }
-                if let display = state.displayParams {
-                    self.displayParams = display
-                }
-
-                self.firmwareID = state.firmwareID
-                self.hardwareID = state.hardwareID
-                self.lastRefreshTime = Date()
-                self.errorMessage = nil
+                self.applyRefreshedState(guid: guid, snapshot: snapshot)
             }
         }
+    }
+
+    func applyRefreshedState(guid: UInt64, snapshot: DuetStateSnapshot?) {
+        duetGUID = guid
+        hasInputState = snapshot?.inputParams != nil
+        hasMixerState = snapshot?.mixerParams != nil
+        firmwareID = snapshot?.firmwareID
+        hardwareID = snapshot?.hardwareID
+        lastRefreshTime = snapshot?.updatedAt
+        if let input = snapshot?.inputParams { inputParams = input }
+        if let mixer = snapshot?.mixerParams { mixerParams = mixer }
+        if let output = snapshot?.outputParams { outputParams = output }
+        if let display = snapshot?.displayParams { displayParams = display }
+        errorMessage = hasInputState && hasMixerState ? nil
+            : "Duet was detected, but some controls could not be read. Refresh to try again."
     }
 
     func mixerGain(source: Int) -> Double {

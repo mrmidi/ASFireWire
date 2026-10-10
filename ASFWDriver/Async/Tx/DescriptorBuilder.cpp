@@ -107,15 +107,19 @@ size_t DescriptorBuilder::ReserveBlocks(uint8_t blocks) noexcept {
         return start;
     };
 
+    // The new tail may never land on the head: head == tail means empty
+    // (RingHelpers::IsEmpty), so a full ring would read as empty and its
+    // outstanding packets would never be retired. One slot always stays free.
+
     // Case 1: tail ahead of head (free space may be split across end/start)
     if (tail >= head) {
         const size_t spaceToEnd = capacity - tail;
-        if (blocks <= spaceToEnd) {
+        if (blocks < spaceToEnd || (blocks == spaceToEnd && head != 0)) {
             return recordNext(tail);
         }
 
-        // Wrap: need contiguous space at beginning strictly before head
-        if (blocks <= head) {
+        // Wrap: the packet occupies [0, blocks) and must end strictly before head
+        if (blocks < head) {
             return recordNext(0);
         }
 
@@ -124,7 +128,7 @@ size_t DescriptorBuilder::ReserveBlocks(uint8_t blocks) noexcept {
 
     // Case 2: tail before head (single contiguous free region [tail, head))
     const size_t spaceAvailable = head - tail;
-    if (blocks <= spaceAvailable) {
+    if (blocks < spaceAvailable) {
         return recordNext(tail);
     }
 

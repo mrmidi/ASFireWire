@@ -308,6 +308,91 @@ StatusComparison CompareWithStatus(FirefaceModel model, const ConfigWords& confi
     return {.expected = expected, .reported = status1 & kStatusMirrorMask, .mask = kStatusMirrorMask};
 }
 
+namespace {
+// Rate codes: status1 bits 4:1 (Linux parse_clock_bits, ff-protocol-former.c:20-30).
+uint32_t ConfiguredRate(uint32_t status1) noexcept {
+    switch (status1 & 0x1eU) {
+        case 0x02U: return 32000;  case 0x00U: return 44100;  case 0x06U: return 48000;
+        case 0x0aU: return 64000;  case 0x08U: return 88200;  case 0x0eU: return 96000;
+        case 0x12U: return 128000; case 0x10U: return 176400; case 0x16U: return 192000;
+        default: return 0;
+    }
+}
+// status0 bits 28:25: FFADO SR0_AUTOSYNC_FREQ_* (fireface_def.h:331-340), Linux
+// dump_sync_status rate_entries. Code n in 1..9 is 32k, 44.1k, 48k, ... 192k.
+uint32_t SyncRate(uint32_t status0) noexcept {
+    constexpr uint32_t kRates[] = {32000, 44100, 48000, 64000, 88200, 96000, 128000, 176400, 192000};
+    const uint32_t code = (status0 >> 25) & 0xfU;
+    return code >= 1 && code <= 9 ? kRates[code - 1] : 0;
+}
+// status1 bits 12:10 when bit 0 is clear (Linux parse_clock_bits, :31-40). The
+// FF800 timecode module reads 0x1800 here, though its configuration code is 0x1400.
+ClockSource ConfiguredSource(uint32_t status1) noexcept {
+    if (status1 & 0x1U) return ClockSource::kInternal;
+    switch (status1 & 0x1c00U) {
+        case 0x0000U: return ClockSource::kAdat1;
+        case 0x0400U: return ClockSource::kAdat2;
+        case 0x0c00U: return ClockSource::kSpdif;
+        case 0x1000U: return ClockSource::kWordClock;
+        case 0x1800U: return ClockSource::kTimecode;
+        default: return ClockSource::kUnknown;
+    }
+}
+// status0 bits 24:22: FFADO SR0_AUTOSYNC_SRC_* (fireface_def.h:323-329).
+ClockSource SyncReferenceSource(uint32_t status0) noexcept {
+    switch (status0 & 0x01c00000U) {
+        case 0x00000000U: return ClockSource::kAdat1;
+        case 0x00400000U: return ClockSource::kAdat2;
+        case 0x00c00000U: return ClockSource::kSpdif;
+        case 0x01000000U: return ClockSource::kWordClock;
+        case 0x01400000U: return ClockSource::kTimecode;
+        case 0x01800000U: return ClockSource::kNone;
+        default: return ClockSource::kUnknown;
+    }
+}
+// Lock and sync bits: FFADO SR0_*_LOCK/_SYNC (fireface_def.h:270-289). Linux
+// dump_sync_status agrees except for S/PDIF lock, which it reads at 0x00080000
+// (FFADO: SR0_OVER). Followed: FFADO.
+LockState Lock(uint32_t status0, uint32_t lock, uint32_t sync) noexcept {
+    if ((status0 & lock) == 0) return LockState::kNone;
+    return (status0 & sync) != 0 ? LockState::kSync : LockState::kLock;
+}
+} // namespace
+
+DecodedStatus DecodeStatus(uint32_t status0, uint32_t status1) noexcept {
+    return DecodedStatus{
+        .configured = ConfiguredSource(status1),
+        .configuredRateHz = ConfiguredRate(status1),
+        .syncReference = SyncReferenceSource(status0),
+        .syncRateHz = SyncRate(status0),
+        .wordClock = Lock(status0, 0x40000000U, 0x20000000U),
+        .spdif = Lock(status0, 0x00100000U, 0x00040000U),
+        .adat1 = Lock(status0, 0x00000400U, 0x00001000U),
+        .adat2 = Lock(status0, 0x00000800U, 0x00002000U),
+    };
+}
+
+const char* Name(ClockSource source) noexcept {
+    switch (source) {
+        case ClockSource::kInternal: return "internal";
+        case ClockSource::kAdat1: return "adat1";
+        case ClockSource::kAdat2: return "adat2";
+        case ClockSource::kSpdif: return "spdif";
+        case ClockSource::kWordClock: return "word-clock";
+        case ClockSource::kTimecode: return "timecode";
+        case ClockSource::kNone: return "none";
+        case ClockSource::kUnknown: return "unknown";
+    }
+    return "?";
+}
+const char* Name(LockState state) noexcept {
+    switch (state) {
+        case LockState::kNone: return "none";
+        case LockState::kLock: return "lock";
+        case LockState::kSync: return "sync";
+    }
+    return "?";
+}
 const char* Name(InputLevel level) noexcept {
     switch (level) {
         case InputLevel::kLowGain: return "low-gain";

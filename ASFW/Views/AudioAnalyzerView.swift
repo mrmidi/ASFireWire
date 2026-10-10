@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct AudioAnalyzerView: View {
-    @StateObject private var devicesModel = AudioDebugViewModel()
+    let devices: [AudioWrapperDevice]
+    let refresh: () -> Void
+    @State private var selectedDeviceID: AudioWrapperDevice.ID?
 
-    private var devices: [AudioWrapperDevice] {
-        devicesModel.devices.filter {
-            ASFWAudioObserverClient.guid(fromDeviceUID: $0.uid) != nil
-        }
+    private var selectedDevice: AudioWrapperDevice? {
+        devices.first { $0.id == selectedDeviceID } ?? devices.first
     }
 
     var body: some View {
@@ -14,9 +14,12 @@ struct AudioAnalyzerView: View {
             HStack {
                 Text("Audio Analyzer").font(.title2.bold())
                 Spacer()
-                Picker("Device", selection: $devicesModel.selectedDevice) {
+                Picker("Device", selection: Binding(
+                    get: { selectedDevice?.id },
+                    set: { selectedDeviceID = $0 }
+                )) {
                     ForEach(devices, id: \.id) { device in
-                        Text(device.name).tag(Optional(device))
+                        Text(device.name).tag(Optional(device.id))
                     }
                 }
                 .frame(maxWidth: 400)
@@ -25,7 +28,7 @@ struct AudioAnalyzerView: View {
                 }
             }
 
-            if let device = devicesModel.selectedDevice,
+            if let device = selectedDevice,
                let guid = ASFWAudioObserverClient.guid(fromDeviceUID: device.uid) {
                 AudioObserverPanel(guid: guid, deviceName: device.name)
                     .id(guid)
@@ -34,7 +37,7 @@ struct AudioAnalyzerView: View {
                 ContentUnavailableView(
                     "No ASFW Audio Device",
                     systemImage: "waveform",
-                    description: Text("Connect a FireWire audio device and refresh the list."))
+                    description: Text("Connect an audio device and wait for it to become available in Core Audio."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -42,9 +45,4 @@ struct AudioAnalyzerView: View {
         .onAppear { refresh() }
     }
 
-    private func refresh() {
-        let previousUID = devicesModel.selectedDevice?.uid
-        devicesModel.refreshDevices()
-        devicesModel.selectedDevice = devices.first { $0.uid == previousUID } ?? devices.first
-    }
 }

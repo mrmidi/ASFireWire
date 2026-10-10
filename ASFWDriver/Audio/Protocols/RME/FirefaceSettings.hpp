@@ -107,6 +107,26 @@ struct StatusComparison {
 [[nodiscard]] StatusComparison CompareWithStatus(FirefaceModel model, const ConfigWords& config,
                                                  uint32_t status1) noexcept;
 
+/// The status quadlets at 0x801c0000 (status0) and 0x801c0004 (status1),
+/// decoded. One layout for both models: Linux dump_sync_status serves the FF400
+/// and FF800 alike (ff-protocol-former.c:159-255).
+enum class ClockSource : uint8_t { kInternal, kAdat1, kAdat2, kSpdif, kWordClock, kTimecode, kNone, kUnknown };
+enum class LockState : uint8_t { kNone, kLock, kSync };
+struct DecodedStatus {
+    ClockSource configured{ClockSource::kUnknown};     // status1 bit 0, else bits 12:10
+    uint32_t configuredRateHz{0};                      // status1 bits 4:1; 0 if unknown
+    ClockSource syncReference{ClockSource::kUnknown};  // status0 bits 24:22: what a slave follows
+    uint32_t syncRateHz{0};                            // status0 bits 28:25; 0 if unknown
+    LockState wordClock{LockState::kNone};
+    LockState spdif{LockState::kNone};
+    LockState adat1{LockState::kNone};
+    LockState adat2{LockState::kNone};
+};
+
+[[nodiscard]] DecodedStatus DecodeStatus(uint32_t status0, uint32_t status1) noexcept;
+
+[[nodiscard]] const char* Name(ClockSource source) noexcept;
+[[nodiscard]] const char* Name(LockState state) noexcept;
 [[nodiscard]] const char* Name(InputLevel level) noexcept;
 [[nodiscard]] const char* Name(OutputLevel level) noexcept;
 [[nodiscard]] const char* Name(PhonesLevel level) noexcept;
