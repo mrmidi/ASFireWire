@@ -9,6 +9,7 @@
 // job and must show up as a declared golden-trace delta.
 
 #include "DiceFamilyDriver.hpp"
+#include "DiceClockChangeObserver.hpp"
 #include "../../../Runtime/RateValidation.hpp"
 
 #include "../../../../Common/WireFormat.hpp"
@@ -340,6 +341,7 @@ IOReturn DiceFamilyDriver::Stop() {
 // ---------------------------------------------------------------------------
 
 IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
+    clockSelectWritten_ = false;
     // Section layout first: every GLOBAL access below depends on it (TCAT
     // RestartStreaming reads the 0x28-byte table before GLOBAL).
     if (!EnsureRouteCurrent()) {
@@ -476,12 +478,20 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
                  diceClock_.clockSelect, targetHz, preClaimSampleRate_, preClaimStatus_);
     }
 
+    if (bringupPolicy_.clockChangeObserver != nullptr) {
+        bringupPolicy_.clockChangeObserver->BeforeClockSelectWrite(io_);
+        if (!EnsureRouteCurrent()) {
+            return Rollback(kIOReturnOffline);
+        }
+    }
+
     notifications_.Reset();
     if (const auto written = io_.WriteQuad(sections_.global.offset + GlobalOffset::kClockSelect,
                                            diceClock_.clockSelect);
         !written) {
         return Rollback(written.error());
     }
+    clockSelectWritten_ = true;
 
     // The notification may have arrived during the write.
     const uint32_t earlyBits = notifications_.Consume();
@@ -611,6 +621,9 @@ IOReturn DiceFamilyDriver::ClockConfirmed(const AudioDuplexChannels& channels) {
         if (status != kIOReturnSuccess) {
             return status;
         }
+        if (!SettleAfterClockChange()) {
+            return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
+        }
         return CompleteClockApply();
     }
     return AwaitStreamingClockLock(channels);
@@ -681,6 +694,9 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
                          "PrepareDuplex48k: target rate ready at %u Hz after %u ms; sourceLock=%u; enabling streams",
                          state->sampleRate, attempt * kPollIntervalMs, sourceLocked ? 1U : 0U);
             }
+            if (!SettleAfterClockChange()) {
+                return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
+            }
             return DiscoverStreams();
         }
 
@@ -695,6 +711,46 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
 
         io_.Clock().SleepMs(kPollIntervalMs);
     }
+}
+
+bool DiceFamilyDriver::SettleAfterClockChange() {
+    if (!clockSelectWritten_) {
+        return true;
+    }
+    clockSelectWritten_ = false;
+    const uint32_t rateHz = session_.desiredClock.sampleRateHz;
+
+    bool settled = true;
+    const uint32_t settleBits = bringupPolicy_.clockChangeSettleNotify;
+    if (settleBits != 0) {
+        settled = false;
+        const uint32_t timeoutMs = bringupPolicy_.clockChangeSettleTimeoutMs;
+        for (uint32_t waitedMs = 0;; waitedMs += kPollIntervalMs) {
+            if (TeardownRequested() || !EnsureRouteCurrent()) {
+                return false;
+            }
+            if (notifications_.TakeSeenSinceReset(settleBits) != 0) {
+                settled = true;
+                ASFW_LOG(DICE, "ApplyClock: device settled at %u Hz %u ms after the clock write "
+                         "(notify 0x%08x)", rateHz, waitedMs, settleBits);
+                break;
+            }
+            if (waitedMs >= timeoutMs) {
+                ASFW_LOG_ERROR(DICE, "ApplyClock: no settle notification 0x%08x within %u ms at %u Hz",
+                               settleBits, timeoutMs, rateHz);
+                break;
+            }
+            io_.Clock().SleepMs(kPollIntervalMs);
+        }
+    }
+
+    if (bringupPolicy_.clockChangeObserver != nullptr) {
+        bringupPolicy_.clockChangeObserver->AfterClockChange(io_, rateHz, settled);
+        if (TeardownRequested() || !EnsureRouteCurrent()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 IOReturn DiceFamilyDriver::DiscoverStreams() {

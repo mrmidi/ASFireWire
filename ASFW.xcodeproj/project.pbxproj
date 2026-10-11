@@ -1149,6 +1149,7 @@
 		8EC5A3EFDE5A475EFBC395D1 /* AmdtpTransferDelay.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AmdtpTransferDelay.hpp; sourceTree = "<group>"; };
 		8EF3F0759559A69BBCABA484 /* ResponseSender.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ResponseSender.cpp; sourceTree = "<group>"; };
 		8FB2E35051CCCFD3E4CD6E2F /* SystemLogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemLogsView.swift; sourceTree = "<group>"; };
+		8FD6309B5F470DF3B44CEFFB /* DiceClockChangeObserver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceClockChangeObserver.hpp; sourceTree = "<group>"; };
 		8FFC248C26AEF60A5184D251 /* StatusHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StatusHandler.cpp; sourceTree = "<group>"; };
 		9044ED76DD6A5121361A42ED /* IEEE1394.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IEEE1394.hpp; sourceTree = "<group>"; };
 		90A544A010383404CF8E4A65 /* AvcGraphBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcGraphBuilder.hpp; sourceTree = "<group>"; };
@@ -2448,6 +2449,7 @@
 		601AA648247AF33963C7C0E1 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				8FD6309B5F470DF3B44CEFFB /* DiceClockChangeObserver.hpp */,
 				B773C162575ABBE22D0D4C8A /* DiceDeviceIo.cpp */,
 				D627F5CB0371AE94C13B34E3 /* DiceDeviceIo.hpp */,
 				C8BE0550883A589972502A7D /* DiceFamilyDriver.cpp */,

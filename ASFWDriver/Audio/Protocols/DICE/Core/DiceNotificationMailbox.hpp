@@ -35,14 +35,28 @@ public:
     DiceNotificationMailbox(const DiceNotificationMailbox&) = delete;
     DiceNotificationMailbox& operator=(const DiceNotificationMailbox&) = delete;
 
-    void Reset() noexcept { bits_.store(0, std::memory_order_release); }
-    void Publish(uint32_t bits) noexcept { bits_.fetch_or(bits, std::memory_order_acq_rel); }
+    void Reset() noexcept {
+        bits_.store(0, std::memory_order_release);
+        seenSinceReset_.store(0, std::memory_order_release);
+    }
+    void Publish(uint32_t bits) noexcept {
+        bits_.fetch_or(bits, std::memory_order_acq_rel);
+        seenSinceReset_.fetch_or(bits, std::memory_order_acq_rel);
+    }
     // Take every bit latched so far.
     [[nodiscard]] uint32_t Consume() noexcept { return bits_.exchange(0, std::memory_order_acq_rel); }
     [[nodiscard]] uint32_t Snapshot() const noexcept { return bits_.load(std::memory_order_acquire); }
+    // Whether any of `mask` arrived since the last Reset(), clearing those bits
+    // only. Consume() takes every bit, so a waiter for one late bit (a vendor's
+    // "rate change finished") could lose it to the clock-accept loop; this
+    // record is separate and Consume() leaves it alone.
+    [[nodiscard]] uint32_t TakeSeenSinceReset(uint32_t mask) noexcept {
+        return seenSinceReset_.fetch_and(~mask, std::memory_order_acq_rel) & mask;
+    }
 
 private:
     std::atomic<uint32_t> bits_{0};
+    std::atomic<uint32_t> seenSinceReset_{0};
 };
 
 } // namespace ASFW::Audio::DICE

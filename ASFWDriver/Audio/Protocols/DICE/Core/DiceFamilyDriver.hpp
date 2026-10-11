@@ -91,6 +91,9 @@ private:
     [[nodiscard]] IOReturn ClockConfirmed(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitStreamingClockLock(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitIdleClockRate();
+    // After a CLOCK_SELECT write this flow issued: the policy's settle wait,
+    // then the observer. False only when the route went stale or teardown began.
+    [[nodiscard]] bool SettleAfterClockChange();
     [[nodiscard]] IOReturn DiscoverStreams();
     [[nodiscard]] IOReturn FinishPrepare();
     [[nodiscard]] IOReturn CompleteClockApply();
@@ -131,6 +134,8 @@ private:
     uint32_t preClaimClockSelect_{0};
     uint32_t preClaimStatus_{0};
     uint32_t preClaimSampleRate_{0};
+    // This flow wrote CLOCK_SELECT (a redundant write is skipped and does not count).
+    bool clockSelectWritten_{false};
     const std::atomic<bool>* teardownCancel_{nullptr};
     // The bus generation we last claimed the owner in. Held across stops;
     // a new generation claims again.
