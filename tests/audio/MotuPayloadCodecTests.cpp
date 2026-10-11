@@ -11,6 +11,7 @@
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "Logging/LogRing.hpp"
 
 #include <gtest/gtest.h>
 
@@ -779,4 +780,193 @@ TEST(MotuPayloadCodecTests, RxTimingObserverReportsAMeterBehindTheBridgeOnce) {
     observer.OnBatchBegin(nullptr);
     observer.DrainTelemetry(16);
     EXPECT_EQ(observer.RxClockStalls(), 2U);
+}
+
+// ---------------------------------------------------------------------------
+// The regulator's absolute phase `rel`, formed by the observer's drain from the
+// device's absolute receive phase and the transmit phase trace.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+uint32_t CountLogLines(const char* needle) {
+    ASFW::Logging::LogRingQuery query{};
+    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
+    std::vector<ASFW::Logging::LogRecord> records(512);
+    return ASFW::Logging::LogRing::Shared()
+        .Query(query, records.data(), static_cast<uint32_t>(records.size()), 1U << 20)
+        .recordCount;
+}
+
+// A transmit cadence period as the publisher releases it: three DATA packets
+// 700 ticks into cycle 5, against a completion in cycle 10 of the same second.
+ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample TracePeriod(uint64_t generation) {
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    period.streamGeneration = generation;
+    period.outputLastPacketIndex = 100;
+    period.outputLastCycleTimer = ASFW::Timing::encodeCycleTimer(0, 10, 0);
+    period.hasOutputLast = true;
+    period.presentationLeadTicks = kDefaultPresentationLeadTicks;
+    for (uint64_t packetIndex = 101; packetIndex <= 103; ++packetIndex) {
+        ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(
+            period, packetIndex, SphFromTick(5 * kTicksPerCycle + 700));
+    }
+    return period;
+}
+
+// A device whose clock moves exactly one bus cycle per packet of six frames
+// (48 kHz), presenting each packet `absPhaseTicks` after the cycle it arrives
+// in, for `seconds` of bus time. Drained once per HAL zero-timestamp period,
+// as the watchdog would at least.
+void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
+                              int64_t absPhaseTicks, uint32_t sampleRateHz = 48000) {
+    constexpr uint32_t kFramesPerPacket = 6;
+    const uint32_t drainEvery =
+        ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz).zeroTimestampPeriodFrames /
+        kFramesPerPacket;
+    const uint32_t packets = seconds * kCyclesPerSecond;
+    for (uint32_t i = 0; i < packets; ++i) {
+        const uint32_t cycle = i % kCyclesPerSecond;
+        observer.ObservePacket(
+            ReceivedMotuPacket(int64_t{cycle} * kTicksPerCycle + absPhaseTicks, kFramesPerPacket),
+            4, kFramesPerPacket, static_cast<uint16_t>(cycle));
+        if ((i + 1) % drainEvery == 0) {
+            observer.DrainTelemetry(8);
+        }
+    }
+}
+
+} // namespace
+
+// End to end through the observer: the absolute receive phase sampled on the
+// packet path, the window closed in the drain on the first sample and then
+// every four seconds of device frames (frames 0, 196608, 393216 and 577536 in
+// 13 s), and `rel` = transmit residual - receive median, conditioned and
+// published from the conditioner's third sample on.
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain) {
+    constexpr int64_t kAbsPhaseTicks = 9216;
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+
+    const auto period = TracePeriod(generation);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(period));
+    const auto residual = ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period);
+    ASSERT_TRUE(residual.valid);
+    const int64_t expectedRel = TickDifference(residual.residualTicks, kAbsPhaseTicks);
+
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t relLinesBefore = CountLogLines("[RxPhaseRel]");
+    const uint32_t absLinesBefore = CountLogLines("[RxPhaseAbs]");
+    const uint32_t firstLinesBefore = CountLogLines("[RxPhaseBridge] first publish");
+
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 13, kAbsPhaseTicks);
+
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
+    EXPECT_EQ(observer.RelPhaseFormed(), 4U);
+    EXPECT_EQ(observer.RelPhasePublished(), 2U);
+    EXPECT_EQ(observer.RelPhaseRejected(), 0U);
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+    uint64_t relUpdates = 0;
+    ASSERT_TRUE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    EXPECT_EQ(relUpdates, 2U);
+    EXPECT_EQ(rel.streamGeneration, generation);
+    EXPECT_EQ(rel.ticks, expectedRel);
+    EXPECT_EQ(rel.centerTicks, expectedRel);
+    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 4U);
+    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 4U);
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 1U);
+
+    // A new control generation starts the conditioner over: two windows in
+    // five seconds are short of its warm-up, so nothing is published even
+    // with the transmit term there.
+    control.ResetForStart();
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(
+        TracePeriod(control.generation.load(std::memory_order_acquire))));
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 5, kAbsPhaseTicks);
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 6U);
+    EXPECT_EQ(observer.RelPhasePublished(), 0U);
+    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+}
+
+// A `rel` the bridge refuses -- armed for another generation -- is counted
+// every time and logged once per start.
+TEST(MotuPayloadCodecTests, RxTimingObserverLogsARefusedRelOncePerStart) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
+    control.motuRelPhase.Reset(generation + 1);
+
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t rejectedBefore = CountLogLines("[RxPhaseBridge] rejected");
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 13, 9216);
+
+    EXPECT_EQ(observer.RelPhaseRejected(), 2U);
+    EXPECT_EQ(observer.RelPhasePublished(), 0U);
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+    uint64_t relUpdates = 0;
+    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] rejected") - rejectedBefore, 1U);
+}
+
+// `rel` needs the transmit term and the 48 kHz-family geometry; without either
+// the windows still close and report the receive phase, and nothing is formed.
+TEST(MotuPayloadCodecTests, RxTimingObserverFormsRelOnlyWithATraceAndWhereTheGeometryHolds) {
+    {
+        SCOPED_TRACE("no trace");
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        control.ResetForStart();
+        ControlBindingSource source(&control, 48000);
+        MotuRxTimingObserver observer(&source);
+        observer.OnBatchBegin(nullptr);
+        DriveConstantPhaseDevice(observer, 9, 9216);
+        EXPECT_EQ(observer.PhaseWindowsClosed(), 3U);
+        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
+    }
+    {
+        SCOPED_TRACE("44.1 kHz");
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        control.ResetForStart();
+        ControlBindingSource source(&control, 44100);
+        ASSERT_TRUE(control.motuPhaseTrace.Publish(
+            TracePeriod(control.generation.load(std::memory_order_acquire))));
+        MotuRxTimingObserver observer(&source);
+        observer.OnBatchBegin(nullptr);
+        DriveConstantPhaseDevice(observer, 9, 9216, 44100);
+        EXPECT_GE(observer.PhaseWindowsClosed(), 2U);
+        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
+        ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+        uint64_t relUpdates = 0;
+        EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    }
+}
+
+// Reset() inside a stream (receive activation, quiesce, a replay
+// discontinuity) restarts the sampling -- the next sample closes a window at
+// once -- but keeps the conditioner's operating point, so `rel` keeps flowing.
+TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheOperatingPointAcrossResetWithinAStream) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
+
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 9, 9216);
+    ASSERT_EQ(observer.RelPhasePublished(), 1U);
+
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 1, 9216);
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
+    EXPECT_EQ(observer.RelPhasePublished(), 2U);
 }

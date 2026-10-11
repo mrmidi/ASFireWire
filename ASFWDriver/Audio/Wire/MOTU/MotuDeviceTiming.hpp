@@ -6,6 +6,7 @@
 #include "../../Ports/IWirePayloadCodec.hpp"
 #include "MotuTxTiming.hpp"
 #include "MotuModel.hpp"
+#include "MotuRelPhaseConditioner.hpp"
 #include "MotuSphClockServo.hpp"
 #include "MotuSphHardResyncGate.hpp"
 #include "MotuSphQ32Accumulator.hpp"
@@ -14,7 +15,9 @@
 #include "../../DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "../../DriverKit/Runtime/MotuRxSphRateMeter.hpp"
 #include "../../DriverKit/Runtime/MotuServoStallDetector.hpp"
+#include "../../../Common/TimingUtils.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "../../../Shared/Isoch/AudioHalBufferProfiles.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -35,11 +38,33 @@ namespace ASFW::Audio::Wire {
 // a Reset() or a new stream generation. That establishes the receive replay,
 // whose DATA/NO-DATA cadence the transmit side replays.
 //
+// It forms the regulator's absolute phase `rel` as well. The packet path
+// samples the device's absolute receive phase (SPH minus receive cycle) once per
+// HAL zero-timestamp period; DrainTelemetry() closes a window on the first
+// sample after a Reset() and then every four seconds of device frames, and
+// takes `rel` as the transmit presentation residual (the cadence-period mean
+// from motuPhaseTrace) minus the window's median receive phase. The
+// conditioner (MotuRelPhaseConditioner) turns that into the sample published
+// over motuRelPhase for the transmit regulator. Formed only where the cadence
+// geometry holds (MotuRelPhaseGeometryHolds). The two terms are neither
+// simultaneous nor of the same statistical kind; `rel` is a slow measurement,
+// not a per-packet one.
+//
+// Unified-log lines from the drain, short and in stable formats (offline
+// analysers read [RxPhaseRel] and [RxPhaseAbs] by field order):
+//   [RxSphRate]      the device's sample period over the window
+//   [RxPhaseAbs]     min/median/max of the absolute receive phase, samples
+//   [RxPhaseRel]     rel, the transmit residual and the receive median
+//   [RxPhaseBridge]  the first `rel` the bridge took this start, or the first
+//                    it refused (another generation; never expected)
+//   [RxPhaseLattice] a sample corrected by whole cadence quanta
+//
 // Stream boundaries: a new control generation (StartIO) starts the measurement
 // over, together with the bridge. Reset() -- receive activation, quiesce and
 // replay discontinuities -- stays inside the stream: it re-anchors the meter so
 // the step across the gap is not measured, and keeps the cumulative totals so
-// the bridge stays monotonic.
+// the bridge stays monotonic. It restarts the phase sampling too, but keeps the
+// conditioner's operating point.
 class MotuRxTimingObserver final : public IRxDeviceTimingObserver {
 public:
     MotuRxTimingObserver() noexcept = default;
@@ -88,8 +113,7 @@ public:
         uint32_t strideQuadlets,
         uint32_t framesDecoded,
         uint16_t cycle) noexcept override {
-        (void)cycle;
-        MeasureRxClock(payload, framesDecoded);
+        MeasureRxClock(payload, framesDecoded, cycle);
         // A DATA packet whose first block's SPH is there to read.
         if (clockControl_ != nullptr && framesDecoded != 0 && strideQuadlets != 0 &&
             payload.size() >= kMotuCipPrefixBytes + 4U) {
@@ -105,6 +129,7 @@ public:
         timingEstablished_ = false;
         rxClock_.Reanchor();
         stallDetector_.Reset();
+        RestartPhaseSampling();
         // Reset() also runs on quiesce, after which the control block may be
         // unbound. Drop the view; the next OnBatchBegin re-binds it.
         clockControl_ = nullptr;
@@ -114,10 +139,27 @@ public:
     void DrainTelemetry(uint32_t maxRecords) noexcept override {
         (void)maxRecords;
         CheckRxClockStall();
+        if (phaseWindowDue_) {
+            phaseWindowDue_ = false;
+            ClosePhaseWindow();
+        }
     }
 
     // Times the measurement was found behind the bridge, since construction.
     [[nodiscard]] uint32_t RxClockStalls() const noexcept { return rxClockStalls_; }
+
+    // `rel` samples the motuRelPhase bridge took, and refused, this stream
+    // generation.
+    [[nodiscard]] uint64_t RelPhasePublished() const noexcept { return relPhasePublished_; }
+    [[nodiscard]] uint64_t RelPhaseRejected() const noexcept { return relPhaseRejected_; }
+
+    // Telemetry windows closed in total, and `rel` values formed, since
+    // construction.
+    [[nodiscard]] uint64_t PhaseWindowsClosed() const noexcept { return phaseWindowsClosed_; }
+    [[nodiscard]] uint64_t RelPhaseFormed() const noexcept { return relPhaseFormed_; }
+
+    // Device frames per telemetry window: four seconds.
+    static constexpr uint32_t kPhaseWindowSeconds = 4;
 
 private:
     // 8-byte isochronous receive prefix plus the 8-byte CIP header.
@@ -132,20 +174,33 @@ private:
             timingEstablished_ = false;
             rxClock_.Reset();
             stallDetector_.Reset();
+            relPhase_.Reset();
+            relPhasePublished_ = 0;
+            relPhaseRejected_ = 0;
+            RestartPhaseSampling();
             clockGenerationControl_ = control;
             clockGeneration_ = generation;
         }
         clockControl_ = control;
     }
 
+    void RestartPhaseSampling() noexcept {
+        framesSinceReset_ = 0;
+        phaseSamples_ = 0;
+        nextPhaseWindowFrame_ = 0;
+        phaseWindowDue_ = false;
+    }
+
     // The first block's SPH and the packet's frame count; NO-DATA packets
     // carry neither and are skipped by the meter.
-    void MeasureRxClock(std::span<const uint8_t> payload, uint32_t framesDecoded) noexcept {
+    void MeasureRxClock(std::span<const uint8_t> payload, uint32_t framesDecoded,
+                        uint16_t cycle) noexcept {
         if (framesDecoded == 0 || payload.size() < kMotuCipPrefixBytes + 4U) {
             return;
         }
         const uint32_t sph = ::ASFW::Encoding::Motu::ReadSph(payload.subspan(kMotuCipPrefixBytes, 4));
         rxClock_.Observe(sph, framesDecoded, sampleRateHz_);
+        SampleAbsolutePhase(sph, framesDecoded, cycle);
         if (clockControl_ == nullptr) {
             return;
         }
@@ -160,6 +215,123 @@ private:
             .rxFrames = cumulative.frames,
             .rxTicks = cumulative.ticks,
         });
+    }
+
+    // One absolute-phase sample per HAL zero-timestamp period, counted in
+    // this observer's own frames since Reset(): the packet holding the
+    // period's first frame. The period is a whole number of cadence periods,
+    // so within a stream every sample lands on the same packet of the
+    // cadence. The receive cycle stands for the cycle timer at offset 0; the
+    // SPH lives in a one-second domain, so the cycle alone is enough.
+    void SampleAbsolutePhase(uint32_t sph, uint32_t framesDecoded, uint16_t cycle) noexcept {
+        const uint64_t firstFrame = framesSinceReset_;
+        framesSinceReset_ += framesDecoded;
+        const uint64_t period =
+            ::ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz_).zeroTimestampPeriodFrames;
+        if (period == 0) {
+            return;
+        }
+        const uint64_t boundary = ((firstFrame + period - 1) / period) * period;
+        if (boundary >= framesSinceReset_) {
+            return;
+        }
+        rxClock_.ObserveAbsolutePhase(sph, ::ASFW::Timing::encodeCycleTimer(0, cycle, 0));
+
+        // The window closes on the first sample after a Reset(), then once
+        // per four seconds of device frames; the drain does the closing.
+        const uint64_t windowFrames = uint64_t{sampleRateHz_} * kPhaseWindowSeconds;
+        if (++phaseSamples_ == 1) {
+            phaseWindowDue_ = true;
+            nextPhaseWindowFrame_ = boundary + windowFrames;
+        } else if (boundary >= nextPhaseWindowFrame_) {
+            phaseWindowDue_ = true;
+            nextPhaseWindowFrame_ +=
+                ((boundary - nextPhaseWindowFrame_) / windowFrames + 1) * windowFrames;
+        }
+    }
+
+    void ClosePhaseWindow() noexcept {
+        ++phaseWindowsClosed_;
+        const uint32_t rate = sampleRateHz_;
+        const auto sphRate = rxClock_.Snapshot(rate);
+        if (sphRate.valid) {
+            ASFW_LOG(DirectAudio,
+                     "[RxSphRate] ppb=%lld frames=%llu steps=%llu rejected=%llu/%llu "
+                     "worstRej=%lld/%u rate=%u",
+                     static_cast<long long>(sphRate.deviationPpb), sphRate.frames,
+                     sphRate.packets, sphRate.rejectedNonMonotonic,
+                     sphRate.rejectedImplausibleRate,
+                     static_cast<long long>(sphRate.worstRejectedStepTicks),
+                     sphRate.worstRejectedFrames, rate);
+        }
+        const auto absPhase = rxClock_.AbsolutePhaseSnapshot();
+        if (absPhase.valid) {
+            ASFW_LOG(DirectAudio, "[RxPhaseAbs] min=%lld med=%lld max=%lld n=%u/%u",
+                     static_cast<long long>(absPhase.minTicks),
+                     static_cast<long long>(absPhase.medianTicks),
+                     static_cast<long long>(absPhase.maxTicks), absPhase.stored,
+                     absPhase.samples);
+            FormRelPhase(absPhase.medianTicks);
+        }
+        rxClock_.BeginWindow();
+    }
+
+    // `rel`: the transmit presentation residual against the device's absolute
+    // receive phase, conditioned and handed to the transmit regulator.
+    void FormRelPhase(int64_t rxAbsTicks) noexcept {
+        auto* control = clockControl_;
+        if (control == nullptr ||
+            !::ASFW::Audio::Runtime::MotuRelPhaseGeometryHolds(sampleRateHz_)) {
+            return;
+        }
+        ::ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+        uint64_t traceUpdates = 0;
+        if (!control->motuPhaseTrace.ReadLatest(period, traceUpdates)) {
+            return;
+        }
+        const uint64_t generation = control->generation.load(std::memory_order_acquire);
+        const auto residual = ::ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period);
+        if (period.streamGeneration != generation || !residual.valid) {
+            return;
+        }
+        const int64_t rel = ::ASFW::Encoding::Motu::TickDifference(residual.residualTicks, rxAbsTicks);
+        ++relPhaseFormed_;
+        ASFW_LOG(DirectAudio,
+                 "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
+                 "buckets=%u",
+                 static_cast<long long>(rel), static_cast<long long>(residual.residualTicks),
+                 static_cast<long long>(rxAbsTicks), traceUpdates, period.count);
+
+        const auto conditioned = relPhase_.Accept(rel);
+        if (conditioned.valid) {
+            const ::ASFW::Audio::Runtime::MotuRelPhaseSampleRecord sample{
+                .streamGeneration = generation,
+                .ticks = conditioned.ticks,
+                .centerTicks = conditioned.centerTicks,
+            };
+            if (control->motuRelPhase.Publish(sample)) {
+                // One line on a stream's first publication, so a run can tell
+                // "nothing was published" from "the regulator ignored it".
+                if (++relPhasePublished_ == 1) {
+                    ASFW_LOG(DirectAudio, "[RxPhaseBridge] first publish gen=%llu ticks=%lld center=%lld",
+                             generation, static_cast<long long>(sample.ticks),
+                             static_cast<long long>(sample.centerTicks));
+                }
+            } else if (++relPhaseRejected_ == 1) {
+                ASFW_LOG(DirectAudio, "[RxPhaseBridge] rejected gen=%llu ticks=%lld center=%lld",
+                         generation, static_cast<long long>(sample.ticks),
+                         static_cast<long long>(sample.centerTicks));
+            }
+        }
+        if (conditioned.latticeCorrectionTicks != 0) {
+            ASFW_LOG(DirectAudio,
+                     "[RxPhaseLattice] corrected=%lld excess=%lld center=%lld corrections=%llu "
+                     "published=%llu",
+                     static_cast<long long>(conditioned.latticeCorrectionTicks),
+                     static_cast<long long>(conditioned.excessTicks),
+                     static_cast<long long>(conditioned.centerTicks),
+                     relPhase_.LatticeCorrections(), relPhase_.PublishedSamples());
+        }
     }
 
     void CheckRxClockStall() noexcept {
@@ -203,6 +375,20 @@ private:
     const ::ASFW::Audio::Runtime::AudioTransportControlBlock* clockGenerationControl_{nullptr};
     uint64_t clockGeneration_{0};
     uint32_t rxClockStalls_{0};
+
+    // Absolute-phase sampling since Reset(), and the window it feeds.
+    uint64_t framesSinceReset_{0};
+    uint64_t phaseSamples_{0};
+    uint64_t nextPhaseWindowFrame_{0};
+    bool phaseWindowDue_{false};
+    uint64_t phaseWindowsClosed_{0};
+
+    // `rel`: one conditioner per stream generation, beside the meter that
+    // feeds it, so the same boundary resets both.
+    ::ASFW::Encoding::Motu::MotuRelPhaseConditioner relPhase_{};
+    uint64_t relPhaseFormed_{0};
+    uint64_t relPhasePublished_{0};
+    uint64_t relPhaseRejected_{0};
 };
 
 // ---------------------------------------------------------------------------
