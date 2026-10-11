@@ -124,6 +124,11 @@ add_audio_test(MotuSphQ32AccumulatorTests
     MotuSphQ32AccumulatorTests.cpp
 )
 
+# MOTU SPH regulator: the clock servo and its hard-resync gate
+add_audio_test(MotuSphClockServoTests
+    MotuSphClockServoTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp
