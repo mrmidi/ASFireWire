@@ -58,4 +58,27 @@ inline constexpr uint32_t kSphOffsetMask = 0x00000fff;
     return SphFromTick((baseTick + cachedOffset) % kTicksPerSecond);
 }
 
+/// Any signed tick count, wrapped onto the one-second timeline.
+[[nodiscard]] constexpr uint32_t WrapTick(int64_t tick) noexcept {
+    constexpr int64_t kSecond = kTicksPerSecond;
+    int64_t wrapped = tick % kSecond;
+    if (wrapped < 0) {
+        wrapped += kSecond;
+    }
+    return static_cast<uint32_t>(wrapped);
+}
+
+/// Signed distance from `from` to `to` on the one-second timeline, taken the
+/// short way round: (-half a second, +half a second]. A step across a second
+/// rollover therefore reads as the few thousand ticks it really is.
+[[nodiscard]] constexpr int64_t TickDifference(int64_t to, int64_t from) noexcept {
+    constexpr int64_t kSecond = kTicksPerSecond;
+    const int64_t difference = static_cast<int64_t>(WrapTick(to - from));
+    return difference > kSecond / 2 ? difference - kSecond : difference;
+}
+
+static_assert(WrapTick(-1) == kTicksPerSecond - 1);
+static_assert(TickDifference(10, kTicksPerSecond - 10) == 20);
+static_assert(TickDifference(kTicksPerSecond - 10, 10) == -20);
+
 } // namespace ASFW::Encoding::Motu

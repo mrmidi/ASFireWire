@@ -148,4 +148,28 @@ TEST(MotuTxTimingTests, RoundTripsAnOffsetCapturedFromReceive) {
               (BaseTickForCycle(txCycle) + deviceOffset) % kTicksPerSecond);
 }
 
+// The SPH carries no seconds field, so tick arithmetic happens on a one-second
+// circle: wrapping is modular for negative counts too, and a difference across
+// the rollover is the short distance, not almost a second.
+TEST(MotuTxTimingTests, SignedTickArithmeticWrapsOnTheOneSecondTimeline) {
+    using ASFW::Encoding::Motu::TickDifference;
+    using ASFW::Encoding::Motu::WrapTick;
+    constexpr int64_t kSecond = kTicksPerSecond;
+
+    EXPECT_EQ(WrapTick(0), 0u);
+    EXPECT_EQ(WrapTick(kSecond), 0u);
+    EXPECT_EQ(WrapTick(3 * kSecond + 7), 7u);
+    EXPECT_EQ(WrapTick(-1), kTicksPerSecond - 1);
+    EXPECT_EQ(WrapTick(-3 * kSecond - 7), kTicksPerSecond - 7);
+
+    // One 48 kHz packet of eight frames straddling the rollover.
+    EXPECT_EQ(TickDifference(4096 - 1000, kSecond - 1000), 4096);
+    EXPECT_EQ(TickDifference(kSecond - 1000, 4096 - 1000), -4096);
+    // Exactly half a second is the positive end of the range.
+    EXPECT_EQ(TickDifference(kSecond / 2, 0), kSecond / 2);
+    EXPECT_EQ(TickDifference(kSecond / 2 + 1, 0), -(kSecond / 2 - 1));
+    // Whole seconds in either operand do not change the distance.
+    EXPECT_EQ(TickDifference(5 * kSecond + 100, -2 * kSecond + 40), 60);
+}
+
 } // namespace
