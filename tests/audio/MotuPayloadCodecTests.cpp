@@ -187,23 +187,19 @@ TEST(MotuPayloadCodecTests, RxTimingObserverCapturesOffsetsAndEstablishesTiming)
     EXPECT_FALSE(observer.IsTimingEstablished());
 }
 
-TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
-    MotuEventOffsetCache cache;
+TEST(MotuPayloadCodecTests, TxTimingStamperStampsTheRegulatorClockAndZeroesBeforeTheSeed) {
     constexpr uint32_t kDbs = 4;
-    MotuTxTimingStamper stamper(&cache, kDbs);
-
-    std::atomic<uint32_t> readiness{0};
-    stamper.BindCache(&cache, &readiness);
+    MotuTxTimingStamper stamper{};
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks));
     EXPECT_TRUE(stamper.IsSytUnaware());
 
-    // Allocate buffer for 1 slot: 8 bytes CIP + 2 blocks * 16 bytes = 40 bytes.
-    std::vector<uint8_t> slotBytes(40, 0xFF); // Initialize with dirty memory
+    // 1 slot: 8 bytes CIP + 2 blocks * 16 bytes, initialised with dirty memory.
+    std::vector<uint8_t> slotBytes(40, 0xFF);
     TxPacketSlotView slot{
         .packetIndex = 0,
         .bytes = slotBytes.data(),
         .capacityBytes = static_cast<uint32_t>(slotBytes.size()),
     };
-
     PreparedTxPacket packet{
         .packetIndex = 0,
         .byteCount = static_cast<uint32_t>(slotBytes.size()),
@@ -211,90 +207,26 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
         .framesInPacket = 2,
         .dbs = kDbs,
     };
-
-    AmdtpTimingState timing{
-        .transmitCycle = 10,
-        .transmitCycleValid = false, // Invalid cycle -> should fall back to zeroing SPH
+    const auto sphAt = [&](size_t offset) {
+        return ReadSph(std::span<const uint8_t>(slotBytes).subspan(offset, 4));
     };
 
-    const auto failRes = stamper.StampPacket(slot, packet, timing);
-    EXPECT_EQ(failRes, ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    // No transmit time and no seed yet: nothing to stamp, every SPH zeroed.
+    AmdtpTimingState timing{.transmitCycle = 10, .transmitCycleValid = false};
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing),
+              ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    EXPECT_EQ(sphAt(8), 0U);
+    EXPECT_EQ(sphAt(24), 0U);
 
-    // SPH at offset 8 and offset 24 should be zeroed
-    uint32_t sph0 = (static_cast<uint32_t>(slotBytes[8]) << 24) |
-                    (static_cast<uint32_t>(slotBytes[9]) << 16) |
-                    (static_cast<uint32_t>(slotBytes[10]) << 8) |
-                    static_cast<uint32_t>(slotBytes[11]);
-    uint32_t sph1 = (static_cast<uint32_t>(slotBytes[24]) << 24) |
-                    (static_cast<uint32_t>(slotBytes[25]) << 16) |
-                    (static_cast<uint32_t>(slotBytes[26]) << 8) |
-                    static_cast<uint32_t>(slotBytes[27]);
-    EXPECT_EQ(sph0, 0U);
-    EXPECT_EQ(sph1, 0U);
-
-    // Now seed the cache with known offsets
-    // Feed RX packets with known SPH so cache is established
-    std::vector<uint8_t> rxPayload(16 + 2 * kDbs * 4, 0);
-    StoreBigEndian(rxPayload.data() + 16, (100U << 12) | 200U);
-    StoreBigEndian(rxPayload.data() + 16 + 16, (100U << 12) | 1200U);
-    for (uint32_t i = 0; i < 40; ++i) {
-        cache.Capture(rxPayload, kDbs, 2, 100, 16);
-    }
-    ASSERT_TRUE(cache.IsEstablished());
-
-    // Transmit with valid cycle
+    // The first transmit time seeds the clock: transmit time plus the lead,
+    // then one 48 kHz sample period (512 ticks) per block.
     timing.transmitCycleValid = true;
     timing.transmitCycle = 20;
-
-    const auto okRes = stamper.StampPacket(slot, packet, timing);
-    EXPECT_EQ(okRes, ::ASFW::Audio::TxTimingStampResult::kOk);
-
-    sph0 = (static_cast<uint32_t>(slotBytes[8]) << 24) |
-           (static_cast<uint32_t>(slotBytes[9]) << 16) |
-           (static_cast<uint32_t>(slotBytes[10]) << 8) |
-           static_cast<uint32_t>(slotBytes[11]);
-    sph1 = (static_cast<uint32_t>(slotBytes[24]) << 24) |
-           (static_cast<uint32_t>(slotBytes[25]) << 16) |
-           (static_cast<uint32_t>(slotBytes[26]) << 8) |
-           static_cast<uint32_t>(slotBytes[27]);
-
-    // Replay preserves the device's uneven per-frame presentation sequence.
-    EXPECT_EQ(sph0, (20U << 12) | 200U);
-    EXPECT_EQ(sph1, (20U << 12) | 1200U);
-    EXPECT_EQ(readiness.load(), 1U);
-    cache.Reset();
-    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
-    EXPECT_EQ(readiness.load(), 0U);
-}
-
-TEST(MotuPayloadCodecTests, SynthesizedPhaseResyncKeepsDataAndReacquiresAfterEpochReset) {
-    MotuEventOffsetCache cache;
-    MotuTxTimingStamper stamper(&cache, 4, TimingPolicy::SynthesizedExperimental);
-    std::atomic<uint32_t> readiness{0};
-    stamper.BindCache(&cache, &readiness);
-    std::array<uint8_t, 136> payload{};
-    TxPacketSlotView slot{.bytes = payload.data(), .capacityBytes = payload.size()};
-    PreparedTxPacket packet{.byteCount = payload.size(), .isData = true, .framesInPacket = 8, .dbs = 4};
-    auto stamp = [&](uint32_t tick, uint32_t cycle) {
-        for (uint32_t i = 0; i < 8; ++i) StoreBigEndian(payload.data() + 8 + i * 16, SphFromTick(tick + i * 512));
-        EXPECT_EQ(cache.Capture(payload, 4, 8, cycle), 8U);
-        AmdtpTimingState timing{.transmitCycle = cycle, .transmitCycleValid = true};
-        return stamper.StampPacket(slot, packet, timing);
-    };
-    for (uint32_t frame = 0; frame < 1024; frame += 8)
-        ASSERT_EQ(stamp(20000 + frame * 512, frame / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    ASSERT_EQ(readiness.load(), 1U);
-    const auto anchor = 20000 + 1024 * 512 + 5 * kTicksPerCycle;
-    ASSERT_EQ(stamp(anchor, 1024 / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(anchor));
-    EXPECT_EQ(readiness.load(), 0U);
-    for (uint32_t frame = 8; frame <= 512; frame += 8)
-        ASSERT_EQ(stamp(anchor + frame * 512, (1024 + frame) / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(readiness.load(), 1U);
-    cache.Reset();
-    ASSERT_EQ(stamp(1000000, 0), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(1000000));
-    EXPECT_EQ(readiness.load(), 0U);
+    timing.transmitTicks = 20 * kTicksPerCycle + 100;
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kOk);
+    const uint32_t seed = 20 * kTicksPerCycle + 100 + kDefaultPresentationLeadTicks;
+    EXPECT_EQ(sphAt(8), SphFromTick(seed));
+    EXPECT_EQ(sphAt(24), SphFromTick(seed + 512));
 }
 
 TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
@@ -310,21 +242,19 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
     TestTxSlotProvider provider{};
     engine.BindSlotProvider(&provider);
 
-    // Cache is unestablished (no captures)
-    MotuEventOffsetCache cache{};
-    ASSERT_FALSE(cache.IsEstablished());
-
+    // A configured stamper whose clock has no seed yet.
     constexpr uint32_t kDbs = 2;
-    MotuTxTimingStamper stamper(&cache, kDbs);
+    MotuTxTimingStamper stamper{};
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks));
     engine.BindTimingStamper(&stamper);
 
-    // Timing requested Data with 8 blocks (simulating active presentation)
+    // Timing requested Data with 8 blocks, but without a transmit time to
+    // seed the clock from.
     AmdtpTimingState timing{};
     timing.txClockValid = true;
     timing.disposition = AmdtpPacketDisposition::Data;
     timing.nextDataSyt = 0x1234;
-    timing.transmitCycleValid = true;
-    timing.transmitCycle = 100;
+    timing.transmitCycleValid = false;
     timing.replayValid = true;
     timing.replayDataBlocks = 8;
 
@@ -360,15 +290,9 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     TestTxSlotProvider provider{};
     engine.BindSlotProvider(&provider);
 
-    MotuEventOffsetCache cache{};
-    std::vector<uint8_t> capture(16 + 8 * config.dbs * 4, 0);
-    for (uint32_t frame = 0; frame < 8; ++frame)
-        StoreBigEndian(capture.data() + 16 + frame * config.dbs * 4,
-            SphFromTick(BaseTickForCycle(100) + 200 + frame * 512));
-    for (uint32_t packet = 0; packet < 8; ++packet)
-        cache.Capture(capture, config.dbs, 8, 100, 16);
-    ASSERT_TRUE(cache.IsEstablished());
-    MotuTxTimingStamper stamper{&cache, config.dbs};
+    MotuTxTimingStamper stamper{};
+    ASSERT_TRUE(stamper.Configure(config.dbs, config.sampleRate,
+                                  profile.TxStreamPolicy().motuPresentationLeadTicks));
     engine.BindTimingStamper(&stamper);
     AmdtpTimingState timing{};
     timing.txClockValid = true;
@@ -376,6 +300,7 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     timing.disposition = AmdtpPacketDisposition::Data;
     timing.transmitCycleValid = true;
     timing.transmitCycle = 100;
+    timing.transmitTicks = 100 * kTicksPerCycle;
     timing.replayValid = true;
     timing.replayDataBlocks = 8;
     ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);

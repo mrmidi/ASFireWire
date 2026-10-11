@@ -289,6 +289,9 @@ struct AudioDriverRuntimeState {
 
     ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
+    // The MOTU SPH regulator times this stream: set by ArmPrimaryTxProducer,
+    // cleared there and on every stop.
+    std::atomic<bool> motuSphActive{false};
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes

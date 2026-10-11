@@ -48,6 +48,37 @@ uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
            (presentationDeltaTicks * sampleRate) / ASFW::Timing::kTicksPerSecond;
 }
 
+namespace {
+
+// The servo input hook, run before EVERY packet the producer prepares, NO-DATA
+// included: it hands the stamper the latest generation-checked RX clock
+// sample and keeps the payload writer on the regulator's mute.
+void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
+                            ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    auto& stamper = ivars.runtime.motuTxTimingStamper;
+
+    ASFW::Audio::Runtime::MotuRxSphClockSample rxClock{};
+    uint64_t rxClockUpdates = 0;
+    const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
+    const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
+
+    (void)stamper.ApplyServoInput({
+        .valid = haveRxClock,
+        .streamGeneration = rxClock.streamGeneration,
+        .expectedStreamGeneration = controlGeneration,
+        .bridgeUpdates = rxClockUpdates,
+        .rxFrames = rxClock.rxFrames,
+        .rxTicks = rxClock.rxTicks,
+        // Relative loop: no absolute phase is measured yet.
+        .haveRelPhase = false,
+    });
+    // The gate's state, not the result's: a dropped or early observation
+    // leaves the result without a decision while the gate may still be closed.
+    ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
+}
+
+} // namespace
+
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
                              uint64_t requiredPacketIndex,
@@ -58,16 +89,16 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     auto* directControl = ivars.runtime.directAudioGraph.control;
     if (directControl == nullptr) {
-        ivars.runtime.motuTxTimingStamper.BindCache(nullptr);
+        ivars.runtime.motuTxTimingStamper.BindReadiness(nullptr);
         return 0;
     }
-    // MOTU's audio receive codec captures per-block SPH offsets; this producer
-    // applies the model's timing policy.
-    // They live in the shared control block -- the seam both services map -- rather than
-    // in the capture consumer, which IsochDuplexHostTransport owns and destroys on stop
-    // while this service may still be preparing packets (the FW-60 cross-service class).
-    // Rebind on every pass so the stamper's pointer is never older than directControl.
-    ivars.runtime.motuTxTimingStamper.BindCache(&directControl->motuEventOffsets, &directControl->transmitTimingReady);
+    // The MOTU stamper reads its RX clock from, and publishes its readiness to,
+    // the shared control block -- the seam both services map -- rather than the
+    // capture consumer, which IsochDuplexHostTransport owns and destroys on stop
+    // while this service may still be preparing packets (the FW-60 cross-service
+    // class). Rebind on every pass so the pointer is never older than directControl.
+    ivars.runtime.motuTxTimingStamper.BindReadiness(&directControl->transmitTimingReady);
+    const bool motuSphActive = ivars.runtime.motuSphActive.load(std::memory_order_relaxed);
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;
@@ -561,6 +592,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             }
         }
 
+        if (motuSphActive) {
+            ApplyMotuSphServoInput(ivars, *directControl);
+        }
+
         const auto prepareResult =
             ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
                 nextPacketToPrepare,
@@ -774,8 +809,17 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         return {kIOReturnError, "ConfigureTxStreamEngine"};
     }
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
+    ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
     const auto txPolicy = profile.TxStreamPolicy();
     if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
+        // Every MOTU model is timed by the SPH regulator; a rate it has no
+        // configuration for cannot be timed at all.
+        if (!ivars.runtime.motuTxTimingStamper.Configure(
+                txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks)) {
+            ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
+                     txConfig.sampleRate);
+            return {kIOReturnUnsupported, "ConfigureMotuTxTiming"};
+        }
         ivars.runtime.motuPayloadWriter.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
                 .pcmChunks = txConfig.pcmChannels,
@@ -794,8 +838,12 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
                 currentControl->rxReplayEpochResets.load(std::memory_order_acquire));
             return true;
         });
-        ivars.runtime.motuTxTimingStamper.Configure(txConfig.dbs, txConfig.sampleRate, txPolicy.motuTiming);
+        // Muted from the start until the regulator locks; the servo hook in
+        // PrepareTransmitSlots keeps the writer on the regulator's gate.
+        ivars.runtime.motuPayloadWriter.SetPcmMuted(
+            ivars.runtime.motuTxTimingStamper.IsOutputMuted());
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+        ivars.runtime.motuSphActive.store(true, std::memory_order_relaxed);
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);

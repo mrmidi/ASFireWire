@@ -18,10 +18,10 @@
 // helper writes uint32 slots, and MOTU's chunks are neither quadlet-sized nor
 // quadlet-aligned. Layout cross-validated with Linux amdtp-motu.c:93-187.
 //
-// SPH is deliberately NOT written here. It carries presentation time replayed from the
-// device's own capture stream, so it belongs with the packetizer that owns per-packet
-// timing -- see MotuSph.hpp for the arithmetic and RxSequenceReplay.hpp for the source.
-// This writer only places PCM.
+// SPH is deliberately NOT written here. It carries the presentation time of the SPH
+// regulator, so it belongs with the timing stamper that runs as each packet is prepared
+// (MotuTxTimingStamper, MotuDeviceTiming.hpp). This writer only places PCM, or silence
+// while the regulator holds the output muted.
 
 #pragma once
 

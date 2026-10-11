@@ -190,6 +190,7 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.txSlotProvider.numSlots = 0;
     ivars.runtime.txSlotProvider.releaseObserver = nullptr;
     ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+    ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
 
     // Secondary playback stream teardown. Drop txSecondaryActive first so the
     // RT pump/IO paths stop touching the secondary engine before its mapped
@@ -310,6 +311,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.numSlots = 0;
             ivars.runtime.txSlotProvider.releaseObserver = nullptr;
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
+            ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
 
             // Secondary playback stream resources.
             ivars.txPayloadMapSecondary = nullptr;
