@@ -68,6 +68,8 @@ public:
     kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
                                              uint32_t element,
                                              bool* outValue) LOCALONLY;
+    // Master output volume realised in the host (ASFWHostLevelControl): sets the PCM gain.
+    kern_return_t ApplyHostOutputVolume(float decibels) LOCALONLY;
 };
 
 #endif /* ASFWAudioDriver_h */

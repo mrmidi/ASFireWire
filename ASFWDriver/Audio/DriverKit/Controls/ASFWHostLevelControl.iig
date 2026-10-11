@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// ASFWHostLevelControl.iig
+// ASFWDriver
+//
+// IOUserAudioLevelControl for a master output volume realised in the host: a change goes
+// to ASFWAudioDriver::ApplyHostOutputVolume, which sets the dext's PCM gain. The device
+// receives no command, so the value is taken as soon as it is applied.
+//
+#ifndef ASFWHostLevelControl_h
+#define ASFWHostLevelControl_h
+#include <AudioDriverKit/IOUserAudioLevelControl.iig>
+class ASFWAudioDriver;
+class ASFWHostLevelControl : public IOUserAudioLevelControl {
+public:
+    static OSSharedPtr<ASFWHostLevelControl> Create(ASFWAudioDriver* driver,
+        float initialDecibels, float minDecibels, float maxDecibels) LOCALONLY;
+    bool init(ASFWAudioDriver* driver,
+        float initialDecibels, float minDecibels, float maxDecibels) LOCALONLY;
+    void free() override;
+    kern_return_t HandleChangeDecibelValue(float value) override;
+    kern_return_t HandleChangeScalarValue(float value) override;
+};
+struct ASFWHostLevelControl_IVars {
+    ASFWAudioDriver* driver;
+    float minDecibels;
+    float maxDecibels;
+};
+#endif

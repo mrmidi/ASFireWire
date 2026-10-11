@@ -129,4 +129,60 @@ void BuildControlName(const BoolControlDescriptor& descriptor,
     return kIOReturnSuccess;
 }
 
+kern_return_t AddHostOutputVolumeToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWHostLevelControl>& outControl,
+    float& outInitialDecibels,
+    float& outMinDecibels) {
+    // -80...0 dB with the floor playing silence; 0 dB leaves the PCM untouched, so the
+    // device plays as loud as it would without the stage.
+    constexpr float kMinDb = -80.0f;
+    constexpr float kMaxDb = 0.0f;
+    constexpr float kInitialDb = 0.0f;
+
+    auto control = ASFWHostLevelControl::Create(&driver, kInitialDb, kMinDb, kMaxDb);
+    if (!control) {
+        return kIOReturnNoMemory;
+    }
+    const kern_return_t status = audioDevice.AddControl(control.get());
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
+
+    outControl = control;
+    outInitialDecibels = kInitialDb;
+    outMinDecibels = kMinDb;
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Added host output volume range=[%d, %d] dB initialCentiDb=%d",
+             static_cast<int>(kMinDb), static_cast<int>(kMaxDb),
+             static_cast<int>(kInitialDb * 100.0f));
+    return kIOReturnSuccess;
+}
+
+kern_return_t AddHostOutputMuteToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    OSSharedPtr<ASFWProtocolBooleanControl>& outControl) {
+    auto control = ASFWProtocolBooleanControl::Create(&driver,
+                                                      true,
+                                                      false,
+                                                      IOUserAudioObjectPropertyElementMain,
+                                                      IOUserAudioObjectPropertyScope::Output,
+                                                      IOUserAudioClassID::MuteControl,
+                                                      kHostOutputMuteRoute,
+                                                      IOUserAudioObjectPropertyElementMain);
+    if (!control) {
+        return kIOReturnNoMemory;
+    }
+    const kern_return_t status = audioDevice.AddControl(control.get());
+    if (status != kIOReturnSuccess) {
+        return status;
+    }
+
+    outControl = control;
+    ASFW_LOG(Audio, "ASFWAudioDriver: Added host output mute");
+    return kIOReturnSuccess;
+}
+
 } // namespace ASFW::Isoch::Audio

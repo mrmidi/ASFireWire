@@ -64,9 +64,14 @@ struct AudioDriverDeviceState {
     ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
+    // Master output volume realised in the host (profile HostOutputVolume) and its mute;
+    // absent for every other device.
+    OSSharedPtr<ASFWHostLevelControl> outputVolumeControl{};
+    OSSharedPtr<ASFWProtocolBooleanControl> outputMuteControl{};
     // The master output volume is realised in the host (profile HostOutputVolume) and its
     // control is published; WriteEnd then runs the host gain stage.
     bool hostOutputVolume{false};
+    float hostOutputVolumeMinDb{0.0f};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};

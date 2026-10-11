@@ -136,6 +136,7 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
     CopyParsedConfigToDeviceState(defaultConfig, ivars.device);
     ivars.device.profile = nullptr;
     ivars.device.timing = {};
+    ivars.device.hostOutputVolume = false;
 }
 
 kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
@@ -804,6 +805,28 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ivars.device.boolControlCount);
     if (!requireAdkSuccess("device.AddBooleanControls", error)) {
         return error;
+    }
+
+    // Master output volume realised in the host, when the profile says so, with its mute.
+    // Non-fatal like the other optional controls: a device without them is still a device.
+    ivars.device.hostOutputVolume = false;
+    if (ivars.outputStream && ivars.device.profile &&
+        ivars.device.profile->HostOutputVolume()) {
+        float initialDb = 0.0f;
+        float minDb = 0.0f;
+        const kern_return_t volumeStatus = ASFW::Isoch::Audio::AddHostOutputVolumeToDevice(
+            driver, *ivars.audioDevice, ivars.device.outputVolumeControl, initialDb, minDb);
+        if (volumeStatus == kIOReturnSuccess) {
+            ivars.device.hostOutputVolumeMinDb = minDb;
+            ivars.device.hostOutputVolume = true;
+            ivars.runtime.hostOutputGain.SetTarget(
+                ASFW::Audio::Runtime::HostOutputGainFromDecibels(initialDb, minDb));
+            ivars.runtime.hostOutputGain.SetMuted(false);
+            const kern_return_t muteStatus = ASFW::Isoch::Audio::AddHostOutputMuteToDevice(
+                driver, *ivars.audioDevice, ivars.device.outputMuteControl);
+            ASFW_LOG(Audio, "ADK GRAPH op=device.AddHostOutputMute kr=0x%x", muteStatus);
+        }
+        ASFW_LOG(Audio, "ADK GRAPH op=device.AddHostOutputVolume kr=0x%x", volumeStatus);
     }
 
     // Confirmed AV/C controls opt in to the host's durable settings store.

@@ -19,6 +19,7 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriver.h"
 #include "ASFWAudioNub.h"
+#include "ASFWHostLevelControl.h"
 #include "ASFWProtocolBooleanControl.h"
 
 #include <gtest/gtest.h>
@@ -53,6 +54,8 @@ struct StartedGraph {
     OSSharedPtr<IOMemoryMap> outputMap{new IOMemoryMap(), OSNoRetain};
     OSSharedPtr<IOMemoryMap> controlMap{new IOMemoryMap(), OSNoRetain};
     OSSharedPtr<ASFWProtocolBooleanControl> control{new ASFWProtocolBooleanControl(), OSNoRetain};
+    OSSharedPtr<ASFWHostLevelControl> hostVolume{new ASFWHostLevelControl(), OSNoRetain};
+    OSSharedPtr<ASFWProtocolBooleanControl> hostMute{new ASFWProtocolBooleanControl(), OSNoRetain};
 
     void AttachTo(ASFWAudioDriver_IVars& ivars, OSSharedPtr<ASFWAudioDevice> device) const {
         ivars.audioDevice = std::move(device);
@@ -64,6 +67,8 @@ struct StartedGraph {
         ivars.device.boolControls[0].control = control;
         ivars.device.boolControls[0].valid = true;
         ivars.device.boolControlCount = 1;
+        ivars.device.outputVolumeControl = hostVolume;
+        ivars.device.outputMuteControl = hostMute;
         ivars.graphState = {.inputStreamAdded = true, .outputStreamAdded = true, .audioDeviceAdded = true};
     }
 };
@@ -95,6 +100,8 @@ TEST(AudioDriverTeardownTests, TeardownDetachesAndReleasesTheWholeGraph) {
     EXPECT_EQ(graph.outputMap->GetRetainCount(), 1);
     EXPECT_EQ(graph.controlMap->GetRetainCount(), 1);
     EXPECT_EQ(graph.control->GetRetainCount(), 1);
+    EXPECT_EQ(graph.hostVolume->GetRetainCount(), 1);
+    EXPECT_EQ(graph.hostMute->GetRetainCount(), 1);
     EXPECT_FALSE(ivars->device.boolControls[0].valid);
     EXPECT_EQ(ivars->device.boolControlCount, 0U);
     EXPECT_EQ(ivars->device.audioNub, nullptr);
