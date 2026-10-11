@@ -50,6 +50,68 @@ uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
 
 namespace {
 
+// MOTU SPH regulator telemetry. Every line reaches the unified log, so a
+// Release build can be read with:
+//
+//   /usr/bin/log show --last 10m --info --style compact \
+//       --predicate 'eventMessage CONTAINS "[MotuSph"'
+//
+//   [MotuSphServo]  summary, with the [TxPrep] heartbeat (every 5 s)
+//   [MotuSphState]  the counters behind it, same cadence
+//   [MotuSphLock]   the first lock of a start or of a new stream generation,
+//                   and how long the output was muted for it
+//   [MotuSphHard]   a hard resync: mute, then a one-shot phase repair
+//   [MotuSphMute]   any other change of the regulator's output mute
+//   [MotuSphStall]  the RX SPH meter fell behind its bridge (logged by
+//                   MotuRxTimingObserver)
+//
+// The edge lines come from the servo hook below, once per event; nothing is
+// logged per packet.
+
+using ASFW::Audio::Wire::MotuSphRatePpb;
+
+void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
+                     const ASFW::Audio::Wire::MotuSphServoApplyResult& result) noexcept {
+    auto& runtime = ivars.runtime;
+    if (!result.hardResyncStarted && !result.acquisitionRestarted && !result.unmuteActivated) {
+        return;
+    }
+    const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    if (result.acquisitionRestarted) {
+        runtime.motuSphAcquireHostTicks = mach_absolute_time();
+        runtime.motuSphLockPending = true;
+        ASFW_LOG(DirectAudio, "[MotuSphMute] gen=%llu muted=1 cause=new-generation",
+                 servo.streamGeneration);
+    }
+    if (result.hardResyncStarted) {
+        ASFW_LOG(DirectAudio,
+                 "[MotuSphHard] gen=%llu err=%lld repair=%u muted=%u requests=%llu "
+                 "repairs=%llu rxFrames=%llu",
+                 servo.streamGeneration, static_cast<long long>(servo.phaseErrorTicks),
+                 result.phaseRepairApplied ? 1u : 0u, result.outputMuted ? 1u : 0u,
+                 servo.hardResyncRequests, servo.phaseRepairs, servo.rxFrames);
+    }
+    if (result.unmuteActivated) {
+        if (runtime.motuSphLockPending) {
+            runtime.motuSphLockPending = false;
+            const uint64_t now = mach_absolute_time();
+            const uint64_t elapsed = now >= runtime.motuSphAcquireHostTicks
+                                         ? now - runtime.motuSphAcquireHostTicks
+                                         : 0;
+            ASFW_LOG(DirectAudio,
+                     "[MotuSphLock] gen=%llu afterUs=%llu decisions=%llu err=%lld "
+                     "ratePpb=%lld lead=%u",
+                     servo.streamGeneration, ASFW::Timing::hostTicksToNanos(elapsed) / 1000,
+                     servo.decisions, static_cast<long long>(servo.phaseErrorTicks),
+                     static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
+                     runtime.motuTxTimingStamper.PresentationLeadTicks());
+        } else {
+            ASFW_LOG(DirectAudio, "[MotuSphMute] gen=%llu muted=0 cause=relocked err=%lld",
+                     servo.streamGeneration, static_cast<long long>(servo.phaseErrorTicks));
+        }
+    }
+}
+
 // The servo input hook, run before EVERY packet the producer prepares, NO-DATA
 // included: it hands the stamper the latest generation-checked RX clock
 // sample and keeps the payload writer on the regulator's mute.
@@ -62,7 +124,7 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
     const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
     const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
 
-    (void)stamper.ApplyServoInput({
+    const auto result = stamper.ApplyServoInput({
         .valid = haveRxClock,
         .streamGeneration = rxClock.streamGeneration,
         .expectedStreamGeneration = controlGeneration,
@@ -75,6 +137,36 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
     // The gate's state, not the result's: a dropped or early observation
     // leaves the result without a decision while the gate may still be closed.
     ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
+    LogMotuSphEdges(ivars, result);
+}
+
+// The summary, on the [TxPrep] heartbeat. Two short lines: each must fit the
+// driver log ring's 232-byte record together with its category prefix.
+// ratePpb/rxPpb: the transmit step and the device's measured period against
+// nominal (positive = faster). same: observations dropped as repeats (benign);
+// back: bridge/frame/tick counters seen going backwards (never expected).
+void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    ASFW_LOG(DirectAudio,
+             "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
+             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld",
+             servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
+             servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
+             static_cast<long long>(servo.phaseErrorTicks),
+             static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
+             static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
+             static_cast<long long>(servo.stepQ32),
+             static_cast<long long>(servo.txCorrectionQ32));
+    ASFW_LOG(DirectAudio,
+             "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
+             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u",
+             servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
+             servo.muteTransitions, servo.unmuteTransitions,
+             ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
+                 std::memory_order_relaxed),
+             servo.observationDrops, servo.dropBridgeNotAdvanced,
+             servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
+             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls);
 }
 
 } // namespace
@@ -843,6 +935,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.motuPayloadWriter.SetPcmMuted(
             ivars.runtime.motuTxTimingStamper.IsOutputMuted());
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+        ivars.runtime.motuSphAcquireHostTicks = mach_absolute_time();
+        ivars.runtime.motuSphLockPending = true;
         ivars.runtime.motuSphActive.store(true, std::memory_order_relaxed);
     }
     ivars.runtime.txStreamEngine.BindSlotProvider(&ivars.runtime.txSlotProvider);
@@ -1427,6 +1521,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                      fill.framesMissedFinality.load(std::memory_order_relaxed),
                      directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
                      directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
+            if (ivars->runtime.motuSphActive.load(std::memory_order_relaxed)) {
+                ASFW::Audio::DriverKit::LogMotuSphSummary(*ivars);
+            }
         }
 
         directControl->counters.txPreparationWakeRequests.store(

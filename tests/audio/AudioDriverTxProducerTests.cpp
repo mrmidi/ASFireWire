@@ -33,11 +33,13 @@
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 #include "WireTrace.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
+#include "Logging/LogRing.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <span>
@@ -787,6 +789,16 @@ TEST(AudioDriverTxProducerTests, TimingStateCarriesTheFullTransmitTime) {
 // ---------------------------------------------------------------------------
 // MOTU: the SPH regulator times the transmit stream.
 
+// Lines in the driver's log ring that contain `needle`.
+uint32_t CountLogLines(const char* needle) {
+    ASFW::Logging::LogRingQuery query{};
+    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
+    std::vector<ASFW::Logging::LogRecord> records(512);
+    return ASFW::Logging::LogRing::Shared()
+        .Query(query, records.data(), static_cast<uint32_t>(records.size()), 1U << 20)
+        .recordCount;
+}
+
 // The byte of host channel 0's PCM in a MOTU data block, from the block start.
 size_t MotuHostChannelZeroOffset(const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile& profile,
                                  uint32_t unitVersion, uint32_t pcmChannels) {
@@ -806,6 +818,11 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
     for (const uint32_t version : {0x3U, 0x15U}) {
         SCOPED_TRACE(version);
         const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
+        ASFW::Logging::LogRing::Shared().Initialize();
+        const uint32_t lockLinesBefore = CountLogLines("[MotuSphLock]");
+        const uint32_t edgeLinesBefore =
+            CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]");
+        const uint32_t summaryLinesBefore = CountLogLines("[MotuSphServo]");
         TxProducerRig rig;
         ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
         auto& runtime = rig.Ivars().runtime;
@@ -885,6 +902,14 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
         // Only the benign drop: the producer ran between RX publications.
         EXPECT_EQ(servo.observationDrops, servo.dropBridgeNotAdvanced);
         EXPECT_EQ(runtime.txStreamEngine.Counters().timingUnavailableReverts.load(), 0u);
+        EXPECT_FALSE(runtime.motuSphLockPending);
+        // The unified-log trail of a clean start: one lock line, no other
+        // edge, and the summary on the heartbeat.
+        EXPECT_EQ(CountLogLines("[MotuSphLock]") - lockLinesBefore, 1u);
+        EXPECT_EQ(CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]") -
+                      edgeLinesBefore,
+                  0u);
+        EXPECT_GT(CountLogLines("[MotuSphServo]") - summaryLinesBefore, 0u);
 
         size_t audibleTail = 0;
         for (size_t i = wire.size() - 1000; i < wire.size(); ++i) {

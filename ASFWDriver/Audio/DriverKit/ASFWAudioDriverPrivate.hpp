@@ -292,6 +292,10 @@ struct AudioDriverRuntimeState {
     // The MOTU SPH regulator times this stream: set by ArmPrimaryTxProducer,
     // cleared there and on every stop.
     std::atomic<bool> motuSphActive{false};
+    // [MotuSphLock]: when the current acquisition began, and whether its first
+    // lock is still to be reported. TX preparation queue only.
+    uint64_t motuSphAcquireHostTicks{0};
+    bool motuSphLockPending{false};
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes

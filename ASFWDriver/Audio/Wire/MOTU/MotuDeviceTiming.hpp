@@ -194,7 +194,7 @@ private:
         }
         ++rxClockStalls_;
         ASFW_LOG(DirectAudio,
-                 "[MotuServoStall] reason=rx-meter-behind-bridge gen=%llu updates=%llu "
+                 "[MotuSphStall] reason=rx-meter-behind-bridge gen=%llu updates=%llu "
                  "bridgeFrames=%llu bridgeTicks=%lld meterFrames=%llu meterTicks=%lld",
                  event.streamGeneration, event.bridgeUpdates, event.bridgeFrames,
                  static_cast<long long>(event.bridgeTicks), event.meterFrames,
@@ -348,6 +348,16 @@ struct MotuSphServoRuntimeSnapshot final {
     uint32_t dropRxTicksNotAdvanced{0};
     uint32_t dropRxTicksRegressed{0};
 };
+
+// A step's sample rate against nominal, in parts per billion, for telemetry:
+// positive when the step is shorter than nominal, i.e. the clock runs fast.
+[[nodiscard]] constexpr int64_t MotuSphRatePpb(int64_t stepQ32, int64_t nominalStepQ32) noexcept {
+    if (stepQ32 <= 0 || nominalStepQ32 <= 0) {
+        return 0;
+    }
+    return static_cast<int64_t>(
+        (static_cast<__int128>(nominalStepQ32 - stepQ32) * 1'000'000'000) / stepQ32);
+}
 
 // Threading: the transmit producer calls StampPacket(), ApplyServoInput() and
 // ServoTelemetrySnapshot() on the transmit preparation queue. Configure() and

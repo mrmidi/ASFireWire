@@ -936,6 +936,18 @@ TEST(MotuTxTimingStamperTests, ANewGenerationMutesForAFreshAcquisition) {
     EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().muteTransitions, 2u);
 }
 
+// The telemetry's rate figure: parts per billion against nominal, positive
+// for a shorter step (a faster clock).
+TEST(MotuTxTimingStamperTests, RateInPartsPerBillionIsSignedAgainstNominal) {
+    constexpr int64_t nominal = 512 * kOneQ32;
+    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(nominal, nominal), 0);
+    // 511 ticks per frame is 512/511 - 1 = 1956947 ppb fast.
+    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(511 * kOneQ32, nominal), 1956947);
+    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(513 * kOneQ32, nominal), -1949317);
+    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(0, nominal), 0);
+    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(nominal, 0), 0);
+}
+
 // ---------------------------------------------------------------------------
 // Readiness: what the session waits for before the device may fetch.
 
