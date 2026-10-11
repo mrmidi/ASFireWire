@@ -227,11 +227,21 @@ public struct UnitInfo: Sendable, Codable {
     public var modelName: String?
 }
 
+/// Where a summary's model identity was published. An absent root key and a
+/// root key holding zero are different evidence: some devices publish model_id
+/// only in a unit directory (real hardware: RME Fireface 400/800, IEEE 1212
+/// unit directory key 0x17).
+public enum RomModelIdSource: String, Sendable, Codable {
+    case rootDirectory
+    case unitDirectory
+}
+
 public struct RomSummary: Sendable, Codable {
     public var vendorId: UInt32?
     public var vendorName: String?
     public var modelId: UInt32?
     public var modelName: String?
+    public var modelIdSource: RomModelIdSource?
     public var units: [UnitInfo]
     public var modalias: String? // ieee1394:ven..mo..sp..ver..
 }

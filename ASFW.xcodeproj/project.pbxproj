@@ -397,6 +397,7 @@
 		BFA67B801CE2FD081CFA4BF5 /* AVCSampleRateMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AC380D7BBAE68986EC3385C /* AVCSampleRateMappingTests.swift */; };
 		BFDB87D622855A64D9A87BC6 /* Spectrum.metal in Sources */ = {isa = PBXBuildFile; fileRef = 51EA98AFB39E5AB9C08EB339 /* Spectrum.metal */; };
 		C07DCD725AE05F943F709CF4 /* KWeightBlockPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 684DBA52820698B1EFBC9C49 /* KWeightBlockPipeline.swift */; };
+		C0CE09ED46D08A06A19760F4 /* RomExplorerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59278D881F0F363B7B7885D5 /* RomExplorerTests.swift */; };
 		C0E4505CB625480E1417773A /* AudioDeviceHost.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 621A34A93F77E9ADA4BB7860 /* AudioDeviceHost.cpp */; };
 		C18B80D7017F8B7B1E6795C3 /* StereoHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC7D48050892BC4080D61AE /* StereoHistoryView.swift */; };
 		C1B90CB0E16C8BBF5DCD6E68 /* BusInspectorTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF686DD5D5F51F23BB44565 /* BusInspectorTab.swift */; };
@@ -925,6 +926,7 @@
 		581B0959C626D7BB8C2B75CA /* ControllerStateMachine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerStateMachine.cpp; sourceTree = "<group>"; };
 		58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SaffireproCommon.cpp; sourceTree = "<group>"; };
 		582742484D61634C43CE6873 /* BusResetWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetWireFormats.hpp; sourceTree = "<group>"; };
+		59278D881F0F363B7B7885D5 /* RomExplorerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomExplorerTests.swift; sourceTree = "<group>"; };
 		59E5457F9203C72E40C4F72C /* AvcGraphBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AvcGraphBuilder.cpp; sourceTree = "<group>"; };
 		5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuNotificationMailbox.hpp; sourceTree = "<group>"; };
 		5A48BB418AED6FDF98DAD440 /* DuplexIRMReservations.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DuplexIRMReservations.hpp; sourceTree = "<group>"; };
@@ -2280,6 +2282,7 @@
 				51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */,
 				5547E3B90C64AA5CE17B300A /* DVFrameAssemblerTests.swift */,
 				C7C99BEBA907A7F59A00EE5A /* LogCategoryCatalogTests.swift */,
+				59278D881F0F363B7B7885D5 /* RomExplorerTests.swift */,
 				5A4E70ED75911158B0E744F2 /* AudioObserver */,
 				AA63228416151FD72A8A9C49 /* MCP */,
 			);
@@ -4239,6 +4242,7 @@
 				B5E2AAE7ACC3F26AD1DEE2E6 /* MCPToolDispatchTests.swift in Sources */,
 				E2BB42AEEB8BFF832A5F7A40 /* MCPTransactionSchemaTests.swift in Sources */,
 				378D59E7E59B7B11CE0FEF6F /* MCPWritePolicyTests.swift in Sources */,
+				C0CE09ED46D08A06A19760F4 /* RomExplorerTests.swift in Sources */,
 				5F7FDF8DEBADF8E990B5EAC3 /* SpectrogramTests.swift in Sources */,
 				B4EFC00793F63DA7E5B07058 /* SpectrumKernelTests.swift in Sources */,
 				9B3711D81A4F95978EE8227B /* WaterfallTests.swift in Sources */,

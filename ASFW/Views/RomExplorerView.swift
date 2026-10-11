@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ROMExplorerView: View {
     @ObservedObject var viewModel: RomExplorerViewModel
@@ -275,14 +276,18 @@ private struct ROMSummaryTab: View {
     }
 
     private func friendlyModel(_ summary: RomSummary) -> String {
+        // A model published in a unit directory is the only one some devices
+        // have (RME Fireface 400/800, key 0x17); say where it came from, so the
+        // reader is not left thinking the device advertises no model at all.
+        let source = summary.modelIdSource == .unitDirectory ? " — unit directory" : ""
         if let name = summary.modelName, !name.isEmpty {
             if let id = summary.modelId {
-                return String(format: "%@ (0x%06X)", name, id)
+                return String(format: "%@ (0x%06X)", name, id) + source
             }
             return name
         }
         if let id = summary.modelId {
-            return String(format: "0x%06X", id)
+            return String(format: "0x%06X", id) + source
         }
         return "Unknown"
     }
@@ -623,22 +628,47 @@ private struct ROMValueDetailView: View {
 private struct ROMRawTab: View {
     let data: Data
 
+    @State private var copyLabel = "Copy Quadlets"
+    @State private var lastError: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 GroupBox("Summary") {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                        GridRow {
-                            Text("Size")
-                                .foregroundStyle(.secondary)
-                            Text("\(data.count) bytes (\(data.count / 4) quadlets)")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                            GridRow {
+                                Text("Size")
+                                    .foregroundStyle(.secondary)
+                                Text("\(data.count) bytes (\(data.count / 4) quadlets)")
+                            }
+                        }
+                        HStack(spacing: 10) {
+                            Button {
+                                copyToPasteboard()
+                            } label: {
+                                Label(copyLabel, systemImage: copyLabel == "Copied!" ? "checkmark" : "doc.on.doc")
+                            }
+                            Button {
+                                saveToFile()
+                            } label: {
+                                Label("Save...", systemImage: "square.and.arrow.down")
+                            }
+                        }
+                        Text("The export is the ROM as quadlets and bytes, so a report can be pasted or attached as it is.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        if let lastError {
+                            Label(lastError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
                         }
                     }
                     .padding(.vertical, 4)
                 }
 
                 GroupBox("Hex Dump (Big-endian wire order)") {
-                    Text(hexDump())
+                    Text(RomRawExport.hexDump(data))
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -648,7 +678,7 @@ private struct ROMRawTab: View {
                 GroupBox("Quadlets") {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(0..<(data.count / 4), id: \.self) { index in
-                            Text(quadletLine(index: index))
+                            Text(RomRawExport.quadletLine(index: index, in: data))
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -661,45 +691,34 @@ private struct ROMRawTab: View {
         }
     }
 
-    private func hexDump() -> String {
-        var result = ""
-        let bytesPerLine = 16
-
-        for offset in stride(from: 0, to: data.count, by: bytesPerLine) {
-            result += String(format: "%08X: ", offset)
-            for i in 0..<bytesPerLine {
-                let idx = offset + i
-                if idx < data.count {
-                    result += String(format: "%02X ", data[idx])
-                } else {
-                    result += "   "
-                }
-                if i == 7 { result += " " }
-            }
-            result += " "
-            for i in 0..<bytesPerLine {
-                let idx = offset + i
-                if idx < data.count {
-                    let b = data[idx]
-                    result += (32..<127).contains(b) ? String(Character(UnicodeScalar(Int(b))!)) : "."
-                }
-            }
-            result += "\n"
+    private func copyToPasteboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([RomRawExport.text(for: data) as NSString])
+        withAnimation {
+            copyLabel = "Copied!"
         }
-
-        return result
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation {
+                copyLabel = "Copy Quadlets"
+            }
+        }
     }
 
-    private func quadletLine(index: Int) -> String {
-        let offset = index * 4
-        guard offset + 4 <= data.count else {
-            return String(format: "q%-3d <truncated>", index)
+    private func saveToFile() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "ASFW_Config_ROM.txt"
+        panel.title = "Save Config ROM"
+        panel.prompt = "Save"
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try RomRawExport.text(for: data).write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                lastError = "Failed to save file: \(error.localizedDescription)"
+            }
         }
-        let q = UInt32(data[offset]) << 24 |
-                UInt32(data[offset + 1]) << 16 |
-                UInt32(data[offset + 2]) << 8 |
-                UInt32(data[offset + 3])
-        return String(format: "q%-3d  0x%08X", index, q)
     }
 }
 

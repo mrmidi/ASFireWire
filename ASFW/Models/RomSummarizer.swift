@@ -32,6 +32,20 @@ enum Summarizer {
         var units: [UnitInfo] = []
         collectUnits(in: tree.rootDirectory, into: &units)
 
+        // Some devices publish model_id only in a unit directory: real hardware
+        // (RME Fireface 400/800, IEEE 1212 unit directory key 0x17) has no root
+        // model at all, and the driver's catalog matches those from the unit.
+        // A root model always wins, and the source is reported, so an absent
+        // root key is not shown as "the device advertises nothing".
+        var modelIdSource: RomModelIdSource?
+        if modelId != nil {
+            modelIdSource = .rootDirectory
+        } else if let fromUnit = units.first(where: { $0.modelId != nil }) {
+            modelId = fromUnit.modelId
+            modelName = modelName ?? fromUnit.modelName
+            modelIdSource = .unitDirectory
+        }
+
         let sp = units.first?.specifierId ?? 0
         let ver = units.first?.version ?? 0
         let ven = vendorId ?? 0
@@ -42,6 +56,7 @@ enum Summarizer {
                           vendorName: vendorName,
                           modelId: modelId,
                           modelName: modelName,
+                          modelIdSource: modelIdSource,
                           units: units,
                           modalias: modalias)
     }
@@ -60,5 +75,69 @@ enum Summarizer {
             out.append(info)
             collectUnits(in: sub, into: &out)
         }
+    }
+}
+
+/// The Raw tab's export: the cached ROM bytes as quadlets and as a byte dump,
+/// independent of how the tree decoded them, so a report can be pasted or
+/// attached and still be the evidence itself rather than a transcription.
+/// Covered by RomRawExportTests, which round-trips both representations back to
+/// the bytes that were read from the device.
+enum RomRawExport {
+    static func text(for data: Data) -> String {
+        var lines = [
+            "ASFW Config ROM",
+            "size: \(data.count) bytes (\(data.count / 4) quadlets)",
+            "",
+            "quadlets (big-endian wire order):",
+        ]
+        for index in 0..<(data.count / 4) {
+            lines.append(quadletLine(index: index, in: data))
+        }
+        lines.append("")
+        lines.append("hex dump:")
+        lines.append(hexDump(data))
+        return lines.joined(separator: "\n")
+    }
+
+    static func quadletLine(index: Int, in data: Data) -> String {
+        let offset = index * 4
+        guard offset + 4 <= data.count else {
+            return String(format: "q%-3d <truncated>", index)
+        }
+        let q = UInt32(data[offset]) << 24 |
+                UInt32(data[offset + 1]) << 16 |
+                UInt32(data[offset + 2]) << 8 |
+                UInt32(data[offset + 3])
+        return String(format: "q%-3d  0x%08X", index, q)
+    }
+
+    static func hexDump(_ data: Data) -> String {
+        var result = ""
+        let bytesPerLine = 16
+
+        for offset in stride(from: 0, to: data.count, by: bytesPerLine) {
+            result += String(format: "%08X: ", offset)
+            for i in 0..<bytesPerLine {
+                let idx = offset + i
+                if idx < data.count {
+                    result += String(format: "%02X ", data[idx])
+                } else {
+                    result += "   "
+                }
+                if i == 7 { result += " " }
+            }
+            result += " "
+            for i in 0..<bytesPerLine {
+                let idx = offset + i
+                if idx < data.count {
+                    let b = data[idx]
+                    result += (32..<127).contains(b) ? String(Character(UnicodeScalar(Int(b))!)) : "."
+                }
+            }
+            result += "\n"
+        }
+
+        return result
     }
 }
