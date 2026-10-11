@@ -35,6 +35,7 @@ R ffff.e00003a4 56 @s400
 R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
+R ffff.e0200000 72 @s400
 H reserve playback allowed=00000000ffffffff bw=308 -> ch=0
 H reserve capture allowed=00000000ffffffff bw=564 -> ch=1
 H prepare rx ch=1 fmt=0 slots=17 pcm=0
@@ -82,6 +83,7 @@ W ffff.e0000074 0000010c @s400
 # notify 0x1000023
 R ffff.e0000028 380 @s400
 R ffff.e0000028 380 @s400
+R ffff.e0200000 72 @s400
 R ffff.e00001a4 4 @s400
 R ffff.e00003dc 4 @s400
 R ffff.e00001a8 4 @s400

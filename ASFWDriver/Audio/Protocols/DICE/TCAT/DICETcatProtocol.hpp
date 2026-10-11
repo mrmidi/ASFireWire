@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../Duplex/FamilyDriver.hpp"
+#include "../Core/DiceClockChangeObserver.hpp"
 #include "../Core/DiceDeviceIo.hpp"
 #include "../Core/DiceFamilyDriver.hpp"
 #include "../Core/DiceNotificationMailbox.hpp"
@@ -67,10 +68,18 @@ struct DICETcatRuntimePolicy final {
     uint32_t clockChangeSettleNotify{0};
     uint32_t clockChangeSettleTimeoutMs{0};
     DiceClockChangeObserver* clockChangeObserver{nullptr};
+
+    // Re-load the device's own router program for every rate mode at the first
+    // start after attach and after every rate change, as Focusrite's MixControl
+    // does for every Saffire (FFRouter::notifySystemChange ->
+    // IFFMatrix::downloadMatrix -> IFFUserDevice::writePatch, one load per rate
+    // mode). The tables written are the ones the device already holds.
+    bool reloadRouterAfterClockChange{false};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::FamilyDriver {
+                               public Audio::FamilyDriver,
+                               private DiceClockChangeObserver {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
 
@@ -181,6 +190,15 @@ private:
     [[nodiscard]] std::expected<void, IOReturn> WriteRouterProgram(
         const ExtensionSections& ext);
     void WriteStartupMixerCells(const ExtensionSections& ext);
+
+    // DiceClockChangeObserver: the policy's observer first, then the router
+    // reload when the policy asks for it.
+    void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
+    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept override;
+    // Write each rate mode's current router table back to the device and load
+    // it. Device configuration, not a bring-up gate: failures are logged.
+    void ReloadRouterPerRateMode(DiceDeviceIo& io, const char* why) noexcept;
+    bool routerReloadedSinceAttach_{false};
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};

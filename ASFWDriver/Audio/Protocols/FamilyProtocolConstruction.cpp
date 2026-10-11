@@ -31,6 +31,31 @@ static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::GenericAvc),
     "ProtocolImplementationId member added without updating family protocol construction");
 
+namespace {
+
+// The Saffire models that run the generic TCAT protocol (the Pro 24 DSP has
+// its own). Matched on the catalog's definitions, not on vendor alone.
+[[nodiscard]] bool IsFocusriteSaffire(const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan) {
+    using DeviceProfiles::Audio::DeviceDefinitionId;
+    for (const auto id : plan.candidates) {
+        switch (id) {
+            case DeviceDefinitionId::FocusriteSPro14:
+            case DeviceDefinitionId::FocusriteSPro24:
+            case DeviceDefinitionId::FocusriteSPro24Dsp:
+            case DeviceDefinitionId::FocusriteSPro26:
+            case DeviceDefinitionId::FocusriteSPro40:
+            case DeviceDefinitionId::FocusriteSPro40Tcd3070:
+            case DeviceDefinitionId::FocusriteLiquidS56:
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     const DeviceProfiles::Audio::StaticAudioEndpointPlan& plan,
     Protocols::Ports::FireWireBusOps& busOps,
@@ -110,6 +135,20 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                         .startupMixerCellCount =
                             DICE::Avid::MboxProRouting::kStartupMixerCoefficientCount,
                     });
+            }
+            // Focusrite's MixControl re-loads every Saffire's router program at
+            // attach and after each rate change. A Saffire Pro 40 (TCD2220) whose
+            // capture stayed silent after a reconnect recovered when its unchanged
+            // table was re-applied (PR #106).
+            if (IsFocusriteSaffire(plan)) {
+                ASFW_LOG(DICE,
+                         "Creating Saffire DICETcatProtocol node=0x%04x unitOffset=%u "
+                         "(router reloaded at first start and after rate changes)",
+                         nodeId, plan.unit.unitDirectoryOffset);
+                return std::make_unique<DICE::TCAT::DICETcatProtocol>(
+                    busOps, busInfo, routeRegistry, route, irmClient,
+                    DICE::DriverKitWaitClock::Shared(), diceNotifications,
+                    DICE::TCAT::DICETcatRuntimePolicy{.reloadRouterAfterClockChange = true});
             }
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",

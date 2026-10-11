@@ -36,6 +36,7 @@ R ffff.e00003a4 56 @s400
 R ffff.e00003dc 512 @s400
 R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
+R ffff.e0200000 72 @s400
 ## -> 0x00000000
 ## ProgramRx
 R ffff.e00003e0 4 @s400

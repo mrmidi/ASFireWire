@@ -115,7 +115,11 @@ IOReturn DICETcatProtocol::Initialize() {
                                 runtimePolicy_.requireSourceLockAtConfirm,
                             .clockChangeSettleNotify = runtimePolicy_.clockChangeSettleNotify,
                             .clockChangeSettleTimeoutMs = runtimePolicy_.clockChangeSettleTimeoutMs,
-                            .clockChangeObserver = runtimePolicy_.clockChangeObserver,
+                            .clockChangeObserver =
+                                runtimePolicy_.reloadRouterAfterClockChange ||
+                                        runtimePolicy_.clockChangeObserver != nullptr
+                                    ? static_cast<DiceClockChangeObserver*>(this)
+                                    : nullptr,
                         });
         driver_->SetTeardownCancelToken(teardownCancel_);
     }
@@ -271,6 +275,11 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
         // router program comes up silent without one, but the streams are
         // sound either way, so a failure here is logged and not propagated.
         ApplyStartupProgram();
+        // MixControl downloads the router once when it attaches to a device
+        // (its cache starts empty); a start that changed the rate did it already.
+        if (runtimePolicy_.reloadRouterAfterClockChange && !routerReloadedSinceAttach_) {
+            ReloadRouterPerRateMode(deviceIo_, "first start");
+        }
     }
     return result;
 }
@@ -351,6 +360,129 @@ void DICETcatProtocol::WriteStartupMixerCells(const ExtensionSections& ext) {
     }
     ASFW_LOG(DICE, "Startup mixer: wrote %u of %u coefficients", written,
              runtimePolicy_.startupMixerCellCount);
+}
+
+void DICETcatProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
+    if (runtimePolicy_.clockChangeObserver != nullptr) {
+        runtimePolicy_.clockChangeObserver->BeforeClockSelectWrite(io);
+    }
+}
+
+void DICETcatProtocol::AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept {
+    if (runtimePolicy_.clockChangeObserver != nullptr) {
+        runtimePolicy_.clockChangeObserver->AfterClockChange(io, rateHz, settled);
+    }
+    if (runtimePolicy_.reloadRouterAfterClockChange) {
+        ReloadRouterPerRateMode(io, "rate change");
+    }
+}
+
+namespace {
+
+// MixControl tcat::dice::eap_impl_dice2::executeOpcode gives up after 400 ms
+// (kEAP_CMD_TIMEOUT); it waits for a previous command the same way first.
+constexpr uint32_t kExtensionCommandTimeoutMs = 400;
+constexpr uint32_t kExtensionCommandPollMs = 10;
+
+// Polls the command register until EXECUTE clears. Returns the last opcode
+// read, or nothing on a read failure or timeout.
+[[nodiscard]] std::optional<uint32_t> AwaitExtensionCommandIdle(DiceDeviceIo& io,
+                                                                uint32_t commandBase) {
+    const uint64_t startMs = io.Clock().NowMs();
+    for (;;) {
+        const auto opcode = io.ReadQuad(commandBase + ExtensionCommandOffset::kOpcode);
+        if (!opcode) {
+            return std::nullopt;
+        }
+        if ((*opcode & ExtensionCommandOpcode::kExecute) == 0) {
+            return *opcode;
+        }
+        if (io.Clock().NowMs() - startMs >= kExtensionCommandTimeoutMs) {
+            return std::nullopt;
+        }
+        io.Clock().SleepMs(kExtensionCommandPollMs);
+    }
+}
+
+} // namespace
+
+void DICETcatProtocol::ReloadRouterPerRateMode(DiceDeviceIo& io, const char* why) noexcept {
+    routerReloadedSinceAttach_ = true;
+    const auto ext = io.ReadExtensionSections();
+    if (!ext) {
+        ASFW_LOG(DICE, "[RouterReload] %{public}s: extension sections unreadable (0x%08x)", why,
+                 ext.error());
+        return;
+    }
+    if (ext->router.size < 8 || ext->command.size < 8 || ext->currentConfig.size == 0) {
+        ASFW_LOG(DICE, "[RouterReload] %{public}s: device exposes no TCAT router", why);
+        return;
+    }
+    const uint32_t routerBase = ExtensionAbsoluteOffset(ext->router);
+    const uint32_t commandBase = ExtensionAbsoluteOffset(ext->command);
+    const uint32_t maxEntries = ext->router.size / 4U - 1U;
+
+    struct RateMode {
+        const char* name;
+        uint32_t currentConfigOffset;
+        uint32_t rateFlag;
+    };
+    constexpr RateMode kModes[] = {
+        {"low", CurrentConfigOffset::kLowRouter, ExtensionCommandOpcode::kRateLow},
+        {"mid", CurrentConfigOffset::kMiddleRouter, ExtensionCommandOpcode::kRateMiddle},
+        {"high", CurrentConfigOffset::kHighRouter, ExtensionCommandOpcode::kRateHigh},
+    };
+    for (const auto& mode : kModes) {
+        if (mode.currentConfigOffset + 4U > ext->currentConfig.size) {
+            continue;
+        }
+        const uint32_t tableBase = ExtensionAbsoluteOffset(ext->currentConfig, mode.currentConfigOffset);
+        const auto count = io.ReadQuad(tableBase);
+        if (!count) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s table unreadable (0x%08x)", why,
+                     mode.name, count.error());
+            return;
+        }
+        if (*count == 0) {
+            continue;  // the device has no program for this rate mode
+        }
+        if (*count > maxEntries) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s table has %u entries, router "
+                     "section holds %u; skipped", why, mode.name, *count, maxEntries);
+            continue;
+        }
+        const auto table = io.ReadBlock(tableBase, 4U + *count * 4U);
+        if (!table || table->size() != 4U + *count * 4U) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s table read failed", why, mode.name);
+            return;
+        }
+        if (!AwaitExtensionCommandIdle(io, commandBase)) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: a previous extension command is still "
+                     "running; stopped", why);
+            return;
+        }
+        if (const auto written = io.WriteBlock(routerBase, *table); !written) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s router write failed (0x%08x)", why,
+                     mode.name, written.error());
+            return;
+        }
+        const uint32_t opcode = ExtensionCommandOpcode::kExecute | mode.rateFlag |
+                                ExtensionCommandOpcode::kLoadRouter;
+        if (const auto sent = io.WriteQuad(commandBase + ExtensionCommandOffset::kOpcode, opcode);
+            !sent) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s load command failed (0x%08x)", why,
+                     mode.name, sent.error());
+            return;
+        }
+        if (!AwaitExtensionCommandIdle(io, commandBase)) {
+            ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s load did not complete within "
+                     "%u ms", why, mode.name, kExtensionCommandTimeoutMs);
+            return;
+        }
+        const auto result = io.ReadQuad(commandBase + ExtensionCommandOffset::kReturn);
+        ASFW_LOG(DICE, "[RouterReload] %{public}s: %{public}s %u entries loaded (opcode=0x%08x "
+                 "return=0x%08x)", why, mode.name, *count, opcode, result ? *result : 0xFFFFFFFFU);
+    }
 }
 
 void DICETcatProtocol::ApplyStartupProgram() {
