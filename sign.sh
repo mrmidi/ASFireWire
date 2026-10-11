@@ -64,6 +64,13 @@ if ! codesign -d --entitlements - --xml "${APP_PATH}" 2>/dev/null | grep -q 'sys
   err "app is missing com.apple.developer.system-extension.install after signing"
   exit 1
 fi
+# The Release app is sandboxed, so a listening socket needs network.server:
+# without it bind() fails with EPERM, the MCP control plane silently disables
+# itself, and the app is otherwise perfectly healthy.
+if ! codesign -d --entitlements - --xml "${APP_PATH}" 2>/dev/null | grep -q 'network.server'; then
+  err "app is missing com.apple.security.network.server after signing (MCP listener will fail with EPERM)"
+  exit 1
+fi
 if ! codesign -d --entitlements - --xml "${DEXT_PATH}" 2>/dev/null | grep -q 'driverkit'; then
   err "dext is missing DriverKit entitlements after signing"
   exit 1
