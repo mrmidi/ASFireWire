@@ -51,6 +51,9 @@ struct MotuPayloadWriterCounters final {
     /// Frames not written because their packet was below the first writable
     /// packet (the finality frontier): that packet keeps its armed silence.
     std::atomic<uint64_t> framesMissedFinality{0};
+    /// Frames written as silence because the output was muted (SetPcmMuted).
+    /// Included in framesWritten: the frame reached its packet, as zero.
+    std::atomic<uint64_t> framesMuted{0};
 };
 
 struct MotuPayloadStreamConfig final {
@@ -79,12 +82,23 @@ public:
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
         uint64_t firstWritablePacket) noexcept override;
 
+    /// Write silence instead of the host's samples, into the same packets. The
+    /// packets stay DATA: their cadence is the device's own, replayed from the
+    /// receive stream, and only their content changes. The transmit producer
+    /// sets this from the SPH regulator's gate (MotuSphHardResyncGate) before
+    /// each packet it prepares; the gate holds the output silent until the
+    /// regulator has locked.
+    void SetPcmMuted(bool muted) noexcept;
+    [[nodiscard]] bool IsPcmMuted() const noexcept;
+
     [[nodiscard]] const MotuPayloadWriterCounters& Counters() const noexcept;
 
 private:
     MotuPayloadStreamConfig streamConfig_{};
     Protocols::Audio::AMDTP::AmdtpPacketTimeline* timeline_{nullptr};
     MotuPayloadWriterCounters counters_{};
+    // Written on the transmit preparation queue, read by the IO thread's fill.
+    std::atomic<bool> muted_{false};
 };
 
 } // namespace ASFW::Encoding::Motu

@@ -40,6 +40,14 @@ const MotuPayloadWriterCounters& MotuPayloadWriter::Counters() const noexcept {
     return counters_;
 }
 
+void MotuPayloadWriter::SetPcmMuted(bool muted) noexcept {
+    muted_.store(muted, std::memory_order_release);
+}
+
+bool MotuPayloadWriter::IsPcmMuted() const noexcept {
+    return muted_.load(std::memory_order_acquire);
+}
+
 void MotuPayloadWriter::WriteFloat32Interleaved(
     const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
     uint64_t firstWritablePacket) noexcept {
@@ -57,6 +65,8 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     uint64_t truncated = 0;
     uint64_t missedFinality = 0;
     const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
+    // One decision per call: a call never mixes muted and audible frames.
+    const bool muted = muted_.load(std::memory_order_acquire);
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -115,7 +125,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             // Chunks beyond the host buffer encode PCM zero -- MOTU's fixed chunk count
             // always covers every physical port, including ones CoreAudio is not
             // driving, and those must carry silence rather than stale bytes.
-            const float sample = (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
+            const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             WritePcmSample(
                 std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
                                    kBytesPerChunk),
@@ -131,6 +141,9 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     counters_.framesOutsidePacket.fetch_add(outsidePacket, std::memory_order_relaxed);
     counters_.framesTruncated.fetch_add(truncated, std::memory_order_relaxed);
     counters_.framesMissedFinality.fetch_add(missedFinality, std::memory_order_relaxed);
+    if (muted) {
+        counters_.framesMuted.fetch_add(written, std::memory_order_relaxed);
+    }
 }
 
 } // namespace ASFW::Encoding::Motu
