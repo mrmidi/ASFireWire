@@ -16,6 +16,7 @@
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <atomic>
@@ -65,14 +66,13 @@ struct DICETcatRuntimePolicy final {
     // Passed to DiceFamilyDriver (DICEBringupPolicy): device steps around a
     // clock change. Off by default.
     DiceClockChangeObserver* clockChangeObserver{nullptr};
+    bool waitForInitialDsp{false};
 
-    // Re-load the device's own router program for every rate mode at the first
-    // start after attach and after every rate change, as Focusrite's MixControl
-    // does (FFRouter::notifySystemChange -> IFFMatrix::downloadMatrix ->
-    // IFFUserDevice::writePatch, one load per rate mode). The tables written are
-    // the ones the device already holds. On for every DICE device with a TCAT
-    // router; one without is logged and left alone.
-    bool reloadRouterAfterClockChange{true};
+    // Explicit opt-in only. Reading unchanged stored tables is not a request
+    // to reload them: MixControl skips identical images, and FFADO updates the
+    // requested/current mode (dice_eap.cpp:528-554). Preserve firmware routing
+    // during ordinary attachment and clock changes.
+    bool reloadRouterAfterClockChange{false};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
@@ -88,7 +88,8 @@ public:
                      ::ASFW::IRM::IRMClient* irmClient,
                      DiceWaitClock& waitClock,
                      DiceNotificationRouter* notifications,
-                     DICETcatRuntimePolicy runtimePolicy = {});
+                     DICETcatRuntimePolicy runtimePolicy = {},
+                     Scheduling::ITimerScheduler* preparationScheduler = nullptr);
     ~DICETcatProtocol() override;
 
     DICETcatProtocol(const DICETcatProtocol&) = delete;
@@ -114,6 +115,7 @@ public:
     // The GLOBAL clock and lock state, read asynchronously (safe on any queue).
     void ReadDuplexHealth(HealthCallback callback);
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
+    void CancelPendingPreparation() override { CancelInitialClock(); }
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
 
     IOReturn StopDuplex() override;
@@ -157,6 +159,17 @@ private:
         DiceClockConfiguration& out) noexcept;
     void EnsureSectionsLoaded(VoidCallback callback);
     void EnsureRuntimeCapsLoaded(VoidCallback callback);
+    struct InitialClockPreparation;
+    void PrepareInitialClock(VoidCallback callback);
+    void InitialClockOwner(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockDsp(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockWrite(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state);
+    void ScheduleInitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state,
+                                  uint32_t delayMs, bool dsp);
+    bool InitialClockCurrent(const std::shared_ptr<InitialClockPreparation>& state);
+    void FinishInitialClock(const std::shared_ptr<InitialClockPreparation>& state, IOReturn status);
+    void CancelInitialClock();
     void CacheRuntimeCaps(const GlobalState& global,
                           const StreamConfig& tx,
                           const StreamConfig& rx) noexcept;
@@ -177,6 +190,9 @@ private:
     std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
     DICETcatRuntimePolicy runtimePolicy_{};
+    Scheduling::ITimerScheduler* preparationScheduler_{nullptr};
+    std::shared_ptr<InitialClockPreparation> initialClock_;
+    std::optional<Discovery::DeviceRouteToken> initializedRoute_;
     bool startupProgramApplied_{false};
 
     // Writes the startup router program and mixer coefficients when the policy

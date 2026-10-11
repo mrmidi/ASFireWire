@@ -83,7 +83,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient,
-                DICE::DriverKitWaitClock::Shared(), diceNotifications);
+                DICE::DriverKitWaitClock::Shared(), diceNotifications, timerScheduler);
 
         // The plain TCAT devices differ in their profile, not their protocol:
         // geometry comes from the device's own registers either way.
@@ -109,14 +109,15 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                             DICE::Avid::MboxProRouting::kStartupMixerCoefficients,
                         .startupMixerCellCount =
                             DICE::Avid::MboxProRouting::kStartupMixerCoefficientCount,
-                    });
+                    }, timerScheduler);
             }
             ASFW_LOG(DICE,
                      "Creating generic DICETcatProtocol node=0x%04x unitOffset=%u",
                      nodeId, plan.unit.unitDirectoryOffset);
             return std::make_unique<DICE::TCAT::DICETcatProtocol>(
                 busOps, busInfo, routeRegistry, route, irmClient,
-                DICE::DriverKitWaitClock::Shared(), diceNotifications);
+                DICE::DriverKitWaitClock::Shared(), diceNotifications,
+                DICE::TCAT::DICETcatRuntimePolicy{}, timerScheduler);
 
         // Weiss is the one DICE device with a non-default runtime policy: it is
         // a one-way interface, so CoreAudio must not be shown the device->host
@@ -133,7 +134,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                     .exposeDeviceToHostToCoreAudio = false,
                     .requireSourceLockBeforeStreamEnable = false,
                     .requireSourceLockAtConfirm = false,
-                });
+                }, timerScheduler);
 
         // --- OXFW Family ---
         case ProtocolImplementationId::ApogeeDuet:

@@ -131,6 +131,26 @@ struct Pro24DspRig {
     FamilyDriver* family{nullptr};
 };
 
+TEST(SPro24DspClockChangeTests, InitialDspWaitUsesCallbacksBeforePublication) {
+    Pro24DspRig rig(SimulatedDiceOptions{});
+    rig.ext.status = Focusrite::DspStatus::kRunning | Focusrite::DspStatus::kBusy;
+    (void)rig.timer.ScheduleAfter(500'000'000ULL, [&] {
+        rig.ext.status = Focusrite::DspStatus::kRunning;
+    });
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.timer.Advance(450'000'000ULL);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(rig.LineOfClockWrite(), rig.bus.Trace().Lines().size());
+    rig.timer.Advance(50'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnSuccess);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.waitClock.Backoffs(), 0U);
+    EXPECT_TRUE(rig.ext.notices.empty());
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+}
+
 TEST(SPro24DspClockChangeTests, RunningDspIsNotWaitedForOrRestarted) {
     Pro24DspRig rig(SimulatedDiceOptions{});
     ASSERT_EQ(rig.ApplyClock48k(), kIOReturnSuccess);

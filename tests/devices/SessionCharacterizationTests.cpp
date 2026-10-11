@@ -222,12 +222,26 @@ TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {
     SessionRig rig(kMultimixTwoPlaybackShape);
     ASSERT_TRUE(rig.deviceHost.has_value());
     rig.deviceHost->RefreshPublication(rig.guid);
+    rig.timer.Advance(400'000'000ULL);
     const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
     ASSERT_NE(endpoint, nullptr) << "the device was refused at publication";
     ASFW::Audio::Model::ASFWAudioDevice config{};
     ASSERT_TRUE(endpoint->CopyConfig(config));
     EXPECT_EQ(config.playbackStreams.size(), 2U);
     EXPECT_EQ(config.outputChannelCount, 4U);
+}
+
+TEST(SessionMultimixTwoPlayback, TeardownCancelsPublicationBeforeWaitingForItsTimer) {
+    SessionRig rig(kMultimixTwoPlaybackShape);
+    ASSERT_TRUE(rig.deviceHost.has_value());
+    rig.deviceHost->RefreshPublication(rig.guid);
+    ASSERT_GT(rig.timer.PendingCount(), 0U);
+    const auto operations = rig.bus.Operations().size();
+    rig.deviceHost->BeginTeardown(); // must return without advancing the timer
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+    rig.timer.Advance(1'000'000'000ULL);
+    EXPECT_EQ(rig.bus.Operations().size(), operations);
+    EXPECT_EQ(rig.runtime.FindEndpointRuntime(rig.guid), nullptr);
 }
 
 TEST(SessionMultimixTwoPlayback, ColdStartArmsBothPlaybackStreams) {

@@ -65,6 +65,10 @@ public:
     // Total stop: disable and disarm every stream. The owner stays ours.
     [[nodiscard]] IOReturn Stop();
 
+    // Callback-based discovery claimed the owner and applied the clock. The
+    // owner is reused; every stream start still writes CLOCK_SELECT.
+    void AdoptPreparedClock(const DiceClockConfiguration& clock) noexcept;
+
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept { teardownCancel_ = cancel; }
 
     [[nodiscard]] bool IsPrepared() const noexcept { return session_.devicePrepared; }
@@ -84,11 +88,15 @@ private:
     [[nodiscard]] IOReturn EnsureOwner(uint64_t currentOwner);
     [[nodiscard]] IOReturn WriteClockSelect(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn ActiveClockCheck(const AudioDuplexChannels& channels, uint32_t accumulatedNotify);
-    [[nodiscard]] IOReturn WaitClockAccepted(const AudioDuplexChannels& channels);
+    [[nodiscard]] IOReturn WaitClockAccepted(const AudioDuplexChannels& channels,
+                                               uint32_t observedNotify);
     [[nodiscard]] IOReturn ReadGlobalAfterClockAccepted(const AudioDuplexChannels& channels,
                                                         uint32_t observedNotify,
                                                         IOReturn failureStatus);
     [[nodiscard]] IOReturn ClockConfirmed(const AudioDuplexChannels& channels);
+    // After CLOCK_ACCEPTED with RX/TX_CFG_CHG: wait for LOCK_CHG and a locked
+    // STATUS at the target before the bring-up continues.
+    [[nodiscard]] IOReturn AwaitReconfigurationRelock(uint32_t observedNotify);
     [[nodiscard]] IOReturn AwaitStreamingClockLock(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitIdleClockRate();
     // After a CLOCK_SELECT write this flow issued, once the device runs at the
@@ -129,8 +137,8 @@ private:
     IOReturn stopSequenceError_{kIOReturnSuccess};
     bool refreshRuntimeCapsOnPrepare_{true};
     // GLOBAL state read before the owner claim: CLOCK_SELECT is the rate that was
-    // requested, STATUS/SAMPLE_RATE the rate the device reached. The redundant
-    // CLOCK_SELECT write is skipped only when both are at the target.
+    // requested, STATUS/SAMPLE_RATE the rate the device reached. An idle apply
+    // skips the CLOCK_SELECT write only when both are at the target.
     uint32_t preClaimClockSelect_{0};
     uint32_t preClaimStatus_{0};
     uint32_t preClaimSampleRate_{0};

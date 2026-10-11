@@ -118,7 +118,7 @@ public:
 
     /// Atomically closes admission so no future TryEnter can succeed,
     /// and waits synchronously until all in-flight admissions exit.
-    void CloseAndWait() noexcept {
+    void CloseAndWait(const std::function<void()>& afterClose = {}) noexcept {
         int32_t cur = state_.load(std::memory_order_relaxed);
         while (cur >= 0) {
             if (state_.compare_exchange_weak(cur, cur - kClosedSentinel,
@@ -127,6 +127,9 @@ public:
                 break;
             }
         }
+
+        // Cancel deferred work only after new admissions are fenced out.
+        if (afterClose) afterClose();
 
 #ifdef ASFW_HOST_TEST
         if (onGateClosedForTesting_) {

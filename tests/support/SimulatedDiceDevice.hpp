@@ -493,8 +493,11 @@ private:
                 // A hardware-validated 44.1 -> 48 kHz change raised
                 // RxCfgChg|TxCfgChg|ClockAccepted together
                 // (DICE_STABILITY_REGRESSION.md §3), even within one rate mode.
+                // Instant settlement still completes the lock transition. The
+                // delayed path emits the same bit when its clock settles.
                 bits |= ::ASFW::Audio::DICE::Notify::kRxConfigChange |
-                        ::ASFW::Audio::DICE::Notify::kTxConfigChange;
+                        ::ASFW::Audio::DICE::Notify::kTxConfigChange |
+                        ::ASFW::Audio::DICE::Notify::kLockChange;
                 if (DiceRateModeForIndex(rateIndex) != DiceRateModeForIndex(previousIndex)) {
                     ApplyRateModeGeometry(DiceRateModeForIndex(rateIndex));
                 }

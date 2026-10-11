@@ -257,6 +257,22 @@ void AudioRuntimeRegistry::Remove(uint64_t guid) noexcept {
     }
 }
 
+void AudioRuntimeRegistry::CancelPendingPreparation() noexcept {
+    std::vector<std::shared_ptr<IDeviceProtocol>> protocols;
+    if (lock_) IOLockLock(lock_);
+    protocols.reserve(protocolsByGuid_.size());
+    for (const auto& [guid, protocol] : protocolsByGuid_) {
+        (void)guid;
+        protocols.push_back(protocol);
+    }
+    if (lock_) IOLockUnlock(lock_);
+    // Cancellation completes publication callbacks, which can enter the
+    // registry again. Hold strong references, never the registry lock.
+    for (const auto& protocol : protocols) {
+        if (protocol) protocol->CancelPendingPreparation();
+    }
+}
+
 void AudioRuntimeRegistry::Clear() noexcept {
     std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> drained;
     std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> drainedEndpoints;

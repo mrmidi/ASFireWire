@@ -101,6 +101,7 @@ public:
     // through EnsureForDevice + DeviceProtocolFactory.
     void Insert(uint64_t guid, std::shared_ptr<IDeviceProtocol> protocol) noexcept;
 
+    void CancelPendingPreparation() noexcept;
     void Remove(uint64_t guid) noexcept;
     void Clear() noexcept;
 

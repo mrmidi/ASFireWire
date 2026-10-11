@@ -250,7 +250,9 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
     }
     dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
     dev.deviceSampleRates = true;
-    dev.currentSampleRate = initialRate;
+    dev.currentSampleRate = DICE::DiceRateIsStreamable(caps.sampleRateHz) &&
+        std::ranges::find(dev.sampleRates, caps.sampleRateHz) != dev.sampleRates.end()
+            ? caps.sampleRateHz : initialRate;
     if (const auto formations = protocol.RateFormations();
         formations && !formations->empty() && dev.inputChannelCount != 0) {
         dev.rateFormationCandidates = *formations;
@@ -260,12 +262,12 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
         dev.rateBusGeneration = route.generation.value;
         dev.sampleRates.clear();
         for (const auto& formation : *formations)
-            if (Runtime::RateEnabled(formation, initialRate, true))
+            if (Runtime::RateEnabled(formation, dev.currentSampleRate, true))
                 dev.sampleRates.push_back(formation.sampleRateHz);
         // Generic non-EAP hardware can have only its observed mode known.
         // Publish a coherent known formation, never another mode's geometry
         // under a convenient scalar clock.
-        if (std::ranges::find(dev.sampleRates, initialRate) == dev.sampleRates.end()) {
+        if (std::ranges::find(dev.sampleRates, dev.currentSampleRate) == dev.sampleRates.end()) {
             if (dev.sampleRates.empty()) {
                 return DescribeRefusal{kIOReturnUnsupported, DiceFamilyAdapter::kNoEnabledFormation};
             }

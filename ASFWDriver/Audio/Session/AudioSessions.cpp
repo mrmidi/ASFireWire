@@ -177,7 +177,12 @@ IOReturn AudioSessions::RequestRestart(uint64_t guid, DuplexRestartReason reason
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
-    const auto session = Find(guid);
+    // A device reconfiguration can arrive before the first attach: DICE clock
+    // preparation runs before publication, and the device answers its first
+    // CLOCK_SELECT after power-up with RX/TX_CFG_CHG. The session must exist to
+    // remember it, so the first start is followed by one restart (Pro 24 DSP
+    // cold start silent otherwise, hardware 2026-10-11).
+    const auto session = reason == DuplexRestartReason::kDeviceConfigChange ? Ensure(guid) : Find(guid);
     return session ? session->RequestRestart(reason, observedRun) : kIOReturnUnsupported;
 }
 

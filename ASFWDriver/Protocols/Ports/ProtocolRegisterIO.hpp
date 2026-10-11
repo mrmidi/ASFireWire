@@ -343,6 +343,8 @@ public:
         route_ = route;
     }
 
+    [[nodiscard]] Discovery::DeviceRouteToken Route() const noexcept { return route_; }
+
     [[nodiscard]] bool IsRouteCurrent() const noexcept {
         return static_cast<bool>(route_) && routeRegistry_.IsCurrent(route_);
     }

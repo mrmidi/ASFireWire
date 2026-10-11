@@ -189,8 +189,10 @@ public:
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kGlobalBaseLo &&
                    length >= kGlobalReadBytes) {
             ++globalReadCount;
-            const auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
+            auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
+            ASFW::FW::WriteBE64(bytes.data(), owner_);
             payload.assign(bytes.begin(), bytes.end());
+            payload.resize(length, 0);
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kExtensionBaseLo &&
             length >= ExtensionSections::kWireSize) {
             ++extensionReadCount;
@@ -266,6 +268,11 @@ public:
         (void)speed;
         ++lockCount;
         std::vector<uint8_t> payload(responseLength, 0);
+        if (responseLength == 8 && operand.size() == 16 && address.addressLo == kGlobalBaseLo) {
+            ASFW::FW::WriteBE64(payload.data(), owner_);
+            if (ASFW::FW::ReadBE64(operand.data()) == owner_)
+                owner_ = ASFW::FW::ReadBE64(operand.data() + 8);
+        }
         callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
         return NextHandle();
     }
@@ -315,6 +322,7 @@ public:
     uint32_t extStatus_{0};
     uint32_t sampleRate_{48000};
     uint32_t notification_{0x20};
+    uint64_t owner_{ASFW::Audio::DICE::kOwnerNoOwner};
     bool rateEap{false};
     bool oversizedEapCount{false};
     bool failEapEntry{false};
@@ -903,7 +911,14 @@ TEST(DICETcatProtocolTests, RateObservationUsesFreshClockAndRejectsUnconfirmedSe
     RouteState routeState;
     DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    std::optional<IOReturn> prepared;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) { prepared = status; });
+    static_cast<ASFW::Testing::FakeTimerScheduler*>(WaitClock().Scheduler())->Advance(550'000'000ULL);
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(*prepared, kIOReturnSuccess);
     ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    bus.writeCount = 0;
+    bus.lockCount = 0;
     auto observe = [&] {
         std::optional<ASFW::Audio::RateHardwareObservation> result;
         protocol.ReadRateObservation([&](IOReturn status, auto observed) {

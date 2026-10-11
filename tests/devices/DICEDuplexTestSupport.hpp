@@ -267,10 +267,21 @@ public:
     [[nodiscard]] SimulatedDiceDevice& Device() noexcept { return device_; }
     [[nodiscard]] const SimulatedDiceDevice& Device() const noexcept { return device_; }
 
+    // Deliver a notification after GLOBAL has been sampled, before the read
+    // completes, to model an in-flight response racing a clock transition.
+    void SetGlobalReadCompletedHandler(std::function<void()> handler) {
+        globalReadCompletedHandler_ = std::move(handler);
+    }
+
 protected:
     std::vector<uint8_t> ReadPayload(Async::FWAddress address, uint32_t length) override {
         if (address.addressHi == kDiceBaseAddressHi) {
             if (auto bytes = device_.Read(address.addressLo, length)) {
+                if (globalReadCompletedHandler_ &&
+                    address.addressLo == kDiceBaseAddressLo + device_.GlobalBase() &&
+                    length == device_.Image().globalSection.sizeQuadlets * 4) {
+                    globalReadCompletedHandler_();
+                }
                 return *bytes;
             }
             if (extensionReader_) {
@@ -314,6 +325,7 @@ private:
     SimulatedDiceDevice device_;
     DiceClockResponse defaultClockResponse_;
     std::function<void()> clockSelectWriteHandler_;
+    std::function<void()> globalReadCompletedHandler_;
     ExtensionReader extensionReader_;
     ExtensionWriter extensionWriter_;
 };

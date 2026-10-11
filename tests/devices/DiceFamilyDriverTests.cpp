@@ -658,9 +658,8 @@ TEST(DiceFamilyDriverTests,
 }
 
 TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
-    // With the active clock check, even when the mailbox notification is delayed,
-    // the driver reads global state immediately after the clock-select write and
-    // short-circuits because the device is already locked at 48 kHz.
+    // Missing acceptance is tolerated only after the full notification deadline
+    // and a final GLOBAL confirmation, rather than trusting pre-write status.
     DuplexRig rig;
     rig.bus.SetClockSelectWriteHandler([&rig] {
         (void)rig.timer.ScheduleAfter(3'250'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
@@ -676,12 +675,11 @@ TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
     EXPECT_TRUE(rig.controller.IsPrepared());
-    EXPECT_LT(rig.timer.NowNs(), 3'250'000'000ULL) << "completed without waiting for the late notification";
+    EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
 }
 
 TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockAccepted) {
-    // When the mailbox notification never arrives but the device is already locked
-    // at 48 kHz, the active clock check after the write short-circuits immediately.
+    // A latched GLOBAL notification recovers a lost mailbox write at the deadline.
     DuplexRig rig;
     rig.bus.SetClockSelectWriteHandler([&rig]() { rig.bus.LatchClockAccepted(); });
 
@@ -695,6 +693,161 @@ TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockA
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
     EXPECT_TRUE(rig.controller.IsPrepared());
+    EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
+}
+
+// Reproduce power-up timing independently of status-read count: the initial
+// target status is stale until the firmware reacts to our same-value write.
+TEST(DiceFamilyDriverTests, SameValueClockWriteWaitsForDelayedReconfigurationAndRelock) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted |
+                NotifyBits::kRxConfigChange | NotifyBits::kTxConfigChange | NotifyBits::kLockChange);
+        });
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ConfigChangeBeforeClockAcceptedIsRetainedUntilRelock) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        // Config changes can be separate writes, including inside CLOCK_SELECT.
+        rig.bus.Device().RaiseNotification(NotifyBits::kRxConfigChange);
+        (void)rig.timer.ScheduleAfter(40'000'000ULL, [&rig] {
+            rig.bus.Device().RaiseNotification(NotifyBits::kTxConfigChange);
+        });
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(); // STATUS still holds its pre-write value.
+        });
+        (void)rig.timer.ScheduleAfter(100'000'000ULL, [&rig] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        });
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ChangedClockSelectAlsoWaitsForAcceptanceDespiteTargetStatus) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect,
+        (ClockRateIndex::k44100 << ClockSelectBits::kRateShift) |
+            static_cast<uint32_t>(ClockSource::Internal));
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 90'000'000ULL);
+}
+
+TEST(DiceFamilyDriverTests, LockChangeDuringGlobalReadCannotConfirmItsOlderLockedStatus) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    unsigned globalReads = 0;
+    rig.bus.SetGlobalReadCompletedHandler([&rig, &globalReads] {
+        if (++globalReads == 3) {
+            // The device sampled locked STATUS before dropping lock; its
+            // LOCK_CHG write overtakes the pending GLOBAL response.
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        }
+        if (globalReads == 4) {
+            // A new read must follow the poll boundary, not premature success
+            // and entry into the separate streaming readiness check.
+            EXPECT_GE(rig.timer.NowNs(), 10'000'000ULL);
+        }
+    });
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.PublishClockAccepted(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ReconfigurationWaitStopsIoOnTeardownOrRouteInvalidation) {
+    for (const bool teardown : {false, true}) {
+        SCOPED_TRACE(teardown);
+        DuplexRig rig;
+        size_t operationsAtAbort = 0;
+        rig.bus.SetClockSelectWriteHandler([&rig, &operationsAtAbort, teardown] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+            (void)rig.timer.ScheduleAfter(100'000'000ULL, [&rig, &operationsAtAbort, teardown] {
+                if (teardown) {
+                    rig.cancel.store(true, std::memory_order_release);
+                } else {
+                    rig.routeState.registry.InvalidateLiveMappingsForBusReset();
+                }
+                operationsAtAbort = rig.bus.Operations().size();
+            });
+        });
+        const auto result = rig.driver.Prepare(
+            {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+            {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error(), teardown ? kIOReturnAborted : kIOReturnOffline);
+        EXPECT_EQ(rig.timer.NowNs(), 100'000'000ULL);
+        EXPECT_EQ(rig.bus.Operations().size(), operationsAtAbort);
+        EXPECT_FALSE(rig.driver.IsPrepared());
+        EXPECT_EQ(rig.bus.Enable(), 0U);
+    }
+}
+
+TEST(DiceFamilyDriverTests, MissingLockNotificationUsesBoundedReferenceWait) {
+    DuplexRig rig;
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.PublishClockAccepted(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 1'000'000'000ULL);
+}
+
+TEST(DiceFamilyDriverTests, ReconfigurationThatNeverRelocksDoesNotPrepareOrEnableStreams) {
+    DuplexRig rig;
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift, 48000U);
+        rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted |
+            NotifyBits::kRxConfigChange | NotifyBits::kLockChange);
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), kIOReturnTimeout);
+    EXPECT_FALSE(rig.driver.IsPrepared());
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.timer.NowNs(), 3'000'000'000ULL);
 }
 
 TEST(DiceFamilyDriverTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegister) {

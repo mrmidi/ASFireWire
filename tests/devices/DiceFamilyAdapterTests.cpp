@@ -117,13 +117,16 @@ public:
 };
 
 // Runs Describe and returns its result; asserts `done` ran exactly once.
-std::optional<DescribeResult> Describe(DiceFamilyAdapter& adapter, const DescribeInput& in) {
+std::optional<DescribeResult> Describe(DiceFamilyAdapter& adapter, const DescribeInput& in,
+                                       ASFW::Testing::FakeTimerScheduler& timer) {
     int doneCalls = 0;
     std::optional<DescribeResult> result;
     adapter.Describe(in, [&](DescribeResult r) {
         ++doneCalls;
         result = std::move(r);
     });
+    for (unsigned tick = 0; doneCalls == 0 && tick < 400; ++tick)
+        timer.Advance(10'000'000ULL);
     EXPECT_EQ(doneCalls, 1) << "Describe must call done exactly once";
     return result;
 }
@@ -370,7 +373,7 @@ protected:
 };
 
 TEST_F(DescribeFixture, Pro24DspIsDescribedFromItsRegisters) {
-    const auto result = Describe(adapter, MakeInput(rig));
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
     ASSERT_TRUE(result.has_value());
     const auto* device = std::get_if<ASFWAudioDevice>(&*result);
     ASSERT_NE(device, nullptr) << "expected a described device, got another outcome";
@@ -385,10 +388,25 @@ TEST_F(DescribeFixture, Pro24DspIsDescribedFromItsRegisters) {
     EXPECT_FALSE(device->playbackStreams.empty());
 }
 
+TEST_F(DescribeFixture, PublicationPreservesThePreparedHardwareRate) {
+    namespace Dice = ASFW::Audio::DICE;
+    uint32_t selection = 0;
+    ASSERT_TRUE(Dice::DiceClockSelectForRate(44100, Dice::ClockSource::Internal, selection));
+    rig.bus.Device().SetGlobalQuad(Dice::GlobalOffset::kClockSelect, selection);
+    rig.bus.Device().SetAchievedClock(Dice::ClockRateIndex::k44100, true);
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
+    ASSERT_TRUE(result.has_value());
+    const auto* device = std::get_if<ASFWAudioDevice>(&*result);
+    ASSERT_NE(device, nullptr);
+    EXPECT_EQ(device->currentSampleRate, 44100U);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+}
+
 TEST_F(DescribeFixture, MissingProtocolIsRefusedAsNoProtocol) {
     DescribeInput in = MakeInput(rig);
     in.protocol = nullptr;
-    const auto result = Describe(adapter, in);
+    const auto result = Describe(adapter, in, rig.timer);
     ASSERT_TRUE(result.has_value());
     const auto* refusal = std::get_if<DescribeRefusal>(&*result);
     ASSERT_NE(refusal, nullptr) << "expected a refusal";
@@ -401,7 +419,7 @@ TEST_F(DescribeFixture, CommittedRateFormationsAreKeptNotRedescribed) {
     committed.guid = rig.guid;
     committed.usesRateFormations = true;
     in.committed = committed;
-    const auto result = Describe(adapter, in);
+    const auto result = Describe(adapter, in, rig.timer);
     ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(std::holds_alternative<KeepCommitted>(*result));
 }
@@ -409,7 +427,7 @@ TEST_F(DescribeFixture, CommittedRateFormationsAreKeptNotRedescribed) {
 TEST(DescribeMultimixTest, TwoPlaybackStreamsArePublishedAsTwo) {
     SessionRig rig(kMultimixShape);
     DiceFamilyAdapter adapter{rig.notifications};
-    const auto result = Describe(adapter, MakeInput(rig));
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
     ASSERT_TRUE(result.has_value());
     const auto* device = std::get_if<ASFWAudioDevice>(&*result);
     if (device == nullptr) {
@@ -427,7 +445,7 @@ TEST(DescribeGeometryTest, GeometryReadFailureIsRefusedAsGeometryLoadFailed) {
     rig.bus.FailNext(::ASFW::Testing::OpKind::Read,
                      ASFW::Testing::DICE::kDiceBaseAddressLo + rig.bus.Device().GlobalBase(),
                      ASFW::Async::AsyncStatus::kTimeout);
-    const auto result = Describe(adapter, MakeInput(rig));
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
     ASSERT_TRUE(result.has_value());
     const auto* refusal = std::get_if<DescribeRefusal>(&*result);
     if (refusal == nullptr) {

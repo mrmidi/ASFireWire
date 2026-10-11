@@ -248,6 +248,27 @@ TEST_F(DiceQuietPeriodTest, RestartOnAKeptWireIsHandedToTheHostAfterTheQuietPeri
 // followed by one restart after the quiet period, handed to the host. The
 // Pro 24 DSP came up locked to our stream and silent after such a start
 // until its streams were enabled again (hardware, 2026-10-09).
+// DICE clock preparation runs before publication, so the device's RX/TX_CFG_CHG
+// for its first CLOCK_SELECT after power-up arrives before any session exists.
+// It must still be remembered: the Pro 24 DSP came up silent on a cold start
+// whose reconfiguration was declined for want of a session (hardware,
+// 2026-10-11).
+TEST_F(DiceQuietPeriodTest, ReconfigurationBeforeTheFirstAttachRestartsOnceAfterTheFirstStart) {
+    std::atomic<int> routed{0};
+    rig.sessions.SetHostRestartRouter([&](uint64_t, DuplexRestartReason) {
+        routed.fetch_add(1);
+        return true;
+    });
+    EXPECT_NE(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kDeviceConfigChange,
+                                          UINT64_MAX),
+              kIOReturnSuccess);
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.Wait(399);
+    EXPECT_EQ(routed.load(), 0);
+    rig.Wait(1);
+    EXPECT_EQ(routed.load(), 1);
+}
+
 TEST_F(DiceQuietPeriodTest, ReconfigurationWhileIdleRestartsOnceAfterTheNextStart) {
     std::atomic<int> routed{0};
     DuplexRestartReason routedReason{};

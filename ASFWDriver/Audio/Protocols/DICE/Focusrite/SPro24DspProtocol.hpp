@@ -63,7 +63,8 @@ public:
                       const Discovery::DeviceRouteToken& route,
                       ::ASFW::IRM::IRMClient* irmClient,
                       DiceWaitClock& waitClock,
-                      DiceNotificationRouter* notifications);
+                      DiceNotificationRouter* notifications,
+                      Scheduling::ITimerScheduler* preparationScheduler = nullptr);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;
@@ -85,6 +86,7 @@ public:
     void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override {
         tcat_.ReadRateObservation(std::move(callback));
     }
+    void CancelPendingPreparation() override { tcat_.CancelPendingPreparation(); }
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
         tcat_.EnsureRuntimeStreamGeometry(std::move(callback));
     }

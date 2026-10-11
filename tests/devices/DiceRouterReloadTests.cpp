@@ -3,13 +3,11 @@
 //
 // DiceRouterReloadTests.cpp - Re-loading a TCAT device's own router program.
 //
-// Focusrite's MixControl downloads every Saffire's router for each rate mode
-// when it attaches and after a rate change: one router image per mode, written
-// to the router section, then EXECUTE|rate|LOAD_ROUTER, polled until EXECUTE
-// clears (tcat::dice::eap_impl_dice2::setRouting / executeOpcode). These tests
-// drive DICETcatProtocol with that policy over a simulated device whose TCAT
-// extension space holds a section table, a router staging section, the
-// command register and per-mode current-config router tables.
+// Ordinary attachment and clock changes preserve firmware routing. The first
+// tests retain coverage of the explicit opt-in loader; the default-policy
+// regression asserts that it issues no router load on either path. The fake
+// models section tables, router staging, command completion, and per-mode
+// current-config images; it does not model analog/DSP side effects.
 
 #include <gtest/gtest.h>
 
@@ -109,15 +107,17 @@ struct FakeEapDevice {
 };
 
 struct ReloadRig {
-    explicit ReloadRig(bool reload)
+    explicit ReloadRig(std::optional<bool> reload = std::nullopt)
         : bus(DiceDeviceImages::kSaffirePro24Dsp, SimulatedDiceOptions{}) {
         bus.Device().ResetToIdle();
         bus.SetExtensionResponder(
             [this](uint32_t addressLo, uint32_t length) { return eap.Read(addressLo, length); },
             [this](uint32_t addressLo, std::span<const uint8_t> data) { eap.Write(addressLo, data); });
+        ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy policy{};
+        if (reload) policy.reloadRouterAfterClockChange = *reload;
         protocol = std::make_unique<ASFW::Audio::DICE::TCAT::DICETcatProtocol>(
             bus, bus, routeState.registry, routeState.route, nullptr, waitClock, &notifications,
-            ASFW::Audio::DICE::TCAT::DICETcatRuntimePolicy{.reloadRouterAfterClockChange = reload});
+            policy);
         EXPECT_EQ(protocol->Initialize(), kIOReturnSuccess);
         family = protocol->AsFamilyDriver();
         family->SetTeardownCancelToken(&cancel);
@@ -170,8 +170,8 @@ TEST(DiceRouterReloadTests, RateChangeLoadsAgain) {
     EXPECT_EQ(rig.eap.loads.size(), 2U);
 }
 
-TEST(DiceRouterReloadTests, NothingIsLoadedWithoutThePolicy) {
-    ReloadRig rig(false);
+TEST(DiceRouterReloadTests, DefaultPolicyPreservesRoutingAtStartAndRateChange) {
+    ReloadRig rig;
     ASSERT_EQ(rig.Configure48k(), kIOReturnSuccess);
     rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect44kInternal);
     rig.bus.Device().SetAchievedClock(ClockRateIndex::k44100, true);

@@ -79,6 +79,10 @@ public:
         callback(kIOReturnSuccess);
     }
 
+    // Cancel deferred publication preparation before the host drains admission.
+    // Does not stop active streams or issue hardware transactions.
+    virtual void CancelPendingPreparation() {}
+
     /// Query per-channel device labels discovered from the protocol's stream
     /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,
     /// `outNames` is host output/playback, both in channel order; an empty entry

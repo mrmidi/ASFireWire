@@ -603,8 +603,9 @@ void AudioDeviceHost::BeginTeardown() noexcept {
     if (teardownComplete_.load(std::memory_order_acquire)) return;
 
     if (!teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
-        // Close admission and wait for admitted entry points and publications.
-        gate_.CloseAndWait();
+        // Deferred preparation owns a publication admission. Cancel it before
+        // draining: its timer may run on the queue calling teardown.
+        gate_.CloseAndWait([this] { runtime_.CancelPendingPreparation(); });
         const uint64_t startMs = UptimeMilliseconds();
         // Drain queued work before hardware detaches; each block checks
         // stopping_ before it can touch the device (FW-61).

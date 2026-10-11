@@ -220,6 +220,157 @@ struct DiceRig {
     FamilyDriver* family{nullptr};
 };
 
+// Publication must wait for callback-driven hardware preparation. Application
+// StartIO then reuses the verified clock rather than reconfiguring live hardware.
+TEST(DiceInitialPreparation, JoinsCallbacksWithoutSleepingAndTheStartWritesTheClockAgain) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    unsigned completions = 0;
+    auto done = [&](IOReturn status) { EXPECT_EQ(status, kIOReturnSuccess); ++completions; };
+    rig.protocol->EnsureRuntimeStreamGeometry(done);
+    rig.protocol->EnsureRuntimeStreamGeometry(done);
+    EXPECT_EQ(completions, 0U);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    rig.timer.Advance(399'000'000ULL);
+    EXPECT_EQ(completions, 0U);
+    rig.timer.Advance(1'000'000ULL);
+    ASSERT_EQ(completions, 2U);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.waitClock.Backoffs(), 0U);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    auto clockWrites = [&] {
+        return std::ranges::count_if(rig.bus.Operations(), [](const auto& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xe0000074;
+        });
+    };
+    EXPECT_EQ(clockWrites(), 1);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+    rig.bus.ClearOperations();
+    // TCAT RestartStreaming writes CLOCK_SELECT on every start (kext 0xe3fe).
+    ASSERT_TRUE(rig.family->Configure(rig.ChannelsFor(caps), {.sampleRateHz = caps.sampleRateHz}));
+    EXPECT_EQ(clockWrites(), 1);
+}
+
+TEST(DiceInitialPreparation, AcceptanceDoesNotCompleteBeforeRelock) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    rig.bus.SetClockSelectWriteHandler([&] {
+        rig.bus.Device().SetAchievedClock(ClockRateIndex::k48000, false);
+        (void)rig.timer.ScheduleAfter(40'000'000ULL, [&] {
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted | NotifyBits::kTxConfigChange);
+        });
+        (void)rig.timer.ScheduleAfter(220'000'000ULL, [&] {
+            rig.bus.Device().SetAchievedClock(ClockRateIndex::k48000, true);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        });
+    });
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.timer.Advance(610'000'000ULL);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    rig.timer.Advance(10'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnSuccess);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.waitClock.Backoffs(), 0U);
+}
+
+TEST(DiceInitialPreparation, LateLockEventCannotValidateAnOlderGlobalSnapshot) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    unsigned globalReads = 0;
+    rig.bus.SetGlobalReadCompletedHandler([&] {
+        if (++globalReads != 3) return; // pre-claim, owner verification, first clock poll
+        rig.bus.Device().SetAchievedClock(ClockRateIndex::k48000, false);
+        rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        (void)rig.timer.ScheduleAfter(20'000'000ULL, [&] {
+            rig.bus.Device().SetAchievedClock(ClockRateIndex::k48000, true);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        });
+    });
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.timer.Advance(400'000'000ULL);
+    EXPECT_FALSE(result.has_value());
+    rig.timer.Advance(10'000'000ULL);
+    EXPECT_FALSE(result.has_value());
+    rig.timer.Advance(10'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnSuccess);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+}
+
+TEST(DiceInitialPreparation, ShutdownCancelsPendingPreparationExactlyOnce) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    unsigned completions = 0;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        EXPECT_EQ(status, kIOReturnAborted); ++completions;
+    });
+    EXPECT_EQ(rig.protocol->Shutdown(), kIOReturnSuccess);
+    EXPECT_EQ(completions, 1U);
+    const auto operations = rig.bus.Operations().size();
+    rig.protocol.reset();
+    rig.timer.Advance(5'000'000'000ULL);
+    EXPECT_EQ(completions, 1U);
+    EXPECT_EQ(rig.bus.Operations().size(), operations);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceInitialPreparation, StaleGlobalAcceptanceDoesNotBypassTheAcceptanceWait) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    rig.bus.Device().SetNotificationRegister(NotifyBits::kClockAccepted);
+    rig.bus.SetClockSelectWriteHandler([] {}); // retain the old locked state, emit no new acceptance
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.timer.Advance(540'000'000ULL);
+    EXPECT_FALSE(result.has_value());
+    rig.timer.Advance(10'000'000ULL); // reference-compatible final live confirmation at 150 ms
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnSuccess);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+}
+
+TEST(DiceInitialPreparation, UnlockedClockTimesOutWithoutEnablingStreams) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24,
+                {.clockResponse = DiceClockResponse::kAcceptNeverLock});
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.timer.Advance(3'400'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnTimeout);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceInitialPreparation, StaleRouteCancelsWithoutTouchingTheNewGeneration) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
+    rig.routeState.registry.InvalidateLiveMappingsForBusReset();
+    const auto operations = rig.bus.Operations().size();
+    rig.timer.Advance(400'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnOffline);
+    EXPECT_EQ(rig.bus.Operations().size(), operations);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceInitialPreparation, PreservesObservedRateAndPreparesRestoredRateBeforeStart) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
+    ASSERT_EQ(rig.Run("initial", [&](auto done) { rig.protocol->EnsureRuntimeStreamGeometry(done); }),
+              kIOReturnSuccess);
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.sampleRateHz, 44100U);
+    ASSERT_TRUE(rig.family->ApplyClockIdle({.sampleRateHz = 48000}));
+    rig.bus.ClearOperations();
+    ASSERT_TRUE(rig.family->Configure(rig.ChannelsFor(caps), {.sampleRateHz = 48000}));
+    EXPECT_EQ(std::ranges::count_if(rig.bus.Operations(), [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xe0000074;
+    }), 1);
+}
+
 std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info) {
     std::string name = info.param->key;
     for (char& c : name) {
