@@ -54,6 +54,8 @@ struct AudioStreamTxPolicy final {
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
     Encoding::Motu::TimingPolicy motuTiming{Encoding::Motu::TimingPolicy::ReplayObserved};
+    /// MOTU only: the model's transmit presentation lead (RuntimePolicy).
+    uint32_t motuPresentationLeadTicks{Encoding::Motu::kDefaultPresentationLeadTicks};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 
 };

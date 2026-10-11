@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 #pragma once
 #include "MotuBlockLayout.hpp"
+#include "MotuSph.hpp"
 #include <array>
 #include <cstdint>
 
@@ -18,6 +19,12 @@ inline constexpr bool kSynthHardwareBatch = ASFW_MOTU_SYNTH_VALIDATION != 0;
 // measured. Default builds preserve the observed-offset replay seam.
 inline constexpr TimingPolicy kExperimentalTiming = kSynthHardwareBatch ?
     TimingPolicy::SynthesizedExperimental : TimingPolicy::ReplayObserved;
+// How far ahead of its transmit cycle a packet's presentation time is: the
+// first DATA packet's first block is stamped with its transmit time plus this
+// lead, and the SPH regulator holds the transmit clock from there.
+// assumed: three bus cycles for every model and at every rate. Seen on the
+// wire only for the 828mk3 at 48 kHz (k828mk3Policy).
+inline constexpr uint32_t kDefaultPresentationLeadTicks = 3 * kTicksPerCycle;
 struct RuntimePolicy final {
     TimingPolicy timing{TimingPolicy::ReplayObserved};
     bool requireTimingBeforeFetch{false};
@@ -25,13 +32,17 @@ struct RuntimePolicy final {
     bool deactivateBeforeStart{false};
     bool clearIsoCommLowBits{false};
     bool write48kStreamConfig{false};
+    uint32_t presentationLeadTicks{kDefaultPresentationLeadTicks};
 };
 inline constexpr RuntimePolicy kReplayFetch{.requireTimingBeforeFetch = true};
 inline constexpr RuntimePolicy kOriginal828{.requireTimingBeforeFetch = true, .minimumHostRunMs = 100};
 inline constexpr RuntimePolicy kSynthFetch{.timing = kExperimentalTiming, .requireTimingBeforeFetch = true};
 inline constexpr RuntimePolicy k828mk3Policy{.timing = kExperimentalTiming,
     .requireTimingBeforeFetch = true, .deactivateBeforeStart = true,
-    .clearIsoCommLowBits = true, .write48kStreamConfig = true};
+    .clearIsoCommLowBits = true, .write48kStreamConfig = true,
+    // vendor driver: the official driver's first DATA packet carries an SPH of
+    // exactly its transmit cycle + 9216 ticks (bus capture, 828mk3, 48 kHz).
+    .presentationLeadTicks = 3 * kTicksPerCycle};
 #ifndef ASFW_MOTU_V1_VALIDATION
 #define ASFW_MOTU_V1_VALIDATION 0
 #endif

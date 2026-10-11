@@ -130,6 +130,15 @@ TEST(MotuStack, TimingAndActivationPoliciesAreChosenPerModel) {
     EXPECT_FALSE(SupportsRate(*FindModel(2), 96000));
     EXPECT_FALSE(ResolvePcmChunks(0, 1, 2).opticalDecoded);
 }
+// The transmit presentation lead is a model parameter; every model carries the
+// three cycles seen on the wire of the official 828mk3 driver.
+TEST(MotuStack, PresentationLeadIsThreeCyclesForEveryModel) {
+    EXPECT_EQ(kDefaultPresentationLeadTicks, 9216U);
+    for (const auto& model : kModels) {
+        SCOPED_TRACE(model.name);
+        EXPECT_EQ(model.runtime.presentationLeadTicks, 3U * kTicksPerCycle);
+    }
+}
 
 TEST(MotuStack, OriginalLayoutsAndFireWire896Mk3Geometry) {
     EXPECT_EQ(ResolvePcmChunks(0, 0, 1).tx, 18U);

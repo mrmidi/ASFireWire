@@ -394,6 +394,17 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
               (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
 }
 
+TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLead) {
+    for (const uint32_t version : {0x1U, 0x3U, 0x15U}) {
+        SCOPED_TRACE(version);
+        const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
+        const auto* model = FindModel(version);
+        ASSERT_NE(model, nullptr);
+        EXPECT_EQ(profile.TxStreamPolicy().motuPresentationLeadTicks,
+                  model->runtime.presentationLeadTicks);
+    }
+}
+
 TEST(MotuPayloadCodecTests, MotuRxDiagnosticCaptureRecordsStartupAndSteadyState) {
     MotuRxDiagnosticCapture capture{};
 
