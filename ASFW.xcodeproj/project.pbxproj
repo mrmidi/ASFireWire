@@ -780,7 +780,6 @@
 		35E77E9DF2A0B759301A2D02 /* AnalyzerRenderSubmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerRenderSubmission.swift; sourceTree = "<group>"; };
 		35F37E8BD922667FEF047B58 /* CommandsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandsView.swift; sourceTree = "<group>"; };
 		35FEEEBFF27C11DB7258268C /* SelectProbeBootstrap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelectProbeBootstrap.hpp; sourceTree = "<group>"; };
-		365F0D822752B1C65D350B1E /* MotuSphSynthesizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphSynthesizer.hpp; sourceTree = "<group>"; };
 		36677308040EB4AD3F4E9527 /* IOReturnName.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IOReturnName.hpp; sourceTree = "<group>"; };
 		36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SessionRegistry.cpp; sourceTree = "<group>"; };
 		36C2979781EB95C72EE6C491 /* DiceStreamConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceStreamConfig.hpp; sourceTree = "<group>"; };
@@ -2557,7 +2556,6 @@
 				DAF8D3F446A9C3ED1D7EACFA /* MotuSphHardResyncGate.hpp */,
 				6912DAF0B6A020148CDFE0F6 /* MotuSphQ32Accumulator.hpp */,
 				8366E67059E3DCD0BE5FE2E8 /* MotuSphServoPolicy.hpp */,
-				365F0D822752B1C65D350B1E /* MotuSphSynthesizer.hpp */,
 				B02F97FB6E5F1A78F7D497E6 /* MotuTxTiming.hpp */,
 			);
 			path = MOTU;
@@ -4555,7 +4553,6 @@
 				ARCHS = "x86_64 arm64";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
-				ASFW_MOTU_SYNTH_VALIDATION = 0;
 				ASFW_MOTU_V1_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
@@ -4576,7 +4573,6 @@
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
 					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 					"ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)",
-					"ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -4647,7 +4643,6 @@
 				ARCHS = "x86_64 arm64e";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
-				ASFW_MOTU_SYNTH_VALIDATION = 0;
 				ASFW_MOTU_V1_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
@@ -4668,7 +4663,6 @@
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
 					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 					"ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)",
-					"ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (

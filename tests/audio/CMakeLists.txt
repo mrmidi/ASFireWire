@@ -56,7 +56,7 @@ add_audio_test(Am824PayloadCodecTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
-# Shared MOTU model, framing and synthesis invariants.
+# Shared MOTU model, framing and policy invariants.
 add_audio_test(MotuStackTests MotuStackTests.cpp)
 
 # MOTU Payload Codec and Device Timing Tests

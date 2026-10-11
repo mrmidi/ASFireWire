@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include "ASFWDriver/Audio/Wire/MOTU/MotuModel.hpp"
-#include "ASFWDriver/Audio/Wire/MOTU/MotuSphSynthesizer.hpp"
 #include "ASFWDriver/Audio/Wire/MOTU/MotuPayloadCodec.hpp"
 #include "ASFWDriver/Audio/Protocols/MOTU/MotuRegisters.hpp"
 #include "ASFWDriver/Audio/Runtime/ResolvedAudioConfiguration.hpp"
@@ -61,68 +60,16 @@ TEST(MotuStack, ProprietaryReceivePrefixIsScopedToV3Codec) {
     EXPECT_FALSE(v3.DecodeHeader(OSSwapHostToBigInt32(0x8d040400), q1));
     EXPECT_FALSE(v3.DecodeHeader(q0, OSSwapHostToBigInt32(0x12345678)));
 }
-TEST(MotuSynthesis, FractionalAccumulatorTracksAllSixRatesAcrossSecondWrap) {
-    for (auto rate : kClockRates) {
-        SCOPED_TRACE(rate);
-        SphSynthesizer synth; synth.Configure(rate);
-        const uint32_t seed = kTicksPerSecond - 100;
-        ASSERT_TRUE(synth.Observe(seed));
-        // Avoid feeding the same single seed repeatedly: verify the accumulator
-        // itself retains fractions for more than one second at every rate.
-        for (uint64_t frame = 0; frame < rate + 100U; ++frame) {
-            const auto sph = synth.NextSph();
-            const auto tick = ((sph >> 12) & 0x1fff) * 3072 + (sph & 0xfff);
-            const auto expected = (seed + frame * uint64_t{kTicksPerSecond} / rate) % kTicksPerSecond;
-            const int64_t difference = static_cast<int64_t>(tick) - static_cast<int64_t>(expected);
-            EXPECT_LE(std::abs(difference), 1) << frame;
-        }
+// Every model is timed by the SPH regulator, so timing is not a per-model
+// choice; activation is. Each FireWire-only model waits for the regulator's
+// lock before the device may fetch.
+TEST(MotuStack, ActivationPoliciesAreChosenPerModel) {
+    for (auto version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U}) {
+        ASSERT_TRUE(FireWireOnly(version));
+        EXPECT_TRUE(FindModel(version)->runtime.requireTimingBeforeFetch) << version;
     }
-}
-TEST(MotuSynthesis, AcquiresDeviceDriftWithoutReplayingIntraPacketNoise) {
-    SphSynthesizer synth; synth.Configure(48000);
-    for (uint32_t frame = 0; frame < 10000; frame += 8) {
-        const auto ideal = static_cast<uint32_t>(20000 + frame * 512.0 / 1.0001);
-        ASSERT_TRUE(synth.Observe(ideal));
-        const auto first = synth.NextSph();
-        const auto tick = ((first >> 12) & 0x1fff) * 3072 + (first & 0xfff);
-        if (frame > 4096) EXPECT_LE(std::abs(static_cast<int64_t>(tick) - ideal), 3);
-        for (int i = 1; i < 8; ++i) (void)synth.NextSph();
-    }
-    EXPECT_TRUE(synth.Current().locked);
-    EXPECT_LT(synth.Current().stepQ32, (int64_t{512} << 32));
-}
-TEST(MotuSynthesis, PhaseDiscontinuityReanchorsAndReacquiresWithoutStopping) {
-    SphSynthesizer synth; synth.Configure(48000);
-    ASSERT_TRUE(synth.Observe(10000));
-    for (int i = 0; i < 8; ++i) (void)synth.NextSph();
-    const uint32_t anchor = 10000 + 4096 + 4 * 3072 + 1;
-    ASSERT_TRUE(synth.Observe(anchor));
-    EXPECT_TRUE(synth.Current().ready);
-    EXPECT_FALSE(synth.Current().locked);
-    EXPECT_EQ(synth.Current().resyncCount, 1U);
-    EXPECT_EQ(synth.NextSph(), SphFromTick(anchor));
-    for (int i = 1; i < 512; ++i) (void)synth.NextSph();
-    ASSERT_TRUE(synth.Observe(anchor + 512 * 512));
-    EXPECT_TRUE(synth.Current().locked);
-    EXPECT_FALSE(synth.Current().discontinuity);
-    EXPECT_EQ(synth.NextSph(), SphFromTick(anchor + 512 * 512));
-}
-TEST(MotuSynthesis, MalformedAndBackwardObservationsDoNotPermanentlyLatch) {
-    SphSynthesizer synth; synth.Configure(48000);
-    ASSERT_TRUE(synth.Observe(10000));
-    for (int i = 0; i < 8; ++i) (void)synth.NextSph();
-    EXPECT_FALSE(synth.Observe(kTicksPerSecond));
-    EXPECT_FALSE(synth.Observe(9000));
-    EXPECT_TRUE(synth.Observe(14096));
-    EXPECT_TRUE(synth.Current().ready);
-    EXPECT_EQ(synth.NextSph(), SphFromTick(14096));
-}
-TEST(MotuStack, TimingAndActivationPoliciesAreChosenPerModel) {
-    for (auto version : {1U,2U,3U,5U,9U,13U,15U})
-        EXPECT_EQ(FindModel(version)->runtime.timing, TimingPolicy::ReplayObserved);
+    EXPECT_EQ(FindModel(1U)->runtime.minimumHostRunMs, 100U);
     for (auto version : {21U,23U,25U,27U}) {
-        EXPECT_EQ(FindModel(version)->runtime.timing, kExperimentalTiming);
-        EXPECT_TRUE(FindModel(version)->runtime.requireTimingBeforeFetch);
         EXPECT_EQ(FindModel(version)->runtime.deactivateBeforeStart, version == 21U);
         EXPECT_EQ(FindModel(version)->runtime.clearIsoCommLowBits, version == 21U);
         EXPECT_EQ(FindModel(version)->runtime.write48kStreamConfig, version == 21U);
