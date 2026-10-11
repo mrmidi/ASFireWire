@@ -1059,6 +1059,7 @@
 		77718C25B7597AEFA561E918 /* AudioDriverConfigPolicy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDriverConfigPolicy.cpp; sourceTree = "<group>"; };
 		77E0A0CD727F9B32F646D13A /* ConfigROMStager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMStager.cpp; sourceTree = "<group>"; };
 		77E8C63140AA1CA70700B0A0 /* StatusPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StatusPublisher.cpp; sourceTree = "<group>"; };
+		77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPhaseTrace.hpp; sourceTree = "<group>"; };
 		780289076436D559DE381E30 /* CSRContract.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRContract.hpp; sourceTree = "<group>"; };
 		7826C0490B2B0BD154EAED9F /* BeBoBBootloaderPreparation.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBBootloaderPreparation.cpp; sourceTree = "<group>"; };
 		782F6B3B8831C7D812DD7704 /* AsyncSubsystemBusReset.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemBusReset.cpp; sourceTree = "<group>"; };
@@ -3568,6 +3569,7 @@
 				BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */,
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
+				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 			);
 			path = Runtime;
