@@ -74,10 +74,10 @@ public:
         if (rawAckCode == 0x8 && comp.ackCode == rawAckCode) {
             ASFW_LOG_V1(Async,
                         "AT completion raw ack nibble 0x8 survived normalization: "
-                        "tLabel=%u event=0x%02X (%{public}s) ts=%u ackCount=%u. "
+                        "tLabel=%u event=0x%02X (%{public}s) ts=%u spd=%u. "
                         "Linux treats eventCode, not this nibble, as authoritative.",
                         comp.tLabel, static_cast<uint8_t>(comp.eventCode),
-                        ToString(comp.eventCode), comp.timeStamp, comp.ackCount);
+                        ToString(comp.eventCode), comp.timeStamp, comp.speed);
         }
 
         // AT Response context completions correspond to WrResp acks we send back
@@ -103,8 +103,8 @@ public:
         ATPostResult postResult;
 
         ASFW_LOG_V2(Async,
-                    "🔄 OnATCompletion: tLabel=%u ack=0x%X event=0x%02X ts=%u ackCount=%u",
-                    comp.tLabel, comp.ackCode, static_cast<uint8_t>(comp.eventCode), comp.timeStamp, comp.ackCount);
+                    "🔄 OnATCompletion: tLabel=%u ack=0x%X event=0x%02X ts=%u spd=%u",
+                    comp.tLabel, comp.ackCode, static_cast<uint8_t>(comp.eventCode), comp.timeStamp, comp.speed);
 
         // Find transaction by tLabel
         bool found = txnMgr_->WithTransactionByLabel(TLabel{comp.tLabel}, [&](Transaction* txn) {
