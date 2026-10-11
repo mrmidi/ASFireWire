@@ -871,7 +871,6 @@
 		4D671C398E07E582F14F5A56 /* ControllerCoreAccess.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerCoreAccess.hpp; sourceTree = "<group>"; };
 		4D7F3E7B85E3BCC651D2BC9C /* AnalyzerTimingStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerTimingStatistics.swift; sourceTree = "<group>"; };
 		4D994BDB948D370E6F61467F /* DuetControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetControlView.swift; sourceTree = "<group>"; };
-		4DF481CDEDE5AFA09A2E649A /* MotuEventOffsetCache.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuEventOffsetCache.hpp; sourceTree = "<group>"; };
 		4DFC5D271E3484233BD1B0D2 /* TopologyHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyHandler.hpp; sourceTree = "<group>"; };
 		4E065C1061BFE1DDEBFCEF3B /* ControllerStateMachine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerStateMachine.hpp; sourceTree = "<group>"; };
 		4E4A6CA6172FE6548D83C3B9 /* ResolvedAudioConfiguration.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ResolvedAudioConfiguration.hpp; sourceTree = "<group>"; };
@@ -2541,7 +2540,6 @@
 				4343F3527B3CEA77F73E62EB /* MotuBlockCodec.hpp */,
 				B297F57F5F8592875537BB88 /* MotuBlockLayout.hpp */,
 				A26A0D6C7257A20EF0E2569E /* MotuDeviceTiming.hpp */,
-				4DF481CDEDE5AFA09A2E649A /* MotuEventOffsetCache.hpp */,
 				751D51C8E06FC1670D3DCDB4 /* MotuModel.hpp */,
 				70905838A5754565A839A4F9 /* MotuPayloadCodec.hpp */,
 				B8A798523A386FF95BDEB419 /* MotuPayloadReader.hpp */,

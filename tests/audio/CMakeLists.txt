@@ -104,11 +104,6 @@ add_audio_test(MotuPayloadReaderTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
-# MOTU per-data-block presentation offset cache
-add_audio_test(MotuEventOffsetCacheTests
-    MotuEventOffsetCacheTests.cpp
-)
-
 # MOTU transmit-side SPH replay
 add_audio_test(MotuTxTimingTests
     MotuTxTimingTests.cpp

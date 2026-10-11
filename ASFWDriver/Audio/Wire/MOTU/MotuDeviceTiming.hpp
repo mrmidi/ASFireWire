@@ -4,7 +4,6 @@
 #pragma once
 
 #include "../../Ports/IWirePayloadCodec.hpp"
-#include "MotuEventOffsetCache.hpp"
 #include "MotuTxTiming.hpp"
 #include "MotuModel.hpp"
 #include "MotuSphClockServo.hpp"
@@ -25,11 +24,16 @@
 
 namespace ASFW::Audio::Wire {
 
-// Besides the per-block offset cache, the observer measures the device's
-// sample period from the received SPH (MotuRxSphRateMeter) and publishes the
-// cumulative measurement over the control block's motuRxSphClock bridge, for
-// the transmit SPH regulator. The SPH format is the same for every MOTU
-// protocol version, so this runs for all of them.
+// The observer measures the device's sample period from the received SPH
+// (MotuRxSphRateMeter) and publishes the cumulative measurement over the
+// control block's motuRxSphClock bridge, for the transmit SPH regulator. The
+// SPH format is the same for every MOTU protocol version, so this runs for all
+// of them.
+//
+// It also tells the receive consumer when the device's timing is being
+// observed (IsTimingEstablished): from the first DATA packet with an SPH after
+// a Reset() or a new stream generation. That establishes the receive replay,
+// whose DATA/NO-DATA cadence the transmit side replays.
 //
 // Stream boundaries: a new control generation (StartIO) starts the measurement
 // over, together with the bridge. Reset() -- receive activation, quiesce and
@@ -44,17 +48,8 @@ public:
         ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept
         : bindingSource_(bindingSource) {}
 
-    explicit MotuRxTimingObserver(
-        ::ASFW::Encoding::Motu::MotuEventOffsetCache* cache) noexcept
-        : explicitCache_(cache), activeCache_(cache) {}
-
     void BindSource(::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
         bindingSource_ = bindingSource;
-    }
-
-    void BindCache(::ASFW::Encoding::Motu::MotuEventOffsetCache* cache) noexcept {
-        explicitCache_ = cache;
-        activeCache_ = cache;
     }
 
     void BindDiagnosticCapture(MotuRxDiagnosticCapture* capture, uint32_t strideQuadlets = 0, uint64_t sourceGuid = 0) noexcept {
@@ -67,18 +62,12 @@ public:
         if (bindingSource != nullptr) {
             bindingSource_ = bindingSource;
         }
-        if (explicitCache_ != nullptr) {
-            activeCache_ = explicitCache_;
-            return;
-        }
         if (bindingSource_ != nullptr) {
             ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
             if (bindingSource_->CopyDirectAudioBinding(snapshot) && snapshot.control != nullptr) {
-                activeCache_ = &snapshot.control->motuEventOffsets;
                 sampleRateHz_ = snapshot.sampleRateHz;
                 BindClockControl(snapshot.control);
             } else {
-                activeCache_ = nullptr;
                 sampleRateHz_ = 0;
                 clockControl_ = nullptr;
             }
@@ -99,26 +88,21 @@ public:
         uint32_t strideQuadlets,
         uint32_t framesDecoded,
         uint16_t cycle) noexcept override {
+        (void)cycle;
         MeasureRxClock(payload, framesDecoded);
-        if (activeCache_ == nullptr) {
-            return;
-        }
-        const uint32_t cached = activeCache_->Capture(
-            payload, strideQuadlets, framesDecoded, cycle, kMotuCipPrefixBytes);
-        if (cached > 0) {
+        // A DATA packet whose first block's SPH is there to read.
+        if (clockControl_ != nullptr && framesDecoded != 0 && strideQuadlets != 0 &&
+            payload.size() >= kMotuCipPrefixBytes + 4U) {
             timingEstablished_ = true;
         }
     }
 
     [[nodiscard]] bool IsTimingEstablished() const noexcept override {
-        return timingEstablished_ && (activeCache_ != nullptr && activeCache_->IsEstablished());
+        return timingEstablished_ && clockControl_ != nullptr;
     }
 
     void Reset() noexcept override {
         timingEstablished_ = false;
-        if (activeCache_ != nullptr) {
-            activeCache_->Reset();
-        }
         rxClock_.Reanchor();
         stallDetector_.Reset();
         // Reset() also runs on quiesce, after which the control block may be
@@ -145,6 +129,7 @@ private:
     void BindClockControl(::ASFW::Audio::Runtime::AudioTransportControlBlock* control) noexcept {
         const uint64_t generation = control->generation.load(std::memory_order_acquire);
         if (control != clockGenerationControl_ || generation != clockGeneration_) {
+            timingEstablished_ = false;
             rxClock_.Reset();
             stallDetector_.Reset();
             clockGenerationControl_ = control;
@@ -202,8 +187,6 @@ private:
     }
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache* explicitCache_{nullptr};
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache* activeCache_{nullptr};
     MotuRxDiagnosticCapture* diagnosticCapture_{nullptr};
     uint32_t sampleRateHz_{0};
     uint64_t diagnosticGuid_{0};

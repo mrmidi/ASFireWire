@@ -157,36 +157,6 @@ TEST(MotuPayloadCodecTests, DecodeBlockExtractsFloatSamplesAndHandlesDelay) {
     EXPECT_NEAR(delayedOut[1], -0.5f, 1e-5f);
 }
 
-TEST(MotuPayloadCodecTests, RxTimingObserverCapturesOffsetsAndEstablishesTiming) {
-    MotuEventOffsetCache cache;
-    MotuRxTimingObserver observer(&cache);
-
-    EXPECT_FALSE(observer.IsTimingEstablished());
-
-    // Build packet payload with 2 blocks (kDbs = 4 quadlets = 16 bytes per block).
-    // Total size = 16 bytes prefix (8 isoch + 8 CIP) + 2 * 16 = 48 bytes.
-    constexpr uint32_t kDbs = 4;
-    constexpr uint32_t kDataBlocks = 2;
-    std::vector<uint8_t> payload(16 + kDataBlocks * kDbs * 4, 0);
-
-    // Write SPH to block 0 and block 1
-    // Tick at cycle 100, tick 500: SPH = (100 << 12) | 500
-    uint32_t sph0 = (100U << 12) | 500U;
-    uint32_t sph1 = (100U << 12) | 1500U;
-    StoreBigEndian(payload.data() + 16, sph0);
-    StoreBigEndian(payload.data() + 16 + 16, sph1);
-
-    // Feed 32 runs of packets to seed cache and pass min contiguous runs threshold
-    for (uint32_t i = 0; i < 35; ++i) {
-        observer.ObservePacket(payload, kDbs, kDataBlocks, /*cycle=*/100);
-    }
-
-    EXPECT_TRUE(observer.IsTimingEstablished());
-
-    observer.Reset();
-    EXPECT_FALSE(observer.IsTimingEstablished());
-}
-
 TEST(MotuPayloadCodecTests, TxTimingStamperStampsTheRegulatorClockAndZeroesBeforeTheSeed) {
     constexpr uint32_t kDbs = 4;
     MotuTxTimingStamper stamper{};
@@ -702,6 +672,67 @@ TEST(MotuPayloadCodecTests, RxTimingObserverMeasuresAtTheBoundRate) {
     ASSERT_TRUE(clock.published);
     EXPECT_EQ(clock.sample.rxFrames, 16U);
     EXPECT_EQ(clock.sample.rxTicks, 4096);
+}
+
+// The receive replay establishes once the device's timing is observed: the
+// first DATA packet with an SPH since the last Reset() or stream generation.
+TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesTimingOnTheFirstDataPacket) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    // A NO-DATA packet carries no SPH; a truncated one has none to read.
+    observer.ObservePacket(std::vector<uint8_t>(16, 0), 4, 0, 0);
+    observer.ObservePacket(std::vector<uint8_t>(18, 0), 4, 1, 1);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 2);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    // Receive activation, quiesce and replay discontinuities start over.
+    observer.Reset();
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 3);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+}
+
+// A new stream generation starts over too, even on the same control block. A
+// batch without a binding observes nothing, and the same stream picks up
+// where it was once the binding is back.
+TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesPerGenerationAndOnlyWhileBound) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    ASSERT_TRUE(observer.IsTimingEstablished());
+
+    source.bound = false;
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    source.bound = true;
+    observer.OnBatchBegin(nullptr);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    control.ResetForStart();
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    // Never without any binding source at all.
+    MotuRxTimingObserver unbound{};
+    unbound.OnBatchBegin(nullptr);
+    unbound.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    EXPECT_FALSE(unbound.IsTimingEstablished());
 }
 
 TEST(MotuPayloadCodecTests, RxTimingObserverPublishesNothingWithoutABinding) {

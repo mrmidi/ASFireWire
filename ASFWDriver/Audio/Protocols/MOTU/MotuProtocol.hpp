@@ -8,9 +8,10 @@
 // kAddrBase + offset) and the cached device state those reads produce.
 //
 // Device-side streaming bring-up IS implemented here, through FamilyDriver.
-// The host-side half -- replaying the device's per-data-block SPH presentation times --
-// lives in Audio/Wire/MOTU (MotuEventOffsetCache captures, MotuTxTiming stamps), because
-// it belongs with packet timing rather than register control.
+// The host-side half -- the per-data-block SPH presentation times -- lives in
+// Audio/Wire/MOTU (MotuRxTimingObserver measures the device clock, MotuTxTimingStamper
+// stamps the transmit SPH), because it belongs with packet timing rather than
+// register control.
 
 #pragma once
 
@@ -88,10 +89,11 @@ public:
     // hands the assignments in via AudioDuplexChannels.
     //
     // These hooks are only the register half. MOTU is duplex-always and recovers its
-    // media clock from the host replaying the device's own cadence -- both the
-    // data-blocks-per-packet sequence and the per-block SPH presentation times
-    // (motu-stream.c:289-291). That half lives in Audio/Wire/MOTU: MotuEventOffsetCache
-    // captures the offsets on receive, MotuTxTiming stamps them back on transmit.
+    // media clock from the host's stream -- the data-blocks-per-packet sequence, which
+    // the host replays from the device's own, and the per-block SPH presentation times
+    // (motu-stream.c:289-291). That half lives in Audio/Wire/MOTU: MotuRxTimingObserver
+    // measures the device clock on receive, MotuTxTimingStamper stamps the SPH from the
+    // regulator that follows it on transmit.
     //==========================================================================
 
     // IDeviceProtocol -> FamilyDriver. Returning `this` is what makes the audio
