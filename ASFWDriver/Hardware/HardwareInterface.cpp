@@ -187,6 +187,38 @@ bool HardwareInterface::IsAvailable() const noexcept {
     return accessGate_.IsOpen() && static_cast<bool>(device_);
 }
 
+PciInterruptState HardwareInterface::ReadPciInterruptState() const noexcept {
+    PciInterruptState state{};
+#ifndef ASFW_HOST_TEST
+    if (!device_ || HardwareGone()) {
+        return state;
+    }
+    device_->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &state.command);
+    device_->ConfigurationRead16(kIOPCIConfigurationOffsetStatus, &state.status);
+
+    constexpr uint64_t kMessageControl = 2;
+    constexpr uint16_t kMsi64Bit = 0x0080;
+    constexpr uint16_t kMsiPerVectorMask = 0x0100;
+    uint64_t msi = 0;
+    if (device_->FindPCICapability(kIOPCICapabilityIDMSI, 0, &msi) == kIOReturnSuccess && msi != 0) {
+        state.msiPresent = true;
+        device_->ConfigurationRead16(msi + kMessageControl, &state.msiControl);
+        if ((state.msiControl & kMsiPerVectorMask) != 0) {
+            const uint64_t maskOffset = (state.msiControl & kMsi64Bit) != 0 ? 0x10 : 0x0C;
+            device_->ConfigurationRead32(msi + maskOffset, &state.msiMaskBits);
+        }
+    }
+    uint64_t msix = 0;
+    if (device_->FindPCICapability(kIOPCICapabilityIDMSIX, 0, &msix) == kIOReturnSuccess &&
+        msix != 0) {
+        state.msixPresent = true;
+        device_->ConfigurationRead16(msix + kMessageControl, &state.msixControl);
+    }
+    state.valid = true;
+#endif
+    return state;
+}
+
 bool HardwareInterface::HardwareGone() const noexcept {
     return hardwareGoneReason_.load(std::memory_order_acquire) !=
            static_cast<uint8_t>(HardwareGoneReason::kNone);

@@ -55,6 +55,12 @@ public:
     /// enabled event still pending this deasserts and reasserts the interrupt
     /// output, so the controller sends a new MSI (InterruptDrain.hpp).
     void RetriggerPendingInterrupt(class HardwareInterface* hw);
+    /// Whether the dispatch source was last enabled (Enable) or disabled
+    /// (Disable/Teardown). Read by the watchdog's [IrqStall] report: an ISR that
+    /// is never entered looks the same whether the source or the MSI is off.
+    [[nodiscard]] bool SourceEnabled() const noexcept {
+        return sourceEnabled_.load(std::memory_order_acquire);
+    }
 
 private:
     std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion_;
@@ -63,6 +69,7 @@ private:
     OSSharedPtr<OSAction> handler_;
     
     std::atomic<uint32_t> shadowMask_{0};
+    std::atomic<bool> sourceEnabled_{false};
 };
 
 } // namespace ASFW::Driver

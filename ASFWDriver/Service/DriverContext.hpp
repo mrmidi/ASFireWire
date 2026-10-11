@@ -38,6 +38,10 @@ struct ServiceContext {
     std::atomic<uint64_t> irqEntries{0}, irqExits{0};
     uint32_t irqProbeTicks{0}, irqPendingSamples{0}, irqProbeReports{0};
     uint64_t irqProbeLastEntries{0};
+    // One master-enable retrigger per stall, issued by the watchdog; the next
+    // probe reports whether the ISR was entered again.
+    bool irqRetriggerPending{false};
+    uint64_t irqRetriggerEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
     // Initial (wiring-time) role policy. The runtime-mutable copy is owned by
