@@ -462,6 +462,7 @@ TEST(AudioTransportControlBlockTests, MotuPhaseTraceBridgeCarriesTheWholePeriodF
         .outputLastCycleTimer = 0x04234000u,
         .hasOutputLast = true,
         .count = 3,
+        .presentationLeadTicks = 9216,
     };
     ASSERT_TRUE(control.motuPhaseTrace.Publish(published));
     ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
@@ -476,6 +477,7 @@ TEST(AudioTransportControlBlockTests, MotuPhaseTraceBridgeCarriesTheWholePeriodF
     EXPECT_EQ(period.outputLastPacketIndex, 400U);
     EXPECT_EQ(period.outputLastCycleTimer, 0x04234000u);
     EXPECT_TRUE(period.hasOutputLast);
+    EXPECT_EQ(period.presentationLeadTicks, 9216U);
 
     // A period from another generation, or claiming more buckets than exist.
     auto stale = published;

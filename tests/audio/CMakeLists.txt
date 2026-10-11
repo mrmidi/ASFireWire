@@ -149,6 +149,20 @@ add_audio_test(MotuRelPhaseConditionerTests
     MotuRelPhaseConditionerTests.cpp
 )
 
+# MOTU SPH regulator: the transmit presentation residual and its cadence lattice
+add_audio_test(MotuTxPhaseResidualQuantizationTests
+    MotuTxPhaseResidualQuantizationTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+)
+
 # MOTU SPH regulator: device sample period measured from received SPH
 add_audio_test(MotuRxSphRateMeterTests
     MotuRxSphRateMeterTests.cpp
