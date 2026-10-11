@@ -578,6 +578,7 @@
 		068AAF5222F8DFC30E8B20D9 /* Focusrite.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Focusrite.hpp; sourceTree = "<group>"; };
 		0690EC90E1D7902BAB4BCA5B /* RestartRoutine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RestartRoutine.cpp; sourceTree = "<group>"; };
 		06DA3E0EF778EAF9B01DC7CD /* PayloadPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadPolicy.hpp; sourceTree = "<group>"; };
+		06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxSphClockSnapshot.hpp; sourceTree = "<group>"; };
 		070831F2CFF382CA4A41D45E /* InfoRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoRow.swift; sourceTree = "<group>"; };
 		070AC8A37A94176E7AACEFF0 /* ControllerCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCore.cpp; sourceTree = "<group>"; };
 		077468963C2F7E7BB91E28CB /* ASFWMCPBeBoBTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBeBoBTools.swift; sourceTree = "<group>"; };
@@ -3567,6 +3568,7 @@
 				BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */,
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
+				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";

@@ -15,6 +15,7 @@ using ASFW::Audio::Runtime::TxProducerFaultReason;
 using ASFW::Audio::Runtime::TxProducerFaultRecord;
 using ASFW::Audio::Runtime::TxProducerFaultStage;
 using ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot;
+using ASFW::Audio::Runtime::MotuRxSphClockSample;
 
 TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalescible) {
     TxPreparationRequestState requests{};
@@ -270,6 +271,80 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.fatalGeneration.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
               FatalStreamReason::None);
+}
+
+// The MOTU RX clock bridge carries one cumulative measurement per publication,
+// for the armed start generation only, and only forward.
+TEST(AudioTransportControlBlockTests, MotuRxSphClockBridgePublishesOnlyMonotonicCurrentGeneration) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t streamGeneration = control.generation.load(std::memory_order_acquire);
+
+    MotuRxSphClockSample observed{};
+    uint64_t updates = 0;
+    EXPECT_FALSE(control.motuRxSphClock.ReadLatest(observed, updates));
+
+    // Four seconds at exactly 512 ticks per frame (48 kHz).
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration, .rxFrames = 192000, .rxTicks = 98304000}));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(observed.streamGeneration, streamGeneration);
+    EXPECT_EQ(observed.rxFrames, 192000U);
+    EXPECT_EQ(observed.rxTicks, 98304000);
+
+    // Backwards in the same generation, and a generation that is not armed.
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration, .rxFrames = 191992, .rxTicks = 98299904}));
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration + 1, .rxFrames = 192008, .rxTicks = 98308096}));
+    // Frames forward with ticks standing still is not a measurement either.
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration, .rxFrames = 192008, .rxTicks = 98304000}));
+    // Empty samples are refused outright.
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = 0, .rxFrames = 192008, .rxTicks = 98308096}));
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration, .rxFrames = 0, .rxTicks = 98308096}));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(observed.rxFrames, 192000U);
+
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = streamGeneration, .rxFrames = 192008, .rxTicks = 98308096}));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 2U);
+    EXPECT_EQ(observed.rxFrames, 192008U);
+    EXPECT_EQ(observed.rxTicks, 98308096);
+}
+
+// A new start empties the bridge, re-arms it with the new generation, and
+// refuses a late publication from the stream before it.
+TEST(AudioTransportControlBlockTests, MotuRxSphClockBridgeRebasesOnStartGeneration) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t firstGeneration = control.generation.load(std::memory_order_acquire);
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = firstGeneration, .rxFrames = 192000, .rxTicks = 98304000}));
+
+    control.ResetForStart();
+    const uint64_t secondGeneration = control.generation.load(std::memory_order_acquire);
+    ASSERT_EQ(secondGeneration, firstGeneration + 1);
+
+    MotuRxSphClockSample observed{};
+    uint64_t updates = 0;
+    EXPECT_FALSE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_FALSE(control.motuRxSphClock.Publish(
+        {.streamGeneration = firstGeneration, .rxFrames = 192008, .rxTicks = 98308096}));
+
+    // The counters start over: a small sample is accepted in the new stream.
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = secondGeneration, .rxFrames = 8, .rxTicks = 4096}));
+    ASSERT_TRUE(control.motuRxSphClock.ReadLatest(observed, updates));
+    EXPECT_EQ(updates, 1U);
+    EXPECT_EQ(observed.streamGeneration, secondGeneration);
+    EXPECT_EQ(observed.rxFrames, 8U);
+    EXPECT_EQ(observed.rxTicks, 4096);
 }
 
 } // namespace

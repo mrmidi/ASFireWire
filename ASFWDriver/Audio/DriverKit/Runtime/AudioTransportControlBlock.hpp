@@ -2,6 +2,7 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
+#include "MotuRxSphClockSnapshot.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
@@ -565,6 +566,11 @@ struct AudioTransportControlBlock final {
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
     std::atomic<uint32_t> txTransferDelayTicks{
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
+    /// MOTU device clock measured from received SPH: published by the master RX
+    /// stream's timing observer, read by the serialized TX producer for the SPH
+    /// stamper. Armed per start generation in ResetForStart; unused by every
+    /// other family.
+    MotuRxSphClockLatest motuRxSphClock{};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
 
@@ -729,7 +735,13 @@ struct AudioTransportControlBlock final {
         captureRingFirstCompleteRead.store(false, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
-        generation.fetch_add(1, std::memory_order_acq_rel);
+        const uint64_t armedGeneration =
+            generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+        // Generation-stamped bridges are armed after the increment, with the
+        // generation they belong to, so a publication from the previous stream
+        // is refused rather than read as this one's. ResetForStart runs before
+        // the IT/IR contexts are armed, so no writer races these resets.
+        motuRxSphClock.Reset(armedGeneration);
     }
 };
 
