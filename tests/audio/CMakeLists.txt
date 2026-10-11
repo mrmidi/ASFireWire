@@ -129,6 +129,11 @@ add_audio_test(MotuSphClockServoTests
     MotuSphClockServoTests.cpp
 )
 
+# MOTU SPH regulator: per-rate production configuration
+add_audio_test(MotuSphServoPolicyTests
+    MotuSphServoPolicyTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp

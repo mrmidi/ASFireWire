@@ -7,6 +7,7 @@
 
 #include "Audio/Wire/MOTU/MotuSphClockServo.hpp"
 #include "Audio/Wire/MOTU/MotuSphHardResyncGate.hpp"
+#include "Audio/Wire/MOTU/MotuSphServoPolicy.hpp"
 
 #include <gtest/gtest.h>
 
@@ -832,27 +833,18 @@ TEST(MotuSphClockServoTests, AbsolutePhaseArrivingLateReReferencesTheLoop) {
 
 // --- The two-stage loop ------------------------------------------------------
 //
-// These pin the servo's thresholds, so they run at the production 48 kHz
-// decision interval and step clamp rather than at wide synthetic bounds. A
-// number here changing means a threshold changed.
+// These pin the servo's thresholds, so they run on the production 48 kHz
+// configuration (decision interval and step clamp) rather than on wide
+// synthetic bounds. A number here changing means a threshold changed.
 constexpr uint64_t kProductionIntervalFrames = 512;
 constexpr uint32_t kProductionRate = 48000;
 
-constexpr int64_t StepQ32AtRate(uint32_t rateHz) {
-    return static_cast<int64_t>((static_cast<__int128>(kTicksPerSecond) << MotuSphClockServo::kFractionBits) /
-                                rateHz);
-}
-
 MotuSphServoConfig ProductionConfig(uint32_t acquisitionShift) {
-    return {
-        .sampleRateHz = kProductionRate,
-        .phaseCorrectionHorizonFrames = kProductionIntervalFrames,
-        .phaseGainShift = 2,
-        .acquisitionPhaseGainShift = acquisitionShift,
-        .minimumStepQ32 = StepQ32AtRate(50160),
-        .maximumStepQ32 = StepQ32AtRate(41895),
-        .absolutePhaseSetpointTicks = kSetpoint,
-    };
+    auto config = *ASFW::Encoding::Motu::MotuSphServoConfigForRate(kProductionRate);
+    EXPECT_EQ(config.phaseCorrectionHorizonFrames, kProductionIntervalFrames);
+    config.acquisitionPhaseGainShift = acquisitionShift;
+    config.absolutePhaseSetpointTicks = kSetpoint;
+    return config;
 }
 
 MotuSphServoObservation SeededObservation(uint64_t frames, int64_t extraTicks, int64_t phaseTicks,
