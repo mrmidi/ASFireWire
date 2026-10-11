@@ -2,36 +2,60 @@
 // Copyright (c) 2026 ASFireWire Project
 #pragma once
 #include "MotuBlockLayout.hpp"
+#include "MotuSph.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace ASFW::Encoding::Motu {
 enum class ProtocolVersion : uint8_t { V1 = 1, V2, V3 };
 enum class OpticalLayout : uint8_t { None, V2, V2EightPre, V3Banks };
 enum class FetchRule : uint8_t { None, Traveler, Spartan, V3 };
-enum class TimingPolicy : uint8_t { ReplayObserved, SynthesizedExperimental };
-#ifndef ASFW_MOTU_SYNTH_VALIDATION
-#define ASFW_MOTU_SYNTH_VALIDATION 0
-#endif
-inline constexpr bool kSynthHardwareBatch = ASFW_MOTU_SYNTH_VALIDATION != 0;
-// Synthesis remains a model opt-in experiment until equivalent behavior is
-// measured. Default builds preserve the observed-offset replay seam.
-inline constexpr TimingPolicy kExperimentalTiming = kSynthHardwareBatch ?
-    TimingPolicy::SynthesizedExperimental : TimingPolicy::ReplayObserved;
+// How far ahead of its transmit cycle a packet's presentation time is: the
+// first DATA packet's first block is stamped with its transmit time plus this
+// lead, and the SPH regulator holds the transmit clock from there.
+// assumed: three bus cycles for every model and at every rate. Seen on the
+// wire only for the 828mk3 at 48 kHz (k828mk3Policy).
+inline constexpr uint32_t kDefaultPresentationLeadTicks = 3 * kTicksPerCycle;
+// The absolute presentation phase the SPH regulator holds at 48 kHz, in ticks:
+// `rel`, the transmit presentation residual minus the device's absolute
+// receive phase, as MotuRxTimingObserver forms it. Seen on the wire only for
+// the 828mk3 (k828mk3Policy).
+// assumed: the same value for every other model.
+// assumed: our `rel` reads the quantity the official driver's capture was
+// analysed for (the same cadence-period mean); that the loop holds it is seen
+// only through that instrument.
+inline constexpr int32_t kDefaultAbsolutePhaseSetpointTicks48k = 510;
 struct RuntimePolicy final {
-    TimingPolicy timing{TimingPolicy::ReplayObserved};
     bool requireTimingBeforeFetch{false};
     uint32_t minimumHostRunMs{0};
     bool deactivateBeforeStart{false};
     bool clearIsoCommLowBits{false};
     bool write48kStreamConfig{false};
+    uint32_t presentationLeadTicks{kDefaultPresentationLeadTicks};
+    int32_t absolutePhaseSetpointTicks48k{kDefaultAbsolutePhaseSetpointTicks48k};
 };
-inline constexpr RuntimePolicy kReplayFetch{.requireTimingBeforeFetch = true};
+// The setpoint the regulator holds at a rate, or none. Only 48 kHz has one:
+// at every other rate the loop is relative and holds the phase the stream
+// started with.
+[[nodiscard]] constexpr std::optional<int32_t> AbsolutePhaseSetpointTicksAtRate(
+    int32_t setpointTicks48k, uint32_t sampleRateHz) noexcept {
+    if (sampleRateHz != 48'000) {
+        return std::nullopt;
+    }
+    return setpointTicks48k;
+}
+inline constexpr RuntimePolicy kTimingBeforeFetch{.requireTimingBeforeFetch = true};
 inline constexpr RuntimePolicy kOriginal828{.requireTimingBeforeFetch = true, .minimumHostRunMs = 100};
-inline constexpr RuntimePolicy kSynthFetch{.timing = kExperimentalTiming, .requireTimingBeforeFetch = true};
-inline constexpr RuntimePolicy k828mk3Policy{.timing = kExperimentalTiming,
+inline constexpr RuntimePolicy k828mk3Policy{
     .requireTimingBeforeFetch = true, .deactivateBeforeStart = true,
-    .clearIsoCommLowBits = true, .write48kStreamConfig = true};
+    .clearIsoCommLowBits = true, .write48kStreamConfig = true,
+    // vendor driver: the official driver's first DATA packet carries an SPH of
+    // exactly its transmit cycle + 9216 ticks (bus capture, 828mk3, 48 kHz).
+    .presentationLeadTicks = 3 * kTicksPerCycle,
+    // vendor driver: the official driver holds rel at +510 ticks with zero
+    // spread over 87.5 s on the wire (828mk3, 48 kHz).
+    .absolutePhaseSetpointTicks48k = 510};
 #ifndef ASFW_MOTU_V1_VALIDATION
 #define ASFW_MOTU_V1_VALIDATION 0
 #endif
@@ -54,16 +78,16 @@ struct Model final {
 // padding chunks; they must never be interpreted as physical port counts.
 inline constexpr std::array kModels{
     Model{0x1, "828", ProtocolVersion::V1, {10,0,0}, {10,0,0}, OpticalLayout::None, FetchRule::None, 0, kOriginal828},
-    Model{0x2, "896", ProtocolVersion::V1, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::None, 2, kReplayFetch},
-    Model{0x3, "828mk2", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::V2, FetchRule::None, 0, kReplayFetch},
-    Model{0x5, "896HD", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::None, 0, kReplayFetch},
-    Model{0x9, "Traveler", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::Traveler, 0, kReplayFetch},
-    Model{0xd, "UltraLite", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::None, FetchRule::Spartan, 0, kReplayFetch},
-    Model{0xf, "8pre", ProtocolVersion::V2, {10,10,0}, {6,6,0}, OpticalLayout::V2EightPre, FetchRule::Spartan, 0, kReplayFetch},
+    Model{0x2, "896", ProtocolVersion::V1, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::None, 2, kTimingBeforeFetch},
+    Model{0x3, "828mk2", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::V2, FetchRule::None, 0, kTimingBeforeFetch},
+    Model{0x5, "896HD", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::None, 0, kTimingBeforeFetch},
+    Model{0x9, "Traveler", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::Traveler, 0, kTimingBeforeFetch},
+    Model{0xd, "UltraLite", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::None, FetchRule::Spartan, 0, kTimingBeforeFetch},
+    Model{0xf, "8pre", ProtocolVersion::V2, {10,10,0}, {6,6,0}, OpticalLayout::V2EightPre, FetchRule::Spartan, 0, kTimingBeforeFetch},
     Model{0x15, "828mk3", ProtocolVersion::V3, {18,18,14}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, k828mk3Policy},
-    Model{0x17, "896mk3", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, kSynthFetch},
-    Model{0x19, "UltraLite mk3", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3, 0, kSynthFetch},
-    Model{0x1b, "Traveler mk3", ProtocolVersion::V3, {18,14,10}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, kSynthFetch},
+    Model{0x17, "896mk3", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, kTimingBeforeFetch},
+    Model{0x19, "UltraLite mk3", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3, 0, kTimingBeforeFetch},
+    Model{0x1b, "Traveler mk3", ProtocolVersion::V3, {18,14,10}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, kTimingBeforeFetch},
     Model{0x30, "UltraLite mk3 Hybrid", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3},
     Model{0x33, "Audio Express", ProtocolVersion::V3, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::V3},
     Model{0x35, "828mk3 Hybrid", ProtocolVersion::V3, {18,18,14}, {14,14,14}, OpticalLayout::V3Banks, FetchRule::V3, 4},

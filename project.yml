@@ -104,7 +104,7 @@ targets:
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.
-      # Includes the common MOTU register/profile, model table and SPH synthesizer.
+      # Includes the common MOTU register/profile, model table and SPH regulator.
       - path: ASFWDriver
         excludes:
           - "Info.plist"
@@ -137,13 +137,11 @@ targets:
         ASFW_AVC_MULTIRATE_VALIDATION: "1"
         ASFW_DICE_MULTIRATE_VALIDATION: "1"
         ASFW_MOTU_V1_VALIDATION: "0"
-        ASFW_MOTU_SYNTH_VALIDATION: "0"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"
           - "ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)"
           - "ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)"
-          - "ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.asfw.driver

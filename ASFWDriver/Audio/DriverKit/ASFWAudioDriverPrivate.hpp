@@ -9,6 +9,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
@@ -140,6 +141,10 @@ public:
     ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
+    // Optional Audio-side observer of each packet at release (e.g. a device
+    // family's phase instrument). Bound per start by the producer; null for
+    // every family that does not need one, and cleared with the slot memory.
+    ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver* releaseObserver{nullptr};
 
     bool AcquireWritableSlot(
         uint64_t packetIndex,
@@ -200,6 +205,17 @@ public:
         // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
+
+        // Before the release commit: once commitGeneration is stored, the slot
+        // belongs to transport and may be overwritten by the next lap.
+        if (releaseObserver != nullptr && payloadBase != nullptr) {
+            const uint32_t bytes =
+                packet.byteCount < slotStrideBytes ? packet.byteCount : slotStrideBytes;
+            releaseObserver->OnRelease(
+                packet, std::span<const uint8_t>(
+                            payloadBase + static_cast<uint64_t>(slotIdx) * slotStrideBytes,
+                            bytes));
+        }
 
         // Compute expected generation and release-store it last.
         const uint64_t generation =
@@ -274,6 +290,18 @@ struct AudioDriverRuntimeState {
 
     ASFW::Encoding::Motu::MotuPayloadWriter motuPayloadWriter;
     ASFW::Audio::Wire::MotuTxTimingStamper motuTxTimingStamper;
+    // The MOTU SPH regulator times this stream: set by ArmPrimaryTxProducer,
+    // cleared there and on every stop.
+    std::atomic<bool> motuSphActive{false};
+    // [MotuSphLock]: when the current acquisition began, and whether its first
+    // lock is still to be reported. TX preparation queue only.
+    uint64_t motuSphAcquireHostTicks{0};
+    bool motuSphLockPending{false};
+    // The transmit half of the regulator's absolute-phase measurement: the
+    // slot provider's release observer while a MOTU stream runs at a rate
+    // where `rel` is formed. Bound by ArmPrimaryTxProducer, unbound with the
+    // slot memory.
+    ASFW::Audio::Runtime::MotuTxPhaseTracePublisher motuTxPhaseTrace;
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes

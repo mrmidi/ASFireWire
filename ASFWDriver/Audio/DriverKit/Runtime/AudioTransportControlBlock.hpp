@@ -2,13 +2,14 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
+#include "MotuPhaseTrace.hpp"
+#include "MotuRxSphClockSnapshot.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
 #include "../../Wire/AMDTP/AmdtpTransferDelay.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
-#include "../../Wire/MOTU/MotuEventOffsetCache.hpp"
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
@@ -552,19 +553,25 @@ struct AudioTransportControlBlock final {
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
     RxSequenceReplayState rxSequenceReplay{};
-    /// MOTU's per-data-block SPH offsets: written by the capture consumer on the transport
-    /// side, drained by the transmit engine on the audio side. Hosted here, next to its
-    /// AM824 counterpart above, because this block is the lifetime-owned seam both
-    /// services map; neither side may hold a pointer into the other's memory.
     // Audio-owned producer publishes whether playback presentation timing has
     // been acquired. The session reads it through the lifetime-owned binding port.
     std::atomic<uint32_t> transmitTimingReady{0};
-    ::ASFW::Encoding::Motu::MotuEventOffsetCache motuEventOffsets{};
     // Reset values only: StartIO stores ivars.device.timing's resolved delays.
     std::atomic<uint32_t> rxTransferDelayTicks{
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
     std::atomic<uint32_t> txTransferDelayTicks{
         ::ASFW::Encoding::kAmdtpReferenceBlockingTransferDelayTicks};
+    /// MOTU device clock measured from received SPH: published by the master RX
+    /// stream's timing observer, read by the serialized TX producer for the SPH
+    /// stamper. Armed per start generation in ResetForStart; unused by every
+    /// other family.
+    MotuRxSphClockLatest motuRxSphClock{};
+    /// MOTU TX presentation phase: the SPH released for one cadence period,
+    /// published at packet release, read by the RX telemetry drain.
+    MotuPhaseTraceLatest motuPhaseTrace{};
+    /// The conditioned TX-against-RX phase formed from it by the RX telemetry
+    /// drain, read back by the serialized TX producer.
+    MotuRelPhaseLatest motuRelPhase{};
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
 
@@ -703,7 +710,6 @@ struct AudioTransportControlBlock final {
         rxSytCadence.Reset();
         rxSequenceReplay.Reset();
         transmitTimingReady.store(0, std::memory_order_relaxed);
-        motuEventOffsets.Reset();
         rxReplayEntries.store(0, std::memory_order_relaxed);
         rxReplayEpochResets.store(0, std::memory_order_relaxed);
         rxPacketsSeen.store(0, std::memory_order_relaxed);
@@ -729,7 +735,15 @@ struct AudioTransportControlBlock final {
         captureRingFirstCompleteRead.store(false, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
-        generation.fetch_add(1, std::memory_order_acq_rel);
+        const uint64_t armedGeneration =
+            generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+        // Generation-stamped bridges are armed after the increment, with the
+        // generation they belong to, so a publication from the previous stream
+        // is refused rather than read as this one's. ResetForStart runs before
+        // the IT/IR contexts are armed, so no writer races these resets.
+        motuRxSphClock.Reset(armedGeneration);
+        motuPhaseTrace.Reset(armedGeneration);
+        motuRelPhase.Reset(armedGeneration);
     }
 };
 

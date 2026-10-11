@@ -70,21 +70,10 @@ IOReturn MotuProtocol::Initialize() {
     if (!model || !Encoding::Motu::FireWireOnly(unitSwVersion_)) return kIOReturnUnsupported;
     initialized_ = true;
 
-    // Prime the cached clock state. Best-effort: a failure here leaves the cache at 0
-    // ("not yet known") rather than failing device creation, since every consumer reads
-    // the register on demand anyway.
-    ReadClockStatus([](IOReturn status, ClockStatus clock) {
-        if (status != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "MotuProtocol: initial clock read failed: 0x%x", status);
-            return;
-        }
-        ASFW_LOG(Audio,
-                 "MotuProtocol: clock status raw=0x%08x rate=%uHz source=%u",
-                 clock.raw,
-                 clock.sampleRateHz,
-                 clock.source.has_value() ? static_cast<uint32_t>(*clock.source) : 0xFFFFFFFFu);
-    });
-
+    // No register traffic here. The first Describe follows at once, and an 828mk3 answers
+    // a request that arrives while another is outstanding with ack_busy_X, which the
+    // transport never resends (observed 2026-10-09). Every consumer reads the clock
+    // register on demand, so nothing needs it primed.
     return kIOReturnSuccess;
 }
 

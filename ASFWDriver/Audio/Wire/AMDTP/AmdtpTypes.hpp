@@ -139,6 +139,11 @@ struct AmdtpTimingState final {
     /// it (write_sph, amdtp-motu.c:373-393); families that time by SYT ignore it.
     uint32_t transmitCycle{0};
     bool transmitCycleValid{false};
+    /// The same transmit time in full: 24.576 MHz ticks on the 8-second
+    /// cycle-timer offset domain, keeping the sub-cycle phase of the completion
+    /// stamp it was projected from. Valid with transmitCycleValid. A device
+    /// clock that runs between cycle boundaries (MOTU SPH) is seeded from it.
+    int64_t transmitTicks{0};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

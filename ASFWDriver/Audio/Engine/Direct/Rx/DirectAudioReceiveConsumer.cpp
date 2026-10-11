@@ -758,6 +758,11 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
         ASFW_LOG(Zts, "drain overflow: dropped=%llu (capacity=%u)", dropped,
                  ::ASFW::Isoch::Rx::ZtsTelemetryRing::kCapacity);
     }
+    // Master stream only, matching ObservePacket: the observer's device-timing
+    // measurements come from the master's packets.
+    if (timingObserver_ != nullptr && !configuration_.isSecondary) {
+        timingObserver_->DrainTelemetry(maxRecords);
+    }
 }
 
 void DirectAudioReceiveConsumer::ServiceConsumerDiagnostics() {

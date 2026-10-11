@@ -848,6 +848,8 @@ Subagents get `CLAUDE.md` but not my memory, so each task prompt repeats these r
   timeout, and verifies readback. Discovery explicitly re-registers notification
   addresses after reset, including idle devices. USB/hybrid models are excluded by request.
   None of the newly enabled models is hardware-validated.
+  *Since then:* the SPH regulator times every model's transmit SPH; the replay SPH,
+  the synthesizer and `ASFW_MOTU_SYNTH_VALIDATION` are gone (`MOTU_STACK.md`).
   See [MOTU_STACK.md](MOTU_STACK.md) for the checklist and current limits.
 
   The following is the original E3 gap inventory; items 1, 2, 4 and 5's fetch,

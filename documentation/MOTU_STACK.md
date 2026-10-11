@@ -93,29 +93,43 @@ models/rates use the reference register sequence, preserving unrelated low bits.
 The captured vendor prepare script's hard-coded pseudo-addresses are not replayed.
 This is best-effort activation, not a claim of equivalence to PR #172's full bring-up.
 
-Default builds preserve the per-block observed-offset replay policy for every
-model. Each model selects timing and activation policy in `MotuModel.hpp`; there
-is no MOTU rate-admission branch in Session. Admission consumes offered formations.
-V3 synthesis is an explicit per-model experiment enabled only by
-`ASFW_MOTU_SYNTH_VALIDATION=1` (default 0). This flag does not claim equivalence
-to PR #172 or vendor hardware behavior.
+Every model's transmit SPH comes from the SPH regulator below. Each model selects its
+activation policy and presentation lead in `MotuModel.hpp`; there is no MOTU
+rate-admission branch in Session. Admission consumes offered formations.
 
-The experimental TX-owned Q32 SPH synthesizer observes the first replay-rebased SPH per DATA
-packet, updates after at least 512 elapsed frames, uses full acquisition/quarter
-locked gain and clamps to +/-2000 ppm. Valid phase discontinuities re-anchor
-the presentation controller inside the stream, keeping packet cadence and audio
-frame accounting. Lock is reacquired before timing readiness is restored; sustained
-unusable/missing timing still uses session recovery. Epoch changes reset acquisition.
-It retains RX packet cadence. Initial presentation lead comes from the existing
-duplex replay seam; PR #172's absolute-phase conditioning and measured 510-tick
-setpoint are not ported. It is vendor-inspired, not a bit-exact vendor clone.
-Simulator phase error against a synthetic clock is not measured DAC jitter.
+The SPH regulator (`MotuTxTimingStamper` in `MotuDeviceTiming.hpp`) stamps every data
+block from a free-running Q32.32 clock (`MotuSphQ32Accumulator`), seeded once per start
+from the first DATA packet's transmit time plus the model's presentation lead (three
+cycles) and advanced one sample period per block. The clock servo (`MotuSphClockServo`)
+sets that period from the device's own period, measured from received SPH
+(`MotuRxSphRateMeter`, handed over through the control block's `motuRxSphClock`), plus
+phase feedback: the whole error per decision while acquiring, a quarter once locked,
+one decision per about 10.7 ms of received frames at every rate
+(`MotuSphServoPolicy.hpp`). Above a four-cycle error a hard resync mutes the output and
+repairs the clock's phase once. The output is muted until the first lock. The DATA/NO-DATA
+cadence still replays the RX stream. Its values were measured on an 828mk3 at
+48 kHz; the other models and rates are an assumption, and the source comments say which
+value comes from where.
+
+At 48 kHz the loop also holds an absolute presentation phase against the device, `rel`.
+The transmit half (`MotuTxPhaseTracePublisher`, the slot provider's release observer)
+publishes each released cadence period's SPH over `motuPhaseTrace`; the RX timing
+observer takes the period's mean residual against its transmit cycles minus the
+device's median absolute receive phase (SPH minus receive cycle) over a four-second
+window, conditions it (`MotuRelPhaseConditioner`) and publishes it over `motuRelPhase`.
+The first `rel` of a stream, about 8 s after the start, seeds the servo's error against
+the model's setpoint (`RuntimePolicy::absolutePhaseSetpointTicks48k`, +510 ticks, the
+value the official 828mk3 driver holds). At every other rate there is no setpoint and
+the loop stays relative: it holds the phase the stream started with. `rel` is formed in
+the whole 48 kHz family (48/96/192 kHz), where its cadence geometry holds.
 
 The generic Session readiness gate waits after both host contexts start and before
-fetch/unmute confirmation. Replay readiness requires a successfully stamped packet;
-experimental synthesis requires phase lock. The TX producer runs on its independent
-preparation queue while StartIO waits. Timeout and teardown unwind startup before
-fetch is enabled. Original 828 also retains its 100 ms host-packet settling interval.
+fetch/unmute confirmation. Readiness is the regulator's lock on the current stream with
+a seeded clock. Before the seed a DATA packet still reverts to NO-DATA (and to timing
+recovery after 16); once seeded the clock always has a time. The TX producer runs on its
+independent preparation queue while StartIO waits. Timeout and teardown unwind startup
+before fetch is enabled. Original 828 also retains its 100 ms host-packet settling
+interval.
 
 ## Remaining validation and work
 
@@ -144,14 +158,25 @@ DATA continues, epoch reset, producer timing readiness before confirmation, time
 rollback and teardown cancellation, generic formation admission, idle discovery
 re-registration, stale registration completions, and failed-read publication refusal.
 
-The build flags can be passed with `./build.sh --no-bump --set
-ASFW_MOTU_V1_VALIDATION=1 --set ASFW_MOTU_SYNTH_VALIDATION=1` for validation.
-Default builds leave both flags at zero.
+The V1 flag can be passed with `./build.sh --no-bump --set
+ASFW_MOTU_V1_VALIDATION=1` for validation. Default builds leave it at zero. (The
+`ASFW_MOTU_SYNTH_VALIDATION` flag named above is gone: the SPH regulator times every
+model.)
 
 For hardware tracing, use `/usr/bin/log stream --level debug --predicate
 'eventMessage CONTAINS "[SessionTiming]" OR eventMessage CONTAINS "[MotuGeometry]"
-OR eventMessage CONTAINS "MotuProtocol"'`. The readiness line is emitted once per
-start; a timeout identifies `TransmitTimingReady` in the session rollback log.
+OR eventMessage CONTAINS "MotuProtocol" OR eventMessage CONTAINS "[MotuSph"
+OR eventMessage CONTAINS "[RxPhase" OR eventMessage CONTAINS "[RxSphRate]"'`. The
+readiness line is emitted once per start; a timeout identifies `TransmitTimingReady` in
+the session rollback log. `[MotuSphLock]` reports the regulator's first lock and how long
+the output was muted for it; `[MotuSphServo]`/`[MotuSphState]` summarise the loop every
+5 s; `[MotuSphSeed]` reports the first absolute phase of a stream; `[MotuSphHard]`,
+`[MotuSphMute]` and `[MotuSphStall]` appear only on an event. Every four seconds the RX
+side reports `[RxSphRate]`, `[RxPhaseAbs]` and, where it is formed, `[RxPhaseRel]`;
+`[RxPhaseBridge]` marks the first `rel` a start publishes (or the first one the bridge
+refused), `[RxPhaseLattice]` a sample corrected by whole cadence quanta. The RX lines
+come from the receive telemetry drain, which runs only at `DirectAudioVerbosity >= 1`
+(the default); below it no `rel` is formed and the loop stays relative.
 
 These checks validate host logic and compilation, not hardware interoperability.
 

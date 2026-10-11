@@ -11,6 +11,7 @@
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "Logging/LogRing.hpp"
 
 #include <gtest/gtest.h>
 
@@ -157,53 +158,19 @@ TEST(MotuPayloadCodecTests, DecodeBlockExtractsFloatSamplesAndHandlesDelay) {
     EXPECT_NEAR(delayedOut[1], -0.5f, 1e-5f);
 }
 
-TEST(MotuPayloadCodecTests, RxTimingObserverCapturesOffsetsAndEstablishesTiming) {
-    MotuEventOffsetCache cache;
-    MotuRxTimingObserver observer(&cache);
-
-    EXPECT_FALSE(observer.IsTimingEstablished());
-
-    // Build packet payload with 2 blocks (kDbs = 4 quadlets = 16 bytes per block).
-    // Total size = 16 bytes prefix (8 isoch + 8 CIP) + 2 * 16 = 48 bytes.
+TEST(MotuPayloadCodecTests, TxTimingStamperStampsTheRegulatorClockAndZeroesBeforeTheSeed) {
     constexpr uint32_t kDbs = 4;
-    constexpr uint32_t kDataBlocks = 2;
-    std::vector<uint8_t> payload(16 + kDataBlocks * kDbs * 4, 0);
-
-    // Write SPH to block 0 and block 1
-    // Tick at cycle 100, tick 500: SPH = (100 << 12) | 500
-    uint32_t sph0 = (100U << 12) | 500U;
-    uint32_t sph1 = (100U << 12) | 1500U;
-    StoreBigEndian(payload.data() + 16, sph0);
-    StoreBigEndian(payload.data() + 16 + 16, sph1);
-
-    // Feed 32 runs of packets to seed cache and pass min contiguous runs threshold
-    for (uint32_t i = 0; i < 35; ++i) {
-        observer.ObservePacket(payload, kDbs, kDataBlocks, /*cycle=*/100);
-    }
-
-    EXPECT_TRUE(observer.IsTimingEstablished());
-
-    observer.Reset();
-    EXPECT_FALSE(observer.IsTimingEstablished());
-}
-
-TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
-    MotuEventOffsetCache cache;
-    constexpr uint32_t kDbs = 4;
-    MotuTxTimingStamper stamper(&cache, kDbs);
-
-    std::atomic<uint32_t> readiness{0};
-    stamper.BindCache(&cache, &readiness);
+    MotuTxTimingStamper stamper{};
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
     EXPECT_TRUE(stamper.IsSytUnaware());
 
-    // Allocate buffer for 1 slot: 8 bytes CIP + 2 blocks * 16 bytes = 40 bytes.
-    std::vector<uint8_t> slotBytes(40, 0xFF); // Initialize with dirty memory
+    // 1 slot: 8 bytes CIP + 2 blocks * 16 bytes, initialised with dirty memory.
+    std::vector<uint8_t> slotBytes(40, 0xFF);
     TxPacketSlotView slot{
         .packetIndex = 0,
         .bytes = slotBytes.data(),
         .capacityBytes = static_cast<uint32_t>(slotBytes.size()),
     };
-
     PreparedTxPacket packet{
         .packetIndex = 0,
         .byteCount = static_cast<uint32_t>(slotBytes.size()),
@@ -211,90 +178,26 @@ TEST(MotuPayloadCodecTests, TxTimingStamperStampsSphAndFallsBackToZero) {
         .framesInPacket = 2,
         .dbs = kDbs,
     };
-
-    AmdtpTimingState timing{
-        .transmitCycle = 10,
-        .transmitCycleValid = false, // Invalid cycle -> should fall back to zeroing SPH
+    const auto sphAt = [&](size_t offset) {
+        return ReadSph(std::span<const uint8_t>(slotBytes).subspan(offset, 4));
     };
 
-    const auto failRes = stamper.StampPacket(slot, packet, timing);
-    EXPECT_EQ(failRes, ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    // No transmit time and no seed yet: nothing to stamp, every SPH zeroed.
+    AmdtpTimingState timing{.transmitCycle = 10, .transmitCycleValid = false};
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing),
+              ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
+    EXPECT_EQ(sphAt(8), 0U);
+    EXPECT_EQ(sphAt(24), 0U);
 
-    // SPH at offset 8 and offset 24 should be zeroed
-    uint32_t sph0 = (static_cast<uint32_t>(slotBytes[8]) << 24) |
-                    (static_cast<uint32_t>(slotBytes[9]) << 16) |
-                    (static_cast<uint32_t>(slotBytes[10]) << 8) |
-                    static_cast<uint32_t>(slotBytes[11]);
-    uint32_t sph1 = (static_cast<uint32_t>(slotBytes[24]) << 24) |
-                    (static_cast<uint32_t>(slotBytes[25]) << 16) |
-                    (static_cast<uint32_t>(slotBytes[26]) << 8) |
-                    static_cast<uint32_t>(slotBytes[27]);
-    EXPECT_EQ(sph0, 0U);
-    EXPECT_EQ(sph1, 0U);
-
-    // Now seed the cache with known offsets
-    // Feed RX packets with known SPH so cache is established
-    std::vector<uint8_t> rxPayload(16 + 2 * kDbs * 4, 0);
-    StoreBigEndian(rxPayload.data() + 16, (100U << 12) | 200U);
-    StoreBigEndian(rxPayload.data() + 16 + 16, (100U << 12) | 1200U);
-    for (uint32_t i = 0; i < 40; ++i) {
-        cache.Capture(rxPayload, kDbs, 2, 100, 16);
-    }
-    ASSERT_TRUE(cache.IsEstablished());
-
-    // Transmit with valid cycle
+    // The first transmit time seeds the clock: transmit time plus the lead,
+    // then one 48 kHz sample period (512 ticks) per block.
     timing.transmitCycleValid = true;
     timing.transmitCycle = 20;
-
-    const auto okRes = stamper.StampPacket(slot, packet, timing);
-    EXPECT_EQ(okRes, ::ASFW::Audio::TxTimingStampResult::kOk);
-
-    sph0 = (static_cast<uint32_t>(slotBytes[8]) << 24) |
-           (static_cast<uint32_t>(slotBytes[9]) << 16) |
-           (static_cast<uint32_t>(slotBytes[10]) << 8) |
-           static_cast<uint32_t>(slotBytes[11]);
-    sph1 = (static_cast<uint32_t>(slotBytes[24]) << 24) |
-           (static_cast<uint32_t>(slotBytes[25]) << 16) |
-           (static_cast<uint32_t>(slotBytes[26]) << 8) |
-           static_cast<uint32_t>(slotBytes[27]);
-
-    // Replay preserves the device's uneven per-frame presentation sequence.
-    EXPECT_EQ(sph0, (20U << 12) | 200U);
-    EXPECT_EQ(sph1, (20U << 12) | 1200U);
-    EXPECT_EQ(readiness.load(), 1U);
-    cache.Reset();
-    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kTimingUnavailable);
-    EXPECT_EQ(readiness.load(), 0U);
-}
-
-TEST(MotuPayloadCodecTests, SynthesizedPhaseResyncKeepsDataAndReacquiresAfterEpochReset) {
-    MotuEventOffsetCache cache;
-    MotuTxTimingStamper stamper(&cache, 4, TimingPolicy::SynthesizedExperimental);
-    std::atomic<uint32_t> readiness{0};
-    stamper.BindCache(&cache, &readiness);
-    std::array<uint8_t, 136> payload{};
-    TxPacketSlotView slot{.bytes = payload.data(), .capacityBytes = payload.size()};
-    PreparedTxPacket packet{.byteCount = payload.size(), .isData = true, .framesInPacket = 8, .dbs = 4};
-    auto stamp = [&](uint32_t tick, uint32_t cycle) {
-        for (uint32_t i = 0; i < 8; ++i) StoreBigEndian(payload.data() + 8 + i * 16, SphFromTick(tick + i * 512));
-        EXPECT_EQ(cache.Capture(payload, 4, 8, cycle), 8U);
-        AmdtpTimingState timing{.transmitCycle = cycle, .transmitCycleValid = true};
-        return stamper.StampPacket(slot, packet, timing);
-    };
-    for (uint32_t frame = 0; frame < 1024; frame += 8)
-        ASSERT_EQ(stamp(20000 + frame * 512, frame / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    ASSERT_EQ(readiness.load(), 1U);
-    const auto anchor = 20000 + 1024 * 512 + 5 * kTicksPerCycle;
-    ASSERT_EQ(stamp(anchor, 1024 / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(anchor));
-    EXPECT_EQ(readiness.load(), 0U);
-    for (uint32_t frame = 8; frame <= 512; frame += 8)
-        ASSERT_EQ(stamp(anchor + frame * 512, (1024 + frame) / 6), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(readiness.load(), 1U);
-    cache.Reset();
-    ASSERT_EQ(stamp(1000000, 0), ::ASFW::Audio::TxTimingStampResult::kOk);
-    EXPECT_EQ(ReadSph(std::span(payload).subspan(8, 4)), SphFromTick(1000000));
-    EXPECT_EQ(readiness.load(), 0U);
+    timing.transmitTicks = 20 * kTicksPerCycle + 100;
+    EXPECT_EQ(stamper.StampPacket(slot, packet, timing), ::ASFW::Audio::TxTimingStampResult::kOk);
+    const uint32_t seed = 20 * kTicksPerCycle + 100 + kDefaultPresentationLeadTicks;
+    EXPECT_EQ(sphAt(8), SphFromTick(seed));
+    EXPECT_EQ(sphAt(24), SphFromTick(seed + 512));
 }
 
 TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
@@ -310,21 +213,19 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
     TestTxSlotProvider provider{};
     engine.BindSlotProvider(&provider);
 
-    // Cache is unestablished (no captures)
-    MotuEventOffsetCache cache{};
-    ASSERT_FALSE(cache.IsEstablished());
-
+    // A configured stamper whose clock has no seed yet.
     constexpr uint32_t kDbs = 2;
-    MotuTxTimingStamper stamper(&cache, kDbs);
+    MotuTxTimingStamper stamper{};
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
     engine.BindTimingStamper(&stamper);
 
-    // Timing requested Data with 8 blocks (simulating active presentation)
+    // Timing requested Data with 8 blocks, but without a transmit time to
+    // seed the clock from.
     AmdtpTimingState timing{};
     timing.txClockValid = true;
     timing.disposition = AmdtpPacketDisposition::Data;
     timing.nextDataSyt = 0x1234;
-    timing.transmitCycleValid = true;
-    timing.transmitCycle = 100;
+    timing.transmitCycleValid = false;
     timing.replayValid = true;
     timing.replayDataBlocks = 8;
 
@@ -360,15 +261,11 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     TestTxSlotProvider provider{};
     engine.BindSlotProvider(&provider);
 
-    MotuEventOffsetCache cache{};
-    std::vector<uint8_t> capture(16 + 8 * config.dbs * 4, 0);
-    for (uint32_t frame = 0; frame < 8; ++frame)
-        StoreBigEndian(capture.data() + 16 + frame * config.dbs * 4,
-            SphFromTick(BaseTickForCycle(100) + 200 + frame * 512));
-    for (uint32_t packet = 0; packet < 8; ++packet)
-        cache.Capture(capture, config.dbs, 8, 100, 16);
-    ASSERT_TRUE(cache.IsEstablished());
-    MotuTxTimingStamper stamper{&cache, config.dbs};
+    MotuTxTimingStamper stamper{};
+    const auto txPolicy = profile.TxStreamPolicy();
+    ASSERT_TRUE(stamper.Configure(config.dbs, config.sampleRate, txPolicy.motuPresentationLeadTicks,
+                                  AbsolutePhaseSetpointTicksAtRate(
+                                      txPolicy.motuAbsolutePhaseSetpointTicks48k, config.sampleRate)));
     engine.BindTimingStamper(&stamper);
     AmdtpTimingState timing{};
     timing.txClockValid = true;
@@ -376,6 +273,7 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     timing.disposition = AmdtpPacketDisposition::Data;
     timing.transmitCycleValid = true;
     timing.transmitCycle = 100;
+    timing.transmitTicks = 100 * kTicksPerCycle;
     timing.replayValid = true;
     timing.replayDataBlocks = 8;
     ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
@@ -392,6 +290,19 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     EXPECT_EQ(provider.bytes[3], 8);
     EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
               (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
+}
+
+TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLeadAndSetpoint) {
+    for (const uint32_t version : {0x1U, 0x3U, 0x15U}) {
+        SCOPED_TRACE(version);
+        const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
+        const auto* model = FindModel(version);
+        ASSERT_NE(model, nullptr);
+        EXPECT_EQ(profile.TxStreamPolicy().motuPresentationLeadTicks,
+                  model->runtime.presentationLeadTicks);
+        EXPECT_EQ(profile.TxStreamPolicy().motuAbsolutePhaseSetpointTicks48k,
+                  model->runtime.absolutePhaseSetpointTicks48k);
+    }
 }
 
 TEST(MotuPayloadCodecTests, MotuRxDiagnosticCaptureRecordsStartupAndSteadyState) {
@@ -609,4 +520,457 @@ TEST(MotuPayloadCodecTests, TimingRecoveryCoalescesAndRearmsAfterSuccessOrRestar
     burst(); EXPECT_EQ(calls, 3U);
     engine.ResetForStart(0, 0);
     burst(); EXPECT_EQ(calls, 4U);
+}
+
+// ---------------------------------------------------------------------------
+// The RX side of the SPH regulator: the observer measures the device clock
+// from received SPH and publishes it over the control block's motuRxSphClock
+// bridge, for every MOTU protocol version.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class ControlBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
+public:
+    ControlBindingSource(ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+                         uint32_t sampleRateHz) noexcept
+        : control_(control), sampleRateHz_(sampleRateHz) {}
+
+    bool CopyDirectAudioBinding(ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+        if (!bound) {
+            return false;
+        }
+        out = {};
+        out.generation = 1;
+        out.control = control_;
+        out.sampleRateHz = sampleRateHz_;
+        out.valid = true;
+        return true;
+    }
+
+    bool bound{true};
+
+private:
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control_;
+    uint32_t sampleRateHz_;
+};
+
+// A received MOTU packet of `blocks` data blocks whose first SPH sits at
+// `ticks`: the 8-byte receive prefix, the CIP header, then the blocks.
+std::vector<uint8_t> ReceivedMotuPacket(int64_t ticks, uint32_t blocks, uint32_t dbs = 4) {
+    std::vector<uint8_t> payload(16 + blocks * dbs * 4, 0);
+    for (uint32_t block = 0; block < blocks; ++block) {
+        StoreBigEndian(payload.data() + 16 + block * dbs * 4,
+                       SphFromTick(WrapTick(ticks + static_cast<int64_t>(block) * 512)));
+    }
+    return payload;
+}
+
+struct ObservedClock final {
+    bool published{false};
+    uint64_t updates{0};
+    ASFW::Audio::Runtime::MotuRxSphClockSample sample{};
+};
+
+ObservedClock ReadClock(const ASFW::Audio::Runtime::AudioTransportControlBlock& control) {
+    ObservedClock out{};
+    out.published = control.motuRxSphClock.ReadLatest(out.sample, out.updates);
+    return out;
+}
+
+} // namespace
+
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesTheDeviceClockToTheBridge) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    // The SPH crosses the one-second wrap after the first packet.
+    constexpr int64_t kStart = 24576000 - 1000;
+    observer.OnBatchBegin(nullptr);
+    // The first packet only anchors the meter: nothing measured yet.
+    observer.ObservePacket(ReceivedMotuPacket(kStart, 8), 4, 8, 0);
+    EXPECT_FALSE(ReadClock(control).published);
+
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 0, 2);  // NO-DATA: skipped
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 8193, 8), 4, 8, 3);
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.updates, 2U);
+    EXPECT_EQ(clock.sample.streamGeneration, generation);
+    EXPECT_EQ(clock.sample.rxFrames, 16U);
+    EXPECT_EQ(clock.sample.rxTicks, 8193);
+}
+
+// Receive activation, quiesce and replay discontinuities all call Reset()
+// inside one stream. The step across the gap is not measured, and the
+// cumulative clock stays monotonic, so the bridge keeps accepting it.
+TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheClockMonotonicAcrossResetWithinAStream) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    ASSERT_EQ(ReadClock(control).sample.rxFrames, 16U);
+
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(1048576, 8), 4, 8, 300);
+    observer.ObservePacket(ReceivedMotuPacket(1048576 + 4096, 8), 4, 8, 301);
+
+    const auto clock = ReadClock(control);
+    EXPECT_EQ(clock.updates, 3U);
+    EXPECT_EQ(clock.sample.rxFrames, 24U);
+    EXPECT_EQ(clock.sample.rxTicks, 12288);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+}
+
+// StartIO re-arms the bridge with a new generation, possibly on the same
+// mapped control block: the measurement starts over with it.
+TEST(MotuPayloadCodecTests, RxTimingObserverStartsTheClockOverOnANewControlGeneration) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+
+    control.ResetForStart();
+    const uint64_t nextGeneration = control.generation.load(std::memory_order_acquire);
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(2097152, 8), 4, 8, 3);
+    observer.ObservePacket(ReceivedMotuPacket(2097152 + 4096, 8), 4, 8, 4);
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.updates, 1U);
+    EXPECT_EQ(clock.sample.streamGeneration, nextGeneration);
+    EXPECT_EQ(clock.sample.rxFrames, 8U);
+    EXPECT_EQ(clock.sample.rxTicks, 4096);
+}
+
+// Higher rates carry more frames per packet; the rate the meter judges steps
+// by comes from the binding.
+TEST(MotuPayloadCodecTests, RxTimingObserverMeasuresAtTheBoundRate) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 96000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 16), 4, 16, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 16), 4, 16, 1);  // 16 frames x 256 ticks
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.sample.rxFrames, 16U);
+    EXPECT_EQ(clock.sample.rxTicks, 4096);
+}
+
+// The receive replay establishes once the device's timing is observed: the
+// first DATA packet with an SPH since the last Reset() or stream generation.
+TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesTimingOnTheFirstDataPacket) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    // A NO-DATA packet carries no SPH; a truncated one has none to read.
+    observer.ObservePacket(std::vector<uint8_t>(16, 0), 4, 0, 0);
+    observer.ObservePacket(std::vector<uint8_t>(18, 0), 4, 1, 1);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 2);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    // Receive activation, quiesce and replay discontinuities start over.
+    observer.Reset();
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 3);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+}
+
+// A new stream generation starts over too, even on the same control block. A
+// batch without a binding observes nothing, and the same stream picks up
+// where it was once the binding is back.
+TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesPerGenerationAndOnlyWhileBound) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    ASSERT_TRUE(observer.IsTimingEstablished());
+
+    source.bound = false;
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    source.bound = true;
+    observer.OnBatchBegin(nullptr);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    control.ResetForStart();
+    observer.OnBatchBegin(nullptr);
+    EXPECT_FALSE(observer.IsTimingEstablished());
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    EXPECT_TRUE(observer.IsTimingEstablished());
+
+    // Never without any binding source at all.
+    MotuRxTimingObserver unbound{};
+    unbound.OnBatchBegin(nullptr);
+    unbound.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    EXPECT_FALSE(unbound.IsTimingEstablished());
+}
+
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesNothingWithoutABinding) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    source.bound = false;
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.DrainTelemetry(16);
+    EXPECT_FALSE(ReadClock(control).published);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+}
+
+// A bridge ahead of the meter in the same generation refuses every further
+// publication; the drain reports it once until the next Reset().
+TEST(MotuPayloadCodecTests, RxTimingObserverReportsAMeterBehindTheBridgeOnce) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+
+    // What a meter reset without a bridge reset leaves behind.
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = generation, .rxFrames = 192000, .rxTicks = 98304000}));
+    observer.DrainTelemetry(16);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 1U);
+
+    // Reset() re-arms the report; the next batch re-binds the control block.
+    observer.Reset();
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 1U);
+    observer.OnBatchBegin(nullptr);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 2U);
+}
+
+// ---------------------------------------------------------------------------
+// The regulator's absolute phase `rel`, formed by the observer's drain from the
+// device's absolute receive phase and the transmit phase trace.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+uint32_t CountLogLines(const char* needle) {
+    ASFW::Logging::LogRingQuery query{};
+    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
+    std::vector<ASFW::Logging::LogRecord> records(512);
+    return ASFW::Logging::LogRing::Shared()
+        .Query(query, records.data(), static_cast<uint32_t>(records.size()), 1U << 20)
+        .recordCount;
+}
+
+// A transmit cadence period as the publisher releases it: three DATA packets
+// 700 ticks into cycle 5, against a completion in cycle 10 of the same second.
+ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample TracePeriod(uint64_t generation) {
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    period.streamGeneration = generation;
+    period.outputLastPacketIndex = 100;
+    period.outputLastCycleTimer = ASFW::Timing::encodeCycleTimer(0, 10, 0);
+    period.hasOutputLast = true;
+    period.presentationLeadTicks = kDefaultPresentationLeadTicks;
+    for (uint64_t packetIndex = 101; packetIndex <= 103; ++packetIndex) {
+        ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(
+            period, packetIndex, SphFromTick(5 * kTicksPerCycle + 700));
+    }
+    return period;
+}
+
+// A device whose clock moves exactly one bus cycle per packet of six frames
+// (48 kHz), presenting each packet `absPhaseTicks` after the cycle it arrives
+// in, for `seconds` of bus time. Drained once per HAL zero-timestamp period,
+// as the watchdog would at least.
+void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
+                              int64_t absPhaseTicks, uint32_t sampleRateHz = 48000) {
+    constexpr uint32_t kFramesPerPacket = 6;
+    const uint32_t drainEvery =
+        ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz).zeroTimestampPeriodFrames /
+        kFramesPerPacket;
+    const uint32_t packets = seconds * kCyclesPerSecond;
+    for (uint32_t i = 0; i < packets; ++i) {
+        const uint32_t cycle = i % kCyclesPerSecond;
+        observer.ObservePacket(
+            ReceivedMotuPacket(int64_t{cycle} * kTicksPerCycle + absPhaseTicks, kFramesPerPacket),
+            4, kFramesPerPacket, static_cast<uint16_t>(cycle));
+        if ((i + 1) % drainEvery == 0) {
+            observer.DrainTelemetry(8);
+        }
+    }
+}
+
+} // namespace
+
+// End to end through the observer: the absolute receive phase sampled on the
+// packet path, the window closed in the drain on the first sample and then
+// every four seconds of device frames (frames 0, 196608, 393216 and 577536 in
+// 13 s), and `rel` = transmit residual - receive median, conditioned and
+// published from the conditioner's third sample on.
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain) {
+    constexpr int64_t kAbsPhaseTicks = 9216;
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+
+    const auto period = TracePeriod(generation);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(period));
+    const auto residual = ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period);
+    ASSERT_TRUE(residual.valid);
+    const int64_t expectedRel = TickDifference(residual.residualTicks, kAbsPhaseTicks);
+
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t relLinesBefore = CountLogLines("[RxPhaseRel]");
+    const uint32_t absLinesBefore = CountLogLines("[RxPhaseAbs]");
+    const uint32_t firstLinesBefore = CountLogLines("[RxPhaseBridge] first publish");
+
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 13, kAbsPhaseTicks);
+
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
+    EXPECT_EQ(observer.RelPhaseFormed(), 4U);
+    EXPECT_EQ(observer.RelPhasePublished(), 2U);
+    EXPECT_EQ(observer.RelPhaseRejected(), 0U);
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+    uint64_t relUpdates = 0;
+    ASSERT_TRUE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    EXPECT_EQ(relUpdates, 2U);
+    EXPECT_EQ(rel.streamGeneration, generation);
+    EXPECT_EQ(rel.ticks, expectedRel);
+    EXPECT_EQ(rel.centerTicks, expectedRel);
+    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 4U);
+    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 4U);
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 1U);
+
+    // A new control generation starts the conditioner over: two windows in
+    // five seconds are short of its warm-up, so nothing is published even
+    // with the transmit term there.
+    control.ResetForStart();
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(
+        TracePeriod(control.generation.load(std::memory_order_acquire))));
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 5, kAbsPhaseTicks);
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 6U);
+    EXPECT_EQ(observer.RelPhasePublished(), 0U);
+    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+}
+
+// A `rel` the bridge refuses -- armed for another generation -- is counted
+// every time and logged once per start.
+TEST(MotuPayloadCodecTests, RxTimingObserverLogsARefusedRelOncePerStart) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
+    control.motuRelPhase.Reset(generation + 1);
+
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t rejectedBefore = CountLogLines("[RxPhaseBridge] rejected");
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 13, 9216);
+
+    EXPECT_EQ(observer.RelPhaseRejected(), 2U);
+    EXPECT_EQ(observer.RelPhasePublished(), 0U);
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+    uint64_t relUpdates = 0;
+    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] rejected") - rejectedBefore, 1U);
+}
+
+// `rel` needs the transmit term and the 48 kHz-family geometry; without either
+// the windows still close and report the receive phase, and nothing is formed.
+TEST(MotuPayloadCodecTests, RxTimingObserverFormsRelOnlyWithATraceAndWhereTheGeometryHolds) {
+    {
+        SCOPED_TRACE("no trace");
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        control.ResetForStart();
+        ControlBindingSource source(&control, 48000);
+        MotuRxTimingObserver observer(&source);
+        observer.OnBatchBegin(nullptr);
+        DriveConstantPhaseDevice(observer, 9, 9216);
+        EXPECT_EQ(observer.PhaseWindowsClosed(), 3U);
+        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
+    }
+    {
+        SCOPED_TRACE("44.1 kHz");
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        control.ResetForStart();
+        ControlBindingSource source(&control, 44100);
+        ASSERT_TRUE(control.motuPhaseTrace.Publish(
+            TracePeriod(control.generation.load(std::memory_order_acquire))));
+        MotuRxTimingObserver observer(&source);
+        observer.OnBatchBegin(nullptr);
+        DriveConstantPhaseDevice(observer, 9, 9216, 44100);
+        EXPECT_GE(observer.PhaseWindowsClosed(), 2U);
+        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
+        ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+        uint64_t relUpdates = 0;
+        EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    }
+}
+
+// Reset() inside a stream (receive activation, quiesce, a replay
+// discontinuity) restarts the sampling -- the next sample closes a window at
+// once -- but keeps the conditioner's operating point, so `rel` keeps flowing.
+TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheOperatingPointAcrossResetWithinAStream) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
+
+    MotuRxTimingObserver observer(&source);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 9, 9216);
+    ASSERT_EQ(observer.RelPhasePublished(), 1U);
+
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDevice(observer, 1, 9216);
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
+    EXPECT_EQ(observer.RelPhasePublished(), 2U);
 }

@@ -578,6 +578,7 @@
 		068AAF5222F8DFC30E8B20D9 /* Focusrite.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Focusrite.hpp; sourceTree = "<group>"; };
 		0690EC90E1D7902BAB4BCA5B /* RestartRoutine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RestartRoutine.cpp; sourceTree = "<group>"; };
 		06DA3E0EF778EAF9B01DC7CD /* PayloadPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadPolicy.hpp; sourceTree = "<group>"; };
+		06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxSphClockSnapshot.hpp; sourceTree = "<group>"; };
 		070831F2CFF382CA4A41D45E /* InfoRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoRow.swift; sourceTree = "<group>"; };
 		070AC8A37A94176E7AACEFF0 /* ControllerCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCore.cpp; sourceTree = "<group>"; };
 		077468963C2F7E7BB91E28CB /* ASFWMCPBeBoBTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBeBoBTools.swift; sourceTree = "<group>"; };
@@ -615,6 +616,7 @@
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
 		0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeVendorCodec.hpp; sourceTree = "<group>"; };
+		0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuTxPhaseTracePublisher.hpp; sourceTree = "<group>"; };
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0E9D9D9859BBCA2DA4256491 /* DiscoveryGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryGraph.cpp; sourceTree = "<group>"; };
@@ -700,6 +702,7 @@
 		256EA87824CECF3FF30445BB /* LockPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockPolicy.hpp; sourceTree = "<group>"; };
 		2580F370B9A0FCCB7AB371DE /* PacketHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PacketHelpers.hpp; sourceTree = "<group>"; };
 		258569E0435DE3FF824B9AC4 /* RuntimeIdentity.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RuntimeIdentity.hpp; sourceTree = "<group>"; };
+		25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuServoStallDetector.hpp; sourceTree = "<group>"; };
 		25F91BE94E37C9A397C953DA /* LocalIRMResourceController.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LocalIRMResourceController.hpp; sourceTree = "<group>"; };
 		260059B5EDB291077B7F733A /* ConfigROMHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMHandler.cpp; sourceTree = "<group>"; };
 		2619EAC4CD6D9C6B97C6ED09 /* AsyncSubsystemLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemLifecycle.cpp; sourceTree = "<group>"; };
@@ -778,7 +781,6 @@
 		35E77E9DF2A0B759301A2D02 /* AnalyzerRenderSubmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerRenderSubmission.swift; sourceTree = "<group>"; };
 		35F37E8BD922667FEF047B58 /* CommandsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandsView.swift; sourceTree = "<group>"; };
 		35FEEEBFF27C11DB7258268C /* SelectProbeBootstrap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SelectProbeBootstrap.hpp; sourceTree = "<group>"; };
-		365F0D822752B1C65D350B1E /* MotuSphSynthesizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphSynthesizer.hpp; sourceTree = "<group>"; };
 		36677308040EB4AD3F4E9527 /* IOReturnName.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IOReturnName.hpp; sourceTree = "<group>"; };
 		36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SessionRegistry.cpp; sourceTree = "<group>"; };
 		36C2979781EB95C72EE6C491 /* DiceStreamConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceStreamConfig.hpp; sourceTree = "<group>"; };
@@ -870,7 +872,6 @@
 		4D671C398E07E582F14F5A56 /* ControllerCoreAccess.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerCoreAccess.hpp; sourceTree = "<group>"; };
 		4D7F3E7B85E3BCC651D2BC9C /* AnalyzerTimingStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerTimingStatistics.swift; sourceTree = "<group>"; };
 		4D994BDB948D370E6F61467F /* DuetControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuetControlView.swift; sourceTree = "<group>"; };
-		4DF481CDEDE5AFA09A2E649A /* MotuEventOffsetCache.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuEventOffsetCache.hpp; sourceTree = "<group>"; };
 		4DFC5D271E3484233BD1B0D2 /* TopologyHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyHandler.hpp; sourceTree = "<group>"; };
 		4E065C1061BFE1DDEBFCEF3B /* ControllerStateMachine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControllerStateMachine.hpp; sourceTree = "<group>"; };
 		4E4A6CA6172FE6548D83C3B9 /* ResolvedAudioConfiguration.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ResolvedAudioConfiguration.hpp; sourceTree = "<group>"; };
@@ -880,6 +881,7 @@
 		4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverTeardown.cpp; sourceTree = "<group>"; };
 		4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ATTrace.cpp; sourceTree = "<group>"; };
 		4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateValidation.hpp; sourceTree = "<group>"; };
+		4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRelPhaseConditioner.hpp; sourceTree = "<group>"; };
 		500873644296662233E0FA3C /* AvcDeviceGraph.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcDeviceGraph.hpp; sourceTree = "<group>"; };
 		500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalAnalyzerPlotView.swift; sourceTree = "<group>"; };
 		5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceFamilyDriver.hpp; sourceTree = "<group>"; };
@@ -947,6 +949,7 @@
 		601C29508A5C112F4157A708 /* AudioRtCounters.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioRtCounters.hpp; sourceTree = "<group>"; };
 		604730D9D5CD284DB3F4E177 /* MotuFamilyAdapter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuFamilyAdapter.hpp; sourceTree = "<group>"; };
 		607B3B147596F916CB2EBB11 /* DriverConnector+AVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+AVC.swift"; sourceTree = "<group>"; };
+		60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxSphRateMeter.hpp; sourceTree = "<group>"; };
 		60EEFC3AC7756D549E967D25 /* CSRResponder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CSRResponder.cpp; sourceTree = "<group>"; };
 		6103F39DBF1EDAC73FDD5CB8 /* ASFWApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWApp.swift; sourceTree = "<group>"; };
 		61520E1D95BE9E50D8316AB0 /* AudioGeometryObserverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGeometryObserverTests.swift; sourceTree = "<group>"; };
@@ -990,6 +993,7 @@
 		6875709099799590B76F5DEF /* TargetLifecycle.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TargetLifecycle.hpp; sourceTree = "<group>"; };
 		68805919073786AF82B196A3 /* DiscoveryCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveryCoordinator.hpp; sourceTree = "<group>"; };
 		68FCF09440E88789D78C6AD6 /* GapCountOptimizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = GapCountOptimizer.hpp; sourceTree = "<group>"; };
+		6912DAF0B6A020148CDFE0F6 /* MotuSphQ32Accumulator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphQ32Accumulator.hpp; sourceTree = "<group>"; };
 		6990DACCD98CD6D7F483A379 /* TransactionHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionHandler.hpp; sourceTree = "<group>"; };
 		69DA61FB6DCC4A0CA981A042 /* AVCCommandFilter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCCommandFilter.hpp; sourceTree = "<group>"; };
 		69F6BB42F81D1FFC8653F3B1 /* WireRetention.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WireRetention.hpp; sourceTree = "<group>"; };
@@ -1058,6 +1062,7 @@
 		77718C25B7597AEFA561E918 /* AudioDriverConfigPolicy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDriverConfigPolicy.cpp; sourceTree = "<group>"; };
 		77E0A0CD727F9B32F646D13A /* ConfigROMStager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMStager.cpp; sourceTree = "<group>"; };
 		77E8C63140AA1CA70700B0A0 /* StatusPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StatusPublisher.cpp; sourceTree = "<group>"; };
+		77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPhaseTrace.hpp; sourceTree = "<group>"; };
 		780289076436D559DE381E30 /* CSRContract.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRContract.hpp; sourceTree = "<group>"; };
 		7826C0490B2B0BD154EAED9F /* BeBoBBootloaderPreparation.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBBootloaderPreparation.cpp; sourceTree = "<group>"; };
 		782F6B3B8831C7D812DD7704 /* AsyncSubsystemBusReset.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemBusReset.cpp; sourceTree = "<group>"; };
@@ -1096,6 +1101,7 @@
 		821A6DB6E00A5845BCF00DC0 /* DiscoveryValues.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveryValues.hpp; sourceTree = "<group>"; };
 		82FB7FBAF21E71523AF7F99D /* ASFWIOReturn.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ASFWIOReturn.hpp; sourceTree = "<group>"; };
 		8328694F1859478AB8AB311C /* ResolvedStreamConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ResolvedStreamConfig.hpp; sourceTree = "<group>"; };
+		8366E67059E3DCD0BE5FE2E8 /* MotuSphServoPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphServoPolicy.hpp; sourceTree = "<group>"; };
 		836FC05D0CFB4B21242C2C23 /* AudioObserverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioObserverView.swift; sourceTree = "<group>"; };
 		83ACA470BDC9FC3701CDEAA8 /* CIPHeaderBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CIPHeaderBuilder.hpp; sourceTree = "<group>"; };
 		83B54945C20A1F523BBA72E5 /* BusInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusInspectorView.swift; sourceTree = "<group>"; };
@@ -1266,6 +1272,7 @@
 		AEC88EDC2EC1E38DC23B8916 /* AudioCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioCoordinator.hpp; sourceTree = "<group>"; };
 		AED113166DE4061F3A41FC54 /* BoundedDequeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDequeTests.swift; sourceTree = "<group>"; };
 		AED823683733E47EADBB95EB /* DriverConnector+IRM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+IRM.swift"; sourceTree = "<group>"; };
+		AEEA47E4935F902BB330B1CC /* MotuSphClockServo.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphClockServo.hpp; sourceTree = "<group>"; };
 		AF1A419AF5FBA87907D436DC /* CSRResponder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRResponder.hpp; sourceTree = "<group>"; };
 		AF1C3092A44090D6B97FF5EB /* FamilyProtocolConstruction.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FamilyProtocolConstruction.cpp; sourceTree = "<group>"; };
 		AF46E21DCF97D1A3F7DFDA09 /* ASFWDriverUserClient.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWDriverUserClient.iig; sourceTree = "<group>"; };
@@ -1433,6 +1440,7 @@
 		DA13AD2AD61D8F60C878BAA9 /* LoudnessHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessHistoryView.swift; sourceTree = "<group>"; };
 		DA6BA2092A8F1FD3898ADB96 /* GenericAvcProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = GenericAvcProfile.hpp; sourceTree = "<group>"; };
 		DA93CEBA7777F3441342F48F /* BringupOverrides.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BringupOverrides.hpp; sourceTree = "<group>"; };
+		DAF8D3F446A9C3ED1D7EACFA /* MotuSphHardResyncGate.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphHardResyncGate.hpp; sourceTree = "<group>"; };
 		DB44B94B07D6C330C0EA2537 /* AudioRuntimeRegistry.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioRuntimeRegistry.cpp; sourceTree = "<group>"; };
 		DB47ED84B94228C020F1EDF5 /* SBP2Handler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2Handler.hpp; sourceTree = "<group>"; };
 		DB9DCBFF9775ECAB303A26C8 /* CatalogHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CatalogHelpers.hpp; sourceTree = "<group>"; };
@@ -2533,17 +2541,20 @@
 				4343F3527B3CEA77F73E62EB /* MotuBlockCodec.hpp */,
 				B297F57F5F8592875537BB88 /* MotuBlockLayout.hpp */,
 				A26A0D6C7257A20EF0E2569E /* MotuDeviceTiming.hpp */,
-				4DF481CDEDE5AFA09A2E649A /* MotuEventOffsetCache.hpp */,
 				751D51C8E06FC1670D3DCDB4 /* MotuModel.hpp */,
 				70905838A5754565A839A4F9 /* MotuPayloadCodec.hpp */,
 				B8A798523A386FF95BDEB419 /* MotuPayloadReader.hpp */,
 				7A73DB72F38AE4D2E61907F8 /* MotuPayloadWriter.cpp */,
 				3DA16292178C3C5E25E7978D /* MotuPayloadWriter.hpp */,
 				434649F778402B768C487C9F /* MotuPortLayout.hpp */,
+				4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */,
 				B74AAA0C50CB9FA4E45F13AA /* MotuRxDiagnosticCapture.hpp */,
 				71D6784D5EAE51E7FAFD0A6D /* MotuRxTiming.hpp */,
 				BD3EC624D2DB2E19F2587BE2 /* MotuSph.hpp */,
-				365F0D822752B1C65D350B1E /* MotuSphSynthesizer.hpp */,
+				AEEA47E4935F902BB330B1CC /* MotuSphClockServo.hpp */,
+				DAF8D3F446A9C3ED1D7EACFA /* MotuSphHardResyncGate.hpp */,
+				6912DAF0B6A020148CDFE0F6 /* MotuSphQ32Accumulator.hpp */,
+				8366E67059E3DCD0BE5FE2E8 /* MotuSphServoPolicy.hpp */,
 				B02F97FB6E5F1A78F7D497E6 /* MotuTxTiming.hpp */,
 			);
 			path = MOTU;
@@ -3567,6 +3578,11 @@
 				BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */,
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
+				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
+				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
+				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
+				25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */,
+				0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -4537,7 +4553,6 @@
 				ARCHS = "x86_64 arm64";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
-				ASFW_MOTU_SYNTH_VALIDATION = 0;
 				ASFW_MOTU_V1_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
@@ -4558,7 +4573,6 @@
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
 					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 					"ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)",
-					"ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
@@ -4629,7 +4643,6 @@
 				ARCHS = "x86_64 arm64e";
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
-				ASFW_MOTU_SYNTH_VALIDATION = 0;
 				ASFW_MOTU_V1_VALIDATION = 0;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
 				CLANG_ENABLE_MODULES = YES;
@@ -4650,7 +4663,6 @@
 					"ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)",
 					"ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)",
 					"ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)",
-					"ASFW_MOTU_SYNTH_VALIDATION=$(ASFW_MOTU_SYNTH_VALIDATION)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (

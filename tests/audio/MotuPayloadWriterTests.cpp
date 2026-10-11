@@ -281,6 +281,71 @@ TEST(MotuPayloadWriterTests, DoesNothingWhenUnconfiguredOrUnbound) {
     EXPECT_EQ(unconfigured.Counters().framesVisited.load(), 0U);
 }
 
+// The regulator's mute: the same packets, the same frames, silence instead of
+// the host's samples. SPH and message chunks stay untouched either way.
+TEST(MotuPayloadWriterTests, MuteWritesSilenceIntoTheSamePacketsAndCountsIt) {
+    TimelineHarness h{2};
+    MotuPayloadWriter writer{};
+    SetUpWriter(writer, &h.timeline);
+    EXPECT_FALSE(writer.IsPcmMuted());
+
+    const std::array<float, 4> samples{0.5f, -0.5f, 0.25f, -0.25f};
+    HostAudioBufferView view{};
+    view.interleavedFloat32 = samples.data();
+    view.frameCount = 2;
+    view.frameCapacity = 2;
+    view.channels = 2;
+
+    writer.WriteFloat32Interleaved(view, 0);
+    const std::vector<uint8_t> audible = h.bytes;
+    ASSERT_NE(ReadChunk(h.Block(0), 0), 0);
+
+    writer.SetPcmMuted(true);
+    EXPECT_TRUE(writer.IsPcmMuted());
+    writer.WriteFloat32Interleaved(view, 0);
+    EXPECT_EQ(writer.Counters().framesWritten.load(), 4U);
+    EXPECT_EQ(writer.Counters().framesMuted.load(), 2U);
+    for (uint32_t block = 0; block < 2; ++block) {
+        for (uint32_t chunk = 0; chunk < kPcmChunks; ++chunk) {
+            EXPECT_EQ(ReadChunk(h.Block(block), chunk), 0) << "block " << block;
+        }
+        for (uint32_t byte = 0; byte < kPcmByteOffset; ++byte) {
+            EXPECT_EQ(h.Block(block)[byte], 0xEEu) << "block " << block << " byte " << byte;
+        }
+    }
+
+    writer.SetPcmMuted(false);
+    writer.WriteFloat32Interleaved(view, 0);
+    EXPECT_EQ(h.bytes, audible);
+    EXPECT_EQ(writer.Counters().framesMuted.load(), 2U);
+}
+
+// Muting changes the source only: frames behind the finality frontier and
+// frames no packet owns yet are counted as before, and not as muted.
+TEST(MotuPayloadWriterTests, MuteKeepsTheFinalityFrontierAndTheMissingPacketCounts) {
+    TimelineHarness h{1};
+    MotuPayloadWriter writer{};
+    SetUpWriter(writer, &h.timeline);
+    writer.SetPcmMuted(true);
+
+    const std::array<float, 4> samples{1.0f, 1.0f, 1.0f, 1.0f};
+    HostAudioBufferView view{};
+    view.interleavedFloat32 = samples.data();
+    view.frameCount = 2;
+    view.frameCapacity = 2;
+    view.channels = 2;
+
+    // Packet 0 is behind the frontier; frame 1 has no packet yet.
+    writer.WriteFloat32Interleaved(view, 1);
+    EXPECT_EQ(writer.Counters().framesMissedFinality.load(), 1U);
+    EXPECT_EQ(writer.Counters().framesWithoutPacket.load(), 1U);
+    EXPECT_EQ(writer.Counters().framesWritten.load(), 0U);
+    EXPECT_EQ(writer.Counters().framesMuted.load(), 0U);
+    for (uint32_t byte = 0; byte < kBlockBytes; ++byte) {
+        EXPECT_EQ(h.Block(0)[byte], 0xEEu) << "byte " << byte;
+    }
+}
+
 } // namespace
 
 TEST(MotuPayloadWriterTests, OriginalProtocolWritesImmediatelyAfterSphWithoutMessageGap) {

@@ -22,6 +22,7 @@
 #include "Audio/DriverKit/ASFWAudioDriverPrivate.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
+#include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "Isoch/Core/IsochTxQueue.hpp"
@@ -32,13 +33,18 @@
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 #include "WireTrace.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
+#include "Logging/LogRing.hpp"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -234,6 +240,44 @@ public:
     // packets are 8 or 296 bytes, device packets up to 552 = 8 x DBS 17).
     void FeedBlockingRx(uint32_t dataBlocksPerPacket) { rxBlocksPerPacket_ = dataBlocksPerPacket; }
 
+    // MOTU capture as MotuRxTimingObserver leaves it: replay entries carry
+    // block counts but never a valid SYT (the device sends NO_INFO), and every
+    // DATA packet publishes the device's cumulative SPH clock for the transmit
+    // regulator -- here a device at exactly 512 ticks per frame (48 kHz). With
+    // `clockOnly` no replay entry is published, so transmit never has a DATA
+    // cadence to replay and sends NO-DATA only.
+    void FeedMotuRx(uint32_t dataBlocksPerPacket, bool clockOnly = false) {
+        rxBlocksPerPacket_ = dataBlocksPerPacket;
+        rxMotu_ = true;
+        rxMotuClockOnly_ = clockOnly;
+    }
+
+    // The same capture through the production MotuRxTimingObserver instead:
+    // every DATA packet carries the device's SPH, frame F presented at
+    // StartCycle() * 3072 + F * 512 + devicePresentationTicks, and the observer
+    // publishes the clock and forms `rel` from its drain, which runs every
+    // 100 ms of bus time as the watchdog's does.
+    void FeedMotuRxThroughObserver(int64_t devicePresentationTicks) {
+        FeedMotuRx(8);
+        rxBinding_.control = control_.get();
+        rxBinding_.sampleRateHz = sampleRate_;
+        rxObserver_ = std::make_unique<ASFW::Audio::Wire::MotuRxTimingObserver>(&rxBinding_);
+        devicePresentationTicks_ = devicePresentationTicks;
+    }
+    [[nodiscard]] const ASFW::Audio::Wire::MotuRxTimingObserver* RxObserver() const {
+        return rxObserver_.get();
+    }
+
+    // Long runs keep no copy of the wire.
+    void RecordWire(bool record) { recordWire_ = record; }
+
+    // Sub-cycle offset of every OUTPUT_LAST completion stamp. Hardware stamps
+    // land anywhere in the cycle; the rig defaults to its start.
+    void SetCompletionOffset(uint32_t offset) { completionOffset_ = offset & 0xFFFU; }
+
+    // The bus cycle the rig's IT context started in.
+    [[nodiscard]] static constexpr uint64_t StartCycle() { return kStartCycle; }
+
     // CoreAudio's side of playback. Each IO cycle CoreAudio fills its output
     // ring for [sampleTime, sampleTime + ioFrames) and calls WriteEnd; this
     // plays that through the driver's real WriteEnd step
@@ -348,8 +392,10 @@ private:
             const uint64_t packet = completed_ + i;
             const auto& meta = metadata_[packet % numSlots_];
             const uint8_t* bytes = payload_.data() + (packet % numSlots_) * stride_;
-            wire_.push_back({packet, std::vector<uint8_t>(bytes, bytes + meta.payloadLength)});
-            queue_->PushCompletionStamp(packet, CycleTimerFor(packet, 0));
+            if (recordWire_) {
+                wire_.push_back({packet, std::vector<uint8_t>(bytes, bytes + meta.payloadLength)});
+            }
+            queue_->PushCompletionStamp(packet, CycleTimerFor(packet, completionOffset_));
             // CoreAudio wakes on its own clock, not on our interrupt: give it
             // every packet time, after that packet has left.
             clockPacket_ = packet + 1;
@@ -440,6 +486,9 @@ private:
     void ReceiveCycles(uint32_t cycles) {
         auto& replay = control_->rxSequenceReplay;
         const uint32_t rxDelay = control_->rxTransferDelayTicks.load();
+        if (rxObserver_) {
+            rxObserver_->OnBatchBegin(&rxBinding_);
+        }
         for (uint32_t i = 0; i < cycles; ++i) {
             const uint64_t cycle = rxCycles_++;
             const uint32_t phase = static_cast<uint32_t>(cycle % 4);
@@ -448,7 +497,32 @@ private:
             entry.dbc = rxDbc_;
             entry.flags = ASFW::Audio::Runtime::RxSequenceFlags::kValidCip;
             entry.firstAudioFrame = rxFrames_;
-            if (phase != 3) {
+            if (phase != 3 && rxMotu_) {
+                entry.dataBlocks = static_cast<uint16_t>(rxBlocksPerPacket_);
+                entry.sytOffset = ASFW::Audio::Runtime::RxSequenceReplayState::kNoInfo;
+                const uint64_t firstFrame = rxFrames_;
+                rxFrames_ += rxBlocksPerPacket_;
+                rxDbc_ = static_cast<uint8_t>(rxDbc_ + rxBlocksPerPacket_);
+                if (rxObserver_) {
+                    const int64_t sphTicks = static_cast<int64_t>(kStartCycle * 3072ULL) +
+                                             static_cast<int64_t>(firstFrame) * 512 +
+                                             devicePresentationTicks_;
+                    const uint32_t sph = ASFW::Encoding::Motu::SphFromTick(
+                        ASFW::Encoding::Motu::WrapTick(sphTicks));
+                    rxPayload_[16] = static_cast<uint8_t>(sph >> 24);
+                    rxPayload_[17] = static_cast<uint8_t>(sph >> 16);
+                    rxPayload_[18] = static_cast<uint8_t>(sph >> 8);
+                    rxPayload_[19] = static_cast<uint8_t>(sph);
+                    rxObserver_->ObservePacket(
+                        rxPayload_, dbs_, rxBlocksPerPacket_,
+                        static_cast<uint16_t>((kStartCycle + cycle) % kCyclesPerSecond));
+                } else {
+                    (void)control_->motuRxSphClock.Publish(
+                        {.streamGeneration = control_->generation.load(),
+                         .rxFrames = rxFrames_,
+                         .rxTicks = static_cast<int64_t>(rxFrames_) * 512});
+                }
+            } else if (phase != 3) {
                 const uint64_t presentation = (kStartCycle + cycle) * 3072ULL + phase * 1024ULL + rxDelay;
                 const auto syt = static_cast<uint16_t>((((presentation / 3072) & 0xF) << 12) |
                                                        (presentation % 3072));
@@ -459,12 +533,36 @@ private:
                 rxFrames_ += rxBlocksPerPacket_;
                 rxDbc_ = static_cast<uint8_t>(rxDbc_ + rxBlocksPerPacket_);
             }
+            if (rxObserver_ && cycle % kCyclesPerTelemetryDrain == kCyclesPerTelemetryDrain - 1) {
+                rxObserver_->DrainTelemetry(8);
+            }
+            if (rxMotuClockOnly_) {
+                continue;
+            }
             replay.Publish(entry);
             if (!replay.IsEstablished()) {
                 (void)replay.MarkEstablished();
             }
         }
     }
+
+    class RigBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
+    public:
+        bool CopyDirectAudioBinding(
+            ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+            out = {};
+            out.generation = 1;
+            out.control = control;
+            out.sampleRateHz = sampleRateHz;
+            out.valid = true;
+            return control != nullptr;
+        }
+        ASFW::Audio::Runtime::AudioTransportControlBlock* control{nullptr};
+        uint32_t sampleRateHz{0};
+    };
+
+    // The watchdog drains receive telemetry about every 100 ms.
+    static constexpr uint64_t kCyclesPerTelemetryDrain = 800;
 
     // OHCI cycle timer: seconds[31:25] cycle[24:12] offset[11:0].
     [[nodiscard]] static uint32_t CycleTimerFor(uint64_t packet, uint32_t offset) {
@@ -510,7 +608,15 @@ private:
     bool stalled_{false};
     bool clockFromZts_{false};
 
+    uint32_t completionOffset_{0};
     uint32_t rxBlocksPerPacket_{0};
+    bool rxMotu_{false};
+    bool rxMotuClockOnly_{false};
+    RigBindingSource rxBinding_{};
+    std::unique_ptr<ASFW::Audio::Wire::MotuRxTimingObserver> rxObserver_;
+    int64_t devicePresentationTicks_{0};
+    std::array<uint8_t, 20> rxPayload_{};
+    bool recordWire_{true};
     uint64_t rxCycles_{0};
     uint64_t rxFrames_{0};
     uint8_t rxDbc_{0};
@@ -693,6 +799,460 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
     ASSERT_LT(firstData, wire.size());
     EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
     EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
+}
+
+// A device timing stamper sees each DATA packet's transmit time twice: as the
+// bus cycle and in full ticks, with the sub-cycle phase of the completion stamp
+// the producer projected it from. A passive stamper (SYT-aware, not
+// applicable) changes nothing on the wire, so the replay path runs as above.
+TEST(AudioDriverTxProducerTests, TimingStateCarriesTheFullTransmitTime) {
+    struct RecordingStamper final : ASFW::Audio::ITxDeviceTimingStamper {
+        struct Seen final {
+            uint64_t packetIndex{0};
+            ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+        };
+        std::vector<Seen> seen;
+        ASFW::Audio::TxTimingStampResult StampPacket(
+            const ASFW::Protocols::Audio::AMDTP::TxPacketSlotView&,
+            const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet,
+            const ASFW::Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept override {
+            seen.push_back({packet.packetIndex, timing});
+            return ASFW::Audio::TxTimingStampResult::kNotApplicable;
+        }
+        bool IsSytUnaware() const noexcept override { return false; }
+    } stamper;
+
+    constexpr uint32_t kCompletionOffset = 1234;
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.SetCompletionOffset(kCompletionOffset);
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.Ivars().runtime.txStreamEngine.BindTimingStamper(&stamper);
+    rig.FeedBlockingRx(8);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    size_t checked = 0;
+    for (const auto& [packetIndex, timing] : stamper.seen) {
+        if (!timing.transmitCycleValid) {
+            continue;
+        }
+        // The rig's bus never crosses a second here, so the offset domain is
+        // the plain tick count of the packet's own cycle.
+        ASSERT_LT(TxProducerRig::StartCycle() + packetIndex, kCyclesPerSecond);
+        const int64_t expectedTicks =
+            static_cast<int64_t>(TxProducerRig::StartCycle() + packetIndex) *
+                ASFW::Timing::kTicksPerCycle +
+            kCompletionOffset;
+        ASSERT_EQ(timing.transmitTicks, expectedTicks) << "packet " << packetIndex;
+        ASSERT_EQ(timing.transmitCycle,
+                  static_cast<uint32_t>((timing.transmitTicks / ASFW::Timing::kTicksPerCycle) %
+                                        kCyclesPerSecond))
+            << "packet " << packetIndex;
+        ++checked;
+    }
+    EXPECT_GT(checked, kSteadyStatePackets / 2);
+}
+
+// ---------------------------------------------------------------------------
+// MOTU: the SPH regulator times the transmit stream.
+
+// Lines in the driver's log ring that contain `needle`.
+uint32_t CountLogLines(const char* needle) {
+    ASFW::Logging::LogRingQuery query{};
+    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
+    std::vector<ASFW::Logging::LogRecord> records(512);
+    return ASFW::Logging::LogRing::Shared()
+        .Query(query, records.data(), static_cast<uint32_t>(records.size()), 1U << 20)
+        .recordCount;
+}
+
+// The byte of host channel 0's PCM in a MOTU data block, from the block start.
+size_t MotuHostChannelZeroOffset(const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile& profile,
+                                 uint32_t unitVersion, uint32_t pcmChannels) {
+    const auto ports = ASFW::Encoding::Motu::EffectivePortMap(
+        profile.TxStreamPolicy().motuPlaybackPorts, pcmChannels);
+    return ASFW::Encoding::Motu::PcmByteOffset(unitVersion) +
+           ASFW::Encoding::Motu::ChunkForHostChannel(ports, 0) *
+               ASFW::Encoding::Motu::kBytesPerChunk;
+}
+
+// Every MOTU stream through the real producer, v2 and v3 block layouts. The
+// capture carries no SYT, so DATA goes out only because the MOTU stamper makes
+// the engine SYT-unaware. Every block's SPH comes from the regulator's clock,
+// seeded from the first DATA packet's transmit time plus the model's lead; the
+// servo hook keeps PCM muted until the loop locks, then lets the host through.
+TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
+    for (const uint32_t version : {0x3U, 0x15U}) {
+        SCOPED_TRACE(version);
+        const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
+        ASFW::Logging::LogRing::Shared().Initialize();
+        const uint32_t lockLinesBefore = CountLogLines("[MotuSphLock]");
+        const uint32_t edgeLinesBefore =
+            CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]");
+        const uint32_t summaryLinesBefore = CountLogLines("[MotuSphServo]");
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+        auto& runtime = rig.Ivars().runtime;
+        // Armed muted, before any decision exists.
+        EXPECT_TRUE(runtime.motuSphActive.load());
+        EXPECT_TRUE(runtime.motuPayloadWriter.IsPcmMuted());
+        EXPECT_EQ(rig.Control().transmitTimingReady.load(), 0u);
+        rig.FeedMotuRx(8);
+        rig.EnableHostOutput({});
+        ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+        const uint32_t dbs = rig.Dbs();
+        const size_t dataBytes = 8 + 8 * dbs * 4;
+        const size_t mainAt = MotuHostChannelZeroOffset(profile, version, rig.PcmChannels());
+        const auto blockSph = [dbs](const WirePacket& packet, uint32_t block) {
+            return packet.Quadlet(8 + block * dbs * 4);
+        };
+
+        const auto& wire = rig.Wire();
+        ASSERT_EQ(wire.size(), kSteadyStatePackets);
+        const WirePacket* previousData = nullptr;
+        const WirePacket* firstData = nullptr;
+        size_t dataPackets = 0;
+        for (const auto& packet : wire) {
+            ASSERT_TRUE(packet.bytes.size() == 8 || packet.bytes.size() == dataBytes)
+                << "packet " << packet.index << " is " << packet.bytes.size() << " bytes";
+            // The MOTU CIP header on every packet: SPH bit, FMT 0x02, FDF 0x22,
+            // SYT NO_INFO.
+            ASSERT_EQ(packet.bytes[2] & 0x04, 0x04) << "packet " << packet.index;
+            ASSERT_EQ(packet.Quadlet(4), 0x8222FFFFu) << "packet " << packet.index;
+            if (packet.bytes.size() != dataBytes) {
+                continue;
+            }
+            ++dataPackets;
+            if (firstData == nullptr) {
+                firstData = &packet;
+            }
+            // One sample period per block, across packet boundaries: a device
+            // at exactly 512 ticks per frame leaves the loop at nominal.
+            for (uint32_t block = 0; block < 8; ++block) {
+                const uint32_t sph = blockSph(packet, block);
+                const WirePacket* previousPacket = block > 0 ? &packet : previousData;
+                if (previousPacket != nullptr) {
+                    const uint32_t previous = ASFW::Encoding::Motu::TickFromSph(
+                        blockSph(*previousPacket, block > 0 ? block - 1 : 7));
+                    ASSERT_EQ(ASFW::Encoding::Motu::TickDifference(
+                                  ASFW::Encoding::Motu::TickFromSph(sph), previous),
+                              512)
+                        << "packet " << packet.index << " block " << block;
+                }
+            }
+            previousData = &packet;
+        }
+        ASSERT_NE(firstData, nullptr);
+        EXPECT_GE(dataPackets, (wire.size() - firstData->index) * 3 / 4 - 1);
+        // The seed: the first DATA packet's own transmit time, plus the lead.
+        const int64_t firstTransmitTicks =
+            static_cast<int64_t>(TxProducerRig::StartCycle() + firstData->index) *
+            ASFW::Timing::kTicksPerCycle;
+        EXPECT_EQ(blockSph(*firstData, 0),
+                  ASFW::Encoding::Motu::SphFromTick(ASFW::Encoding::Motu::WrapTick(
+                      firstTransmitTicks + ASFW::Encoding::Motu::kDefaultPresentationLeadTicks)));
+
+        // The loop locked once and lifted the mute. It locks while the
+        // prefilled NO-DATA lap is still draining -- the hook runs before
+        // every prepared packet -- so no host frame was ever muted.
+        EXPECT_FALSE(runtime.motuPayloadWriter.IsPcmMuted());
+        EXPECT_EQ(runtime.motuPayloadWriter.Counters().framesMuted.load(), 0u);
+        EXPECT_EQ(rig.Control().transmitTimingReady.load(), 1u);
+        const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+        EXPECT_GE(servo.decisions, 2u);
+        EXPECT_TRUE(servo.locked);
+        EXPECT_TRUE(servo.seeded);
+        EXPECT_EQ(servo.muteTransitions, 1u);
+        EXPECT_EQ(servo.unmuteTransitions, 1u);
+        EXPECT_EQ(servo.hardResyncRequests, 0u);
+        // Only the benign drop: the producer ran between RX publications.
+        EXPECT_EQ(servo.observationDrops, servo.dropBridgeNotAdvanced);
+        EXPECT_EQ(runtime.txStreamEngine.Counters().timingUnavailableReverts.load(), 0u);
+        EXPECT_FALSE(runtime.motuSphLockPending);
+        // The unified-log trail of a clean start: one lock line, no other
+        // edge, and the summary on the heartbeat.
+        EXPECT_EQ(CountLogLines("[MotuSphLock]") - lockLinesBefore, 1u);
+        EXPECT_EQ(CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]") -
+                      edgeLinesBefore,
+                  0u);
+        EXPECT_GT(CountLogLines("[MotuSphServo]") - summaryLinesBefore, 0u);
+
+        size_t audibleTail = 0;
+        for (size_t i = wire.size() - 1000; i < wire.size(); ++i) {
+            if (wire[i].bytes.size() != dataBytes) {
+                continue;
+            }
+            for (uint32_t block = 0; block < 8; ++block) {
+                const size_t at = 8 + block * dbs * 4 + mainAt;
+                ASSERT_NE(wire[i].bytes[at] | wire[i].bytes[at + 1] | wire[i].bytes[at + 2], 0)
+                    << "packet " << wire[i].index << " block " << block;
+            }
+            ++audibleTail;
+        }
+        EXPECT_GE(audibleTail, 700u);
+    }
+}
+
+// The servo hook runs before EVERY prepared packet, not only before DATA: with
+// the RX clock arriving but no DATA cadence to replay, transmit sends NO-DATA
+// only, and the loop still acquires and locks. Without a DATA packet the clock
+// has no seed, so the session is not told the timing is ready.
+TEST(AudioDriverTxProducerTests, MotuServoRunsBeforeNoDataPacketsToo) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuRx(8, /*clockOnly=*/true);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    for (const auto& packet : rig.Wire()) {
+        ASSERT_EQ(packet.bytes.size(), 8u) << "packet " << packet.index;
+    }
+    auto& runtime = rig.Ivars().runtime;
+    EXPECT_EQ(runtime.txStreamEngine.Counters().dataPacketsPrepared.load(), 0u);
+    const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    EXPECT_GE(servo.decisions, 2u);
+    EXPECT_TRUE(servo.locked);
+    EXPECT_FALSE(servo.seeded);
+    EXPECT_FALSE(runtime.motuPayloadWriter.IsPcmMuted());
+    EXPECT_EQ(rig.Control().transmitTimingReady.load(), 0u);
+}
+
+// The session's readiness flips once, at the lock: never while the loop is
+// muted, unlocked or unseeded.
+TEST(AudioDriverTxProducerTests, MotuTimingReadinessFlipsOnlyAtLock) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuRx(8);
+    auto& runtime = rig.Ivars().runtime;
+
+    bool wasReady = false;
+    uint32_t flips = 0;
+    uint64_t decisionsAtFlip = 0;
+    for (uint32_t batch = 0; batch < kSteadyStatePackets / 8; ++batch) {
+        ASSERT_TRUE(rig.RunPackets(8)) << rig.DescribeFault();
+        const bool ready = rig.Control().transmitTimingReady.load() != 0;
+        const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+        if (ready) {
+            ASSERT_TRUE(servo.locked) << "batch " << batch;
+            ASSERT_TRUE(servo.seeded) << "batch " << batch;
+            ASSERT_FALSE(servo.outputMuted) << "batch " << batch;
+        }
+        if (ready && !wasReady) {
+            ++flips;
+            decisionsAtFlip = servo.decisions;
+        }
+        wasReady = ready;
+    }
+    EXPECT_EQ(flips, 1u);
+    EXPECT_TRUE(wasReady);
+    // A reference, then a locking decision.
+    EXPECT_GE(decisionsAtFlip, 2u);
+}
+
+// The phase trace reads what goes on the wire: arming a MOTU stream binds the
+// publisher as the release observer, and each published cadence period
+// carries three released DATA packets' first SPH -- the bytes transport then
+// sends -- with an older OUTPUT_LAST reference, the model's lead and the
+// stream's generation. Once per period, not per packet.
+TEST(AudioDriverTxProducerTests, MotuPhaseTraceCarriesTheReleasedWireSph) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    auto& runtime = rig.Ivars().runtime;
+    EXPECT_EQ(runtime.txSlotProvider.releaseObserver, &runtime.motuTxPhaseTrace);
+    rig.FeedMotuRx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
+
+    // Released, not transmitted: preparation runs about a ring lap ahead of
+    // the wire, so take a period now and compare it once it has gone out.
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    uint64_t updates = 0;
+    ASSERT_TRUE(rig.Control().motuPhaseTrace.ReadLatest(period, updates));
+    const uint64_t releasedData = runtime.txStreamEngine.Counters().dataPacketsPrepared.load();
+    EXPECT_NEAR(static_cast<double>(updates), static_cast<double>(releasedData) / 3.0, 1.0);
+    EXPECT_EQ(runtime.motuTxPhaseTrace.Published(), updates);
+    EXPECT_EQ(runtime.motuTxPhaseTrace.Rejected(), 0u);
+    EXPECT_EQ(period.streamGeneration, rig.Control().generation.load());
+    EXPECT_EQ(period.presentationLeadTicks, ASFW::Encoding::Motu::kDefaultPresentationLeadTicks);
+    ASSERT_EQ(period.count, 3u);
+    EXPECT_LT(period.packetIndex[0], period.packetIndex[1]);
+    EXPECT_LT(period.packetIndex[1], period.packetIndex[2]);
+    ASSERT_TRUE(period.hasOutputLast);
+    EXPECT_LT(period.outputLastPacketIndex, period.packetIndex[0]);
+    EXPECT_TRUE(ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period).valid);
+
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    const size_t dataBytes = 8 + 8 * rig.Dbs() * 4;
+    const auto& wire = rig.Wire();
+    for (uint32_t bucket = 0; bucket < 3; ++bucket) {
+        const uint64_t index = period.packetIndex[bucket];
+        ASSERT_LT(index, wire.size()) << "bucket " << bucket;
+        ASSERT_EQ(wire[index].bytes.size(), dataBytes) << "bucket " << bucket;
+        EXPECT_EQ(period.firstSph[bucket], wire[index].Quadlet(8)) << "bucket " << bucket;
+    }
+    // The three are consecutive DATA packets: one period, one of each bucket.
+    size_t dataBetween = 0;
+    for (uint64_t index = period.packetIndex[0]; index <= period.packetIndex[2]; ++index) {
+        dataBetween += wire[index].bytes.size() == dataBytes ? 1 : 0;
+    }
+    EXPECT_EQ(dataBetween, 3u);
+}
+
+// The producer hands the loop the conditioned absolute phase only from the
+// current stream generation. A `rel` of this generation seeds the error at
+// setpoint - rel, and the regulator then moves the transmit phase on the wire
+// by exactly that; a `rel` of any other generation is never used.
+TEST(AudioDriverTxProducerTests, MotuRelPhaseSeedsTheLoopOnlyForTheCurrentGeneration) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    constexpr int64_t kRel = 900;
+    constexpr int64_t kOneQ32 = ASFW::Encoding::Motu::MotuSphQ32Accumulator::kOneQ32;
+    for (const bool currentGeneration : {true, false}) {
+        SCOPED_TRACE(currentGeneration);
+        ASFW::Logging::LogRing::Shared().Initialize();
+        const uint32_t seedLinesBefore = CountLogLines("[MotuSphSeed]");
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+        auto& runtime = rig.Ivars().runtime;
+        ASSERT_TRUE(runtime.motuTxTimingStamper.HoldsAbsolutePhase());
+        const int64_t setpoint = runtime.motuTxTimingStamper.AbsolutePhaseSetpointTicks();
+        ASSERT_EQ(setpoint, 510);
+        rig.FeedMotuRx(8);
+        ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+        ASSERT_TRUE(runtime.motuTxTimingStamper.ServoTelemetrySnapshot().locked);
+        // The rig's device runs at exactly 512 ticks per frame: no correction.
+        const int64_t correctionBefore = runtime.motuTxTimingStamper.AppliedCorrectionQ32();
+        const uint64_t firstPacketAfter = rig.Wire().size();
+
+        auto& control = rig.MutableControl();
+        const uint64_t generation = control.generation.load();
+        if (currentGeneration) {
+            ASSERT_TRUE(control.motuRelPhase.Publish(
+                {.streamGeneration = generation, .ticks = kRel, .centerTicks = kRel}));
+        } else {
+            // A bridge armed for another stream, as between a start's
+            // generation step and the re-arm of its bridges.
+            control.motuRelPhase.Reset(generation + 7);
+            ASSERT_TRUE(control.motuRelPhase.Publish(
+                {.streamGeneration = generation + 7, .ticks = kRel, .centerTicks = kRel}));
+        }
+        ASSERT_TRUE(rig.RunPackets(2 * kSteadyStatePackets)) << rig.DescribeFault();
+
+        const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+        EXPECT_TRUE(servo.locked);
+        EXPECT_EQ(servo.hardResyncRequests, 0u);
+        EXPECT_FALSE(runtime.motuPayloadWriter.IsPcmMuted());
+        const double movedTicks =
+            static_cast<double>(runtime.motuTxTimingStamper.AppliedCorrectionQ32() -
+                                correctionBefore) /
+            static_cast<double>(kOneQ32);
+
+        // The same movement on the wire: every block's SPH step against the
+        // nominal 512, summed from the publication onwards.
+        const uint32_t dbs = rig.Dbs();
+        const size_t dataBytes = 8 + 8 * dbs * 4;
+        int64_t wireDrift = 0;
+        uint32_t previous = 0;
+        bool havePrevious = false;
+        for (uint64_t index = firstPacketAfter; index < rig.Wire().size(); ++index) {
+            const auto& packet = rig.Wire()[index];
+            if (packet.bytes.size() != dataBytes) {
+                continue;
+            }
+            for (uint32_t block = 0; block < 8; ++block) {
+                const uint32_t tick =
+                    ASFW::Encoding::Motu::TickFromSph(packet.Quadlet(8 + block * dbs * 4));
+                if (havePrevious) {
+                    wireDrift += ASFW::Encoding::Motu::TickDifference(tick, previous) - 512;
+                }
+                previous = tick;
+                havePrevious = true;
+            }
+        }
+
+        if (currentGeneration) {
+            EXPECT_EQ(servo.seedReReferences, 1u);
+            EXPECT_NEAR(movedTicks, static_cast<double>(setpoint - kRel), 1.0);
+            EXPECT_NEAR(static_cast<double>(wireDrift), static_cast<double>(setpoint - kRel), 2.0);
+            EXPECT_EQ(CountLogLines("[MotuSphSeed]") - seedLinesBefore, 1u);
+        } else {
+            EXPECT_EQ(servo.seedReReferences, 0u);
+            EXPECT_NEAR(movedTicks, 0.0, 1.0);
+            EXPECT_EQ(wireDrift, 0);
+            EXPECT_EQ(CountLogLines("[MotuSphSeed]") - seedLinesBefore, 0u);
+        }
+    }
+}
+
+// The whole absolute-phase loop on the production pieces: the phase trace at
+// release, the RX timing observer forming `rel` from it and from the device's
+// own SPH, the producer seeding the servo with it, and the servo moving the
+// transmit phase until the observer measures the setpoint -- modulo one cycle,
+// which is all the measurement resolves. The device offset keeps the starting
+// `rel` off the setpoint whichever cadence packets the two sides sample, so a
+// loop moving the wrong way could not settle there.
+TEST(AudioDriverTxProducerTests, MotuAbsolutePhaseLoopSettlesOnTheSetpoint) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    TxProducerRig rig;
+    rig.RecordWire(false);
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuRxThroughObserver(3 * 3072 + 300);
+    const auto* observer = rig.RxObserver();
+    auto& runtime = rig.Ivars().runtime;
+    constexpr int64_t kCycle = 3072;
+    const auto offSetpoint = [](int64_t rel) {
+        const int64_t off = ((rel - 510) % kCycle + kCycle) % kCycle;
+        return off > kCycle / 2 ? off - kCycle : off;
+    };
+
+    // The conditioner publishes from its third window: about 8 s.
+    uint32_t seconds = 0;
+    while (observer->RelPhasePublished() == 0 && seconds < 20) {
+        ASSERT_TRUE(rig.RunPackets(kCyclesPerSecond)) << rig.DescribeFault();
+        ++seconds;
+    }
+    ASSERT_EQ(observer->RelPhasePublished(), 1u);
+    const int64_t relAtSeed = observer->LastRelTicks();
+    EXPECT_GT(std::abs(offSetpoint(relAtSeed)), 64) << relAtSeed;
+    ASSERT_TRUE(rig.RunPackets(kCyclesPerSecond / 2)) << rig.DescribeFault();
+    auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    EXPECT_EQ(servo.seedReReferences, 1u);
+
+    // Two more windows: the measurement now reads the setpoint.
+    const uint64_t formed = observer->RelPhaseFormed();
+    while (observer->RelPhaseFormed() < formed + 2 && seconds < 40) {
+        ASSERT_TRUE(rig.RunPackets(kCyclesPerSecond)) << rig.DescribeFault();
+        ++seconds;
+    }
+    ASSERT_GE(observer->RelPhaseFormed(), formed + 2);
+    EXPECT_LE(std::abs(offSetpoint(observer->LastRelTicks())), 2)
+        << "rel at seed " << relAtSeed << ", now " << observer->LastRelTicks();
+    servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    EXPECT_TRUE(servo.locked);
+    EXPECT_EQ(servo.seedReReferences, 1u);
+    EXPECT_EQ(servo.hardResyncRequests, 0u);
+    EXPECT_EQ(observer->RelPhaseRejected(), 0u);
+    EXPECT_EQ(runtime.motuTxPhaseTrace.Rejected(), 0u);
+    EXPECT_FALSE(runtime.motuPayloadWriter.IsPcmMuted());
+}
+
+// Bound only where the cadence geometry behind `rel` holds: the 48 kHz family
+// (MotuRelPhaseGeometryHolds). The rig frames every start with the profile's
+// 1x geometry, so 44.1 kHz stands for the rates outside it.
+TEST(AudioDriverTxProducerTests, MotuPhaseTraceIsBoundOnlyWhereItsGeometryHolds) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    for (const uint32_t rate : {48000u, 44100u}) {
+        SCOPED_TRACE(rate);
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, rate));
+        auto& runtime = rig.Ivars().runtime;
+        const bool expectBound = rate != 44100u;
+        EXPECT_EQ(runtime.txSlotProvider.releaseObserver != nullptr, expectBound);
+        EXPECT_EQ(runtime.motuTxPhaseTrace.IsBound(), expectBound);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,6 +1585,96 @@ TEST(TxPacketIndexWidth, APacketPastTwoToTheThirtySecondCommitsItsOwnGeneration)
     EXPECT_EQ(meta.packetIndex, kPacket);
     EXPECT_EQ(meta.commitGeneration.load(), ASFW::Isoch::ExpectedTxCommitGeneration(kPacket, kSlots));
     EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
+}
+
+// A release observer reads each packet's final bytes from PublishSlot while
+// the slot is still the producer's: before the commit generation and the
+// committed cursor hand it to transport.
+TEST(TxPacketReleaseObserver, SeesTheReleasedBytesBeforeTheCommit) {
+    constexpr uint32_t kSlots = Geometry::kTxSharedSlotPackets;
+    constexpr uint32_t kStride = 296;
+    std::vector<uint8_t> payload(uint64_t{kSlots} * kStride);
+    std::vector<IsochTxPacketMeta> metadata(kSlots);
+    IsochTxQueueControl queue{};
+
+    struct Observer final : ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver {
+        const IsochTxPacketMeta* meta{nullptr};
+        const IsochTxQueueControl* queue{nullptr};
+        uint32_t calls{0};
+        uint64_t packetIndex{0};
+        std::vector<uint8_t> bytes;
+        bool committedBeforeRelease{false};
+        void OnRelease(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet,
+                       std::span<const uint8_t> packetBytes) noexcept override {
+            ++calls;
+            packetIndex = packet.packetIndex;
+            bytes.assign(packetBytes.begin(), packetBytes.end());
+            committedBeforeRelease =
+                meta->commitGeneration.load() ==
+                    ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex, kSlots) ||
+                queue->committedEnd.load() > packet.packetIndex;
+        }
+    } observer;
+
+    DextTxSlotProvider provider;
+    provider.payloadBase = payload.data();
+    provider.metadataRing = metadata.data();
+    provider.queueControl = &queue;
+    provider.numSlots = kSlots;
+    provider.slotStrideBytes = kStride;
+    provider.releaseObserver = &observer;
+
+    constexpr uint64_t kPacket = 3 * kSlots + 17;
+    observer.meta = &metadata[kPacket % kSlots];
+    observer.queue = &queue;
+    ASFW::Protocols::Audio::AMDTP::TxPacketSlotView slot{};
+    ASSERT_TRUE(provider.AcquireWritableSlot(kPacket, slot));
+    for (uint32_t i = 0; i < 16; ++i) {
+        slot.bytes[i] = static_cast<uint8_t>(0xA0 + i);
+    }
+
+    ASFW::Protocols::Audio::AMDTP::PreparedTxPacket packet{};
+    packet.packetIndex = kPacket;
+    packet.byteCount = 16;
+    packet.isData = true;
+    ASSERT_TRUE(provider.PublishSlot(packet));
+
+    EXPECT_EQ(observer.calls, 1U);
+    EXPECT_EQ(observer.packetIndex, kPacket);
+    ASSERT_EQ(observer.bytes.size(), 16U);
+    for (uint32_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(observer.bytes[i], 0xA0 + i) << "byte " << i;
+    }
+    EXPECT_FALSE(observer.committedBeforeRelease);
+    // ...and the commit still happens after it.
+    EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
+
+    // A rejected publication never reaches the observer.
+    packet.operation = ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::SkipCycle;
+    EXPECT_FALSE(provider.PublishSlot(packet));
+    EXPECT_EQ(observer.calls, 1U);
+}
+
+// Arming a stream starts with no release observer: one left from a previous
+// start must not see this stream's packets.
+TEST(TxPacketReleaseObserver, ArmingTheProducerUnbindsAStaleObserver) {
+    struct Counter final : ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver {
+        uint32_t calls{0};
+        void OnRelease(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket&,
+                       std::span<const uint8_t>) noexcept override {
+            ++calls;
+        }
+    } stale;
+
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.Ivars().runtime.txSlotProvider.releaseObserver = &stale;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    EXPECT_EQ(rig.Ivars().runtime.txSlotProvider.releaseObserver, nullptr);
+    rig.FeedBlockingRx(8);
+    ASSERT_TRUE(rig.RunPackets(1000)) << rig.DescribeFault();
+    EXPECT_EQ(stale.calls, 0U);
 }
 
 // T7 (TX_OWNERSHIP.md §1g): the TX frame cursor starts at the projected frame.

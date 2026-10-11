@@ -88,23 +88,6 @@ TEST(MotuSphTests, OffsetFromBaseWithoutWrap) {
     EXPECT_EQ(TickOffsetFromBase(sph, baseTick), 500u);
 }
 
-TEST(MotuSphTests, ReplayRebasesCachedOffsets) {
-    // Offsets cached on the receive side are preserved relative to whatever
-    // base the transmit side rebases onto (amdtp-motu.c:373-393).
-    const uint32_t offsets[] = {0u, 7u, 557u, 1114u};
-    const uint32_t txBase = 400u * kTicksPerCycle;
-
-    for (uint32_t cached : offsets) {
-        const uint32_t sph = ReplaySph(cached, txBase);
-        EXPECT_EQ(TickFromSph(sph), (txBase + cached) % kTicksPerSecond);
-    }
-}
-
-TEST(MotuSphTests, ReplayWrapsOneSecondTimeline) {
-    const uint32_t txBase = kTicksPerSecond - 10u;
-    EXPECT_EQ(TickFromSph(ReplaySph(30u, txBase)), 20u);
-}
-
 //==============================================================================
 // PCM codec (amdtp-motu.c:93-187)
 //==============================================================================

@@ -18,10 +18,10 @@
 // helper writes uint32 slots, and MOTU's chunks are neither quadlet-sized nor
 // quadlet-aligned. Layout cross-validated with Linux amdtp-motu.c:93-187.
 //
-// SPH is deliberately NOT written here. It carries presentation time replayed from the
-// device's own capture stream, so it belongs with the packetizer that owns per-packet
-// timing -- see MotuSph.hpp for the arithmetic and RxSequenceReplay.hpp for the source.
-// This writer only places PCM.
+// SPH is deliberately NOT written here. It carries the presentation time of the SPH
+// regulator, so it belongs with the timing stamper that runs as each packet is prepared
+// (MotuTxTimingStamper, MotuDeviceTiming.hpp). This writer only places PCM, or silence
+// while the regulator holds the output muted.
 
 #pragma once
 
@@ -51,6 +51,9 @@ struct MotuPayloadWriterCounters final {
     /// Frames not written because their packet was below the first writable
     /// packet (the finality frontier): that packet keeps its armed silence.
     std::atomic<uint64_t> framesMissedFinality{0};
+    /// Frames written as silence because the output was muted (SetPcmMuted).
+    /// Included in framesWritten: the frame reached its packet, as zero.
+    std::atomic<uint64_t> framesMuted{0};
 };
 
 struct MotuPayloadStreamConfig final {
@@ -79,12 +82,23 @@ public:
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
         uint64_t firstWritablePacket) noexcept override;
 
+    /// Write silence instead of the host's samples, into the same packets. The
+    /// packets stay DATA: their cadence is the device's own, replayed from the
+    /// receive stream, and only their content changes. The transmit producer
+    /// sets this from the SPH regulator's gate (MotuSphHardResyncGate) before
+    /// each packet it prepares; the gate holds the output silent until the
+    /// regulator has locked.
+    void SetPcmMuted(bool muted) noexcept;
+    [[nodiscard]] bool IsPcmMuted() const noexcept;
+
     [[nodiscard]] const MotuPayloadWriterCounters& Counters() const noexcept;
 
 private:
     MotuPayloadStreamConfig streamConfig_{};
     Protocols::Audio::AMDTP::AmdtpPacketTimeline* timeline_{nullptr};
     MotuPayloadWriterCounters counters_{};
+    // Written on the transmit preparation queue, read by the IO thread's fill.
+    std::atomic<bool> muted_{false};
 };
 
 } // namespace ASFW::Encoding::Motu

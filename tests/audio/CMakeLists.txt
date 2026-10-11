@@ -56,7 +56,7 @@ add_audio_test(Am824PayloadCodecTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
-# Shared MOTU model, framing and synthesis invariants.
+# Shared MOTU model, framing and policy invariants.
 add_audio_test(MotuStackTests MotuStackTests.cpp)
 
 # MOTU Payload Codec and Device Timing Tests
@@ -104,12 +104,7 @@ add_audio_test(MotuPayloadReaderTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
-# MOTU per-data-block presentation offset cache
-add_audio_test(MotuEventOffsetCacheTests
-    MotuEventOffsetCacheTests.cpp
-)
-
-# MOTU transmit-side SPH replay
+# MOTU transmit-side SPH arithmetic
 add_audio_test(MotuTxTimingTests
     MotuTxTimingTests.cpp
 )
@@ -117,6 +112,65 @@ add_audio_test(MotuTxTimingTests
 # MOTU capture-side presentation timing (SPH -> replay offset)
 add_audio_test(MotuRxTimingTests
     MotuRxTimingTests.cpp
+)
+
+# MOTU SPH regulator: fractional transmit clock
+add_audio_test(MotuSphQ32AccumulatorTests
+    MotuSphQ32AccumulatorTests.cpp
+)
+
+# MOTU SPH regulator: the clock servo and its hard-resync gate
+add_audio_test(MotuSphClockServoTests
+    MotuSphClockServoTests.cpp
+)
+
+# MOTU SPH regulator: per-rate production configuration
+add_audio_test(MotuSphServoPolicyTests
+    MotuSphServoPolicyTests.cpp
+)
+
+# MOTU SPH regulator: the transmit timing stamper, for every protocol version
+add_audio_test(MotuTxTimingStamperTests
+    MotuTxTimingStamperTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
+)
+
+# MOTU SPH regulator: absolute-phase conditioner
+add_audio_test(MotuRelPhaseConditionerTests
+    MotuRelPhaseConditionerTests.cpp
+)
+
+# MOTU SPH regulator: the release observer that publishes the transmit phase trace
+add_audio_test(MotuTxPhaseTracePublisherTests
+    MotuTxPhaseTracePublisherTests.cpp
+)
+
+# MOTU SPH regulator: the transmit presentation residual and its cadence lattice
+add_audio_test(MotuTxPhaseResidualQuantizationTests
+    MotuTxPhaseResidualQuantizationTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+)
+
+# MOTU SPH regulator: device sample period measured from received SPH
+add_audio_test(MotuRxSphRateMeterTests
+    MotuRxSphRateMeterTests.cpp
 )
 
 # MOTU host->device payload placement tests
@@ -265,6 +319,7 @@ add_audio_test(AudioDriverTxProducerTests
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioPresentationObserver.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Families/BeBoB/MAudio/MAudioDuplexChoreography.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
 )
 target_include_directories(AudioDriverTxProducerTests PRIVATE
     "${ASFW_TESTS_DIR}/mocks/net.asfw.driver"

@@ -53,7 +53,11 @@ struct AudioStreamTxPolicy final {
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
-    Encoding::Motu::TimingPolicy motuTiming{Encoding::Motu::TimingPolicy::ReplayObserved};
+    /// MOTU only: the model's transmit presentation lead (RuntimePolicy).
+    uint32_t motuPresentationLeadTicks{Encoding::Motu::kDefaultPresentationLeadTicks};
+    /// MOTU only: the model's absolute-phase setpoint at 48 kHz (RuntimePolicy).
+    int32_t motuAbsolutePhaseSetpointTicks48k{
+        Encoding::Motu::kDefaultAbsolutePhaseSetpointTicks48k};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 
 };

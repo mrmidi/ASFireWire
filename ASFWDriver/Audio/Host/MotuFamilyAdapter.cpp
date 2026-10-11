@@ -92,9 +92,14 @@ void MotuFamilyAdapter::Describe(const DescribeInput& in, DescribeDone done) {
     // lambda keeps the protocol alive until the read completes.
     auto protocol = in.protocol;
     protocol->EnsureRuntimeStreamGeometry(
-        [record = in.record, protocol, done = std::move(done)](IOReturn geometryStatus) {
+        [record = in.record, builder = in.policy->plan.profileBuilder, protocol,
+         done = std::move(done)](IOReturn geometryStatus) {
             if (geometryStatus == kIOReturnSuccess) {
                 auto config = BuildNubConfig(record, *protocol);
+                // The audio driver selects its stream profile by this id; without
+                // it the registry falls back to generic DICE, whose AM824 framing
+                // refuses the packed geometry at StartIO.
+                config.profileBuilderId = static_cast<uint32_t>(builder);
                 if (config.sampleRates.empty()) {
                     done(DescribeRefusal{kIOReturnUnsupported, "unusable-motu-formation"});
                     return;
