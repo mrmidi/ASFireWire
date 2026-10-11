@@ -155,9 +155,10 @@ public:
     [[nodiscard]] uint64_t RelPhaseRejected() const noexcept { return relPhaseRejected_; }
 
     // Telemetry windows closed in total, and `rel` values formed, since
-    // construction.
+    // construction; the last `rel` formed, before conditioning.
     [[nodiscard]] uint64_t PhaseWindowsClosed() const noexcept { return phaseWindowsClosed_; }
     [[nodiscard]] uint64_t RelPhaseFormed() const noexcept { return relPhaseFormed_; }
+    [[nodiscard]] int64_t LastRelTicks() const noexcept { return lastRelTicks_; }
 
     // Device frames per telemetry window: four seconds.
     static constexpr uint32_t kPhaseWindowSeconds = 4;
@@ -297,6 +298,7 @@ private:
         }
         const int64_t rel = ::ASFW::Encoding::Motu::TickDifference(residual.residualTicks, rxAbsTicks);
         ++relPhaseFormed_;
+        lastRelTicks_ = rel;
         ASFW_LOG(DirectAudio,
                  "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
                  "buckets=%u",
@@ -388,6 +390,7 @@ private:
     // feeds it, so the same boundary resets both.
     ::ASFW::Encoding::Motu::MotuRelPhaseConditioner relPhase_{};
     uint64_t relPhaseFormed_{0};
+    int64_t lastRelTicks_{0};
     uint64_t relPhasePublished_{0};
     uint64_t relPhaseRejected_{0};
 };
