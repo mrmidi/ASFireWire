@@ -9,6 +9,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
@@ -296,6 +297,11 @@ struct AudioDriverRuntimeState {
     // lock is still to be reported. TX preparation queue only.
     uint64_t motuSphAcquireHostTicks{0};
     bool motuSphLockPending{false};
+    // The transmit half of the regulator's absolute-phase measurement: the
+    // slot provider's release observer while a MOTU stream runs at a rate
+    // where `rel` is formed. Bound by ArmPrimaryTxProducer, unbound with the
+    // slot memory.
+    ASFW::Audio::Runtime::MotuTxPhaseTracePublisher motuTxPhaseTrace;
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes

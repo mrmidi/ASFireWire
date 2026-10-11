@@ -68,6 +68,19 @@ inline constexpr uint32_t kSphOffsetMask = 0x00000fff;
     return difference > kSecond / 2 ? difference - kSecond : difference;
 }
 
+/// An SPH quadlet that can be a presentation time: nothing above the cycle
+/// count (bits 31:25 clear), a cycle count below 8000 and an offset below
+/// 3072. SphFromTick() produces nothing else.
+[[nodiscard]] constexpr bool IsWellFormedSph(uint32_t sph) noexcept {
+    return (sph & ~(kSphCycleMask | kSphOffsetMask)) == 0 &&
+           ((sph & kSphCycleMask) >> kSphCycleShift) < kCyclesPerSecond &&
+           (sph & kSphOffsetMask) < kTicksPerCycle;
+}
+
+static_assert(IsWellFormedSph(SphFromTick(kTicksPerSecond - 1)));
+static_assert(!IsWellFormedSph(0x02000000u));
+static_assert(!IsWellFormedSph(8000u << kSphCycleShift));
+static_assert(!IsWellFormedSph(kTicksPerCycle));
 static_assert(WrapTick(-1) == kTicksPerSecond - 1);
 static_assert(TickDifference(10, kTicksPerSecond - 10) == 20);
 static_assert(TickDifference(kTicksPerSecond - 10, 10) == -20);

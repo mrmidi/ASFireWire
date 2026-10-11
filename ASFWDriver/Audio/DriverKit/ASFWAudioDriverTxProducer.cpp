@@ -145,6 +145,8 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
 // ratePpb/rxPpb: the transmit step and the device's measured period against
 // nominal (positive = faster). same: observations dropped as repeats (benign);
 // back: bridge/frame/tick counters seen going backwards (never expected).
+// trace: cadence periods the phase-trace bridge took / refused this start
+// (a refusal means another stream generation, never expected).
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
     ASFW_LOG(DirectAudio,
@@ -159,14 +161,16 @@ void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
              static_cast<long long>(servo.txCorrectionQ32));
     ASFW_LOG(DirectAudio,
              "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
-             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u",
+             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
              servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
              servo.muteTransitions, servo.unmuteTransitions,
              ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
                  std::memory_order_relaxed),
              servo.observationDrops, servo.dropBridgeNotAdvanced,
              servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
-             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls);
+             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls,
+             ivars.runtime.motuTxPhaseTrace.Published(),
+             ivars.runtime.motuTxPhaseTrace.Rejected());
 }
 
 } // namespace
@@ -891,6 +895,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
     // Nothing observes release unless this start binds an observer below.
     ivars.runtime.txSlotProvider.releaseObserver = nullptr;
+    ivars.runtime.motuTxPhaseTrace.Unbind();
 
     ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
 
@@ -935,6 +940,15 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.motuPayloadWriter.SetPcmMuted(
             ivars.runtime.motuTxTimingStamper.IsOutputMuted());
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
+        // The transmit half of the absolute-phase measurement, where its
+        // cadence geometry holds: every released DATA packet's SPH, one
+        // cadence period at a time, to the RX timing observer.
+        if (ASFW::Audio::Runtime::MotuRelPhaseGeometryHolds(txConfig.sampleRate)) {
+            ivars.runtime.motuTxPhaseTrace.Bind(
+                control, memory.queueControl,
+                ivars.runtime.motuTxTimingStamper.PresentationLeadTicks());
+            ivars.runtime.txSlotProvider.releaseObserver = &ivars.runtime.motuTxPhaseTrace;
+        }
         ivars.runtime.motuSphAcquireHostTicks = mach_absolute_time();
         ivars.runtime.motuSphLockPending = true;
         ivars.runtime.motuSphActive.store(true, std::memory_order_relaxed);

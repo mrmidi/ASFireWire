@@ -984,6 +984,72 @@ TEST(AudioDriverTxProducerTests, MotuTimingReadinessFlipsOnlyAtLock) {
     EXPECT_GE(decisionsAtFlip, 2u);
 }
 
+// The phase trace reads what goes on the wire: arming a MOTU stream binds the
+// publisher as the release observer, and each published cadence period
+// carries three released DATA packets' first SPH -- the bytes transport then
+// sends -- with an older OUTPUT_LAST reference, the model's lead and the
+// stream's generation. Once per period, not per packet.
+TEST(AudioDriverTxProducerTests, MotuPhaseTraceCarriesTheReleasedWireSph) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    auto& runtime = rig.Ivars().runtime;
+    EXPECT_EQ(runtime.txSlotProvider.releaseObserver, &runtime.motuTxPhaseTrace);
+    rig.FeedMotuRx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
+
+    // Released, not transmitted: preparation runs about a ring lap ahead of
+    // the wire, so take a period now and compare it once it has gone out.
+    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
+    uint64_t updates = 0;
+    ASSERT_TRUE(rig.Control().motuPhaseTrace.ReadLatest(period, updates));
+    const uint64_t releasedData = runtime.txStreamEngine.Counters().dataPacketsPrepared.load();
+    EXPECT_NEAR(static_cast<double>(updates), static_cast<double>(releasedData) / 3.0, 1.0);
+    EXPECT_EQ(runtime.motuTxPhaseTrace.Published(), updates);
+    EXPECT_EQ(runtime.motuTxPhaseTrace.Rejected(), 0u);
+    EXPECT_EQ(period.streamGeneration, rig.Control().generation.load());
+    EXPECT_EQ(period.presentationLeadTicks, ASFW::Encoding::Motu::kDefaultPresentationLeadTicks);
+    ASSERT_EQ(period.count, 3u);
+    EXPECT_LT(period.packetIndex[0], period.packetIndex[1]);
+    EXPECT_LT(period.packetIndex[1], period.packetIndex[2]);
+    ASSERT_TRUE(period.hasOutputLast);
+    EXPECT_LT(period.outputLastPacketIndex, period.packetIndex[0]);
+    EXPECT_TRUE(ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period).valid);
+
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    const size_t dataBytes = 8 + 8 * rig.Dbs() * 4;
+    const auto& wire = rig.Wire();
+    for (uint32_t bucket = 0; bucket < 3; ++bucket) {
+        const uint64_t index = period.packetIndex[bucket];
+        ASSERT_LT(index, wire.size()) << "bucket " << bucket;
+        ASSERT_EQ(wire[index].bytes.size(), dataBytes) << "bucket " << bucket;
+        EXPECT_EQ(period.firstSph[bucket], wire[index].Quadlet(8)) << "bucket " << bucket;
+    }
+    // The three are consecutive DATA packets: one period, one of each bucket.
+    size_t dataBetween = 0;
+    for (uint64_t index = period.packetIndex[0]; index <= period.packetIndex[2]; ++index) {
+        dataBetween += wire[index].bytes.size() == dataBytes ? 1 : 0;
+    }
+    EXPECT_EQ(dataBetween, 3u);
+}
+
+// Bound only where the cadence geometry behind `rel` holds: the 48 kHz family
+// (MotuRelPhaseGeometryHolds). The rig frames every start with the profile's
+// 1x geometry, so 44.1 kHz stands for the rates outside it.
+TEST(AudioDriverTxProducerTests, MotuPhaseTraceIsBoundOnlyWhereItsGeometryHolds) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    for (const uint32_t rate : {48000u, 44100u}) {
+        SCOPED_TRACE(rate);
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, rate));
+        auto& runtime = rig.Ivars().runtime;
+        const bool expectBound = rate != 44100u;
+        EXPECT_EQ(runtime.txSlotProvider.releaseObserver != nullptr, expectBound);
+        EXPECT_EQ(runtime.motuTxPhaseTrace.IsBound(), expectBound);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TX ownership goldens (milestone 6, T1; documentation/TX_OWNERSHIP.md)
 //

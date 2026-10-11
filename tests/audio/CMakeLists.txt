@@ -149,6 +149,11 @@ add_audio_test(MotuRelPhaseConditionerTests
     MotuRelPhaseConditionerTests.cpp
 )
 
+# MOTU SPH regulator: the release observer that publishes the transmit phase trace
+add_audio_test(MotuTxPhaseTracePublisherTests
+    MotuTxPhaseTracePublisherTests.cpp
+)
+
 # MOTU SPH regulator: the transmit presentation residual and its cadence lattice
 add_audio_test(MotuTxPhaseResidualQuantizationTests
     MotuTxPhaseResidualQuantizationTests.cpp

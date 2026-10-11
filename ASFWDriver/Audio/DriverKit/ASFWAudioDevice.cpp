@@ -189,6 +189,7 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.txSlotProvider.queueControl = nullptr;
     ivars.runtime.txSlotProvider.numSlots = 0;
     ivars.runtime.txSlotProvider.releaseObserver = nullptr;
+    ivars.runtime.motuTxPhaseTrace.Unbind();
     ivars.runtime.txExecutionTimeline.queueControl = nullptr;
     ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
 
@@ -310,6 +311,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.queueControl = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
             ivars.runtime.txSlotProvider.releaseObserver = nullptr;
+            ivars.runtime.motuTxPhaseTrace.Unbind();
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
             ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
 

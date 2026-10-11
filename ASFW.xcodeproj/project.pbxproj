@@ -616,6 +616,7 @@
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
 		0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeVendorCodec.hpp; sourceTree = "<group>"; };
+		0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuTxPhaseTracePublisher.hpp; sourceTree = "<group>"; };
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0E9D9D9859BBCA2DA4256491 /* DiscoveryGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryGraph.cpp; sourceTree = "<group>"; };
@@ -3581,6 +3582,7 @@
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
 				25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */,
+				0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
