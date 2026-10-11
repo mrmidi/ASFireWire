@@ -119,6 +119,11 @@ add_audio_test(MotuRxTimingTests
     MotuRxTimingTests.cpp
 )
 
+# MOTU SPH regulator: fractional transmit clock
+add_audio_test(MotuSphQ32AccumulatorTests
+    MotuSphQ32AccumulatorTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp

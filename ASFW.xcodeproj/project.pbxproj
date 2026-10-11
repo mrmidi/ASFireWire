@@ -991,6 +991,7 @@
 		6875709099799590B76F5DEF /* TargetLifecycle.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TargetLifecycle.hpp; sourceTree = "<group>"; };
 		68805919073786AF82B196A3 /* DiscoveryCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveryCoordinator.hpp; sourceTree = "<group>"; };
 		68FCF09440E88789D78C6AD6 /* GapCountOptimizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = GapCountOptimizer.hpp; sourceTree = "<group>"; };
+		6912DAF0B6A020148CDFE0F6 /* MotuSphQ32Accumulator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphQ32Accumulator.hpp; sourceTree = "<group>"; };
 		6990DACCD98CD6D7F483A379 /* TransactionHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionHandler.hpp; sourceTree = "<group>"; };
 		69DA61FB6DCC4A0CA981A042 /* AVCCommandFilter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCCommandFilter.hpp; sourceTree = "<group>"; };
 		69F6BB42F81D1FFC8653F3B1 /* WireRetention.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WireRetention.hpp; sourceTree = "<group>"; };
@@ -2545,6 +2546,7 @@
 				B74AAA0C50CB9FA4E45F13AA /* MotuRxDiagnosticCapture.hpp */,
 				71D6784D5EAE51E7FAFD0A6D /* MotuRxTiming.hpp */,
 				BD3EC624D2DB2E19F2587BE2 /* MotuSph.hpp */,
+				6912DAF0B6A020148CDFE0F6 /* MotuSphQ32Accumulator.hpp */,
 				365F0D822752B1C65D350B1E /* MotuSphSynthesizer.hpp */,
 				B02F97FB6E5F1A78F7D497E6 /* MotuTxTiming.hpp */,
 			);
