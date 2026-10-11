@@ -881,6 +881,7 @@
 		4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverTeardown.cpp; sourceTree = "<group>"; };
 		4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ATTrace.cpp; sourceTree = "<group>"; };
 		4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateValidation.hpp; sourceTree = "<group>"; };
+		4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRelPhaseConditioner.hpp; sourceTree = "<group>"; };
 		500873644296662233E0FA3C /* AvcDeviceGraph.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcDeviceGraph.hpp; sourceTree = "<group>"; };
 		500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalAnalyzerPlotView.swift; sourceTree = "<group>"; };
 		5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceFamilyDriver.hpp; sourceTree = "<group>"; };
@@ -2546,6 +2547,7 @@
 				7A73DB72F38AE4D2E61907F8 /* MotuPayloadWriter.cpp */,
 				3DA16292178C3C5E25E7978D /* MotuPayloadWriter.hpp */,
 				434649F778402B768C487C9F /* MotuPortLayout.hpp */,
+				4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */,
 				B74AAA0C50CB9FA4E45F13AA /* MotuRxDiagnosticCapture.hpp */,
 				71D6784D5EAE51E7FAFD0A6D /* MotuRxTiming.hpp */,
 				BD3EC624D2DB2E19F2587BE2 /* MotuSph.hpp */,

@@ -134,6 +134,11 @@ add_audio_test(MotuSphServoPolicyTests
     MotuSphServoPolicyTests.cpp
 )
 
+# MOTU SPH regulator: absolute-phase conditioner
+add_audio_test(MotuRelPhaseConditionerTests
+    MotuRelPhaseConditionerTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp
