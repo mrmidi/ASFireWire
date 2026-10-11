@@ -18,7 +18,7 @@ using ASFW::Encoding::Motu::kMotuRelCadenceQuantumTicks;
 using ASFW::Encoding::Motu::kMotuRelWarmupSamples;
 using ASFW::Encoding::Motu::MotuRelPhaseConditioner;
 using ASFW::Encoding::Motu::MotuRelPhaseSample;
-using ASFW::Encoding::Motu::MotuSphClockServo;
+using ASFW::Encoding::Motu::SphSynthesizer;
 
 constexpr int64_t kCycle = 3072;
 constexpr int64_t kHalfCycle = kCycle / 2;
@@ -40,8 +40,8 @@ void Warmup(MotuRelPhaseConditioner& stage, int64_t level) {
 TEST(MotuRelPhaseFold, FoldingAboutZeroSplitsAnOperatingPointNearTheCap) {
     // Two samples 2 ticks apart, folded about zero, are reported 3070 ticks
     // apart because the branch cut runs between them.
-    const int64_t foldedLow = MotuSphClockServo::FoldAbsolutePhaseErrorTicks(kHalfCycle - 1);
-    const int64_t foldedHigh = MotuSphClockServo::FoldAbsolutePhaseErrorTicks(kHalfCycle + 1);
+    const int64_t foldedLow = SphSynthesizer::FoldAbsolutePhaseErrorTicks(kHalfCycle - 1);
+    const int64_t foldedHigh = SphSynthesizer::FoldAbsolutePhaseErrorTicks(kHalfCycle + 1);
 
     EXPECT_EQ(foldedLow, 1535);
     EXPECT_EQ(foldedHigh, -1535);
@@ -51,8 +51,8 @@ TEST(MotuRelPhaseFold, FoldingAboutZeroSplitsAnOperatingPointNearTheCap) {
 TEST(MotuRelPhaseFold, FoldingAboutTheOperatingPointKeepsNeighboursTogether) {
     const int64_t low = kHalfCycle - 1;
     const int64_t high = kHalfCycle + 1;
-    const int64_t foldedLow = MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(low, kHalfCycle);
-    const int64_t foldedHigh = MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(high, kHalfCycle);
+    const int64_t foldedLow = SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(low, kHalfCycle);
+    const int64_t foldedHigh = SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(high, kHalfCycle);
 
     EXPECT_EQ(foldedLow, low);
     EXPECT_EQ(foldedHigh, high);
@@ -61,8 +61,8 @@ TEST(MotuRelPhaseFold, FoldingAboutTheOperatingPointKeepsNeighboursTogether) {
 
 TEST(MotuRelPhaseFold, FoldingAboutZeroIsTheSpecialCaseOfFoldingAboutAPoint) {
     for (int64_t ticks = -4 * kCycle; ticks <= 4 * kCycle; ++ticks) {
-        EXPECT_EQ(MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(ticks, 0),
-                  MotuSphClockServo::FoldAbsolutePhaseErrorTicks(ticks))
+        EXPECT_EQ(SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(ticks, 0),
+                  SphSynthesizer::FoldAbsolutePhaseErrorTicks(ticks))
             << "ticks=" << ticks;
     }
 }
@@ -72,7 +72,7 @@ TEST(MotuRelPhaseFold, EveryFoldAboutAPointIsCongruentAndWithinHalfACycle) {
     // point: a fold, not a rewrite.
     for (int64_t center = -2000; center <= 2000; center += 137) {
         for (int64_t ticks = -3 * kCycle; ticks <= 3 * kCycle; ticks += 7) {
-            const int64_t folded = MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(ticks, center);
+            const int64_t folded = SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(ticks, center);
             EXPECT_EQ(((folded - ticks) % kCycle + kCycle) % kCycle, 0)
                 << "center=" << center << " ticks=" << ticks;
             const int64_t distance = folded - center;

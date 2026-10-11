@@ -22,7 +22,6 @@
 #include "../../Ports/IAmdtpTxSlotProvider.hpp"
 #include "../../Wire/MOTU/MotuBlockCodec.hpp"
 #include "../../Wire/MOTU/MotuSph.hpp"
-#include "../../../Isoch/Core/IsochTxQueue.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -36,10 +35,10 @@ class MotuTxPhaseTracePublisher final
     : public ::ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver {
 public:
     void Bind(AudioTransportControlBlock* control,
-              const ::ASFW::Isoch::IsochTxQueueControl* queue,
+              const ::ASFW::Protocols::Audio::AMDTP::ITxPacketExecutionTimeline* timeline,
               uint32_t presentationLeadTicks) noexcept {
         control_ = control;
-        queue_ = queue;
+        timeline_ = timeline;
         presentationLeadTicks_ = presentationLeadTicks;
         // The window may still hold the previous stream's packets, whose SPH
         // belongs to another phase.
@@ -50,12 +49,12 @@ public:
 
     void Unbind() noexcept {
         control_ = nullptr;
-        queue_ = nullptr;
+        timeline_ = nullptr;
         window_ = {};
     }
 
     [[nodiscard]] bool IsBound() const noexcept {
-        return control_ != nullptr && queue_ != nullptr;
+        return control_ != nullptr && timeline_ != nullptr;
     }
 
     void OnRelease(const ::ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet,
@@ -78,17 +77,17 @@ public:
         // One OUTPUT_LAST reference for the whole period: the projection
         // subtracts the cycles it adds, so which completion it starts from
         // changes no residual, and this stays one stamp read per period.
-        uint64_t outputLastPacketIndex = 0;
-        uint32_t outputLastCycleTimer = 0;
-        bool hasOutputLast = false;
-        const uint64_t stamps = queue_->completionStampCount.load(std::memory_order_acquire);
-        if (stamps != 0) {
-            hasOutputLast =
-                queue_->ReadCompletionStamp(stamps - 1, outputLastPacketIndex, outputLastCycleTimer);
-        }
-        window_.outputLastPacketIndex = hasOutputLast ? outputLastPacketIndex : 0;
-        window_.outputLastCycleTimer = hasOutputLast ? outputLastCycleTimer : 0;
-        window_.hasOutputLast = hasOutputLast;
+        // Reuse the producer's existing execution projection once for the
+        // oldest DATA bucket. The remaining buckets differ by whole cycles.
+        const uint32_t first = kMotuPhaseTraceCadenceBuckets - window_.count;
+        int64_t executionTicks = 0;
+        const bool haveAnchor = timeline_->AnchorForPacket(window_.packetIndex[first], executionTicks);
+        window_.outputLastPacketIndex = haveAnchor ? window_.packetIndex[first] : 0;
+        const uint32_t tick = ::ASFW::Encoding::Motu::WrapTick(executionTicks);
+        window_.outputLastCycleTimer = haveAnchor ? ::ASFW::Timing::encodeCycleTimer(
+            0, tick / ::ASFW::Encoding::Motu::kTicksPerCycle,
+            tick % ::ASFW::Encoding::Motu::kTicksPerCycle) : 0;
+        window_.hasOutputLast = haveAnchor;
         window_.presentationLeadTicks = presentationLeadTicks_;
         // The control block's live generation: the bridge refuses any other,
         // so a period released across a restart cannot reach the new stream.
@@ -129,7 +128,7 @@ public:
 
 private:
     AudioTransportControlBlock* control_{nullptr};
-    const ::ASFW::Isoch::IsochTxQueueControl* queue_{nullptr};
+    const ::ASFW::Protocols::Audio::AMDTP::ITxPacketExecutionTimeline* timeline_{nullptr};
     uint32_t presentationLeadTicks_{0};
     MotuPhaseTraceCadenceSample window_{};
     uint64_t published_{0};

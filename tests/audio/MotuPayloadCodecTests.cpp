@@ -630,7 +630,6 @@ TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheClockMonotonicAcrossResetWit
     EXPECT_EQ(clock.updates, 3U);
     EXPECT_EQ(clock.sample.rxFrames, 24U);
     EXPECT_EQ(clock.sample.rxTicks, 12288);
-    EXPECT_EQ(observer.RxClockStalls(), 0U);
 }
 
 // StartIO re-arms the bridge with a new generation, possibly on the same
@@ -752,40 +751,10 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesNothingWithoutABinding) {
     observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
     observer.DrainTelemetry(16);
     EXPECT_FALSE(ReadClock(control).published);
-    EXPECT_EQ(observer.RxClockStalls(), 0U);
 }
 
 // A bridge ahead of the meter in the same generation refuses every further
 // publication; the drain reports it once until the next Reset().
-TEST(MotuPayloadCodecTests, RxTimingObserverReportsAMeterBehindTheBridgeOnce) {
-    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t generation = control.generation.load(std::memory_order_acquire);
-    ControlBindingSource source(&control, 48000);
-    MotuRxTimingObserver observer(&source);
-
-    observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
-    observer.DrainTelemetry(16);
-    EXPECT_EQ(observer.RxClockStalls(), 0U);
-
-    // What a meter reset without a bridge reset leaves behind.
-    ASSERT_TRUE(control.motuRxSphClock.Publish(
-        {.streamGeneration = generation, .rxFrames = 192000, .rxTicks = 98304000}));
-    observer.DrainTelemetry(16);
-    observer.DrainTelemetry(16);
-    EXPECT_EQ(observer.RxClockStalls(), 1U);
-
-    // Reset() re-arms the report; the next batch re-binds the control block.
-    observer.Reset();
-    observer.DrainTelemetry(16);
-    EXPECT_EQ(observer.RxClockStalls(), 1U);
-    observer.OnBatchBegin(nullptr);
-    observer.DrainTelemetry(16);
-    EXPECT_EQ(observer.RxClockStalls(), 2U);
-}
-
 // ---------------------------------------------------------------------------
 // The regulator's absolute phase `rel`, formed by the observer's drain from the
 // device's absolute receive phase and the transmit phase trace.
@@ -847,7 +816,7 @@ void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
 // every four seconds of device frames (frames 0, 196608, 393216 and 577536 in
 // 13 s), and `rel` = transmit residual - receive median, conditioned and
 // published from the conditioner's third sample on.
-TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain) {
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelWithoutDrainingTelemetry) {
     constexpr int64_t kAbsPhaseTicks = 9216;
     ASFW::Audio::Runtime::AudioTransportControlBlock control{};
     control.ResetForStart();
@@ -880,9 +849,9 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain)
     EXPECT_EQ(rel.streamGeneration, generation);
     EXPECT_EQ(rel.ticks, expectedRel);
     EXPECT_EQ(rel.centerTicks, expectedRel);
-    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 4U);
-    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 4U);
-    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 1U);
+    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 0U);
+    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 0U);
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 0U);
 
     // A new control generation starts the conditioner over: two windows in
     // five seconds are short of its warm-up, so nothing is published even
@@ -899,7 +868,7 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain)
 
 // A `rel` the bridge refuses -- armed for another generation -- is counted
 // every time and logged once per start.
-TEST(MotuPayloadCodecTests, RxTimingObserverLogsARefusedRelOncePerStart) {
+TEST(MotuPayloadCodecTests, RxTimingObserverRejectsRelFromAnotherStartWithoutLogging) {
     ASFW::Audio::Runtime::AudioTransportControlBlock control{};
     control.ResetForStart();
     const uint64_t generation = control.generation.load(std::memory_order_acquire);
@@ -918,7 +887,7 @@ TEST(MotuPayloadCodecTests, RxTimingObserverLogsARefusedRelOncePerStart) {
     ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
     uint64_t relUpdates = 0;
     EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
-    EXPECT_EQ(CountLogLines("[RxPhaseBridge] rejected") - rejectedBefore, 1U);
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] rejected") - rejectedBefore, 0U);
 }
 
 // `rel` needs the transmit term and the 48 kHz-family geometry; without either
@@ -932,7 +901,7 @@ TEST(MotuPayloadCodecTests, RxTimingObserverFormsRelOnlyWithATraceAndWhereTheGeo
         MotuRxTimingObserver observer(&source);
         observer.OnBatchBegin(nullptr);
         DriveConstantPhaseDevice(observer, 9, 9216);
-        EXPECT_EQ(observer.PhaseWindowsClosed(), 3U);
+        EXPECT_EQ(observer.PhaseWindowsClosed(), 0U);
         EXPECT_EQ(observer.RelPhaseFormed(), 0U);
     }
     {

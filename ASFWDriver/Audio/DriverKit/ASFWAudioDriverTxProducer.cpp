@@ -50,33 +50,10 @@ uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
 
 namespace {
 
-// MOTU SPH regulator telemetry. Every line reaches the unified log, so a
-// Release build can be read with:
-//
-//   /usr/bin/log show --last 10m --info --style compact \
-//       --predicate 'eventMessage CONTAINS "[MotuSph"'
-//
-//   [MotuSphServo]  summary, with the [TxPrep] heartbeat (every 5 s)
-//   [MotuSphState]  the counters behind it, same cadence
-//   [MotuSphLock]   the first lock of a start or of a new stream generation,
-//                   and how long the output was muted for it
-//   [MotuSphSeed]   the first absolute phase `rel` of a generation reached the
-//                   loop, which seeded its error against the model's setpoint
-//   [MotuSphHard]   a hard resync: mute, then a one-shot phase repair
-//   [MotuSphMute]   any other change of the regulator's output mute
-//   [MotuSphStall]  the RX SPH meter fell behind its bridge (logged by
-//                   MotuRxTimingObserver)
-//
-// The edge lines come from the servo hook below, once per event; nothing is
-// logged per packet. The receive side of the absolute phase logs its own
-// lines from MotuRxTimingObserver's drain ([RxSphRate], [RxPhaseAbs],
-// [RxPhaseRel], ...); all of them together:
-//
-//   /usr/bin/log show --last 10m --info --style compact --predicate \
-//       'eventMessage CONTAINS "[MotuSph" OR eventMessage CONTAINS "[RxPhase" OR
-//        eventMessage CONTAINS "[RxSphRate]"'
-
-using ASFW::Audio::Wire::MotuSphRatePpb;
+// MOTU diagnostics: one coarse heartbeat and acquisition/resync edges.
+const auto MotuSphRatePpb = [](int64_t step, int64_t nominal) noexcept -> int64_t {
+    return step > 0 ? static_cast<int64_t>((static_cast<__int128>(nominal - step) * 1'000'000'000) / step) : 0;
+};
 
 void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
                      const ASFW::Audio::Wire::MotuSphServoApplyResult& result) noexcept {
@@ -166,37 +143,13 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
     }
 }
 
-// The summary, on the [TxPrep] heartbeat. Two short lines: each must fit the
-// driver log ring's 232-byte record together with its category prefix.
-// ratePpb/rxPpb: the transmit step and the device's measured period against
-// nominal (positive = faster). same: observations dropped as repeats (benign);
-// back: bridge/frame/tick counters seen going backwards (never expected).
-// trace: cadence periods the phase-trace bridge took / refused this start
-// (a refusal means another stream generation, never expected).
+// Coarse heartbeat only; control never depends on this log.
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
-    const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
-    ASFW_LOG(DirectAudio,
-             "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
-             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld",
-             servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
-             servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
-             static_cast<long long>(servo.phaseErrorTicks),
-             static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(servo.stepQ32),
-             static_cast<long long>(servo.txCorrectionQ32));
-    ASFW_LOG(DirectAudio,
-             "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
-             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
-             servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
-             servo.muteTransitions, servo.unmuteTransitions,
-             ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
-                 std::memory_order_relaxed),
-             servo.observationDrops, servo.dropBridgeNotAdvanced,
-             servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
-             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls,
-             ivars.runtime.motuTxPhaseTrace.Published(),
-             ivars.runtime.motuTxPhaseTrace.Rejected());
+    const auto state = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    ASFW_LOG(DirectAudio, "[MotuSph] gen=%llu locked=%u muted=%u step=%lld err=%lld resync=%llu",
+             state.streamGeneration, state.locked ? 1u : 0u, state.outputMuted ? 1u : 0u,
+             static_cast<long long>(state.stepQ32), static_cast<long long>(state.phaseErrorTicks),
+             state.phaseRepairs);
 }
 
 } // namespace
@@ -973,7 +926,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         // cadence period at a time, to the RX timing observer.
         if (ASFW::Audio::Runtime::MotuRelPhaseGeometryHolds(txConfig.sampleRate)) {
             ivars.runtime.motuTxPhaseTrace.Bind(
-                control, memory.queueControl,
+                control, &ivars.runtime.txExecutionTimeline,
                 ivars.runtime.motuTxTimingStamper.PresentationLeadTicks());
             ivars.runtime.txSlotProvider.releaseObserver = &ivars.runtime.motuTxPhaseTrace;
         }

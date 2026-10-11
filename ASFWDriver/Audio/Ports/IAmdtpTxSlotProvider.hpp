@@ -29,6 +29,14 @@ public:
 ///
 /// Called on the TX preparation queue, once per published packet; must not
 /// block, allocate or log.
+// Audio-side execution-time projection; consumes the transport's neutral
+// completion contract without exposing its queue mechanics to content codecs.
+class ITxPacketExecutionTimeline {
+public:
+    virtual ~ITxPacketExecutionTimeline() = default;
+    [[nodiscard]] virtual bool AnchorForPacket(uint64_t packetIndex, int64_t& ticks) const noexcept = 0;
+};
+
 class ITxPacketReleaseObserver {
 public:
     virtual ~ITxPacketReleaseObserver() = default;

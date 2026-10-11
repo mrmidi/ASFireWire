@@ -11,7 +11,7 @@
 namespace ASFW::DeviceProfiles::Audio::Definitions {
 
 inline constexpr std::array kMotuDefinitions{
-    // Best-effort FireWire-only models. USB/hybrid identities remain recognized.
+    // Best-effort FireWire-only models, including V1. USB/hybrid identities remain recognized.
     MotuDefinition(DeviceDefinitionId::Motu828mk2, kMotu828mk2SwVersion,
                    ProfileBuilderId::Motu828mk2,
                    ProtocolImplementationId::MotuRegister,
@@ -34,8 +34,8 @@ inline constexpr std::array kMotuDefinitions{
                    ProfileBuilderId::Motu8pre,
                    ProtocolImplementationId::MotuRegister,
                    SupportDisposition::Supported, kMotu8preModelName),
-    MotuDefinition(DeviceDefinitionId::Motu828, 1, (Encoding::Motu::kV1HardwareBatch ? ProfileBuilderId::Motu828 : ProfileBuilderId::None), (Encoding::Motu::kV1HardwareBatch ? ProtocolImplementationId::MotuRegister : ProtocolImplementationId::None), (Encoding::Motu::kV1HardwareBatch ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported), "828"),
-    MotuDefinition(DeviceDefinitionId::Motu896, 2, (Encoding::Motu::kV1HardwareBatch ? ProfileBuilderId::Motu896 : ProfileBuilderId::None), (Encoding::Motu::kV1HardwareBatch ? ProtocolImplementationId::MotuRegister : ProtocolImplementationId::None), (Encoding::Motu::kV1HardwareBatch ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported), "896"),
+    MotuDefinition(DeviceDefinitionId::Motu828, 1, ProfileBuilderId::Motu828, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "828"),
+    MotuDefinition(DeviceDefinitionId::Motu896, 2, ProfileBuilderId::Motu896, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "896"),
     MotuDefinition(DeviceDefinitionId::Motu828mk3, 21, ProfileBuilderId::Motu828mk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "828mk3"),
     MotuDefinition(DeviceDefinitionId::Motu896mk3, 23, ProfileBuilderId::Motu896mk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "896mk3"),
     MotuDefinition(DeviceDefinitionId::MotuUltraliteMk3, 25, ProfileBuilderId::MotuUltraliteMk3, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "UltraLite mk3"),
@@ -46,6 +46,12 @@ inline constexpr std::array kMotuDefinitions{
     MotuDefinition(DeviceDefinitionId::Motu896mk3Hybrid, 55, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "896mk3 Hybrid"),
     MotuDefinition(DeviceDefinitionId::MotuTrack16, 57, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Track16"),
     MotuDefinition(DeviceDefinitionId::Motu4pre, 69, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "4pre"),
+    // FFADO src/motu/motu_avdevice.cpp:81-84 identifies these FireWire units,
+    // but supplies no audio model. Recognize each without choosing an audio protocol.
+    MotuDefinition(DeviceDefinitionId::MotuV4hdSubdevice0, 0x21, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "V4HD subdevice 0"),
+    MotuDefinition(DeviceDefinitionId::MotuV4hdSubdevice1, 0x22, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "V4HD subdevice 1"),
+    MotuDefinition(DeviceDefinitionId::MotuV4hdSubdevice2, 0x23, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "V4HD subdevice 2"),
+    MotuDefinition(DeviceDefinitionId::MotuV4hdSubdevice3, 0x24, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "V4HD subdevice 3"),
 };
 
 [[nodiscard]] constexpr const char* MotuModelNameForSwVersion(uint32_t swVersion) noexcept {

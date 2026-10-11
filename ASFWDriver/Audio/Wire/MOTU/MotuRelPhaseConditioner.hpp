@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include "MotuSphClockServo.hpp"
+#include "MotuSphSynthesizer.hpp"
 
 #include <cstdint>
 
@@ -103,7 +103,7 @@ class MotuRelPhaseConditioner final {
             // cannot drag the first operating point a whole quantum off.
             const int64_t reference = stored_ == 0 ? phaseTicks : window_[0];
             const int64_t folded =
-                MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(phaseTicks, reference);
+                SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(phaseTicks, reference);
             const int64_t correction = LatticeOffsetTicks(folded - reference);
             const int64_t corrected = folded - correction;
             if (correction != 0) {
@@ -127,7 +127,7 @@ class MotuRelPhaseConditioner final {
         }
 
         const int64_t folded =
-            MotuSphClockServo::FoldAbsolutePhaseErrorTicksAbout(phaseTicks, centerTicks_);
+            SphSynthesizer::FoldAbsolutePhaseErrorTicksAbout(phaseTicks, centerTicks_);
         const int64_t correction = LatticeOffsetTicks(folded - centerTicks_);
         const int64_t corrected = folded - correction;
         if (correction != 0) {

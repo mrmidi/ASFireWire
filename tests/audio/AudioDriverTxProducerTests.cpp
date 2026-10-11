@@ -890,7 +890,7 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
         const uint32_t lockLinesBefore = CountLogLines("[MotuSphLock]");
         const uint32_t edgeLinesBefore =
             CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]");
-        const uint32_t summaryLinesBefore = CountLogLines("[MotuSphServo]");
+        const uint32_t summaryLinesBefore = CountLogLines("[MotuSph]");
         TxProducerRig rig;
         ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
         auto& runtime = rig.Ivars().runtime;
@@ -977,7 +977,7 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
         EXPECT_EQ(CountLogLines("[MotuSphHard]") + CountLogLines("[MotuSphMute]") -
                       edgeLinesBefore,
                   0u);
-        EXPECT_GT(CountLogLines("[MotuSphServo]") - summaryLinesBefore, 0u);
+        EXPECT_GT(CountLogLines("[MotuSph]") - summaryLinesBefore, 0u);
 
         size_t audibleTail = 0;
         for (size_t i = wire.size() - 1000; i < wire.size(); ++i) {
@@ -1082,7 +1082,7 @@ TEST(AudioDriverTxProducerTests, MotuPhaseTraceCarriesTheReleasedWireSph) {
     EXPECT_LT(period.packetIndex[0], period.packetIndex[1]);
     EXPECT_LT(period.packetIndex[1], period.packetIndex[2]);
     ASSERT_TRUE(period.hasOutputLast);
-    EXPECT_LT(period.outputLastPacketIndex, period.packetIndex[0]);
+    EXPECT_EQ(period.outputLastPacketIndex, period.packetIndex[0]);
     EXPECT_TRUE(ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period).valid);
 
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
@@ -1109,7 +1109,7 @@ TEST(AudioDriverTxProducerTests, MotuPhaseTraceCarriesTheReleasedWireSph) {
 TEST(AudioDriverTxProducerTests, MotuRelPhaseSeedsTheLoopOnlyForTheCurrentGeneration) {
     const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
     constexpr int64_t kRel = 900;
-    constexpr int64_t kOneQ32 = ASFW::Encoding::Motu::MotuSphQ32Accumulator::kOneQ32;
+    constexpr int64_t kOneQ32 = ASFW::Encoding::Motu::SphSynthesizer::kOneQ32;
     for (const bool currentGeneration : {true, false}) {
         SCOPED_TRACE(currentGeneration);
         ASFW::Logging::LogRing::Shared().Initialize();

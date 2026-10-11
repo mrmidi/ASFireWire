@@ -56,10 +56,6 @@ inline constexpr RuntimePolicy k828mk3Policy{
     // vendor driver: the official driver holds rel at +510 ticks with zero
     // spread over 87.5 s on the wire (828mk3, 48 kHz).
     .absolutePhaseSetpointTicks48k = 510};
-#ifndef ASFW_MOTU_V1_VALIDATION
-#define ASFW_MOTU_V1_VALIDATION 0
-#endif
-inline constexpr bool kV1HardwareBatch = ASFW_MOTU_V1_VALIDATION != 0;
 struct Model final {
     uint32_t unitVersion;
     const char* name;

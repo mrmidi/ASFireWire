@@ -92,12 +92,12 @@ struct AudioDriverDeviceState {
     ASFW::Audio::Runtime::ResolvedTimingGeometry timing{};
 };
 
-class DextTxExecutionTimeline final {
+class DextTxExecutionTimeline final : public ASFW::Protocols::Audio::AMDTP::ITxPacketExecutionTimeline {
 public:
     const ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
 
     [[nodiscard]] bool AnchorForPacket(uint64_t packetIndex,
-                                       int64_t& outTicks) const noexcept {
+                                       int64_t& outTicks) const noexcept override {
         if (!queueControl) {
             return false;
         }

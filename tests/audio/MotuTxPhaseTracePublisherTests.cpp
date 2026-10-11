@@ -7,6 +7,7 @@
 
 #include "Audio/DriverKit/Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "Audio/Wire/MOTU/MotuSph.hpp"
+#include "Isoch/Core/IsochTxQueue.hpp"
 
 #include <gtest/gtest.h>
 
@@ -20,6 +21,22 @@ using ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample;
 using ASFW::Audio::Runtime::MotuTxPhaseTracePublisher;
 using ASFW::Isoch::IsochTxQueueControl;
 using ASFW::Protocols::Audio::AMDTP::PreparedTxPacket;
+
+// Neutral audio execution-time interface. Hardware completion access stays
+// in this host fixture, not the MOTU content publisher.
+class ExecutionTimeline final : public ASFW::Protocols::Audio::AMDTP::ITxPacketExecutionTimeline {
+public:
+    explicit ExecutionTimeline(const IsochTxQueueControl& queue) : queue_(queue) {}
+    bool AnchorForPacket(uint64_t index, int64_t& ticks) const noexcept override {
+        uint64_t completed=0;uint32_t timestamp=0;
+        const uint64_t count=queue_.completionStampCount.load();
+        if (!count || !queue_.ReadCompletionStamp(count-1,completed,timestamp) || index<completed) return false;
+        ticks=ASFW::Timing::encodedTstampToOffsets(timestamp)+
+              static_cast<int64_t>(index-completed)*ASFW::Encoding::Motu::kTicksPerCycle;
+        return true;
+    }
+private: const IsochTxQueueControl& queue_;
+};
 
 constexpr uint32_t kDbs = 19;
 constexpr uint32_t kFramesPerPacket = 8;
@@ -82,12 +99,13 @@ TEST(MotuTxPhaseTracePublisherTests, PublishesOneWindowPerCadencePeriodFromTheRe
     control.ResetForStart();
     const uint64_t generation = control.generation.load();
     IsochTxQueueControl queue{};
+    ExecutionTimeline timeline(queue);
     const uint32_t completion = ASFW::Timing::encodeCycleTimer(3, 1234, 0);
     queue.PushCompletionStamp(80, ASFW::Timing::encodeCycleTimer(3, 1220, 0));
     queue.PushCompletionStamp(94, completion);
 
     MotuTxPhaseTracePublisher publisher;
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
     ASSERT_TRUE(publisher.IsBound());
 
     // N,D,D,D,N,D: frames 0, 8, 16, 24 on the DATA packets.
@@ -115,8 +133,8 @@ TEST(MotuTxPhaseTracePublisherTests, PublishesOneWindowPerCadencePeriodFromTheRe
         EXPECT_EQ(bridge.period.firstSph[bucket], SphOf(expectedIndex[bucket])) << bucket;
     }
     ASSERT_TRUE(bridge.period.hasOutputLast);
-    EXPECT_EQ(bridge.period.outputLastPacketIndex, 94U);
-    EXPECT_EQ(bridge.period.outputLastCycleTimer, completion);
+    EXPECT_EQ(bridge.period.outputLastPacketIndex, 102U);
+    EXPECT_EQ(bridge.period.outputLastCycleTimer, ASFW::Timing::encodeCycleTimer(0, 1242, 0));
     EXPECT_EQ(bridge.period.presentationLeadTicks, kLead);
     EXPECT_EQ(publisher.Published(), 2U);
     EXPECT_EQ(publisher.Rejected(), 0U);
@@ -151,8 +169,9 @@ TEST(MotuTxPhaseTracePublisherTests, ReadsOnlyDataPacketsWithAWellFormedSph) {
     AudioTransportControlBlock control{};
     control.ResetForStart();
     IsochTxQueueControl queue{};
+    ExecutionTimeline timeline(queue);
     MotuTxPhaseTracePublisher publisher;
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
     for (const auto* rejected : {&noData, &noFrames, &shortPacket, &shortSpan}) {
         Release(publisher, *rejected);
     }
@@ -175,9 +194,10 @@ TEST(MotuTxPhaseTracePublisherTests, StampsTheLiveGenerationAndCountsARefusedPer
     control.ResetForStart();
     const uint64_t generation = control.generation.load();
     IsochTxQueueControl queue{};
+    ExecutionTimeline timeline(queue);
     queue.PushCompletionStamp(1, ASFW::Timing::encodeCycleTimer(0, 1, 0));
     MotuTxPhaseTracePublisher publisher;
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
 
     Release(publisher, Data(10, 0));
     ASSERT_EQ(Read(control).updates, 1U);
@@ -194,7 +214,7 @@ TEST(MotuTxPhaseTracePublisherTests, StampsTheLiveGenerationAndCountsARefusedPer
     // The next start re-arms the bridge, and arming the producer re-binds.
     control.ResetForStart();
     const uint64_t next = control.generation.load();
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
     EXPECT_EQ(publisher.Rejected(), 0U);
     Release(publisher, Data(12, 48));
     bridge = Read(control);
@@ -209,17 +229,18 @@ TEST(MotuTxPhaseTracePublisherTests, BindingStartsAnEmptyWindowAndUnbindingStops
     AudioTransportControlBlock control{};
     control.ResetForStart();
     IsochTxQueueControl queue{};
+    ExecutionTimeline timeline(queue);
     MotuTxPhaseTracePublisher publisher;
     EXPECT_FALSE(publisher.IsBound());
     Release(publisher, Data(1, 0));
     EXPECT_FALSE(Read(control).published);
 
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
     Release(publisher, Data(2, 8));
     Release(publisher, Data(3, 16));
     EXPECT_FALSE(Read(control).published);  // the gate has not fired
 
-    publisher.Bind(&control, &queue, kLead);
+    publisher.Bind(&control, &timeline, kLead);
     Release(publisher, Data(5, 24));
     auto bridge = Read(control);
     ASSERT_TRUE(bridge.published);

@@ -8,7 +8,7 @@
 #include "Audio/Wire/AM824/Am824PayloadCodec.hpp"
 #include "Audio/Wire/MOTU/MotuDeviceTiming.hpp"
 #include "Audio/Wire/MOTU/MotuPayloadCodec.hpp"
-#include "Audio/Wire/MOTU/MotuSphClockServo.hpp"
+#include "Audio/Wire/MOTU/MotuSphSynthesizer.hpp"
 #include "Audio/Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "Isoch/Receive/IsochRxTiming.hpp"
 
@@ -737,9 +737,9 @@ TEST(IsochRxTimingTests, MotuReceiveReactivationKeepsClockBridgeMonotonicWithinS
 // neither frames nor ticks, the bridge stays monotonic in the same generation,
 // and a servo fed from it keeps its reference: no phase error, no hard resync.
 TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo) {
-    using ASFW::Encoding::Motu::MotuSphClockServo;
+    using ASFW::Encoding::Motu::SphSynthesizer;
     using ASFW::Encoding::Motu::MotuSphReferenceCause;
-    using ASFW::Encoding::Motu::MotuSphServoDecision;
+    using MotuSphServoDecision = ASFW::Encoding::Motu::SphSynthesizer::State;
     constexpr uint32_t kRate = 48000;
     constexpr int64_t kTicksPerPacket = 4096;  // exactly nominal: 512 ticks per frame
 
@@ -749,13 +749,8 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
     // The TX side as the stamper will drive it: one servo update per read of
     // the bridge, with the packetizer following nominal exactly, so the true
     // phase error is zero.
-    MotuSphClockServo servo{};
-    ASSERT_TRUE(servo.Configure({
-        .sampleRateHz = kRate,
-        .phaseCorrectionHorizonFrames = kRate * 8,
-        .minimumStepQ32 = MotuSphClockServo::NominalStepQ32(kRate) - (int64_t{1} << 32),
-        .maximumStepQ32 = MotuSphClockServo::NominalStepQ32(kRate) + (int64_t{1} << 32),
-    }));
+    SphSynthesizer servo{};
+    ASSERT_TRUE(servo.Configure(kRate));
     uint64_t servoUpdates = 0;
     ASFW::Audio::Runtime::MotuRxSphClockSample observed{};
     const auto updateServo = [&](uint64_t newPublications) -> MotuSphServoDecision {
@@ -763,12 +758,11 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
         EXPECT_TRUE(rig.control.motuRxSphClock.ReadLatest(observed, updates));
         EXPECT_EQ(updates, servoUpdates + newPublications);
         servoUpdates = updates;
-        return servo.Update({
-            .valid = true,
-            .generation = observed.streamGeneration,
-            .rxFrames = observed.rxFrames,
-            .rxTicks = observed.rxTicks,
-        });
+        const bool updated = servo.Observe(observed.streamGeneration, updates,
+                                           observed.rxFrames, observed.rxTicks);
+        auto result = servo.Current();
+        result.feedbackUpdated = updated && result.feedbackUpdated;
+        return result;
     };
 
     // Long enough for the replay ring to establish, so the gap hits an
@@ -811,9 +805,8 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
     EXPECT_EQ(observed.rxFrames, kPreGapPackets * kMotuFramesPerPacket);
     EXPECT_EQ(observed.rxTicks, kPreGapPackets * kTicksPerPacket);
     EXPECT_EQ(after.referenceCause, MotuSphReferenceCause::kNone);
-    EXPECT_FALSE(after.bridgeStalled);
-    EXPECT_TRUE(after.feedbackUpdated);
+    EXPECT_FALSE(after.feedbackUpdated); // one packet is shorter than the decision interval.
     EXPECT_FALSE(after.hardResyncRequired);
     EXPECT_EQ(after.phaseErrorTicks, 0);
-    EXPECT_EQ(after.measuredStepQ32, MotuSphClockServo::NominalStepQ32(kRate));
+    EXPECT_EQ(after.measuredStepQ32, SphSynthesizer::NominalStepQ32(kRate));
 }

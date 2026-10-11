@@ -47,7 +47,7 @@ enum class DeviceDefinitionId : uint32_t {
     MAudioFireWire1814Bootloader,
     MAudioFireWire1814,
     MAudioProjectMix,
-    // MOTU publishes root model_id 0; the model lives in Unit_Sw_Version, so
+    // MOTU may omit root model_id; the model lives in Unit_Sw_Version, so
     // these are the one family matched from the unit directory alone.
     Motu828mk2,
     Motu896hd,
@@ -71,6 +71,7 @@ enum class DeviceDefinitionId : uint32_t {
     GenericDice,
     Motu828, Motu896, Motu828mk3, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
+    MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
 };
 
 enum class AudioFamilyProviderId : uint8_t {

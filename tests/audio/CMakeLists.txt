@@ -114,20 +114,13 @@ add_audio_test(MotuRxTimingTests
     MotuRxTimingTests.cpp
 )
 
-# MOTU SPH regulator: fractional transmit clock
-add_audio_test(MotuSphQ32AccumulatorTests
-    MotuSphQ32AccumulatorTests.cpp
-)
+add_audio_test(MotuSphSynthesizerTests MotuSphSynthesizerTests.cpp)
+
+# MOTU timing integration
 
 # MOTU SPH regulator: the clock servo and its hard-resync gate
-add_audio_test(MotuSphClockServoTests
-    MotuSphClockServoTests.cpp
-)
 
 # MOTU SPH regulator: per-rate production configuration
-add_audio_test(MotuSphServoPolicyTests
-    MotuSphServoPolicyTests.cpp
-)
 
 # MOTU SPH regulator: the transmit timing stamper, for every protocol version
 add_audio_test(MotuTxTimingStamperTests

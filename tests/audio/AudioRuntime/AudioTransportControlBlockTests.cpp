@@ -1,6 +1,5 @@
 #include "Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "Audio/DriverKit/Runtime/MotuRxSphRateMeter.hpp"
-#include "Audio/DriverKit/Runtime/MotuServoStallDetector.hpp"
 #include "Audio/Runtime/AudioTelemetrySnapshot.hpp"
 #include "Audio/Wire/MOTU/MotuSph.hpp"
 
@@ -22,8 +21,6 @@ using ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample;
 using ASFW::Audio::Runtime::MotuRelPhaseSampleRecord;
 using ASFW::Audio::Runtime::MotuRxSphClockSample;
 using ASFW::Audio::Runtime::MotuRxSphRateMeter;
-using ASFW::Audio::Runtime::MotuServoStallDetector;
-using ASFW::Audio::Runtime::MotuServoStallEvent;
 using ASFW::Encoding::Motu::SphFromTick;
 
 TEST(AudioTransportControlBlockTests, PreparationRequestsAreMonotonicAndCoalescible) {
@@ -401,46 +398,6 @@ TEST(AudioTransportControlBlockTests,
     EXPECT_EQ(observed.streamGeneration, streamGeneration);
     EXPECT_EQ(observed.rxFrames, afterReactivation.frames);
     EXPECT_EQ(observed.rxTicks, afterReactivation.ticks);
-}
-
-// A meter that fell behind the bridge in the bridge's own generation means
-// every later publication is refused: reported once until Reset().
-TEST(AudioTransportControlBlockTests, MotuServoStallDetectorReportsMeterRegressionOncePerReset) {
-    MotuServoStallDetector detector{};
-    MotuServoStallEvent event{};
-    const MotuRxSphClockSample bridge{.streamGeneration = 7, .rxFrames = 16000, .rxTicks = 8192000};
-
-    EXPECT_FALSE(detector.Observe(7, {.valid = true, .frames = 16000, .ticks = 8192000}, bridge, 2000,
-                                  event));
-    ASSERT_TRUE(detector.Observe(7, {.valid = true, .frames = 8000, .ticks = 4096000}, bridge, 2000,
-                                 event));
-    EXPECT_EQ(event.streamGeneration, 7U);
-    EXPECT_EQ(event.bridgeUpdates, 2000U);
-    EXPECT_EQ(event.bridgeFrames, 16000U);
-    EXPECT_EQ(event.bridgeTicks, 8192000);
-    EXPECT_EQ(event.meterFrames, 8000U);
-    EXPECT_EQ(event.meterTicks, 4096000);
-
-    EXPECT_FALSE(detector.Observe(7, {.valid = true, .frames = 8016, .ticks = 4104192}, bridge, 2000,
-                                  event));
-
-    detector.Reset();
-    EXPECT_TRUE(detector.Observe(7, {.valid = true, .frames = 8, .ticks = 4096}, bridge, 2000, event));
-}
-
-TEST(AudioTransportControlBlockTests,
-     MotuServoStallDetectorIgnoresIncompleteOrDifferentGenerationSnapshots) {
-    MotuServoStallDetector detector{};
-    MotuServoStallEvent event{};
-    const MotuRxSphClockSample bridge{.streamGeneration = 9, .rxFrames = 16000, .rxTicks = 8192000};
-
-    EXPECT_FALSE(detector.Observe(9, {.valid = false, .frames = 0, .ticks = 0}, bridge, 2000, event));
-    EXPECT_FALSE(detector.Observe(8, {.valid = true, .frames = 8000, .ticks = 4096000}, bridge, 2000,
-                                  event));
-    EXPECT_FALSE(detector.Observe(9, {.valid = true, .frames = 8000, .ticks = 4096000}, bridge, 0,
-                                  event));
-    EXPECT_FALSE(detector.Observe(0, {.valid = true, .frames = 8000, .ticks = 4096000}, bridge, 2000,
-                                  event));
 }
 
 // One phase-trace publication is a whole cadence period, so the round trip
