@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <iterator>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -124,7 +125,7 @@ IdealTxRun RunIdealMotuTx(uint64_t leadPackets, bool jitterLead, uint64_t alignC
     CapturingSlotProvider provider{};
     if (!profile.BuildDefaultTxStreamConfig(txConfig) || txConfig.sampleRate != 48000 ||
         !engine.Configure(profile, txConfig) ||
-        !stamper.Configure(txConfig.dbs, txConfig.sampleRate, kLead)) {
+        !stamper.Configure(txConfig.dbs, txConfig.sampleRate, kLead, std::nullopt)) {
         run.prepareFailures = kCycles;
         return run;
     }

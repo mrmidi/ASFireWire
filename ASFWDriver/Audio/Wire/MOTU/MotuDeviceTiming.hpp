@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 #include "MotuRxDiagnosticCapture.hpp"
@@ -425,8 +426,9 @@ struct MotuSphServoRuntimeInput final {
     int64_t rxTicks{0};
 
     // The conditioned absolute phase of our stream against the device, from
-    // its own bridge. Optional: without it the loop is relative and holds the
-    // phase the stream started with.
+    // its own bridge (motuRelPhase). Optional: without it the loop is relative
+    // and holds the phase the stream started with. Ignored unless the stamper
+    // was configured with a setpoint.
     bool haveRelPhase{false};
     int64_t relPhaseTicks{0};
     int64_t relPhaseCenterTicks{0};
@@ -457,6 +459,9 @@ struct MotuSphServoApplyResult final {
     bool unmuteActivated{false};
     // A new stream generation started a fresh, muted acquisition.
     bool acquisitionRestarted{false};
+    // This observation brought the generation's first absolute phase, and the
+    // servo seeded its error from it against the setpoint.
+    bool absolutePhaseAcquired{false};
     bool outputMuted{false};
     // Zero whenever the observation reached the servo, and for the drops this
     // gate does not own (unconfigured stamper, invalid sample, wrong
@@ -537,12 +542,19 @@ public:
     MotuTxTimingStamper() noexcept = default;
 
     // Refuses a rate the regulator has no configuration for, and leaves the
-    // stamper unconfigured then.
+    // stamper unconfigured then. With an absolute-phase setpoint
+    // (AbsolutePhaseSetpointTicksAtRate) the loop holds the measured phase
+    // `rel` there once it arrives; without one it stays relative and ignores
+    // `rel`.
     [[nodiscard]] bool Configure(uint32_t dbs, uint32_t sampleRateHz,
-                                 uint32_t presentationLeadTicks) noexcept {
+                                 uint32_t presentationLeadTicks,
+                                 std::optional<int32_t> absolutePhaseSetpointTicks) noexcept {
         dbs_ = dbs;
         presentationLeadTicks_ = presentationLeadTicks;
-        const auto config = ::ASFW::Encoding::Motu::MotuSphServoConfigForRate(sampleRateHz);
+        auto config = ::ASFW::Encoding::Motu::MotuSphServoConfigForRate(sampleRateHz);
+        if (config.has_value() && absolutePhaseSetpointTicks.has_value()) {
+            config->absolutePhaseSetpointTicks = *absolutePhaseSetpointTicks;
+        }
         const bool configured = config.has_value() && clock_.Configure(sampleRateHz) &&
                                 servo_.Configure(*config);
         if (!configured) {
@@ -550,6 +562,8 @@ public:
             (void)servo_.Configure({});
         }
         decisionIntervalFrames_ = configured ? config->phaseCorrectionHorizonFrames : 0;
+        holdsAbsolutePhase_ = configured && absolutePhaseSetpointTicks.has_value();
+        absolutePhaseSetpointTicks_ = holdsAbsolutePhase_ ? *absolutePhaseSetpointTicks : 0;
         ResetForStart();
         return configured;
     }
@@ -673,6 +687,12 @@ public:
     [[nodiscard]] uint32_t PresentationLeadTicks() const noexcept {
         return presentationLeadTicks_;
     }
+    // Whether the loop holds an absolute phase at this configuration, and
+    // which; false means the relative loop.
+    [[nodiscard]] bool HoldsAbsolutePhase() const noexcept { return holdsAbsolutePhase_; }
+    [[nodiscard]] int32_t AbsolutePhaseSetpointTicks() const noexcept {
+        return absolutePhaseSetpointTicks_;
+    }
     // SPH of the first block of the last packet stamped, 0 before the first.
     [[nodiscard]] uint32_t LastFirstSph() const noexcept { return lastFirstSph_; }
 
@@ -728,9 +748,12 @@ private:
 
         // The reference of a generation is taken on its first observation,
         // long before an absolute phase is available, so the arrival of the
-        // first one re-references the loop.
-        const bool relPhaseAcquired = input.haveRelPhase && !haveRelPhase_;
-        if (input.haveRelPhase) {
+        // first one re-references the loop and seeds its error against the
+        // setpoint (the evidence is on MotuSphClockServo::EstablishReference).
+        // Without a setpoint the loop stays relative and `rel` is ignored.
+        const bool haveRelPhase = holdsAbsolutePhase_ && input.haveRelPhase;
+        const bool relPhaseAcquired = haveRelPhase && !haveRelPhase_;
+        if (haveRelPhase) {
             haveRelPhase_ = true;
         }
 
@@ -740,13 +763,14 @@ private:
             .rxFrames = input.rxFrames,
             .rxTicks = input.rxTicks,
             .txCorrectionQ32 = clock_.AppliedCorrectionQ32(),
-            .haveAbsolutePhase = input.haveRelPhase,
+            .haveAbsolutePhase = haveRelPhase,
             .absolutePhaseTicks = input.relPhaseTicks,
-            .haveAbsolutePhaseCenter = input.haveRelPhase,
+            .haveAbsolutePhaseCenter = haveRelPhase,
             .absolutePhaseCenterTicks = input.relPhaseCenterTicks,
             .absolutePhaseAcquired = relPhaseAcquired,
         });
         result.observationApplied = true;
+        result.absolutePhaseAcquired = relPhaseAcquired;
 
         const auto action = gate_.Update(result.decision.hardResyncRequired, result.decision.locked);
         result.muteActivated = action.muteBeforeRepair;
@@ -856,6 +880,9 @@ private:
     uint64_t lastAppliedRxFrames_{0};
     // Whether any observation of this generation carried absolute phase.
     bool haveRelPhase_{false};
+    // Configured with an absolute-phase setpoint (Configure()).
+    bool holdsAbsolutePhase_{false};
+    int32_t absolutePhaseSetpointTicks_{0};
 
     MotuSphServoRuntimeSnapshot telemetry_{};
 };

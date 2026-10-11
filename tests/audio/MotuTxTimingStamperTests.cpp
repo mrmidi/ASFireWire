@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -44,6 +45,8 @@ using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 
 constexpr int64_t kOneQ32 = MotuSphQ32Accumulator::kOneQ32;
 constexpr int64_t kLead = kDefaultPresentationLeadTicks;
+// No absolute-phase setpoint: the loop holds the phase the stream started with.
+constexpr std::optional<int32_t> kRelativeLoop = std::nullopt;
 constexpr uint32_t k828 = 0x1;     // protocol v1
 constexpr uint32_t k828mk2 = 0x3;  // protocol v2
 constexpr uint32_t k828mk3 = 0x15; // protocol v3
@@ -91,7 +94,9 @@ struct MotuTx final {
         }
         const auto policy = profile.TxStreamPolicy();
         if (!stamper.Configure(txConfig.dbs, txConfig.sampleRate,
-                               policy.motuPresentationLeadTicks)) {
+                               policy.motuPresentationLeadTicks,
+                               AbsolutePhaseSetpointTicksAtRate(
+                                   policy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
             return false;
         }
         writer.Configure({.pcmChunks = txConfig.pcmChannels,
@@ -280,7 +285,7 @@ TEST(MotuTxTimingStamperTests, SeedsFromTheTransmitTimePlusTheConfiguredLead) {
     for (const uint32_t lead : {0u, 9216u, 4096u}) {
         SCOPED_TRACE(lead);
         MotuTxTimingStamper stamper{};
-        ASSERT_TRUE(stamper.Configure(4, 48000, lead));
+        ASSERT_TRUE(stamper.Configure(4, 48000, lead, kRelativeLoop));
         EXPECT_EQ(stamper.PresentationLeadTicks(), lead);
         std::array<uint8_t, 8 + 16> bytes{};
         const TxPacketSlotView slot{0, bytes.data(), static_cast<uint32_t>(bytes.size())};
@@ -299,7 +304,7 @@ TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
     MotuTxTimingStamper stamper{};
     for (const uint32_t rate : kClockRates) {
         SCOPED_TRACE(rate);
-        ASSERT_TRUE(stamper.Configure(4, rate, kDefaultPresentationLeadTicks));
+        ASSERT_TRUE(stamper.Configure(4, rate, kDefaultPresentationLeadTicks, kRelativeLoop));
         EXPECT_TRUE(stamper.IsConfigured());
         EXPECT_FALSE(stamper.IsSeeded());
         EXPECT_TRUE(stamper.IsOutputMuted());
@@ -308,7 +313,7 @@ TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
     }
 
     // A rate change mid-life is a fresh configuration: no seed survives it.
-    ASSERT_TRUE(stamper.Configure(4, 48000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(4, 48000, kDefaultPresentationLeadTicks, kRelativeLoop));
     std::array<uint8_t, 8 + 16> bytes{};
     const TxPacketSlotView slot{0, bytes.data(), static_cast<uint32_t>(bytes.size())};
     const PreparedTxPacket packet{.byteCount = static_cast<uint32_t>(bytes.size()),
@@ -317,7 +322,7 @@ TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
                                   .dbs = 4};
     ASSERT_EQ(stamper.StampPacket(slot, packet, DataTiming(1000)), TxTimingStampResult::kOk);
     ASSERT_TRUE(stamper.IsSeeded());
-    ASSERT_TRUE(stamper.Configure(4, 96000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(4, 96000, kDefaultPresentationLeadTicks, kRelativeLoop));
     EXPECT_FALSE(stamper.IsSeeded());
     EXPECT_EQ(stamper.StepQ32(), 256 * kOneQ32);
     ASSERT_EQ(stamper.StampPacket(slot, packet, DataTiming(2000)), TxTimingStampResult::kOk);
@@ -328,10 +333,10 @@ TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
 // unconfigured: never muted (no decision would lift it), never seeded.
 TEST(MotuTxTimingStamperTests, ConfigureRefusesARateWithoutARegulatorConfiguration) {
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(4, 48000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(4, 48000, kDefaultPresentationLeadTicks, kRelativeLoop));
     for (const uint32_t rate : {0u, 32000u, 22050u}) {
         SCOPED_TRACE(rate);
-        EXPECT_FALSE(stamper.Configure(4, rate, kDefaultPresentationLeadTicks));
+        EXPECT_FALSE(stamper.Configure(4, rate, kDefaultPresentationLeadTicks, kRelativeLoop));
         EXPECT_FALSE(stamper.IsConfigured());
         EXPECT_FALSE(stamper.IsOutputMuted());
         std::array<uint8_t, 8 + 16> bytes{};
@@ -463,7 +468,7 @@ TEST(MotuTxTimingStamperTests, ClosesRxMinusTxPhaseWithOneContinuousServo) {
 // step follows the device's own period at that rate.
 TEST(MotuTxTimingStamperTests, StepFollowsTheDeviceRateAtTheConfiguredRate) {
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(4, 96000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(4, 96000, kDefaultPresentationLeadTicks, kRelativeLoop));
     constexpr uint64_t interval = 1024;
     ASSERT_EQ(stamper.DecisionIntervalFrames(), interval);
     constexpr uint64_t generation = 9;
@@ -521,9 +526,14 @@ TEST(MotuTxTimingStamperTests, RejectsInvalidStaleDuplicateAndTooYoungRxState) {
 
 // The first absolute phase re-references a loop whose reference was built
 // long before it was available. The setpoint is zero here: none is configured.
+// The 828mk3 at 48 kHz, armed as the producer arms it: the loop holds the
+// model's setpoint (+510) once `rel` arrives.
 TEST(MotuTxTimingStamperTests, ReReferencesWhenAbsolutePhaseFirstArrives) {
     MotuTx tx;
     ASSERT_TRUE(tx.Arm());
+    ASSERT_TRUE(tx.stamper.HoldsAbsolutePhase());
+    const int64_t setpoint = tx.stamper.AbsolutePhaseSetpointTicks();
+    ASSERT_EQ(setpoint, 510);
 
     constexpr uint64_t generation = 11;
     constexpr uint64_t windowFrames = 512;
@@ -548,12 +558,14 @@ TEST(MotuTxTimingStamperTests, ReReferencesWhenAbsolutePhaseFirstArrives) {
     EXPECT_FALSE(stillBare.decision.phaseReferenceReset);
     ASSERT_TRUE(stillBare.decision.locked);
 
-    // First absolute phase: re-reference and seed against the setpoint. The
-    // seed does not drop the lock.
+    // First absolute phase: re-reference and seed the error, setpoint - rel.
+    // The seed does not drop the lock.
     const auto acquired = tx.Apply(input(3, windowFrames * 3, nominalTicks * 3, true, relTicks));
     ASSERT_TRUE(acquired.observationApplied);
+    EXPECT_TRUE(acquired.absolutePhaseAcquired);
     EXPECT_TRUE(acquired.decision.phaseReferenceReset);
-    EXPECT_EQ(acquired.decision.phaseErrorTicks, -relTicks);
+    EXPECT_EQ(acquired.decision.referenceCause, MotuSphReferenceCause::kAbsolutePhaseSeed);
+    EXPECT_EQ(acquired.decision.phaseErrorTicks, setpoint - relTicks);
     EXPECT_TRUE(acquired.decision.locked);
     EXPECT_FALSE(acquired.outputMuted);
     EXPECT_FALSE(acquired.muteActivated);
@@ -562,7 +574,59 @@ TEST(MotuTxTimingStamperTests, ReReferencesWhenAbsolutePhaseFirstArrives) {
     const auto tracking =
         tx.Apply(input(4, windowFrames * 4, nominalTicks * 4, true, relTicks + 2));
     ASSERT_TRUE(tracking.observationApplied);
+    EXPECT_FALSE(tracking.absolutePhaseAcquired);
     EXPECT_FALSE(tracking.decision.phaseReferenceReset);
+    EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().seedReReferences, 1u);
+}
+
+// The setpoint is per model and per rate: every model holds +510 at 48 kHz,
+// and no rate but 48 kHz has one, so there the loop stays relative and a `rel`
+// handed to it changes nothing.
+TEST(MotuTxTimingStamperTests, HoldsTheSetpointAt48kAndStaysRelativeAtOtherRates) {
+    for (const auto& model : kModels) {
+        SCOPED_TRACE(model.name);
+        EXPECT_EQ(AbsolutePhaseSetpointTicksAtRate(model.runtime.absolutePhaseSetpointTicks48k, 48000),
+                  std::optional<int32_t>{510});
+        for (const uint32_t rate : {44100u, 88200u, 96000u, 176400u, 192000u}) {
+            EXPECT_FALSE(
+                AbsolutePhaseSetpointTicksAtRate(model.runtime.absolutePhaseSetpointTicks48k, rate))
+                << rate;
+        }
+    }
+
+    constexpr uint64_t generation = 4;
+    constexpr int64_t relTicks = 900;
+    const auto feed = [](MotuTxTimingStamper& stamper, uint64_t frames, uint32_t ticksPerFrame) {
+        MotuSphServoApplyResult last{};
+        for (uint64_t update = 1; update <= 3; ++update) {
+            auto in = Window(generation, update, frames * update,
+                             static_cast<int64_t>(frames * update * ticksPerFrame));
+            in.haveRelPhase = update == 3;
+            in.relPhaseTicks = relTicks;
+            in.relPhaseCenterTicks = relTicks;
+            last = stamper.ApplyServoInput(in);
+        }
+        return last;
+    };
+
+    MotuTxTimingStamper at48k{};
+    ASSERT_TRUE(at48k.Configure(4, 48000, kDefaultPresentationLeadTicks,
+                                AbsolutePhaseSetpointTicksAtRate(510, 48000)));
+    ASSERT_TRUE(at48k.HoldsAbsolutePhase());
+    const auto seeded = feed(at48k, 512, 512);
+    EXPECT_TRUE(seeded.absolutePhaseAcquired);
+    EXPECT_EQ(seeded.decision.phaseErrorTicks, 510 - relTicks);
+
+    MotuTxTimingStamper at96k{};
+    ASSERT_TRUE(at96k.Configure(4, 96000, kDefaultPresentationLeadTicks,
+                                AbsolutePhaseSetpointTicksAtRate(510, 96000)));
+    EXPECT_FALSE(at96k.HoldsAbsolutePhase());
+    const auto relative = feed(at96k, 1024, 256);
+    ASSERT_TRUE(relative.observationApplied);
+    EXPECT_FALSE(relative.absolutePhaseAcquired);
+    EXPECT_FALSE(relative.decision.phaseReferenceReset);
+    EXPECT_EQ(relative.decision.phaseErrorTicks, 0);
+    EXPECT_EQ(at96k.ServoTelemetrySnapshot().seedReReferences, 0u);
 }
 
 TEST(MotuTxTimingStamperTests, MutesRepairsPhaseOnceAndUnmutesOnlyWhenSafe) {

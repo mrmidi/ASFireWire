@@ -78,8 +78,10 @@ AudioStreamTxPolicy MotuProfile::TxStreamPolicy() const noexcept {
     policy.defaultNonAudioSlotWord = 0;
     // Wire order puts the headphone pair first; the map moves Main to host channels 1-2.
     policy.motuPlaybackPorts = PlaybackPortsForSwVersion(unitSwVersion_);
-    if (const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_))
+    if (const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_)) {
         policy.motuPresentationLeadTicks = model->runtime.presentationLeadTicks;
+        policy.motuAbsolutePhaseSetpointTicks48k = model->runtime.absolutePhaseSetpointTicks48k;
+    }
     policy.dbcIsEndEvent = true;
     policy.preserveFdfInNoDataPackets = true;
     return policy;

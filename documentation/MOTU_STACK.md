@@ -107,10 +107,21 @@ phase feedback: the whole error per decision while acquiring, a quarter once loc
 one decision per about 10.7 ms of received frames at every rate
 (`MotuSphServoPolicy.hpp`). Above a four-cycle error a hard resync mutes the output and
 repairs the clock's phase once. The output is muted until the first lock. The DATA/NO-DATA
-cadence still replays the RX stream. The loop is relative: the absolute presentation
-phase against the device is not measured yet. Its values were measured on an 828mk3 at
+cadence still replays the RX stream. Its values were measured on an 828mk3 at
 48 kHz; the other models and rates are an assumption, and the source comments say which
 value comes from where.
+
+At 48 kHz the loop also holds an absolute presentation phase against the device, `rel`.
+The transmit half (`MotuTxPhaseTracePublisher`, the slot provider's release observer)
+publishes each released cadence period's SPH over `motuPhaseTrace`; the RX timing
+observer takes the period's mean residual against its transmit cycles minus the
+device's median absolute receive phase (SPH minus receive cycle) over a four-second
+window, conditions it (`MotuRelPhaseConditioner`) and publishes it over `motuRelPhase`.
+The first `rel` of a stream, about 8 s after the start, seeds the servo's error against
+the model's setpoint (`RuntimePolicy::absolutePhaseSetpointTicks48k`, +510 ticks, the
+value the official 828mk3 driver holds). At every other rate there is no setpoint and
+the loop stays relative: it holds the phase the stream started with. `rel` is formed in
+the whole 48 kHz family (48/96/192 kHz), where its cadence geometry holds.
 
 The generic Session readiness gate waits after both host contexts start and before
 fetch/unmute confirmation. Readiness is the regulator's lock on the current stream with
@@ -154,11 +165,18 @@ model.)
 
 For hardware tracing, use `/usr/bin/log stream --level debug --predicate
 'eventMessage CONTAINS "[SessionTiming]" OR eventMessage CONTAINS "[MotuGeometry]"
-OR eventMessage CONTAINS "MotuProtocol" OR eventMessage CONTAINS "[MotuSph"'`. The
+OR eventMessage CONTAINS "MotuProtocol" OR eventMessage CONTAINS "[MotuSph"
+OR eventMessage CONTAINS "[RxPhase" OR eventMessage CONTAINS "[RxSphRate]"'`. The
 readiness line is emitted once per start; a timeout identifies `TransmitTimingReady` in
 the session rollback log. `[MotuSphLock]` reports the regulator's first lock and how long
 the output was muted for it; `[MotuSphServo]`/`[MotuSphState]` summarise the loop every
-5 s; `[MotuSphHard]`, `[MotuSphMute]` and `[MotuSphStall]` appear only on an event.
+5 s; `[MotuSphSeed]` reports the first absolute phase of a stream; `[MotuSphHard]`,
+`[MotuSphMute]` and `[MotuSphStall]` appear only on an event. Every four seconds the RX
+side reports `[RxSphRate]`, `[RxPhaseAbs]` and, where it is formed, `[RxPhaseRel]`;
+`[RxPhaseBridge]` marks the first `rel` a start publishes (or the first one the bridge
+refused), `[RxPhaseLattice]` a sample corrected by whole cadence quanta. The RX lines
+come from the receive telemetry drain, which runs only at `DirectAudioVerbosity >= 1`
+(the default); below it no `rel` is formed and the loop stays relative.
 
 These checks validate host logic and compilation, not hardware interoperability.
 

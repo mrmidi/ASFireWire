@@ -1034,6 +1034,91 @@ TEST(AudioDriverTxProducerTests, MotuPhaseTraceCarriesTheReleasedWireSph) {
     EXPECT_EQ(dataBetween, 3u);
 }
 
+// The producer hands the loop the conditioned absolute phase only from the
+// current stream generation. A `rel` of this generation seeds the error at
+// setpoint - rel, and the regulator then moves the transmit phase on the wire
+// by exactly that; a `rel` of any other generation is never used.
+TEST(AudioDriverTxProducerTests, MotuRelPhaseSeedsTheLoopOnlyForTheCurrentGeneration) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x15};
+    constexpr int64_t kRel = 900;
+    constexpr int64_t kOneQ32 = ASFW::Encoding::Motu::MotuSphQ32Accumulator::kOneQ32;
+    for (const bool currentGeneration : {true, false}) {
+        SCOPED_TRACE(currentGeneration);
+        ASFW::Logging::LogRing::Shared().Initialize();
+        const uint32_t seedLinesBefore = CountLogLines("[MotuSphSeed]");
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+        auto& runtime = rig.Ivars().runtime;
+        ASSERT_TRUE(runtime.motuTxTimingStamper.HoldsAbsolutePhase());
+        const int64_t setpoint = runtime.motuTxTimingStamper.AbsolutePhaseSetpointTicks();
+        ASSERT_EQ(setpoint, 510);
+        rig.FeedMotuRx(8);
+        ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+        ASSERT_TRUE(runtime.motuTxTimingStamper.ServoTelemetrySnapshot().locked);
+        // The rig's device runs at exactly 512 ticks per frame: no correction.
+        const int64_t correctionBefore = runtime.motuTxTimingStamper.AppliedCorrectionQ32();
+        const uint64_t firstPacketAfter = rig.Wire().size();
+
+        auto& control = rig.MutableControl();
+        const uint64_t generation = control.generation.load();
+        if (currentGeneration) {
+            ASSERT_TRUE(control.motuRelPhase.Publish(
+                {.streamGeneration = generation, .ticks = kRel, .centerTicks = kRel}));
+        } else {
+            // A bridge armed for another stream, as between a start's
+            // generation step and the re-arm of its bridges.
+            control.motuRelPhase.Reset(generation + 7);
+            ASSERT_TRUE(control.motuRelPhase.Publish(
+                {.streamGeneration = generation + 7, .ticks = kRel, .centerTicks = kRel}));
+        }
+        ASSERT_TRUE(rig.RunPackets(2 * kSteadyStatePackets)) << rig.DescribeFault();
+
+        const auto servo = runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+        EXPECT_TRUE(servo.locked);
+        EXPECT_EQ(servo.hardResyncRequests, 0u);
+        EXPECT_FALSE(runtime.motuPayloadWriter.IsPcmMuted());
+        const double movedTicks =
+            static_cast<double>(runtime.motuTxTimingStamper.AppliedCorrectionQ32() -
+                                correctionBefore) /
+            static_cast<double>(kOneQ32);
+
+        // The same movement on the wire: every block's SPH step against the
+        // nominal 512, summed from the publication onwards.
+        const uint32_t dbs = rig.Dbs();
+        const size_t dataBytes = 8 + 8 * dbs * 4;
+        int64_t wireDrift = 0;
+        uint32_t previous = 0;
+        bool havePrevious = false;
+        for (uint64_t index = firstPacketAfter; index < rig.Wire().size(); ++index) {
+            const auto& packet = rig.Wire()[index];
+            if (packet.bytes.size() != dataBytes) {
+                continue;
+            }
+            for (uint32_t block = 0; block < 8; ++block) {
+                const uint32_t tick =
+                    ASFW::Encoding::Motu::TickFromSph(packet.Quadlet(8 + block * dbs * 4));
+                if (havePrevious) {
+                    wireDrift += ASFW::Encoding::Motu::TickDifference(tick, previous) - 512;
+                }
+                previous = tick;
+                havePrevious = true;
+            }
+        }
+
+        if (currentGeneration) {
+            EXPECT_EQ(servo.seedReReferences, 1u);
+            EXPECT_NEAR(movedTicks, static_cast<double>(setpoint - kRel), 1.0);
+            EXPECT_NEAR(static_cast<double>(wireDrift), static_cast<double>(setpoint - kRel), 2.0);
+            EXPECT_EQ(CountLogLines("[MotuSphSeed]") - seedLinesBefore, 1u);
+        } else {
+            EXPECT_EQ(servo.seedReReferences, 0u);
+            EXPECT_NEAR(movedTicks, 0.0, 1.0);
+            EXPECT_EQ(wireDrift, 0);
+            EXPECT_EQ(CountLogLines("[MotuSphSeed]") - seedLinesBefore, 0u);
+        }
+    }
+}
+
 // Bound only where the cadence geometry behind `rel` holds: the 48 kHz family
 // (MotuRelPhaseGeometryHolds). The rig frames every start with the profile's
 // 1x geometry, so 44.1 kHz stands for the rates outside it.

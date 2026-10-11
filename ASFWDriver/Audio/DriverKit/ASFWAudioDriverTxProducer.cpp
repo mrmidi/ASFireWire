@@ -60,13 +60,21 @@ namespace {
 //   [MotuSphState]  the counters behind it, same cadence
 //   [MotuSphLock]   the first lock of a start or of a new stream generation,
 //                   and how long the output was muted for it
+//   [MotuSphSeed]   the first absolute phase `rel` of a generation reached the
+//                   loop, which seeded its error against the model's setpoint
 //   [MotuSphHard]   a hard resync: mute, then a one-shot phase repair
 //   [MotuSphMute]   any other change of the regulator's output mute
 //   [MotuSphStall]  the RX SPH meter fell behind its bridge (logged by
 //                   MotuRxTimingObserver)
 //
 // The edge lines come from the servo hook below, once per event; nothing is
-// logged per packet.
+// logged per packet. The receive side of the absolute phase logs its own
+// lines from MotuRxTimingObserver's drain ([RxSphRate], [RxPhaseAbs],
+// [RxPhaseRel], ...); all of them together:
+//
+//   /usr/bin/log show --last 10m --info --style compact --predicate \
+//       'eventMessage CONTAINS "[MotuSph" OR eventMessage CONTAINS "[RxPhase" OR
+//        eventMessage CONTAINS "[RxSphRate]"'
 
 using ASFW::Audio::Wire::MotuSphRatePpb;
 
@@ -124,6 +132,16 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
     const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
     const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
 
+    // The conditioned absolute phase, from its own bridge, where the model has
+    // a setpoint at this rate (48 kHz); elsewhere the loop stays relative.
+    // Generation-checked like the clock sample: a `rel` measured in another
+    // stream describes a phase this one never had.
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord relPhase{};
+    uint64_t relPhaseUpdates = 0;
+    const bool haveRelPhase = stamper.HoldsAbsolutePhase() &&
+                              control.motuRelPhase.ReadLatest(relPhase, relPhaseUpdates) &&
+                              relPhase.streamGeneration == controlGeneration;
+
     const auto result = stamper.ApplyServoInput({
         .valid = haveRxClock,
         .streamGeneration = rxClock.streamGeneration,
@@ -131,13 +149,21 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
         .bridgeUpdates = rxClockUpdates,
         .rxFrames = rxClock.rxFrames,
         .rxTicks = rxClock.rxTicks,
-        // Relative loop: no absolute phase is measured yet.
-        .haveRelPhase = false,
+        .haveRelPhase = haveRelPhase,
+        .relPhaseTicks = relPhase.ticks,
+        .relPhaseCenterTicks = relPhase.centerTicks,
     });
     // The gate's state, not the result's: a dropped or early observation
     // leaves the result without a decision while the gate may still be closed.
     ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
     LogMotuSphEdges(ivars, result);
+    if (result.absolutePhaseAcquired) {
+        ASFW_LOG(DirectAudio, "[MotuSphSeed] gen=%llu rel=%lld center=%lld setpoint=%d err=%lld",
+                 controlGeneration, static_cast<long long>(relPhase.ticks),
+                 static_cast<long long>(relPhase.centerTicks),
+                 stamper.AbsolutePhaseSetpointTicks(),
+                 static_cast<long long>(result.decision.phaseErrorTicks));
+    }
 }
 
 // The summary, on the [TxPrep] heartbeat. Two short lines: each must fit the
@@ -912,7 +938,9 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         // Every MOTU model is timed by the SPH regulator; a rate it has no
         // configuration for cannot be timed at all.
         if (!ivars.runtime.motuTxTimingStamper.Configure(
-                txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks)) {
+                txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks,
+                ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
+                    txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
             ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
                      txConfig.sampleRate);
             return {kIOReturnUnsupported, "ConfigureMotuTxTiming"};

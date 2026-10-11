@@ -18,6 +18,14 @@
 // measured: on an 828mk3 at 48 kHz the measured phase stayed constant modulo
 // 1024 ticks; a design that adopted hops instead walked its operating point
 // by thousands of ticks within minutes.
+//
+// The fold. The phase is known only modulo one bus cycle, so each sample is
+// folded to within half a cycle of the operating point, and the first
+// operating point is simply where the warm-up samples sit.
+// assumed: that first operating point is on the branch the setpoint was
+// measured on. On a wrong branch the regulator parks the transmit phase one
+// cycle (3072 ticks) away from the operating point the setpoint describes and
+// still reports locked: nothing inside the fold can tell two branches apart.
 
 #pragma once
 

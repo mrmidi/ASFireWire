@@ -161,7 +161,7 @@ TEST(MotuPayloadCodecTests, DecodeBlockExtractsFloatSamplesAndHandlesDelay) {
 TEST(MotuPayloadCodecTests, TxTimingStamperStampsTheRegulatorClockAndZeroesBeforeTheSeed) {
     constexpr uint32_t kDbs = 4;
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
     EXPECT_TRUE(stamper.IsSytUnaware());
 
     // 1 slot: 8 bytes CIP + 2 blocks * 16 bytes, initialised with dirty memory.
@@ -216,7 +216,7 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
     // A configured stamper whose clock has no seed yet.
     constexpr uint32_t kDbs = 2;
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks));
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
     engine.BindTimingStamper(&stamper);
 
     // Timing requested Data with 8 blocks, but without a transmit time to
@@ -262,8 +262,10 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     engine.BindSlotProvider(&provider);
 
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(config.dbs, config.sampleRate,
-                                  profile.TxStreamPolicy().motuPresentationLeadTicks));
+    const auto txPolicy = profile.TxStreamPolicy();
+    ASSERT_TRUE(stamper.Configure(config.dbs, config.sampleRate, txPolicy.motuPresentationLeadTicks,
+                                  AbsolutePhaseSetpointTicksAtRate(
+                                      txPolicy.motuAbsolutePhaseSetpointTicks48k, config.sampleRate)));
     engine.BindTimingStamper(&stamper);
     AmdtpTimingState timing{};
     timing.txClockValid = true;
@@ -290,7 +292,7 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
               (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
 }
 
-TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLead) {
+TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLeadAndSetpoint) {
     for (const uint32_t version : {0x1U, 0x3U, 0x15U}) {
         SCOPED_TRACE(version);
         const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
@@ -298,6 +300,8 @@ TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLead) {
         ASSERT_NE(model, nullptr);
         EXPECT_EQ(profile.TxStreamPolicy().motuPresentationLeadTicks,
                   model->runtime.presentationLeadTicks);
+        EXPECT_EQ(profile.TxStreamPolicy().motuAbsolutePhaseSetpointTicks48k,
+                  model->runtime.absolutePhaseSetpointTicks48k);
     }
 }
 
