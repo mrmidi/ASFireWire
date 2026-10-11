@@ -212,3 +212,48 @@ TEST(MotuSynthesis, DecisionTimeScalesAcrossRatesAndWholeDataPackets) {
         EXPECT_EQ(synth.PresentationOffsetFrames(), 13U);
     }
 }
+
+TEST(MotuSynthesis, ContinuousFeedbackTracksDriftAndPhaseStepAtEverySupportedRate) {
+    for (uint32_t rate : {44100U, 48000U, 88200U, 96000U, 176400U, 192000U}) {
+        for (int64_t driftPpm : {-150, 150}) {
+            SCOPED_TRACE(rate);
+            SCOPED_TRACE(driftPpm);
+            SphSynthesizer synth;
+            ASSERT_TRUE(synth.Configure(rate));
+            synth.BeginGeneration(1);
+            const int64_t period =
+                SphSynthesizer::NominalStepQ32(rate) * (1000000 + driftPpm) / 1000000;
+            const auto stamp = [period](uint64_t frame) {
+                return (static_cast<int64_t>(frame) * period + SphSynthesizer::kOneQ32 / 2) /
+                       SphSynthesizer::kOneQ32;
+            };
+            constexpr int64_t origin = kTicksPerSecond - 1000;
+            ASSERT_TRUE(synth.SeedOnce(origin + stamp(13) + 1500));
+            const uint32_t packetFrames =
+                ASFW::Encoding::AmdtpRateGeometryForSampleRate(rate)->sytIntervalFrames;
+            for (uint64_t frame = 0; frame < uint64_t{rate} * 3; ++frame) {
+                const int64_t phaseStep = frame >= rate ? 500 : 0;
+                if (frame % packetFrames == 0) {
+                    (void)synth.Observe({.generation = 1,
+                                         .updates = frame / packetFrames + 1,
+                                         .frames = frame + packetFrames,
+                                         .ticks = stamp(frame + packetFrames) + phaseStep,
+                                         .rxFirstFrame = frame,
+                                         .txFirstFrame = frame,
+                                         .sphTicks = WrapTick(origin + stamp(frame) + phaseStep),
+                                         .replayEpoch = 1});
+                }
+                const int64_t transmitted = TickFromSph(synth.NextSph());
+                if (frame > uint64_t{rate} * 2) {
+                    ASSERT_NEAR(TickDifference(transmitted,
+                                               WrapTick(origin + stamp(frame + 13) + phaseStep)),
+                                0, 4)
+                        << "frame " << frame;
+                }
+            }
+            EXPECT_TRUE(synth.Current().locked);
+            EXPECT_FALSE(synth.Current().outputMuted);
+            EXPECT_EQ(synth.Current().phaseRepairs, 0U);
+        }
+    }
+}
