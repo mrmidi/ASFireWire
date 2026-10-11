@@ -247,6 +247,52 @@ TEST(AsyncBusContract, ReentrantARCompletionFreesLabelBeforeCallback) {
     EXPECT_EQ(2u, nestedHandle->value) << "next request should advance to the next tLabel";
 }
 
+TEST(AsyncBusContract, FinalBusyOnReadCompletesAtOnceAsBusyRetryExhausted) {
+    // Declared before the transaction manager: tearing it down runs the
+    // response handlers, which capture these by reference.
+    int calls = 0;
+    AsyncStatus status = AsyncStatus::kSuccess;
+    DummyCompletionQueue dummyQueue;
+
+    LabelAllocator allocator;
+    allocator.Reset();
+
+    TransactionManager txnMgr;
+    ASSERT_TRUE(txnMgr.Initialize()) << "TransactionManager::Initialize failed";
+
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &txnMgr, dummyQueue);
+
+    TxMetadata meta{};
+    meta.generation = 9;
+    meta.destinationNodeID = 0x0001;
+    meta.tCode = 0x4;
+    meta.expectedLength = 4;
+    meta.completionStrategy = CompletionStrategy::CompleteOnAR;
+    meta.callback = [&](AsyncHandle, AsyncStatus s, uint8_t, std::span<const uint8_t>) {
+        ++calls;
+        status = s;
+    };
+
+    const AsyncHandle handle = tracking.RegisterTx(meta);
+    ASSERT_TRUE(handle);
+    tracking.OnTxPosted(handle, /*nowUsec=*/1000, /*timeoutUsec=*/500000);
+
+    // A read is parked in AwaitingAR at post time; a final ack_busy (event 0x14,
+    // after the controller's ATRetries) means the node never took it.
+    TxCompletion busy{};
+    busy.tLabel = static_cast<uint8_t>(handle.value - 1);
+    busy.eventCode = OHCIEventCode::kAckBusyX;
+    tracking.OnTxCompletion(busy);
+
+    EXPECT_EQ(1, calls);
+    EXPECT_EQ(AsyncStatus::kBusyRetryExhausted, status);
+    EXPECT_EQ(nullptr, txnMgr.Find(TLabel{busy.tLabel}));
+
+    // Its old deadline passing must not complete it a second time.
+    tracking.OnTimeoutTick(/*nowUsec=*/1000 + 2'000'000);
+    EXPECT_EQ(1, calls);
+}
+
 TEST(AsyncBusContract, StaleBitmapRecoveryPreservesGeneration) {
     DummyCompletionQueue dummyQueue;
 

@@ -104,6 +104,7 @@ constexpr bool IsValidTransition(TransactionState from, TransactionState to) noe
 
         case TransactionState::AwaitingAR:
             return to == TransactionState::ARReceived ||
+                   to == TransactionState::Failed ||          // final ack_busy on a CompleteOnAR request
                    to == TransactionState::TimedOut ||
                    to == TransactionState::Cancelled;
 

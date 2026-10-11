@@ -213,7 +213,7 @@ TEST(CompletionRefactorPlan, ARResponseRejectsDifferentNodeNumber) {
     EXPECT_EQ(live->state(), TransactionState::AwaitingAR);
 }
 
-TEST(CompletionRefactorPlan, BusyAckExtendsDeadlineNoCompletion) {
+TEST(CompletionRefactorPlan, FinalBusyAckEndsWriteAtOnce) {
     // Declared before the harness: tearing the transaction manager down runs the
     // response handlers, which capture this recorder by reference.
     CallbackRecorder cb;
@@ -222,14 +222,12 @@ TEST(CompletionRefactorPlan, BusyAckExtendsDeadlineNoCompletion) {
     auto* txn = h.AllocateTxn(/*label=*/5, /*gen=*/5, /*node=*/0x5555,
                               /*tcode=*/0x1, CompletionStrategy::CompleteOnAT, cb);
     ASSERT_NE(txn, nullptr);
-    const uint64_t before = txn->deadlineUs();
-    txn->SetDeadline(before);  // ensure initialized
 
-    h.handler.OnATCompletion(MakeTx(/*label=*/5, /*ackCode=*/0x4));
+    // The controller has already spent its ATRetries; nothing more will arrive.
+    h.handler.OnATCompletion(MakeTx(/*label=*/5, /*ackCode=*/0x0,
+                                    static_cast<uint8_t>(OHCIEventCode::kAckBusyX)));
 
-    Transaction* live = h.mgr.Find(TLabel{5});
-    ASSERT_NE(live, nullptr);
-    EXPECT_GT(live->deadlineUs(), before);
-    EXPECT_EQ(live->state(), TransactionState::ATCompleted);
-    EXPECT_EQ(cb.called, 0);
+    EXPECT_EQ(cb.called, 1);
+    EXPECT_EQ(cb.lastKr, kIOReturnBusy);
+    EXPECT_EQ(h.mgr.Find(TLabel{5}), nullptr);
 }

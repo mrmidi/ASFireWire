@@ -45,7 +45,7 @@ public:
      * \par State Transitions
      * - ackCode==0x1 (pending): ATCompleted → AwaitingAR (wait for AR response)
      * - ackCode==0x0 (complete): ATCompleted → Completed (immediate completion)
-     * - ackCode==0x4-0x6 (busy): ATCompleted (stay, timeout will retry)
+     * - event ack_busy_X/A/B (0x14-0x16): → Failed with kIOReturnBusy, reads included
      * - ackCode==0xF (timeout): ATCompleted → Failed
      * - eventCode errors: ATCompleted → Failed
      *
@@ -53,7 +53,8 @@ public:
      * Per IEEE 1394-1995 section 6.2.4.3, ACK codes determine transaction flow:
      * - ack_pending (0x1): Split transaction, wait for response packet
      * - ack_complete (0x0): Unified transaction, done immediately
-     * - ack_busy_X/A/B (0x4-0x6): Retry after backoff
+     * - ack_busy_X/A/B (0x4-0x6): final — the controller has already retried the
+     *   request ATRetries times; any further retry belongs to the caller
      */
     void OnATCompletion(const TxCompletion& rawComp) noexcept {
         if (!txnMgr_) {
@@ -127,6 +128,22 @@ public:
                 postResult.action = ATPostAction::kCompletePhySuccess;
                 postResult.transitionTag1 = "OnATCompletion: phy";
                 postResult.transitionTag2 = "OnATCompletion: phy";
+                return;
+            }
+
+            // A final ack_busy: the controller has spent its ATRetries and the node
+            // never took the request, so no response will follow. End it now —
+            // reads included, before the CompleteOnAR skip below — and leave any
+            // retry to the caller. Validated with Linux — refs: core-transaction.c
+            // (transmit_complete_callback) closes ACK_BUSY_X/A/B with RCODE_BUSY.
+            if (IsFinalBusy(comp.eventCode)) {
+                ASFW_LOG_V1(Async,
+                            "[AsyncBusy] tLabel=%u node=0x%04x gen=%u requestTCode=0x%x state=%{public}s event=%{public}s",
+                            txn->label().value, txn->nodeID().value, txn->generation().value,
+                            txn->tCode(), ToString(txn->state()), ToString(comp.eventCode));
+                postResult.action = ATPostAction::kCompleteBusy;
+                postResult.transitionTag1 = "OnATCompletion: busy";
+                postResult.postKr = kIOReturnBusy;
                 return;
             }
 
@@ -285,9 +302,10 @@ public:
      * \param label tLabel of transaction that timed out
      *
      * \par Smart Retry Logic
-     * - If ackCode is busy (0x4-0x6) and retries remain: resubmit
+     * - If ATPosted with no ACK yet: extend the deadline (AT completion may be queued)
      * - If in AwaitingAR with ackPending (0x1): might be spurious timeout
      * - Otherwise: complete with timeout error
+     * A final busy never reaches here: OnATCompletion ends it at once.
      */
     void OnTimeout(TLabel label) noexcept {
         if (!txnMgr_) {
@@ -307,8 +325,7 @@ public:
                         txn->tCode(), ToString(state), ackCode, txn->retryCount(),
                         static_cast<unsigned long long>(Engine::NowUs()));
 
-            if (HandleBusyTimeout(*txn) ||
-                HandleATPostedTimeout(*txn) ||
+            if (HandleATPostedTimeout(*txn) ||
                 HandleAwaitingARTimeout(*txn)) {
                 return;
             }
@@ -347,6 +364,7 @@ private:
         kCompleteTimeout,
         kCompleteCancelled,
         kCompletePhySuccess,
+        kCompleteBusy,
     };
 
     struct ATPostResult {
@@ -411,6 +429,12 @@ private:
         }
     }
 
+    [[nodiscard]] static bool IsFinalBusy(OHCIEventCode eventCode) noexcept {
+        return eventCode == OHCIEventCode::kAckBusyX ||
+               eventCode == OHCIEventCode::kAckBusyA ||
+               eventCode == OHCIEventCode::kAckBusyB;
+    }
+
     void HandleAckCompletion(Transaction& txn,
                              const TxCompletion& comp,
                              ATPostResult& postResult) noexcept {
@@ -440,14 +464,6 @@ private:
                 } else {
                     ASFW_LOG_V3(Async, "  → ackComplete but AR already completed, ignoring");
                 }
-                break;
-
-            case 0x4:
-            case 0x5:
-            case 0x6:
-                ASFW_LOG_V2(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
-                txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: busy");
-                txn.SetDeadline(Engine::NowUs() + 200000);
                 break;
 
             case 0xC:
@@ -507,6 +523,11 @@ private:
                 txnPtr->TransitionTo(TransactionState::Cancelled,
                                      postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
                 break;
+            case ATPostAction::kCompleteBusy:
+                // Straight to Failed: a read is already in AwaitingAR (CompleteOnAR).
+                txnPtr->TransitionTo(TransactionState::Failed,
+                                     postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
+                break;
             case ATPostAction::kNone:
                 break;
         }
@@ -521,29 +542,12 @@ private:
             case ATPostAction::kCompleteError:
             case ATPostAction::kCompleteTimeout:
             case ATPostAction::kCompleteCancelled:
+            case ATPostAction::kCompleteBusy:
                 txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
                 break;
             case ATPostAction::kNone:
                 break;
         }
-    }
-
-    [[nodiscard]] bool HandleBusyTimeout(Transaction& txn) noexcept {
-        const uint8_t ackCode = txn.ackCode();
-        if (ackCode != 0x4 && ackCode != 0x5 && ackCode != 0x6) {
-            return false;
-        }
-
-        constexpr uint8_t kMaxBusyRetries = 3;
-        if (txn.retryCount() >= kMaxBusyRetries) {
-            return false;
-        }
-
-        txn.IncrementRetry();
-        txn.SetDeadline(Engine::NowUs() + 200000);
-        ASFW_LOG_V1(Async, "🔄 RECOVERY: tLabel=%u Busy ACK (0x%X). Device is busy, extending deadline +200ms (attempt %u/%u)",
-                    txn.label().value, ackCode, txn.retryCount(), kMaxBusyRetries);
-        return true;
     }
 
     [[nodiscard]] bool HandleATPostedTimeout(Transaction& txn) noexcept {

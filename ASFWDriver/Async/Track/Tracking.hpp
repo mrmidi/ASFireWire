@@ -170,6 +170,8 @@ public:
                     status = AsyncStatus::kSuccess;
                 } else if (kr == kIOReturnTimeout) {
                     status = AsyncStatus::kTimeout;
+                } else if (kr == kIOReturnBusy) {
+                    status = AsyncStatus::kBusyRetryExhausted;
                 } else if (kr == kIOReturnAborted) {
                     status = AsyncStatus::kAborted;
                 }
