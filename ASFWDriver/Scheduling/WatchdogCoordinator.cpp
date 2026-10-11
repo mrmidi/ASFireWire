@@ -182,8 +182,10 @@ void WatchdogCoordinator::TickIsochReceive(
     }
 
     // Consumer diagnostics maintain state the telemetry contract depends on
-    // (RX interval closing, FW-175) plus the [AudioIO] error report, so they
-    // run whenever RX runs -- not only when diagnostics logging is enabled.
+    // (RX interval closing, FW-175), drain the device-timing observer (whose
+    // drain forms the MOTU regulator's absolute phase) and report [AudioIO]
+    // errors, so they run whenever RX runs -- not only when diagnostics
+    // logging is enabled.
     if (isRunning) {
         if (++consumerDiagnosticsDivider_ >= kConsumerDiagnosticsIntervalTicks) {
             consumerDiagnosticsDivider_ = 0;

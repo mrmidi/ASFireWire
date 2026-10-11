@@ -70,7 +70,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
 
     void DrainReceiveTelemetry(uint32_t maxRecords) override;
-    // Reports IO-callback errors recorded by the real-time path.
+    // Drains the device-timing observer and reports IO-callback errors
+    // recorded by the real-time path.
     void ServiceConsumerDiagnostics() override;
 
   private:

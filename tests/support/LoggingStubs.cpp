@@ -125,8 +125,9 @@ LogConfig& LogConfig::Shared() {
     return instance;
 }
 
-// Constructors are defined inline for the stub; atomics default to zero/false.
-LogConfig::LogConfig() = default;
+// Atomics default to zero/false, except the DirectAudio verbosity, which keeps
+// the driver's default (1) so code gated on it behaves as it ships.
+LogConfig::LogConfig() { directAudioVerbosity_.store(1, std::memory_order_relaxed); }
 LogConfig::~LogConfig() = default;
 
 void LogConfig::Initialize(IOService*) {}
@@ -144,6 +145,7 @@ uint8_t LogConfig::GetIRMVerbosity() const { return 0; }
 uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
 uint8_t LogConfig::GetDICEVerbosity() const { return 0; }
 uint8_t LogConfig::GetIsochVerbosity() const { return 0; }
+uint8_t LogConfig::GetDirectAudioVerbosity() const { return directAudioVerbosity_.load(std::memory_order_relaxed); }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
 bool LogConfig::IsOsLogMirrorEnabled() const { return osLogMirrorEnabled_.load(std::memory_order_relaxed); }
 void LogConfig::SetOsLogMirrorEnabled(bool enable) { osLogMirrorEnabled_.store(enable, std::memory_order_relaxed); }
@@ -163,6 +165,7 @@ void LogConfig::SetIRMVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetMusicSubunitVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetDICEVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetIsochVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetDirectAudioVerbosity(uint8_t level) { directAudioVerbosity_.store(ClampLevel(level), std::memory_order_relaxed); }
 void LogConfig::SetHexDumps(bool) { /* no-op stub */ }
 void LogConfig::SetStatistics(bool) { /* no-op stub */ }
 void LogConfig::SetAudioAutoStartEnabled(bool) { /* no-op stub */ }

@@ -51,8 +51,11 @@ namespace ASFW::Audio::Wire {
 // simultaneous nor of the same statistical kind; `rel` is a slow measurement,
 // not a per-packet one.
 //
-// Unified-log lines from the drain, short and in stable formats (offline
-// analysers read [RxPhaseRel] and [RxPhaseAbs] by field order):
+// The drain runs whenever RX runs, whatever the DirectAudio verbosity: `rel`
+// is the regulator's input. Unified-log lines from the drain, short and in
+// stable formats (offline analysers read [RxPhaseRel] and [RxPhaseAbs] by
+// field order). The three per-window lines are diagnostics and need
+// DirectAudio verbosity >= 1; the events log always:
 //   [RxSphRate]      the device's sample period over the window
 //   [RxPhaseAbs]     min/median/max of the absolute receive phase, samples
 //   [RxPhaseRel]     rel, the transmit residual and the receive median
@@ -136,7 +139,8 @@ public:
         clockControl_ = nullptr;
     }
 
-    // Off the hot path, on the consumer's telemetry cadence.
+    // Off the hot path, on the consumer's diagnostics cadence, whenever RX
+    // runs.
     void DrainTelemetry(uint32_t maxRecords) noexcept override {
         (void)maxRecords;
         CheckRxClockStall();
@@ -252,11 +256,16 @@ private:
         }
     }
 
+    // The per-window lines are diagnostics; the measurement is not.
+    [[nodiscard]] static bool WindowLinesEnabled() noexcept {
+        return ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1;
+    }
+
     void ClosePhaseWindow() noexcept {
         ++phaseWindowsClosed_;
         const uint32_t rate = sampleRateHz_;
         const auto sphRate = rxClock_.Snapshot(rate);
-        if (sphRate.valid) {
+        if (sphRate.valid && WindowLinesEnabled()) {
             ASFW_LOG(DirectAudio,
                      "[RxSphRate] ppb=%lld frames=%llu steps=%llu rejected=%llu/%llu "
                      "worstRej=%lld/%u rate=%u",
@@ -268,11 +277,13 @@ private:
         }
         const auto absPhase = rxClock_.AbsolutePhaseSnapshot();
         if (absPhase.valid) {
-            ASFW_LOG(DirectAudio, "[RxPhaseAbs] min=%lld med=%lld max=%lld n=%u/%u",
-                     static_cast<long long>(absPhase.minTicks),
-                     static_cast<long long>(absPhase.medianTicks),
-                     static_cast<long long>(absPhase.maxTicks), absPhase.stored,
-                     absPhase.samples);
+            if (WindowLinesEnabled()) {
+                ASFW_LOG(DirectAudio, "[RxPhaseAbs] min=%lld med=%lld max=%lld n=%u/%u",
+                         static_cast<long long>(absPhase.minTicks),
+                         static_cast<long long>(absPhase.medianTicks),
+                         static_cast<long long>(absPhase.maxTicks), absPhase.stored,
+                         absPhase.samples);
+            }
             FormRelPhase(absPhase.medianTicks);
         }
         rxClock_.BeginWindow();
@@ -299,11 +310,13 @@ private:
         const int64_t rel = ::ASFW::Encoding::Motu::TickDifference(residual.residualTicks, rxAbsTicks);
         ++relPhaseFormed_;
         lastRelTicks_ = rel;
-        ASFW_LOG(DirectAudio,
-                 "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
-                 "buckets=%u",
-                 static_cast<long long>(rel), static_cast<long long>(residual.residualTicks),
-                 static_cast<long long>(rxAbsTicks), traceUpdates, period.count);
+        if (WindowLinesEnabled()) {
+            ASFW_LOG(DirectAudio,
+                     "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
+                     "buckets=%u",
+                     static_cast<long long>(rel), static_cast<long long>(residual.residualTicks),
+                     static_cast<long long>(rxAbsTicks), traceUpdates, period.count);
+        }
 
         const auto conditioned = relPhase_.Accept(rel);
         if (conditioned.valid) {

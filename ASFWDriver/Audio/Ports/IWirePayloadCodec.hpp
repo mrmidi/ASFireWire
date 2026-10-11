@@ -107,9 +107,11 @@ public:
     [[nodiscard]] virtual bool IsTimingEstablished() const noexcept = 0;
     virtual void Reset() noexcept = 0;
 
-    /// Off-hot-path telemetry, called from the consumer's receive-telemetry
-    /// drain on the watchdog cadence, for the master stream only. Formatting
-    /// and logging belong here, never in the packet callbacks above.
+    /// Off-hot-path telemetry, called from the consumer's diagnostics service
+    /// on the watchdog cadence whenever RX runs, for the master stream only.
+    /// Formatting and logging belong here, never in the packet callbacks
+    /// above; logging that is diagnostics alone follows the DirectAudio
+    /// verbosity here, since the call itself does not.
     virtual void DrainTelemetry(uint32_t maxRecords) noexcept {
         (void)maxRecords;
     }

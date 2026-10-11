@@ -7,10 +7,12 @@
 #include "Audio/Wire/MOTU/MotuSph.hpp"
 #include "Audio/Wire/MOTU/MotuRxDiagnosticCapture.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.hpp"
 #include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/DriverKit/Config/AudioStreamProfile.hpp"
 #include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "Logging/LogConfig.hpp"
 #include "Logging/LogRing.hpp"
 
 #include <gtest/gtest.h>
@@ -820,10 +822,12 @@ ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample TracePeriod(uint64_t generatio
 
 // A device whose clock moves exactly one bus cycle per packet of six frames
 // (48 kHz), presenting each packet `absPhaseTicks` after the cycle it arrives
-// in, for `seconds` of bus time. Drained once per HAL zero-timestamp period,
-// as the watchdog would at least.
-void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
-                              int64_t absPhaseTicks, uint32_t sampleRateHz = 48000) {
+// in, for `seconds` of bus time. `drain` runs once per HAL zero-timestamp
+// period, as the watchdog would at least.
+template <typename Drain>
+void DriveConstantPhaseDeviceDrainedBy(MotuRxTimingObserver& observer, uint32_t seconds,
+                                       int64_t absPhaseTicks, uint32_t sampleRateHz,
+                                       Drain&& drain) {
     constexpr uint32_t kFramesPerPacket = 6;
     const uint32_t drainEvery =
         ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz).zeroTimestampPeriodFrames /
@@ -835,10 +839,32 @@ void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
             ReceivedMotuPacket(int64_t{cycle} * kTicksPerCycle + absPhaseTicks, kFramesPerPacket),
             4, kFramesPerPacket, static_cast<uint16_t>(cycle));
         if ((i + 1) % drainEvery == 0) {
-            observer.DrainTelemetry(8);
+            drain();
         }
     }
 }
+
+// The same device, drained through the observer's own drain.
+void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
+                              int64_t absPhaseTicks, uint32_t sampleRateHz = 48000) {
+    DriveConstantPhaseDeviceDrainedBy(observer, seconds, absPhaseTicks, sampleRateHz,
+                                      [&observer] { observer.DrainTelemetry(8); });
+}
+
+// Sets the DirectAudio verbosity for one test and restores it after.
+class ScopedDirectAudioVerbosity final {
+public:
+    explicit ScopedDirectAudioVerbosity(uint8_t level)
+        : saved_(ASFW::LogConfig::Shared().GetDirectAudioVerbosity()) {
+        ASFW::LogConfig::Shared().SetDirectAudioVerbosity(level);
+    }
+    ~ScopedDirectAudioVerbosity() { ASFW::LogConfig::Shared().SetDirectAudioVerbosity(saved_); }
+    ScopedDirectAudioVerbosity(const ScopedDirectAudioVerbosity&) = delete;
+    ScopedDirectAudioVerbosity& operator=(const ScopedDirectAudioVerbosity&) = delete;
+
+private:
+    uint8_t saved_;
+};
 
 } // namespace
 
@@ -895,6 +921,54 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelFromItsDrain)
     EXPECT_EQ(observer.PhaseWindowsClosed(), 6U);
     EXPECT_EQ(observer.RelPhasePublished(), 0U);
     EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+}
+
+// `rel` is the regulator's input, not a diagnostic. The watchdog drains the
+// receive telemetry only while DirectAudio diagnostics are on (verbosity >= 1),
+// but it services the consumer whenever RX runs, and that service drains the
+// observer. At verbosity 0 `rel` still reaches the regulator; only the
+// window's periodic lines are silent. The bridge's one-off line stays, so a
+// run at verbosity 0 can still tell that the phase was seeded.
+TEST(MotuPayloadCodecTests, RelReachesTheRegulatorThroughTheConsumerServiceAtVerbosityZero) {
+    constexpr int64_t kAbsPhaseTicks = 9216;
+    const ScopedDirectAudioVerbosity verbosity(0);
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+
+    const auto period = TracePeriod(generation);
+    ASSERT_TRUE(control.motuPhaseTrace.Publish(period));
+    const auto residual = ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period);
+    ASSERT_TRUE(residual.valid);
+    const int64_t expectedRel = TickDifference(residual.residualTicks, kAbsPhaseTicks);
+
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t rateLinesBefore = CountLogLines("[RxSphRate]");
+    const uint32_t absLinesBefore = CountLogLines("[RxPhaseAbs]");
+    const uint32_t relLinesBefore = CountLogLines("[RxPhaseRel]");
+    const uint32_t firstLinesBefore = CountLogLines("[RxPhaseBridge] first publish");
+
+    MotuRxTimingObserver observer(&source);
+    DirectAudioReceiveConsumer consumer(
+        &source, {.wireFormat = ASFW::Encoding::AudioWireFormat::kMotuPacked});
+    consumer.SetTimingObserver(&observer);
+    observer.OnBatchBegin(nullptr);
+    DriveConstantPhaseDeviceDrainedBy(observer, 13, kAbsPhaseTicks, 48000,
+                                      [&consumer] { consumer.ServiceConsumerDiagnostics(); });
+
+    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
+    EXPECT_EQ(observer.RelPhaseFormed(), 4U);
+    EXPECT_EQ(observer.RelPhasePublished(), 2U);
+    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
+    uint64_t relUpdates = 0;
+    ASSERT_TRUE(control.motuRelPhase.ReadLatest(rel, relUpdates));
+    EXPECT_EQ(rel.streamGeneration, generation);
+    EXPECT_EQ(rel.ticks, expectedRel);
+    EXPECT_EQ(CountLogLines("[RxSphRate]") - rateLinesBefore, 0U);
+    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 0U);
+    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 0U);
+    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 1U);
 }
 
 // A `rel` the bridge refuses -- armed for another generation -- is counted
