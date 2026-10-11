@@ -11,10 +11,12 @@
 namespace ASFW::Audio::Runtime {
 
 // Packed MOTU capture can carry 34 PCM channels in only 28 quadlets (both
-// ADAT banks at 1x). Host buffer/name capacity is distinct from the 32-slot
-// AM824 map and its bit masks. Linux motu-protocol-v3.c:209-239,274-281.
+// ADAT banks at 1x). Host buffer/name capacity is distinct from the AM824
+// slot map. Linux motu-protocol-v3.c:209-239,274-281.
 inline constexpr uint32_t kMaxPackedPcmChannels = 34;
-inline constexpr uint32_t kMaxHostPcmChannels = kMaxPackedPcmChannels;
+inline constexpr uint32_t kMaxHostPcmChannels =
+    kMaxPackedPcmChannels > Encoding::kMaxPcmChannels ? kMaxPackedPcmChannels
+                                                      : Encoding::kMaxPcmChannels;
 
 // A formation describes one rate, not the shape observed at discovery time.
 // Protocol adapters supply these facts; generic code never scales ADAT widths.

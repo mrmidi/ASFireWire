@@ -456,6 +456,8 @@ DEFAULT_REPORTS = (
     ("studiolive-2442", "documentation/fixtures/DICE/presonus2442.txt"),
     ("firestudio-project", "documentation/fixtures/DICE/presonus-firestudio-project.txt"),
     ("multimix", "documentation/fixtures/DICE/alesismultimix.txt"),
+    # Issue #190: 48 PCM capture and 34 PCM playback in one stream each.
+    ("studiolive-3242", "documentation/fixtures/DICE/presonus3242.txt"),
 )
 
 

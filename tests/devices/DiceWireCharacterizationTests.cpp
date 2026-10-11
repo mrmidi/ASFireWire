@@ -355,6 +355,45 @@ TEST(DiceInitialPreparation, StaleRouteCancelsWithoutTouchingTheNewGeneration) {
     EXPECT_EQ(rig.timer.PendingCount(), 0U);
 }
 
+// Issue #190: a StudioLive 32.4.2 sends 48 PCM and receives 34 in one stream
+// each, wider than the old 32-slot AM824 limit. Its only formation was refused
+// and the host side clamped both directions to 32 (AUX1-16 and 2TrackL/R were
+// missing), while the device slipped on our 32-slot playback packets.
+TEST(DiceWideStream, StudioLive3242KeepsEveryChannelOnTheWireAndTheHost) {
+    DiceRig rig(DiceDeviceImages::kStudiolive3242);
+    ASSERT_EQ(rig.Run("initial", [&](auto done) { rig.protocol->EnsureRuntimeStreamGeometry(done); }),
+              kIOReturnSuccess);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.hostInputPcmChannels, 48U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 34U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 48U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 34U);
+
+    const auto formations = rig.protocol->RateFormations();
+    ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 1U);  // CLOCK_CAPS offers 48 kHz only
+    const auto& formation = formations->front();
+    EXPECT_EQ(formation.sampleRateHz, 48000U);
+    ASSERT_EQ(formation.capture.size(), 1U);
+    EXPECT_EQ(formation.capture[0].pcmChannels, 48U);
+    EXPECT_EQ(formation.capture[0].dataBlockSize, 48U);
+    ASSERT_EQ(formation.playback.size(), 1U);
+    EXPECT_EQ(formation.playback[0].pcmChannels, 34U);
+    EXPECT_EQ(formation.playback[0].dataBlockSize, 34U);
+
+    std::vector<std::string> inNames;
+    std::vector<std::string> outNames;
+    ASSERT_TRUE(rig.protocol->GetChannelLabels(inNames, outNames));
+    ASSERT_EQ(inNames.size(), 48U);
+    EXPECT_EQ(inNames.back(), "AUX16");
+    ASSERT_EQ(outNames.size(), 34U);
+    EXPECT_EQ(outNames.back(), "2TrackR");
+
+    ASSERT_TRUE(rig.family->Configure(rig.ChannelsFor(caps), {.sampleRateHz = 48000}));
+}
+
 TEST(DiceInitialPreparation, PreservesObservedRateAndPreparesRestoredRateBeforeStart) {
     DiceRig rig(DiceDeviceImages::kVeniceF24);
     rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);

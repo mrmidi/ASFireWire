@@ -15,6 +15,7 @@
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
+#include "../../../Runtime/ResolvedAudioConfiguration.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 
@@ -248,8 +249,8 @@ private:
     // channel order (input == device TX, output == device RX). Published
     // through the runtimeCapsValid_ release/acquire fence like the arrays above;
     // only the (global, tx, rx) cache path fills them (the caps-only overload
-    // leaves them intact). Covers the widest supported interface (32x32).
-    static constexpr uint32_t kMaxChannelLabels = 32;
+    // leaves them intact). One label per host channel.
+    static constexpr uint32_t kMaxChannelLabels = Runtime::kMaxHostPcmChannels;
     std::atomic<uint32_t> inputChannelLabelCount_{0};
     std::atomic<uint32_t> outputChannelLabelCount_{0};
     char inputChannelLabels_[kMaxChannelLabels][64]{};
