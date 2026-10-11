@@ -255,26 +255,24 @@ TEST(DiceFamilyDriverTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBig
 TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
 
-    // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
-    // intentionally deviates in two HW-validated ways (see
-    // DiceFamilyDriver):
-    //  1. The CLOCK_SELECT write is skipped when the pre-claim global read
-    //     already reports the target clock (0x020C here) — rewriting it
-    //     re-triggers a PLL relock mid-bring-up and fights an idle rate change.
-    //  2. DoAwaitStreamingClockLock adds one extra global-state read between
-    //     clock-confirm and stream discovery so streams are never enabled on a
-    //     still-relocking clock.
-    // Net: the Write op is replaced by a second 380-byte global read, and that
-    // read consumes one extra scripted response reporting locked-at-target.
-    //  3. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
+    // The reference trace rewrites CLOCK_SELECT during prepare, and so does
+    // ASFW: TCAT RestartStreaming and Linux select_clock both write it on every
+    // start, and skipping it left a Saffire Pro 24 DSP capturing digital zero
+    // (hardware, 2026-10-11). ASFW deviates in two ways:
+    //  1. DoAwaitStreamingClockLock adds one extra global-state read after the
+    //     clock is confirmed, so streams are never enabled on a still-relocking
+    //     clock. That read consumes one extra scripted response, locked at target.
+    //  2. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
     //     kext discards. The bring-up starts with the section table instead,
     //     as TCAT RestartStreaming does (AUDIO_SESSION_REDESIGN.md S3).
     const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
     const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
     std::vector<ExpectedRequest> requests(refRequests.begin() + 1, refRequests.end());
-    ASSERT_GT(requests.size(), 6U);
-    ASSERT_EQ(requests[5].kind, OpKind::Write); // CLOCK_SELECT in the reference
-    requests[5] = requests[6];                  // becomes the await-lock global read
+    ASSERT_GT(requests.size(), 7U);
+    ASSERT_EQ(requests[5].kind, OpKind::Write); // CLOCK_SELECT, as in the reference
+    requests.insert(requests.begin() + 7, requests[6]); // the await-lock global read
+    // Responses line up with reads only (a write has none): [5] answers the
+    // global read after the write; the await-lock read gets the same answer.
     std::vector<ResponseStep> responses(refResponses.begin() + 1, refResponses.end());
     ASSERT_GT(responses.size(), 5U);
     responses.insert(responses.begin() + 6, responses[5]); // second locked global read

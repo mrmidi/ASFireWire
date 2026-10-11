@@ -450,28 +450,40 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
         return Rollback(kIOReturnOffline);
     }
 
-    // Skip a redundant CLOCK_SELECT write when the device is already at the target
-    // clock (e.g. an idle ApplyClock already applied this rate). Rewriting it
-    // re-triggers the PLL relock during the bring-up, right as streams are being
-    // enabled, which wedges the device-side streams. The stable-lock gate below
-    // still waits for the lock to settle before enabling.
+    // A stream start always writes CLOCK_SELECT, even when the device already
+    // runs at the target. TCAT's kexts do (RestartStreaming, MidasFW 0xdb62:
+    // owner claim, then CLOCK_SELECT, then CLOCK_ACCEPTED), and so does Linux on
+    // every start with nothing streaming (dice-stream.c:279-294, select_clock):
+    // "just after owning the unit, the unit can return invalid stream formats.
+    // Selecting clock parameters have an effect for the unit to refine it."
+    // Skipping it here (since dfabe0d6, to avoid a relock during bring-up) left a
+    // Saffire Pro 24 DSP sending exact digital zero on every capture channel
+    // after a power-up at 48 kHz, three starts out of three; one same-value
+    // write restored all of them (hardware, 2026-10-11). The write makes the
+    // device reconfigure (RX/TX_CFG_CHG, ~200 ms unlocked); the stream-lock wait
+    // below covers that.
     //
-    // "At target" needs both halves. CLOCK_SELECT is the rate that was requested;
-    // STATUS and SAMPLE_RATE are the rate the device reached. They disagree after a
-    // rate change the device did not complete, and skipping then suppresses the one
-    // write that forces a relock (DICE_STABILITY_REGRESSION.md §3, hardware-validated
-    // on a Saffire Pro 24 DSP stuck at 44.1 kHz).
+    // An idle rate change to the rate the device already has still skips: the
+    // next start writes anyway. "At target" needs both halves there. CLOCK_SELECT
+    // is the rate that was requested; STATUS and SAMPLE_RATE are the rate the
+    // device reached, and they disagree after a change the device did not
+    // complete (DICE_STABILITY_REGRESSION.md §3).
     const uint32_t targetHz = session_.desiredClock.sampleRateHz;
     const bool requestedAtTarget = preClaimClockSelect_ == diceClock_.clockSelect;
     const bool achievedAtTarget =
         NominalRateHz(preClaimStatus_) == targetHz && preClaimSampleRate_ == targetHz;
-    if (requestedAtTarget && achievedAtTarget) {
+    if (flowMode_ == FlowMode::kClockApply && requestedAtTarget && achievedAtTarget) {
         ASFW_LOG(DICE,
-                 "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
+                 "ApplyClock: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
                  diceClock_.clockSelect, targetHz);
         return ActiveClockCheck(channels, notifications_.Consume());
     }
-    if (requestedAtTarget) {
+    if (requestedAtTarget && achievedAtTarget) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; writing it "
+                 "again so the device re-applies it",
+                 diceClock_.clockSelect, targetHz);
+    } else if (requestedAtTarget) {
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: clockSelect=0x%08x already requests %u Hz but device reports %u Hz "
                  "(status=0x%08x); rewriting",
