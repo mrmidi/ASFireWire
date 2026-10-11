@@ -284,6 +284,59 @@ TEST(IsochRxTimingTests, DirectReceiveConsumerOwnsDecodeAcrossOpaqueIsochSeam) {
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 1u);
 }
 
+// Device-timing telemetry is drained off the packet path, on the consumer's
+// telemetry cadence, and only for the master stream -- the stream whose
+// packets the observer measures. A secondary slice of the same packets must
+// not drain it a second time.
+TEST(IsochRxTimingTests, ReceiveTelemetryDrainReachesTheTimingObserverForTheMasterOnly) {
+    struct RecordingObserver final : ASFW::Audio::IRxDeviceTimingObserver {
+        uint32_t drains{0};
+        uint32_t lastMaxRecords{0};
+        void ObservePacket(std::span<const uint8_t>, uint32_t, uint32_t,
+                           uint16_t) noexcept override {}
+        bool IsTimingEstablished() const noexcept override { return false; }
+        void Reset() noexcept override {}
+        void DrainTelemetry(uint32_t maxRecords) noexcept override {
+            ++drains;
+            lastMaxRecords = maxRecords;
+        }
+    };
+
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    std::array<float, 8> input{};
+    FixedDirectAudioBindingSource source({
+        .generation = 1,
+        .inputBase = input.data(),
+        .inputBytes = sizeof(input),
+        .inputFrames = 4,
+        .inputChannels = 2,
+        .control = &control,
+        .sampleRateHz = 48000,
+        .valid = true,
+    });
+
+    RecordingObserver masterObserver;
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer master(
+        &source, {.am824Slots = 2, .streamChannels = 2});
+    master.SetTimingObserver(&masterObserver);
+    master.DrainReceiveTelemetry(16);
+    master.DrainReceiveTelemetry(8);
+    EXPECT_EQ(masterObserver.drains, 2U);
+    EXPECT_EQ(masterObserver.lastMaxRecords, 8U);
+
+    RecordingObserver secondaryObserver;
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer secondary(
+        &source, {.am824Slots = 2, .streamChannels = 2, .isSecondary = true});
+    secondary.SetTimingObserver(&secondaryObserver);
+    secondary.DrainReceiveTelemetry(16);
+    EXPECT_EQ(secondaryObserver.drains, 0U);
+
+    // No observer bound: the drain is the ZTS one alone.
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer unobserved(
+        &source, {.am824Slots = 2, .streamChannels = 2});
+    unobserved.DrainReceiveTelemetry(16);
+}
+
 namespace {
 
 // Two consecutive DATA packets (valid SYT) of one 2-channel frame each, one
