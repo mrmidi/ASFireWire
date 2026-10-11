@@ -6,10 +6,10 @@
 // Hardware, 2026-10-11: a rate change made while the DSP was still applying
 // the previous one left it reporting "running" with digital zero on capture
 // 1/2, until MixControl's DoDspReset (software notice 0x20) restarted it. The
-// device's own "rate applied" notification (0x01000000) is what was missing.
-// These tests drive the real SPro24DspProtocol over a simulated DICE device
-// with a minimal TCAT extension space: section table, application section,
-// DSP status quadlet and the software notice register.
+// protocol now waits for the DSP to report running and not busy before a clock
+// write. These tests drive the real SPro24DspProtocol over a simulated DICE
+// device with a minimal TCAT extension space: section table, application
+// section, DSP status quadlet and the software notice register.
 
 #include <gtest/gtest.h>
 
@@ -131,35 +131,16 @@ struct Pro24DspRig {
     FamilyDriver* family{nullptr};
 };
 
-TEST(SPro24DspClockChangeTests, RateAppliedNoticeLeavesTheDspAlone) {
-    Pro24DspRig rig(SimulatedDiceOptions{.rateAppliedNotify = Focusrite::kRateAppliedNotify});
-    ASSERT_EQ(rig.ApplyClock48k(), kIOReturnSuccess);
-    EXPECT_TRUE(rig.ext.notices.empty());
-}
-
-TEST(SPro24DspClockChangeTests, MissingRateAppliedNoticeRestartsTheDspAndWaitsForIt) {
+TEST(SPro24DspClockChangeTests, RunningDspIsNotWaitedForOrRestarted) {
     Pro24DspRig rig(SimulatedDiceOptions{});
     ASSERT_EQ(rig.ApplyClock48k(), kIOReturnSuccess);
-
-    ASSERT_EQ(rig.ext.notices.size(), 1U);
-    EXPECT_EQ(rig.ext.notices[0], static_cast<uint32_t>(Focusrite::SwNotice::DspReset));
-    // The clock change returned only once the DSP ran again.
-    EXPECT_EQ(rig.ext.status, Focusrite::DspStatus::kRunning);
-    EXPECT_EQ(rig.ext.notRunningFor, 0U);
-    // The whole settle window passed first (5 s, twice the slowest observed).
-    EXPECT_GE(rig.timer.NowNs(), 5'000'000'000ULL);
-}
-
-TEST(SPro24DspClockChangeTests, StoppedDspIsNotSentARestart) {
-    // DoDspReset is only sent while the DSP reports running.
-    Pro24DspRig rig(SimulatedDiceOptions{});
-    rig.ext.status = 0;
-    ASSERT_EQ(rig.ApplyClock48k(), kIOReturnSuccess);
+    EXPECT_EQ(rig.ext.statusReads, 1U);
     EXPECT_TRUE(rig.ext.notices.empty());
+    EXPECT_LT(rig.timer.NowNs(), 1'000'000'000ULL);
 }
 
 TEST(SPro24DspClockChangeTests, ClockIsNotChangedWhileTheDspIsStillComingUp) {
-    Pro24DspRig rig(SimulatedDiceOptions{.rateAppliedNotify = Focusrite::kRateAppliedNotify});
+    Pro24DspRig rig(SimulatedDiceOptions{});
     rig.ext.status = 0;
     rig.ext.notRunningFor = 4;
     ASSERT_EQ(rig.ApplyClock48k(), kIOReturnSuccess);

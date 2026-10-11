@@ -22,11 +22,6 @@ namespace ASFW::Audio::DICE::Focusrite {
 
 namespace {
 
-// kRateAppliedNotify arrived 1.4-2.3 s after each of eleven rate changes
-// (2026-10-11); twice the slowest.
-constexpr uint32_t kRateAppliedTimeoutMs = 5000;
-// After DoDspReset the running bit dropped for 1-4 s (two resets, 2026-10-11).
-constexpr uint32_t kDspRestartTimeoutMs = 10000;
 // Before a clock change: how long to wait for a DSP still coming up.
 constexpr uint32_t kDspReadyTimeoutMs = 5000;
 constexpr uint32_t kDspPollMs = 50;
@@ -83,8 +78,6 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      DiceNotificationRouter* notifications)
     : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications,
             TCAT::DICETcatRuntimePolicy{
-                .clockChangeSettleNotify = kRateAppliedNotify,
-                .clockChangeSettleTimeoutMs = kRateAppliedTimeoutMs,
                 .clockChangeObserver = this,
                 .reloadRouterAfterClockChange = true,
             })
@@ -93,9 +86,11 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
              route.nodeId);
 }
 
-// A clock change while the DSP is still coming up (cold power-up, or the
-// previous change) left it running with digital zero on capture 1/2
-// (2026-10-11). Wait for it first. Nothing to do on a device without the
+// A clock change while the DSP was still applying the previous one left it
+// running with digital zero on capture 1/2 until a DoDspReset (hardware,
+// 2026-10-11). MixControl itself sends DSP messages only while the DSP reports
+// running and not busy (MaybeSendDspMsg, IsDspRunning/IsDeviceBusy). Wait for
+// that before the clock write. Nothing to do on a device without the
 // extension sections (the wire simulator has none).
 void SPro24DspProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
     const auto appBase = ApplicationBase(io);
@@ -110,44 +105,6 @@ void SPro24DspProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
                        "clock anyway", waitedMs, status);
     } else if (waitedMs > 0) {
         ASFW_LOG(DICE, "[SPro24Dsp] DSP ready after %u ms; changing the clock", waitedMs);
-    }
-}
-
-// No "rate applied" notice: restart the DSP the way MixControl does
-// (DoDspReset = notice 0x20, only while the DSP reports running). On hardware
-// this brought capture 1/2 back from digital zero, twice (2026-10-11).
-void SPro24DspProtocol::AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept {
-    if (settled) {
-        return;
-    }
-    const auto appBase = ApplicationBase(io);
-    if (!appBase) {
-        ASFW_LOG_ERROR(DICE, "[SPro24Dsp] no rate-applied notice at %u Hz and the DSP state is "
-                       "unreadable; cannot restart the DSP", rateHz);
-        return;
-    }
-    uint32_t waitedMs = 0;
-    uint32_t status = 0;
-    if (!AwaitDspReady(io, *appBase, kDspReadyTimeoutMs, waitedMs, status)) {
-        ASFW_LOG_ERROR(DICE, "[SPro24Dsp] no rate-applied notice at %u Hz and the DSP is not "
-                       "running (status=0x%08x); not restarting it", rateHz, status);
-        return;
-    }
-    ASFW_LOG_ERROR(DICE, "[SPro24Dsp] no rate-applied notice at %u Hz; restarting the DSP", rateHz);
-    if (const auto sent = io.WriteQuad(*appBase + kSwNoticeOffset,
-                                       static_cast<uint32_t>(SwNotice::DspReset));
-        !sent) {
-        ASFW_LOG_ERROR(DICE, "[SPro24Dsp] DSP restart notice failed (0x%08x)", sent.error());
-        return;
-    }
-    // Give the DSP time to drop its running bit before polling for it.
-    io.Clock().SleepMs(kDspPollMs);
-    if (AwaitDspReady(io, *appBase, kDspRestartTimeoutMs, waitedMs, status)) {
-        ASFW_LOG(DICE, "[SPro24Dsp] DSP restarted, running %u ms after the notice",
-                 waitedMs + kDspPollMs);
-    } else {
-        ASFW_LOG_ERROR(DICE, "[SPro24Dsp] DSP not running %u ms after the restart (status=0x%08x)",
-                       waitedMs + kDspPollMs, status);
     }
 }
 

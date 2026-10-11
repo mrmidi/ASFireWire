@@ -113,8 +113,6 @@ IOReturn DICETcatProtocol::Initialize() {
                                 runtimePolicy_.requireSourceLockBeforeStreamEnable,
                             .requireSourceLockAtConfirm =
                                 runtimePolicy_.requireSourceLockAtConfirm,
-                            .clockChangeSettleNotify = runtimePolicy_.clockChangeSettleNotify,
-                            .clockChangeSettleTimeoutMs = runtimePolicy_.clockChangeSettleTimeoutMs,
                             .clockChangeObserver =
                                 runtimePolicy_.reloadRouterAfterClockChange ||
                                         runtimePolicy_.clockChangeObserver != nullptr
@@ -368,11 +366,11 @@ void DICETcatProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
     }
 }
 
-void DICETcatProtocol::AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept {
+void DICETcatProtocol::AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool rateChanged) noexcept {
     if (runtimePolicy_.clockChangeObserver != nullptr) {
-        runtimePolicy_.clockChangeObserver->AfterClockChange(io, rateHz, settled);
+        runtimePolicy_.clockChangeObserver->AfterClockChange(io, rateHz, rateChanged);
     }
-    if (runtimePolicy_.reloadRouterAfterClockChange) {
+    if (runtimePolicy_.reloadRouterAfterClockChange && rateChanged) {
         ReloadRouterPerRateMode(io, "rate change");
     }
 }

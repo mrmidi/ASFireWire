@@ -142,10 +142,8 @@ public:
     void SetOutputGroupState(const OutputGroupState& state, VoidCallback callback);
 
 private:
-    // DiceClockChangeObserver: keep clock changes away from a DSP that is not
-    // up, and restart one that did not report the new rate as applied.
+    // DiceClockChangeObserver: keep clock changes away from a DSP that is not up.
     void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
-    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept override;
 
     TCAT::DICETcatProtocol tcat_;
     ExtensionSections extensionSections_{};

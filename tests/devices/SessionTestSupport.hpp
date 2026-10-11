@@ -527,12 +527,7 @@ struct SessionRig {
     explicit SessionRig(const SessionShape& s)
         : shape(s),
           guid(SessionGuid(s)),
-          bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp,
-              // The Pro 24 DSP's own "rate applied" notice (device behaviour the
-              // image does not record; SimulatedDiceOptions::rateAppliedNotify).
-              SimulatedDiceOptions{.rateAppliedNotify =
-                                       s.spro24Dsp ? ASFW::Audio::DICE::Focusrite::kRateAppliedNotify
-                                                   : 0U}),
+          bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp),
           irm(nullBus),
           host(bus.Trace(), hooks, failures),
           sessions(registry, runtime, host, hardware, &cancel,

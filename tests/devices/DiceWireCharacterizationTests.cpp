@@ -58,17 +58,8 @@ constexpr uint32_t kClockSelect44kInternal =
 
 // One device on one bus, with the protocol production would build for it.
 struct DiceRig {
-    // A device's own behaviour that the image does not record.
-    static SimulatedDiceOptions DeviceOptions(const DiceDeviceImage& image,
-                                              SimulatedDiceOptions options) {
-        if (std::string_view(image.key) == "saffire-pro24-dsp") {
-            options.rateAppliedNotify = ASFW::Audio::DICE::Focusrite::kRateAppliedNotify;
-        }
-        return options;
-    }
-
     explicit DiceRig(const DiceDeviceImage& image, SimulatedDiceOptions options = {})
-        : bus(image, DeviceOptions(image, options)) {
+        : bus(image, options) {
         bus.Device().ResetToIdle();
         if (std::string_view(image.key) == "saffire-pro24-dsp") {
             protocol = std::make_unique<ASFW::Audio::DICE::Focusrite::SPro24DspProtocol>(

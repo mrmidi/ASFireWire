@@ -78,11 +78,6 @@ struct SimulatedDiceOptions {
     // RxCfgChg|TxCfgChg|ClockAccepted at once, LockChg and the new rate about
     // 50 ms later. Zero keeps the instant lock the goldens were recorded with.
     uint32_t rateSettlesAfterStatusReads{0};
-    // Vendor bits a device sends once it has applied a new rate. The Saffire
-    // Pro 24 DSP sends 0x01000000 1.4-2.3 s after the change (hardware,
-    // 2026-10-11); here they ride with the notification that marks the rate as
-    // reached (CLOCK_ACCEPTED, or LOCK_CHG when the rate settles late).
-    uint32_t rateAppliedNotify{0};
 };
 
 class SimulatedDiceDevice final {
@@ -495,7 +490,6 @@ private:
         } else if (locks) {
             SetAchievedClock(rateIndex, true);
             if (rateIndex != previousIndex) {
-                bits |= options_.rateAppliedNotify;
                 // A hardware-validated 44.1 -> 48 kHz change raised
                 // RxCfgChg|TxCfgChg|ClockAccepted together
                 // (DICE_STABILITY_REGRESSION.md §3), even within one rate mode.
@@ -533,7 +527,7 @@ private:
         }
         Trace("# device: clock settled");
         SetNotificationRegister(::ASFW::Audio::DICE::Notify::kLockChange);
-        Deliver(::ASFW::Audio::DICE::Notify::kLockChange | options_.rateAppliedNotify);
+        Deliver(::ASFW::Audio::DICE::Notify::kLockChange);
     }
 
     void Deliver(uint32_t bits) {

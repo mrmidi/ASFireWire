@@ -89,13 +89,6 @@ namespace DspStatus {
     constexpr uint32_t kBusy    = 0x00000002;
 }
 
-/// Vendor notification a Saffire Pro 24 DSP sends 1.4-2.3 s after it finishes
-/// applying a new sample rate. [observed] Driver ring, 2026-10-11: eleven rate
-/// changes, each followed by two of these; after a change made before it
-/// arrived, the DSP reported running but its outputs carried digital zero.
-/// Neither MixControl nor the ALSA reference names this bit.
-constexpr uint32_t kRateAppliedNotify = 0x01000000;
-
 // ============================================================================
 // Input Level Enums
 // ============================================================================

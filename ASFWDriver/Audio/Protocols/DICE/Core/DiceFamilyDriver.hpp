@@ -91,9 +91,9 @@ private:
     [[nodiscard]] IOReturn ClockConfirmed(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitStreamingClockLock(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitIdleClockRate();
-    // After a CLOCK_SELECT write this flow issued: the policy's settle wait,
-    // then the observer. False only when the route went stale or teardown began.
-    [[nodiscard]] bool SettleAfterClockChange();
+    // After a CLOCK_SELECT write this flow issued, once the device runs at the
+    // target: the observer. False only when the route went stale or teardown began.
+    [[nodiscard]] bool AfterClockWrite();
     [[nodiscard]] IOReturn DiscoverStreams();
     [[nodiscard]] IOReturn FinishPrepare();
     [[nodiscard]] IOReturn CompleteClockApply();

@@ -62,11 +62,8 @@ struct DICETcatRuntimePolicy final {
     const DiceStartupMixerCell* startupMixerCells{nullptr};
     uint32_t startupMixerCellCount{0};
 
-    // Passed to DiceFamilyDriver (DICEBringupPolicy): the device's own "rate
-    // applied" notification to wait for after a clock change, and device steps
-    // around the change. Off by default.
-    uint32_t clockChangeSettleNotify{0};
-    uint32_t clockChangeSettleTimeoutMs{0};
+    // Passed to DiceFamilyDriver (DICEBringupPolicy): device steps around a
+    // clock change. Off by default.
     DiceClockChangeObserver* clockChangeObserver{nullptr};
 
     // Re-load the device's own router program for every rate mode at the first
@@ -194,7 +191,7 @@ private:
     // DiceClockChangeObserver: the policy's observer first, then the router
     // reload when the policy asks for it.
     void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
-    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept override;
+    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool rateChanged) noexcept override;
     // Write each rate mode's current router table back to the device and load
     // it. Device configuration, not a bring-up gate: failures are logged.
     void ReloadRouterPerRateMode(DiceDeviceIo& io, const char* why) noexcept;

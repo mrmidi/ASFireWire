@@ -621,7 +621,7 @@ IOReturn DiceFamilyDriver::ClockConfirmed(const AudioDuplexChannels& channels) {
         if (status != kIOReturnSuccess) {
             return status;
         }
-        if (!SettleAfterClockChange()) {
+        if (!AfterClockWrite()) {
             return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
         }
         return CompleteClockApply();
@@ -694,7 +694,7 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
                          "PrepareDuplex48k: target rate ready at %u Hz after %u ms; sourceLock=%u; enabling streams",
                          state->sampleRate, attempt * kPollIntervalMs, sourceLocked ? 1U : 0U);
             }
-            if (!SettleAfterClockChange()) {
+            if (!AfterClockWrite()) {
                 return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
             }
             return DiscoverStreams();
@@ -713,44 +713,19 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
     }
 }
 
-bool DiceFamilyDriver::SettleAfterClockChange() {
+bool DiceFamilyDriver::AfterClockWrite() {
     if (!clockSelectWritten_) {
         return true;
     }
     clockSelectWritten_ = false;
+    if (bringupPolicy_.clockChangeObserver == nullptr) {
+        return true;
+    }
     const uint32_t rateHz = session_.desiredClock.sampleRateHz;
-
-    bool settled = true;
-    const uint32_t settleBits = bringupPolicy_.clockChangeSettleNotify;
-    if (settleBits != 0) {
-        settled = false;
-        const uint32_t timeoutMs = bringupPolicy_.clockChangeSettleTimeoutMs;
-        for (uint32_t waitedMs = 0;; waitedMs += kPollIntervalMs) {
-            if (TeardownRequested() || !EnsureRouteCurrent()) {
-                return false;
-            }
-            if (notifications_.TakeSeenSinceReset(settleBits) != 0) {
-                settled = true;
-                ASFW_LOG(DICE, "ApplyClock: device settled at %u Hz %u ms after the clock write "
-                         "(notify 0x%08x)", rateHz, waitedMs, settleBits);
-                break;
-            }
-            if (waitedMs >= timeoutMs) {
-                ASFW_LOG_ERROR(DICE, "ApplyClock: no settle notification 0x%08x within %u ms at %u Hz",
-                               settleBits, timeoutMs, rateHz);
-                break;
-            }
-            io_.Clock().SleepMs(kPollIntervalMs);
-        }
-    }
-
-    if (bringupPolicy_.clockChangeObserver != nullptr) {
-        bringupPolicy_.clockChangeObserver->AfterClockChange(io_, rateHz, settled);
-        if (TeardownRequested() || !EnsureRouteCurrent()) {
-            return false;
-        }
-    }
-    return true;
+    const bool rateChanged =
+        NominalRateHz(preClaimStatus_) != rateHz || preClaimSampleRate_ != rateHz;
+    bringupPolicy_.clockChangeObserver->AfterClockChange(io_, rateHz, rateChanged);
+    return !TeardownRequested() && EnsureRouteCurrent();
 }
 
 IOReturn DiceFamilyDriver::DiscoverStreams() {

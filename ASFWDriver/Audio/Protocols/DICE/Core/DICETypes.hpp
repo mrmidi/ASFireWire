@@ -630,13 +630,6 @@ struct DICEBringupPolicy final {
     bool requireSourceLockBeforeStreamEnable{true};
     bool requireSourceLockAtConfirm{true};
 
-    // After a CLOCK_SELECT write that the device acted on, wait up to
-    // `clockChangeSettleTimeoutMs` for any of these notification bits: the
-    // device's own "finished applying the new rate". Nothing else is put on
-    // the wire to that device meanwhile (no stream programming, no further
-    // clock change). 0 = no wait.
-    uint32_t clockChangeSettleNotify{0};
-    uint32_t clockChangeSettleTimeoutMs{0};
     // Device-specific steps around a CLOCK_SELECT write. Not owned; must
     // outlive the driver. nullptr = none.
     DiceClockChangeObserver* clockChangeObserver{nullptr};

@@ -782,32 +782,20 @@ TEST(DiceFamilyDriverTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegiste
     }
 }
 
-// --- Settle wait and observer around a CLOCK_SELECT write --------------------
-
-// A device-specific "finished applying the new rate" notification. The value is
-// the Saffire Pro 24 DSP's, but the mechanism is generic.
-constexpr uint32_t kSettleBit = 0x01000000U;
+// --- Observer around a CLOCK_SELECT write ------------------------------------
 
 struct RecordingClockObserver final : ::ASFW::Audio::DICE::DiceClockChangeObserver {
     int before{0};
     int after{0};
     uint32_t rateHz{0};
-    bool settled{false};
+    bool rateChanged{false};
     void BeforeClockSelectWrite(DiceDeviceIo&) noexcept override { ++before; }
-    void AfterClockChange(DiceDeviceIo&, uint32_t rate, bool settledNow) noexcept override {
+    void AfterClockChange(DiceDeviceIo&, uint32_t rate, bool changed) noexcept override {
         ++after;
         rateHz = rate;
-        settled = settledNow;
+        rateChanged = changed;
     }
 };
-
-DICEBringupPolicy SettlePolicy(RecordingClockObserver& observer) {
-    return DICEBringupPolicy{
-        .clockChangeSettleNotify = kSettleBit,
-        .clockChangeSettleTimeoutMs = 3000,
-        .clockChangeObserver = &observer,
-    };
-}
 
 DiceClockConfiguration Clock(uint32_t hz) {
     uint32_t selection = 0;
@@ -815,85 +803,27 @@ DiceClockConfiguration Clock(uint32_t hz) {
     return {.sampleRateHz = hz, .clockSelect = selection};
 }
 
-TEST(DiceFamilyDriverTests, IdleClockChangeWaitsForTheSettleNotification) {
+TEST(DiceFamilyDriverTests, IdleClockChangeCallsTheObserverAroundTheWrite) {
     RecordingClockObserver observer;
-    DuplexRig rig(SettlePolicy(observer));
-    rig.bus.SetClockSelectWriteHandler([&rig] {
-        // The rate is reached at once; the device's own settle notice comes 1.5 s later.
-        rig.bus.SetGlobalClockState(StatusBits::kSourceLocked |
-                                        (ClockRateIndex::k44100 << StatusBits::kNominalRateShift),
-                                    44100U);
-        rig.notifications.Publish(NotifyBits::kClockAccepted);
-        (void)rig.timer.ScheduleAfter(1'500'000'000ULL,
-                                      [&rig] { rig.notifications.Publish(kSettleBit); });
-    });
-
+    DuplexRig rig(DICEBringupPolicy{.clockChangeObserver = &observer});
     const auto applied = rig.driver.ApplyClock(Clock(44100));
     ASSERT_TRUE(applied);
     EXPECT_EQ(applied->appliedClock.sampleRateHz, 44100U);
     EXPECT_EQ(observer.before, 1);
     EXPECT_EQ(observer.after, 1);
-    EXPECT_TRUE(observer.settled);
     EXPECT_EQ(observer.rateHz, 44100U);
-    EXPECT_GE(rig.timer.NowNs(), 1'500'000'000ULL);
-    EXPECT_LT(rig.timer.NowNs(), 1'600'000'000ULL);
+    EXPECT_TRUE(observer.rateChanged);
 }
 
-TEST(DiceFamilyDriverTests, MissingSettleNotificationIsReportedAndTheChangeStillCompletes) {
+TEST(DiceFamilyDriverTests, SkippedRedundantIdleClockWriteDoesNotCallTheObserver) {
     RecordingClockObserver observer;
-    DuplexRig rig(SettlePolicy(observer));
-
-    const auto applied = rig.driver.ApplyClock(Clock(44100));
-    ASSERT_TRUE(applied);
-    EXPECT_EQ(observer.after, 1);
-    EXPECT_FALSE(observer.settled);
-    EXPECT_GE(rig.timer.NowNs(), 3'000'000'000ULL);
-}
-
-TEST(DiceFamilyDriverTests, SkippedRedundantClockWriteNeitherWaitsNorCallsTheObserver) {
-    RecordingClockObserver observer;
-    DuplexRig rig(SettlePolicy(observer));
-    // Requested and reached: the bring-up skips the write.
+    DuplexRig rig(DICEBringupPolicy{.clockChangeObserver = &observer});
+    // Requested and reached after the first apply: the second one skips the write.
     ASSERT_TRUE(rig.driver.ApplyClock(Clock(48000)));
     observer = {};
-    const uint64_t before = rig.timer.NowNs();
-    rig.notifications.Publish(kSettleBit);  // stale; must not matter
-
-    const auto applied = rig.driver.ApplyClock(Clock(48000));
-    ASSERT_TRUE(applied);
+    ASSERT_TRUE(rig.driver.ApplyClock(Clock(48000)));
     EXPECT_EQ(observer.before, 0);
     EXPECT_EQ(observer.after, 0);
-    EXPECT_LT(rig.timer.NowNs() - before, 100'000'000ULL);
-}
-
-TEST(DiceFamilyDriverTests, SettleBitRaisedWithClockAcceptedIsNotLostToTheAcceptLoop) {
-    RecordingClockObserver observer;
-    DuplexRig rig(SettlePolicy(observer));
-    rig.bus.SetGlobalClockState(StatusBits::kSourceLocked |
-                                    (ClockRateIndex::k44100 << StatusBits::kNominalRateShift),
-                                44100U);
-    // CLOCK_ACCEPTED and the settle bit in one quadlet: the accept loop
-    // consumes the mailbox, the settle wait must still see its bit.
-    rig.bus.SetClockSelectWriteHandler(
-        [&rig] { rig.bus.PublishClockAccepted(NotifyBits::kClockAccepted | kSettleBit); });
-
-    const auto applied = rig.driver.ApplyClock(Clock(48000));
-    ASSERT_TRUE(applied);
-    EXPECT_EQ(observer.after, 1);
-    EXPECT_TRUE(observer.settled);
-    EXPECT_LT(rig.timer.NowNs(), 100'000'000ULL);
-}
-
-TEST(DiceFamilyDriverTests, ResetClearsTheSeenSinceResetRecord) {
-    DiceNotificationMailbox mailbox;
-    mailbox.Publish(kSettleBit | NotifyBits::kClockAccepted);
-    EXPECT_EQ(mailbox.Consume(), kSettleBit | NotifyBits::kClockAccepted);
-    // Consume took the latch, not the record.
-    EXPECT_EQ(mailbox.TakeSeenSinceReset(kSettleBit), kSettleBit);
-    EXPECT_EQ(mailbox.TakeSeenSinceReset(kSettleBit), 0U);
-    mailbox.Publish(kSettleBit);
-    mailbox.Reset();
-    EXPECT_EQ(mailbox.TakeSeenSinceReset(kSettleBit), 0U);
 }
 
 } // namespace

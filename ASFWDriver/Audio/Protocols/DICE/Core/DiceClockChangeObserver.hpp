@@ -21,12 +21,15 @@ public:
     virtual ~DiceClockChangeObserver() = default;
 
     // Before CLOCK_SELECT is written, owner already claimed.
-    virtual void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept = 0;
+    virtual void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept { (void)io; }
 
-    // After the device runs at `rateHz` and the policy's settle wait ended.
-    // `settled` is false only when a settle notification was configured and did
-    // not arrive in time.
-    virtual void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept = 0;
+    // After the device runs at `rateHz`. `rateChanged` is false when the device
+    // already ran at that rate before the write.
+    virtual void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool rateChanged) noexcept {
+        (void)io;
+        (void)rateHz;
+        (void)rateChanged;
+    }
 };
 
 } // namespace ASFW::Audio::DICE
