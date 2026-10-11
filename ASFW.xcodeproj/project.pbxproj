@@ -949,6 +949,7 @@
 		601C29508A5C112F4157A708 /* AudioRtCounters.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioRtCounters.hpp; sourceTree = "<group>"; };
 		604730D9D5CD284DB3F4E177 /* MotuFamilyAdapter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuFamilyAdapter.hpp; sourceTree = "<group>"; };
 		607B3B147596F916CB2EBB11 /* DriverConnector+AVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+AVC.swift"; sourceTree = "<group>"; };
+		60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxSphRateMeter.hpp; sourceTree = "<group>"; };
 		60EEFC3AC7756D549E967D25 /* CSRResponder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CSRResponder.cpp; sourceTree = "<group>"; };
 		6103F39DBF1EDAC73FDD5CB8 /* ASFWApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWApp.swift; sourceTree = "<group>"; };
 		61520E1D95BE9E50D8316AB0 /* AudioGeometryObserverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGeometryObserverTests.swift; sourceTree = "<group>"; };
@@ -3581,6 +3582,7 @@
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
 				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
+				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";

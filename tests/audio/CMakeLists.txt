@@ -139,6 +139,11 @@ add_audio_test(MotuRelPhaseConditionerTests
     MotuRelPhaseConditionerTests.cpp
 )
 
+# MOTU SPH regulator: device sample period measured from received SPH
+add_audio_test(MotuRxSphRateMeterTests
+    MotuRxSphRateMeterTests.cpp
+)
+
 # MOTU host->device payload placement tests
 add_audio_test(MotuPayloadWriterTests
     MotuPayloadWriterTests.cpp
