@@ -1796,3 +1796,40 @@ TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritab
 }
 
 } // namespace
+
+// A master volume realised in the host is a gain stage applied in WriteEnd. The stage scales
+// only the span CoreAudio just wrote, and only when the device realises its volume in the host.
+TEST(HostOutputVolumeWriteEnd, ScalesTheWrittenSpanOnlyForAHostVolumeDevice) {
+    constexpr uint32_t kFrames = 64;
+    constexpr uint32_t kChannels = 2;
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    auto control = std::make_unique<ASFW::Audio::Runtime::AudioTransportControlBlock>();
+    std::vector<float> ring(static_cast<size_t>(kFrames) * kChannels, 1.0f);
+    auto& memory = ivars->runtime.directAudioGraph.memory;
+    memory.outputBase = ring.data();
+    memory.outputFrameCapacity = kFrames;
+    memory.outputChannels = kChannels;
+    ivars->runtime.hostOutputGain.SetTarget(0.0f);
+
+    ASSERT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(*ivars, *control, 0, 0, 32));
+    for (const float sample : ring) {
+        ASSERT_EQ(sample, 1.0f);
+    }
+
+    ivars->device.hostOutputVolume = true;
+    ASSERT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(*ivars, *control, 32, 0, 32));
+    for (uint32_t frame = 0; frame < 32; ++frame) {
+        EXPECT_EQ(ring[frame * kChannels], 1.0f) << frame;
+    }
+    float previous = 1.0f;
+    for (uint32_t frame = 32; frame < kFrames; ++frame) {
+        EXPECT_LT(ring[frame * kChannels], previous) << frame;
+        EXPECT_EQ(ring[frame * kChannels + 1], ring[frame * kChannels]) << frame;
+        previous = ring[frame * kChannels];
+    }
+}
+
+TEST(HostOutputVolumeWriteEnd, ProfilesRealiseVolumeOnTheDeviceByDefault) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile dice{{.name = "Focusrite Saffire (DICE)"}};
+    EXPECT_FALSE(dice.HostOutputVolume());
+}

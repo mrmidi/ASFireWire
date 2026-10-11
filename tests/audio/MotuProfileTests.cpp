@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
@@ -124,5 +125,17 @@ TEST(MotuProfileTests, FireWireScopeKeepsV1BehindValidationAndUsbModelsRecognize
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
         EXPECT_EQ(plan->support,SupportDisposition::RecognizedUnsupported);
         EXPECT_EQ(plan->profileBuilder,ProfileBuilderId::None);
+    }
+}
+
+// The master volume is realised in the host only for the models it is enabled for; every
+// other MOTU keeps the default (no host volume control, PCM untouched).
+TEST(MotuProfileTests, HostOutputVolumeIsEnabledForThe828mk3Only) {
+    using ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile;
+    EXPECT_TRUE(MotuProfile{0x15}.HostOutputVolume());
+    for (const uint32_t swVersion : {kMotu828mk2SwVersion, kMotu896hdSwVersion,
+                                     kMotuTravelerSwVersion, kMotuUltraliteSwVersion,
+                                     kMotu8preSwVersion, 0x16U, 0x17U, 0x19U, 0x1bU}) {
+        EXPECT_FALSE(MotuProfile{swVersion}.HostOutputVolume()) << std::hex << swVersion;
     }
 }

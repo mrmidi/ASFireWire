@@ -48,6 +48,23 @@ namespace ASFW::Isoch::Audio::MOTU::Profiles {
     }
 }
 
+/// Models whose CoreAudio master volume is realised in the host, by unit directory software
+/// version. Enabled for the 828mk3 (0x15) only.
+/// vendor driver: on the 828mk3 the official driver scales PCM in the host for the volume
+/// keys; the device's MONITOR level and LCD do not move and no write reaches it.
+/// Another model belongs here only once its official driver is seen doing the same: if the
+/// keys move the device's own level, its volume is a device control, not host gain.
+inline constexpr uint32_t kHostOutputVolumeSwVersions[] = {0x15};
+
+[[nodiscard]] constexpr bool HostOutputVolumeForSwVersion(uint32_t swVersion) noexcept {
+    for (const uint32_t enabled : kHostOutputVolumeSwVersions) {
+        if (enabled == swVersion) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class MotuProfile final : public IAudioStreamProfile {
 public:
     /// Model-specific fallback geometry. Live rate formations supersede these
@@ -86,6 +103,10 @@ public:
     // device's. Matches the Linux READY_TIMEOUT_MS budget (motu-stream.c:11).
     [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override {
         return 2000;
+    }
+
+    [[nodiscard]] bool HostOutputVolume() const noexcept override {
+        return HostOutputVolumeForSwVersion(unitSwVersion_);
     }
 
 private:

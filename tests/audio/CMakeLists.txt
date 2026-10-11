@@ -91,6 +91,7 @@ add_audio_test(MotuV2RegisterTests
 # MOTU Device Profile / Factory Identity Tests
 add_audio_test(MotuProfileTests
     MotuProfileTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
 )
 
 # MOTU host channel <-> physical port tables
@@ -222,6 +223,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
     AudioRuntime/WireRetentionTests.cpp
+    AudioRuntime/HostOutputGainTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
 )
 

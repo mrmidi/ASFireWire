@@ -9,6 +9,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/HostOutputGain.hpp"
 #include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
@@ -63,6 +64,9 @@ struct AudioDriverDeviceState {
     ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};
     ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
+    // The master output volume is realised in the host (profile HostOutputVolume) and its
+    // control is published; WriteEnd then runs the host gain stage.
+    bool hostOutputVolume{false};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
@@ -261,6 +265,9 @@ struct AudioDriverRuntimeState {
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.
     uint64_t txMissedFinalityAtStart{0};
+    // Master output volume realised in the host (profile HostOutputVolume): the control
+    // sets the target, WriteEnd scales what CoreAudio wrote. Kept across starts.
+    ASFW::Audio::Runtime::HostOutputGain hostOutputGain;
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;

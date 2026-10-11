@@ -90,6 +90,11 @@ public:
         return {48000u};
     }
 
+    /// True when the CoreAudio master output volume is realised in the host -- the dext
+    /// scales PCM before it is sent and the device receives no command. Only for a device
+    /// whose own driver does the same.
+    [[nodiscard]] virtual bool HostOutputVolume() const noexcept { return false; }
+
     // Transfer delay is not device policy: it is derived from the wire rate
     // geometry by ResolveTimingGeometry (AmdtpTransferDelay.hpp). No profile
     // ever overrode the old 12800 default (TIMING_GEOMETRY_INVENTORY.md G-04).

@@ -68,6 +68,18 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     if (ioBufferFrameSize > ivars.runtime.directAudioGraph.memory.outputFrameCapacity) {
         return false;
     }
+    // Master volume realised in the host: scale the frames CoreAudio just wrote, before
+    // they are published to the fill. The ring is this driver's read-write mapping of the
+    // output buffer (CreateSharedMapping); the binding holds it const because TX only
+    // reads it, and this is the one place that writes it, after CoreAudio's write ended.
+    if (ivars.device.hostOutputVolume) {
+        const auto& memory = ivars.runtime.directAudioGraph.memory;
+        ivars.runtime.hostOutputGain.Apply(const_cast<float*>(memory.outputBase),
+                                           memory.outputChannels,
+                                           memory.outputFrameCapacity,
+                                           sampleTime,
+                                           ioBufferFrameSize);
+    }
     control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
     PublishPlaybackRingWriteEnd(ivars.runtime.directAudioGraph, control);
 
