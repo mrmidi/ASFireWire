@@ -701,6 +701,7 @@
 		256EA87824CECF3FF30445BB /* LockPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockPolicy.hpp; sourceTree = "<group>"; };
 		2580F370B9A0FCCB7AB371DE /* PacketHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PacketHelpers.hpp; sourceTree = "<group>"; };
 		258569E0435DE3FF824B9AC4 /* RuntimeIdentity.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RuntimeIdentity.hpp; sourceTree = "<group>"; };
+		25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuServoStallDetector.hpp; sourceTree = "<group>"; };
 		25F91BE94E37C9A397C953DA /* LocalIRMResourceController.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LocalIRMResourceController.hpp; sourceTree = "<group>"; };
 		260059B5EDB291077B7F733A /* ConfigROMHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMHandler.cpp; sourceTree = "<group>"; };
 		2619EAC4CD6D9C6B97C6ED09 /* AsyncSubsystemLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemLifecycle.cpp; sourceTree = "<group>"; };
@@ -3583,6 +3584,7 @@
 				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
+				25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
