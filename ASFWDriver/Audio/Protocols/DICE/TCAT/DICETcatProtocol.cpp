@@ -113,6 +113,9 @@ IOReturn DICETcatProtocol::Initialize() {
                                 runtimePolicy_.requireSourceLockBeforeStreamEnable,
                             .requireSourceLockAtConfirm =
                                 runtimePolicy_.requireSourceLockAtConfirm,
+                            .clockChangeSettleNotify = runtimePolicy_.clockChangeSettleNotify,
+                            .clockChangeSettleTimeoutMs = runtimePolicy_.clockChangeSettleTimeoutMs,
+                            .clockChangeObserver = runtimePolicy_.clockChangeObserver,
                         });
         driver_->SetTeardownCancelToken(teardownCancel_);
     }

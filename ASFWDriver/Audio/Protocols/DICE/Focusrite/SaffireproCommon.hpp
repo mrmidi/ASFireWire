@@ -23,6 +23,10 @@ namespace Offsets {
     constexpr uint32_t kInputParams     = 0x0058;  ///< Input parameters
     constexpr uint32_t kIoParams        = 0x0040;  ///< I/O configuration
     constexpr uint32_t kDspEnable       = 0x0070;  ///< DSP enable/disable (SPro24DSP)
+    /// DSP state (SPro24DSP): bit 0 running, bit 1 busy. MixControl 3.9
+    /// CPro24DSPUserDevice::IsDspRunning / IsDeviceBusy read application
+    /// quadlet 0x1D (setAppSpaceOffsets), i.e. byte offset 0x74.
+    constexpr uint32_t kDspStatus       = 0x0074;
     constexpr uint32_t kChStripFlags    = 0x0078;  ///< Channel strip flags (SPro24DSP)
     constexpr uint32_t kCoefBase        = 0x0190;  ///< DSP coefficient base (SPro24DSP)
     constexpr uint32_t kEffectGeneral   = 0x0078;  ///< Effect general params offset
@@ -68,13 +72,29 @@ enum class SwNotice : uint32_t {
     EqHighCh1       = 0x16,
     Reverb          = 0x1A,
     DspEnable       = 0x1C,
-    RoutingRefresh  = 0x20,
+    /// Restarts the DSP. MixControl 3.9 CPro24DSPUserDevice::DoDspReset =
+    /// MaybeSendDspMsg(0x20), sent only while the DSP reports running. (Named
+    /// RoutingRefresh here before; nothing sent it.)
+    DspReset        = 0x20,
     // Aliases for cleaner naming
     DspChanged         = 0x1C,  // Same as DspEnable
     EffectChanged      = 0x05,  // Same as ChStripFlags
     InputChanged       = 0x04,  // Same as InputParams
     OutputGroupChanged = 0x02,  // Same as DimMute
 };
+
+/// DSP state bits at Offsets::kDspStatus.
+namespace DspStatus {
+    constexpr uint32_t kRunning = 0x00000001;
+    constexpr uint32_t kBusy    = 0x00000002;
+}
+
+/// Vendor notification a Saffire Pro 24 DSP sends 1.4-2.3 s after it finishes
+/// applying a new sample rate. [observed] Driver ring, 2026-10-11: eleven rate
+/// changes, each followed by two of these; after a change made before it
+/// arrived, the DSP reported running but its outputs carried digital zero.
+/// Neither MixControl nor the ALSA reference names this bit.
+constexpr uint32_t kRateAppliedNotify = 0x01000000;
 
 // ============================================================================
 // Input Level Enums

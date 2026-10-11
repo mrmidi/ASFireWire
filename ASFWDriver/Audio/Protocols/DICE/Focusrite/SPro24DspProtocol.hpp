@@ -9,6 +9,7 @@
 #include "SaffireproCommon.hpp"
 #include "SPro24DspTypes.hpp"
 #include "../Core/DICETypes.hpp"
+#include "../Core/DiceClockChangeObserver.hpp"
 #include "../TCAT/DICETcatProtocol.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include <array>
@@ -39,7 +40,8 @@ constexpr uint32_t kSPro24DspModelId = 0x000008;
 /// 
 /// This class provides async-callback-based access to device parameters.
 /// All operations are asynchronous since they involve FireWire transactions.
-class SPro24DspProtocol : public Audio::IDeviceProtocol {
+class SPro24DspProtocol : public Audio::IDeviceProtocol,
+                          private DiceClockChangeObserver {
 public:
     /// Callback types for async operations
     using InitCallback = std::function<void(IOReturn)>;
@@ -140,6 +142,11 @@ public:
     void SetOutputGroupState(const OutputGroupState& state, VoidCallback callback);
 
 private:
+    // DiceClockChangeObserver: keep clock changes away from a DSP that is not
+    // up, and restart one that did not report the new rate as applied.
+    void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
+    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool settled) noexcept override;
+
     TCAT::DICETcatProtocol tcat_;
     ExtensionSections extensionSections_{};
     uint32_t appSectionBase_{0};

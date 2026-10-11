@@ -60,6 +60,13 @@ struct DICETcatRuntimePolicy final {
     // path does not work".
     const DiceStartupMixerCell* startupMixerCells{nullptr};
     uint32_t startupMixerCellCount{0};
+
+    // Passed to DiceFamilyDriver (DICEBringupPolicy): the device's own "rate
+    // applied" notification to wait for after a clock change, and device steps
+    // around the change. Off by default.
+    uint32_t clockChangeSettleNotify{0};
+    uint32_t clockChangeSettleTimeoutMs{0};
+    DiceClockChangeObserver* clockChangeObserver{nullptr};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,

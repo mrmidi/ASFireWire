@@ -85,6 +85,20 @@ add_device_test(DiceWireCharacterizationTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# Saffire Pro 24 DSP steps around a clock change (DSP-ready wait, DSP restart).
+add_device_test(SPro24DspClockChangeTests
+    SPro24DspClockChangeTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro24DspTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Session-layer golden traces of today's duplex coordinator (AUDIO_SESSION_REDESIGN.md S2).
 # Goldens live in tests/golden/session; ASFW_UPDATE_GOLDEN=1 rewrites them.
 add_device_test(SessionCharacterizationTests
