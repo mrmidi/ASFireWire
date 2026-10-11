@@ -70,6 +70,11 @@ public:
         auto revision = ReadFirmwareRevision();
         if (!revision) return std::unexpected(revision.error());
         if (*revision == 0 || *revision < FirmwareMinimum(model_)) return std::unexpected(kIOReturnUnsupported);
+        // The revision is the first number to compare when a start fails on one
+        // card and works on another, and it was the one the 2026-10-11 field
+        // report did not carry.
+        ASFW_LOG(Audio, "[RME] firmware %{public}s: revision 0x%04x (minimum 0x%04x)",
+                 model_ == FirefaceModel::kFF800 ? "FF800" : "FF400", *revision, FirmwareMinimum(model_));
         // Once per device: the flash does not change between start attempts, and
         // repeating ~13 lines per retry pushed a field log's history out of the ring.
         if (!lastDryRun_.flash) LoadFlashSettings();
@@ -107,8 +112,30 @@ public:
         // Cancelled before init reaches the bus: there is no device state to reset.
         if (Cancelled()) return std::unexpected(kIOReturnAborted);
         initialized_ = true; // An uncertain init completion must be reset on rollback.
-        if (const IOReturn kr = WriteWords(InitAddress(), words); kr != kIOReturnSuccess)
+        // The FF800 takes the sample-transfer frequency before the packet
+        // format: Linux writes FF800_STF alone and then sleeps 100 ms, because
+        // "if starting isochronous communication immediately, change of STF has
+        // no effect" (ff800_allocate_resources, ff-protocol-former.c:335-345).
+        // Sent as one 3-quadlet block (FFADO's order) this card answered
+        // 0xffffffff at 0x801c0008 for the whole 500 ms deadline, seven starts
+        // out of seven (field log 2026-10-11, flash rate 44.1 kHz).
+        if (model_ == FirefaceModel::kFF800) {
+            if (const IOReturn kr = WriteWords(InitAddress(),
+                    std::span<const uint32_t>(words.data(), 1)); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
+            if (const IOReturn kr = WaitForConfigured48k(); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
+            if (const IOReturn kr = WriteWords(Register::kFF800PacketFormat,
+                    std::span<const uint32_t>(words.data() + 1, 2)); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
+        } else if (const IOReturn kr = WriteWords(InitAddress(), words); kr != kIOReturnSuccess) {
             return std::unexpected(kr);
+        }
+        // One line for the whole init tuple, so a remote report can be read
+        // against the reference sequences without a second field session.
+        ASFW_LOG(Audio, "[RME] %{public}s init words: rate=%u format=0x%08x txsize=0x%08x hostChannel=%u",
+                 model_ == FirefaceModel::kFF800 ? "FF800" : "FF400", words[0], words[1], words[2],
+                 channels_.hostToDeviceIsoChannel);
         auto afterInit = ReadClockStatus();
         if (!afterInit) return std::unexpected(afterInit.error());
         LogClockStatus("after-init", *afterInit);
@@ -134,7 +161,16 @@ public:
                 }
                 IOSleep(5);
             }
-            ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms");
+            // The device's own words make the next field report decisive: the
+            // first two are the clock it is running at, the third the channel
+            // it never published.
+            if (auto words = ReadWords(Register::kStatus, 4)) {
+                ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms "
+                         "(status %08x %08x %08x %08x)", words->words[0], words->words[1],
+                         words->words[2], words->words[3]);
+            } else {
+                ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms");
+            }
             return std::unexpected(kIOReturnTimeout);
         }
         if (requested.hostToDeviceIsoChannel > 7 || requested.deviceToHostIsoChannel > 7)
@@ -235,6 +271,28 @@ private:
     }
     [[nodiscard]] bool Cancelled() const noexcept { return cancel_ && cancel_->load(std::memory_order_acquire); }
     [[nodiscard]] uint64_t InitAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Init : Register::kFF400Init; }
+    // Bounded wait for the sample-transfer frequency the driver just wrote to
+    // take effect on the card. The rate is already readable in the status words
+    // the driver polls for the clock anyway, so this costs two reads per start
+    // and cannot pass while the card is still at its stored 44.1 kHz. A card
+    // that never gets there is not failed here: the clock gate after the packet
+    // format owns that verdict, exactly as before.
+    [[nodiscard]] IOReturn WaitForConfigured48k() {
+        const uint64_t deadline = Session::UptimeMilliseconds() + Register::kFF800RateSettleTimeoutMs;
+        for (;;) {
+            if (Cancelled()) return kIOReturnAborted;
+            auto s = ReadClockStatus();
+            if (!s) return s.error();
+            if (s->configured48k) return kIOReturnSuccess;
+            if (Session::UptimeMilliseconds() >= deadline) {
+                ASFW_LOG(Audio, "[RME] FF800 not at 48 kHz %u ms after the frequency write; "
+                         "sending the packet format anyway (status0=0x%08x status1=0x%08x)",
+                         Register::kFF800RateSettleTimeoutMs, s->q0, s->q1);
+                return kIOReturnSuccess;
+            }
+            IOSleep(Register::kFF800RateSettlePollMs);
+        }
+    }
     [[nodiscard]] uint64_t ConfigAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Config : Register::kFF400Config; }
     [[nodiscard]] uint64_t StartAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Start : Register::kFF400Start; }
     [[nodiscard]] bool IsInternalConfigured(uint32_t src) const noexcept {

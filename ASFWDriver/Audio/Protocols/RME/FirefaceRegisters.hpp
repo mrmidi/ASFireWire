@@ -35,6 +35,19 @@ inline constexpr uint32_t kFF400FlashPolls = 25;
 inline constexpr uint32_t kFF400FlashPollIntervalMs = 2;
 inline constexpr uint64_t kFF400Revision = 0x80100290ULL;
 inline constexpr uint64_t kFF800Init = 0x00020000001cULL;
+// The rest of the init block, which Linux writes as its own registers at
+// 0xfc88f000 + 4 and + 8 (FF800_RX_PACKET_FORMAT, FF800_ALLOC_TX_STREAM,
+// ff-protocol-former.c) and FFADO writes in one 3-quadlet block from
+// 0x20000001c. The FF800 latches the packet format only once the new
+// sample-transfer frequency is in effect, so the driver writes the frequency
+// alone first and waits for it (see FirefaceFamilyDriver::WaitForConfigured48k).
+inline constexpr uint64_t kFF800PacketFormat = 0x000200000020ULL;   // FF800_RX_PACKET_FORMAT + the tx stream size
+// Linux sleeps a flat 100 ms after the frequency write, because "if starting
+// isochronous communication immediately, change of STF has no effect... let's
+// sleep for a bit". The driver reads the frequency back instead of sleeping
+// blind, so the bound only has to be above that sleep.
+inline constexpr uint32_t kFF800RateSettleTimeoutMs = 200;
+inline constexpr uint32_t kFF800RateSettlePollMs = 5;
 inline constexpr uint64_t kFF800Start = 0x000200000028ULL;
 inline constexpr uint64_t kFF800Stop = 0x000200000034ULL;
 inline constexpr uint64_t kFF800Revision = 0x000200000100ULL;
