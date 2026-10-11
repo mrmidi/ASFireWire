@@ -14,6 +14,7 @@
 
 namespace {
 
+using ASFW::Audio::Runtime::MotuRxAbsPhaseWindow;
 using ASFW::Audio::Runtime::MotuRxPhaseWindow;
 using ASFW::Audio::Runtime::MotuRxSphCumulativeMeasurement;
 using ASFW::Audio::Runtime::MotuRxSphRateMeter;
@@ -479,6 +480,118 @@ TEST(MotuRxSphRateMeterTests, PhaseErrorMilliCyclesMatchesHandComputation) {
     const double expectedMilliCycles =
         (static_cast<double>(phase.phaseErrorTicks) * 1000.0) / static_cast<double>(kTicksPerCycle);
     EXPECT_NEAR(static_cast<double>(phase.phaseErrorMilliCycles), expectedMilliCycles, 2.0);
+}
+
+// ---------------------------------------------------------------------------
+// The absolute receive phase window.
+
+// A device SPH and the receive cycle timer of the same packet, `phaseTicks`
+// apart. The host side carries whole seconds and the SPH never does, so the
+// meter must fold both into one second before subtracting -- `hostSeconds`
+// is there to prove it does.
+void ObservePhaseAt(MotuRxSphRateMeter& meter, int64_t phaseTicks, uint32_t hostSeconds = 5,
+                    int64_t hostWithinSecondTicks = 12 * kTicksPerCycle) {
+    const uint32_t cycleTimer = ASFW::Timing::encodeCycleTimer(
+        hostSeconds, static_cast<uint32_t>(hostWithinSecondTicks / kTicksPerCycle),
+        static_cast<uint32_t>(hostWithinSecondTicks % kTicksPerCycle));
+    meter.ObserveAbsolutePhase(Sph(hostWithinSecondTicks + phaseTicks), cycleTimer);
+}
+
+// The shape, not one value: min/median/max over a window is what tells a phase
+// holding still from one drifting or jumping.
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseWindowReportsTheDistributionShape) {
+    MotuRxSphRateMeter meter{};
+    for (const int64_t ticks : {9216, 9100, 9300, 9216, 9250}) {
+        ObservePhaseAt(meter, ticks);
+    }
+
+    const MotuRxAbsPhaseWindow window = meter.AbsolutePhaseSnapshot();
+    ASSERT_TRUE(window.valid);
+    EXPECT_EQ(window.samples, 5u);
+    EXPECT_EQ(window.stored, 5u);
+    EXPECT_EQ(window.minTicks, 9100);
+    EXPECT_EQ(window.maxTicks, 9300);
+    EXPECT_EQ(window.medianTicks, 9216);
+}
+
+// The cycle timer wraps at 128 s and the SPH at one; whole host seconds are
+// not phase.
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseIgnoresWholeHostSeconds) {
+    MotuRxSphRateMeter meter{};
+    for (const uint32_t second : {0u, 7u, 93u, 127u}) {
+        ObservePhaseAt(meter, 9216, second);
+    }
+    // ...and the SPH's own rollover is not a jump either.
+    ObservePhaseAt(meter, 9216, 3, kTicksPerSecond - kTicksPerCycle);
+
+    const MotuRxAbsPhaseWindow window = meter.AbsolutePhaseSnapshot();
+    ASSERT_TRUE(window.valid);
+    EXPECT_EQ(window.samples, 5u);
+    EXPECT_EQ(window.minTicks, 9216);
+    EXPECT_EQ(window.maxTicks, 9216);
+}
+
+// An unfed window is invalid, not a distribution of zeros that would read as
+// "measured, and it is zero".
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseWindowIsInvalidWithoutObservations) {
+    MotuRxSphRateMeter meter{};
+    const MotuRxAbsPhaseWindow window = meter.AbsolutePhaseSnapshot();
+    EXPECT_FALSE(window.valid);
+    EXPECT_EQ(window.samples, 0u);
+    EXPECT_EQ(window.stored, 0u);
+    EXPECT_EQ(window.medianTicks, 0);
+}
+
+// Window-scoped like the rate window and cleared by the same call, so the two
+// describe the same span.
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseWindowClearsWithTheRateWindow) {
+    MotuRxSphRateMeter meter{};
+    ObservePhaseAt(meter, 9216);
+    ASSERT_TRUE(meter.AbsolutePhaseSnapshot().valid);
+    meter.BeginWindow();
+    EXPECT_FALSE(meter.AbsolutePhaseSnapshot().valid);
+
+    ObservePhaseAt(meter, 9216);
+    ASSERT_TRUE(meter.AbsolutePhaseSnapshot().valid);
+    meter.Reanchor();
+    EXPECT_FALSE(meter.AbsolutePhaseSnapshot().valid);
+
+    ObservePhaseAt(meter, 9216);
+    ASSERT_TRUE(meter.AbsolutePhaseSnapshot().valid);
+    meter.Reset();
+    EXPECT_FALSE(meter.AbsolutePhaseSnapshot().valid);
+}
+
+// Overflow is visible: `samples` keeps counting past the storage.
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseWindowReportsSamplesBeyondItsStorage) {
+    MotuRxSphRateMeter meter{};
+    const uint32_t offered = MotuRxSphRateMeter::kAbsPhaseCapacity + 20u;
+    for (uint32_t i = 0; i < offered; ++i) {
+        ObservePhaseAt(meter, 9216 + static_cast<int64_t>(i));
+    }
+
+    const MotuRxAbsPhaseWindow window = meter.AbsolutePhaseSnapshot();
+    ASSERT_TRUE(window.valid);
+    EXPECT_EQ(window.samples, offered);
+    EXPECT_EQ(window.stored, MotuRxSphRateMeter::kAbsPhaseCapacity);
+    EXPECT_EQ(window.minTicks, 9216);
+    EXPECT_EQ(window.maxTicks, 9216 + static_cast<int64_t>(MotuRxSphRateMeter::kAbsPhaseCapacity) - 1);
+}
+
+// A jump is the signal here, not noise: Observe() discards implausible steps,
+// this window keeps them.
+TEST(MotuRxSphRateMeterTests, AbsolutePhaseWindowKeepsDiscontinuities) {
+    MotuRxSphRateMeter meter{};
+    ObservePhaseAt(meter, 9216);
+    ObservePhaseAt(meter, 9216);
+    ObservePhaseAt(meter, 9216 + 4 * kTicksPerCycle);
+
+    const MotuRxAbsPhaseWindow window = meter.AbsolutePhaseSnapshot();
+    ASSERT_TRUE(window.valid);
+    EXPECT_EQ(window.samples, 3u);
+    EXPECT_EQ(window.minTicks, 9216);
+    EXPECT_EQ(window.maxTicks, 9216 + 4 * kTicksPerCycle);
+    EXPECT_EQ(window.medianTicks, 9216);
 }
 
 } // namespace

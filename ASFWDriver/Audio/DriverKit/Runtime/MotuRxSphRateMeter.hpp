@@ -11,12 +11,17 @@
 // feed-forward term, through the motuRxSphClock bridge. The meter itself
 // never touches a transmitted packet.
 //
+// It also keeps a window of the device's absolute receive phase -- its SPH
+// against the cycle the packet arrived in -- for the `rel` measurement of the
+// SPH regulator.
+//
 // Integer-only and O(1) per packet: it runs on the receive path. The
 // telemetry drain reads it on the same dispatch queue, so plain members are
 // safe.
 
 #pragma once
 
+#include "MotuPhaseTrace.hpp"
 #include "../../Wire/MOTU/MotuSph.hpp"
 
 #include <cstdint>
@@ -77,6 +82,22 @@ struct MotuRxSphCumulativeMeasurement final {
     int64_t ticks{0};
 };
 
+// The device's absolute receive phase over one window: its SPH minus the
+// receive cycle, both on the SPH's one-second timeline. A different quantity
+// from MotuRxPhaseWindow: that one integrates rate error and has no absolute
+// anchor; this one differences two timestamps of the same packet.
+//
+// A distribution rather than one reading, because the question is its shape:
+// whether the phase holds, drifts or jumps.
+struct MotuRxAbsPhaseWindow final {
+    bool valid{false};
+    uint32_t samples{0};  // observations offered during this window
+    uint32_t stored{0};   // observations that fed min/median/max
+    int64_t minTicks{0};
+    int64_t medianTicks{0};
+    int64_t maxTicks{0};
+};
+
 class MotuRxSphRateMeter final {
 public:
     // Percent of nominal beyond which a step is a wrap, a restart or a
@@ -87,6 +108,12 @@ public:
 
     static constexpr int64_t kMicro = 1000000;
     static constexpr int64_t kNano = 1000000000;
+
+    // Absolute-phase samples kept per window for the order statistics. The
+    // observer samples once per HAL zero-timestamp period, about 16 times per
+    // four-second window at 48 kHz, so this is headroom; a window that
+    // outgrows it still reports how many samples it was offered.
+    static constexpr uint32_t kAbsPhaseCapacity = 64;
 
     // A new stream: forget everything.
     void Reset() noexcept {
@@ -120,6 +147,19 @@ public:
         windowTicks_ = 0;
         windowFrames_ = 0;
         windowPackets_ = 0;
+        absPhaseSamples_ = 0;
+        absPhaseStored_ = 0;
+    }
+
+    // One absolute-phase sample: `sph` in host order, `cycleTimer` the receive
+    // cycle of the packet that carried it. No plausibility gate, unlike
+    // Observe(): a jump is what this window exists to show.
+    void ObserveAbsolutePhase(uint32_t sph, uint32_t cycleTimer) noexcept {
+        const int64_t ticks = MotuRxSphMinusCycleTimerTicks(sph, cycleTimer);
+        ++absPhaseSamples_;
+        if (absPhaseStored_ < kAbsPhaseCapacity) {
+            absPhase_[absPhaseStored_++] = ticks;
+        }
     }
 
     // `sph` is the first block's SPH quadlet in host order, `framesDecoded`
@@ -220,6 +260,38 @@ public:
         return out;
     }
 
+    // Order statistics over this window's absolute-phase samples, off the hot
+    // path; cleared by the same BeginWindow() as the rate window.
+    [[nodiscard]] MotuRxAbsPhaseWindow AbsolutePhaseSnapshot() const noexcept {
+        MotuRxAbsPhaseWindow out{};
+        out.samples = absPhaseSamples_;
+        out.stored = absPhaseStored_;
+        if (absPhaseStored_ == 0) {
+            return out;
+        }
+
+        // Insertion sort over at most kAbsPhaseCapacity samples: bounded and
+        // allocation-free.
+        int64_t sorted[kAbsPhaseCapacity];
+        for (uint32_t i = 0; i < absPhaseStored_; ++i) {
+            const int64_t value = absPhase_[i];
+            uint32_t j = i;
+            while (j > 0 && sorted[j - 1] > value) {
+                sorted[j] = sorted[j - 1];
+                --j;
+            }
+            sorted[j] = value;
+        }
+
+        out.minTicks = sorted[0];
+        out.maxTicks = sorted[absPhaseStored_ - 1];
+        // The upper middle on an even count: an observed sample, not an
+        // average with a half tick the device never presented.
+        out.medianTicks = sorted[absPhaseStored_ / 2];
+        out.valid = true;
+        return out;
+    }
+
 private:
     static constexpr int64_t kTicksPerSecond = ::ASFW::Encoding::Motu::kTicksPerSecond;
     static constexpr int64_t kTicksPerCycle = ::ASFW::Encoding::Motu::kTicksPerCycle;
@@ -254,6 +326,12 @@ private:
 
     int64_t cumulativeTicks_{0};
     uint64_t cumulativeFrames_{0};
+
+    // Window-scoped like windowTicks_: cleared by BeginWindow(), which
+    // Reanchor() and Reset() both call.
+    int64_t absPhase_[kAbsPhaseCapacity]{};
+    uint32_t absPhaseSamples_{0};
+    uint32_t absPhaseStored_{0};
 };
 
 } // namespace ASFW::Audio::Runtime
