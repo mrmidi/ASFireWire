@@ -610,3 +610,206 @@ TEST(MotuPayloadCodecTests, TimingRecoveryCoalescesAndRearmsAfterSuccessOrRestar
     engine.ResetForStart(0, 0);
     burst(); EXPECT_EQ(calls, 4U);
 }
+
+// ---------------------------------------------------------------------------
+// The RX side of the SPH regulator: the observer measures the device clock
+// from received SPH and publishes it over the control block's motuRxSphClock
+// bridge, for every MOTU protocol version.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class ControlBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
+public:
+    ControlBindingSource(ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+                         uint32_t sampleRateHz) noexcept
+        : control_(control), sampleRateHz_(sampleRateHz) {}
+
+    bool CopyDirectAudioBinding(ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+        if (!bound) {
+            return false;
+        }
+        out = {};
+        out.generation = 1;
+        out.control = control_;
+        out.sampleRateHz = sampleRateHz_;
+        out.valid = true;
+        return true;
+    }
+
+    bool bound{true};
+
+private:
+    ASFW::Audio::Runtime::AudioTransportControlBlock* control_;
+    uint32_t sampleRateHz_;
+};
+
+// A received MOTU packet of `blocks` data blocks whose first SPH sits at
+// `ticks`: the 8-byte receive prefix, the CIP header, then the blocks.
+std::vector<uint8_t> ReceivedMotuPacket(int64_t ticks, uint32_t blocks, uint32_t dbs = 4) {
+    std::vector<uint8_t> payload(16 + blocks * dbs * 4, 0);
+    for (uint32_t block = 0; block < blocks; ++block) {
+        StoreBigEndian(payload.data() + 16 + block * dbs * 4,
+                       SphFromTick(WrapTick(ticks + static_cast<int64_t>(block) * 512)));
+    }
+    return payload;
+}
+
+struct ObservedClock final {
+    bool published{false};
+    uint64_t updates{0};
+    ASFW::Audio::Runtime::MotuRxSphClockSample sample{};
+};
+
+ObservedClock ReadClock(const ASFW::Audio::Runtime::AudioTransportControlBlock& control) {
+    ObservedClock out{};
+    out.published = control.motuRxSphClock.ReadLatest(out.sample, out.updates);
+    return out;
+}
+
+} // namespace
+
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesTheDeviceClockToTheBridge) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    // The SPH crosses the one-second wrap after the first packet.
+    constexpr int64_t kStart = 24576000 - 1000;
+    observer.OnBatchBegin(nullptr);
+    // The first packet only anchors the meter: nothing measured yet.
+    observer.ObservePacket(ReceivedMotuPacket(kStart, 8), 4, 8, 0);
+    EXPECT_FALSE(ReadClock(control).published);
+
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 0, 2);  // NO-DATA: skipped
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 8193, 8), 4, 8, 3);
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.updates, 2U);
+    EXPECT_EQ(clock.sample.streamGeneration, generation);
+    EXPECT_EQ(clock.sample.rxFrames, 16U);
+    EXPECT_EQ(clock.sample.rxTicks, 8193);
+}
+
+// Receive activation, quiesce and replay discontinuities all call Reset()
+// inside one stream. The step across the gap is not measured, and the
+// cumulative clock stays monotonic, so the bridge keeps accepting it.
+TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheClockMonotonicAcrossResetWithinAStream) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    ASSERT_EQ(ReadClock(control).sample.rxFrames, 16U);
+
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(1048576, 8), 4, 8, 300);
+    observer.ObservePacket(ReceivedMotuPacket(1048576 + 4096, 8), 4, 8, 301);
+
+    const auto clock = ReadClock(control);
+    EXPECT_EQ(clock.updates, 3U);
+    EXPECT_EQ(clock.sample.rxFrames, 24U);
+    EXPECT_EQ(clock.sample.rxTicks, 12288);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+}
+
+// StartIO re-arms the bridge with a new generation, possibly on the same
+// mapped control block: the measurement starts over with it.
+TEST(MotuPayloadCodecTests, RxTimingObserverStartsTheClockOverOnANewControlGeneration) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+
+    control.ResetForStart();
+    const uint64_t nextGeneration = control.generation.load(std::memory_order_acquire);
+    observer.Reset();
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(2097152, 8), 4, 8, 3);
+    observer.ObservePacket(ReceivedMotuPacket(2097152 + 4096, 8), 4, 8, 4);
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.updates, 1U);
+    EXPECT_EQ(clock.sample.streamGeneration, nextGeneration);
+    EXPECT_EQ(clock.sample.rxFrames, 8U);
+    EXPECT_EQ(clock.sample.rxTicks, 4096);
+}
+
+// Higher rates carry more frames per packet; the rate the meter judges steps
+// by comes from the binding.
+TEST(MotuPayloadCodecTests, RxTimingObserverMeasuresAtTheBoundRate) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 96000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 16), 4, 16, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 16), 4, 16, 1);  // 16 frames x 256 ticks
+
+    const auto clock = ReadClock(control);
+    ASSERT_TRUE(clock.published);
+    EXPECT_EQ(clock.sample.rxFrames, 16U);
+    EXPECT_EQ(clock.sample.rxTicks, 4096);
+}
+
+TEST(MotuPayloadCodecTests, RxTimingObserverPublishesNothingWithoutABinding) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    ControlBindingSource source(&control, 48000);
+    source.bound = false;
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.DrainTelemetry(16);
+    EXPECT_FALSE(ReadClock(control).published);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+}
+
+// A bridge ahead of the meter in the same generation refuses every further
+// publication; the drain reports it once until the next Reset().
+TEST(MotuPayloadCodecTests, RxTimingObserverReportsAMeterBehindTheBridgeOnce) {
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    control.ResetForStart();
+    const uint64_t generation = control.generation.load(std::memory_order_acquire);
+    ControlBindingSource source(&control, 48000);
+    MotuRxTimingObserver observer(&source);
+
+    observer.OnBatchBegin(nullptr);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 0U);
+
+    // What a meter reset without a bridge reset leaves behind.
+    ASSERT_TRUE(control.motuRxSphClock.Publish(
+        {.streamGeneration = generation, .rxFrames = 192000, .rxTicks = 98304000}));
+    observer.DrainTelemetry(16);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 1U);
+
+    // Reset() re-arms the report; the next batch re-binds the control block.
+    observer.Reset();
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 1U);
+    observer.OnBatchBegin(nullptr);
+    observer.DrainTelemetry(16);
+    EXPECT_EQ(observer.RxClockStalls(), 2U);
+}

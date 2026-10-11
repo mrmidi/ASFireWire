@@ -10,6 +10,9 @@
 #include "MotuSphSynthesizer.hpp"
 #include "../../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../../DriverKit/Runtime/AudioTransportControlBlock.hpp"
+#include "../../DriverKit/Runtime/MotuRxSphRateMeter.hpp"
+#include "../../DriverKit/Runtime/MotuServoStallDetector.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <cstdint>
 #include <span>
@@ -18,6 +21,17 @@
 
 namespace ASFW::Audio::Wire {
 
+// Besides the per-block offset cache, the observer measures the device's
+// sample period from the received SPH (MotuRxSphRateMeter) and publishes the
+// cumulative measurement over the control block's motuRxSphClock bridge, for
+// the transmit SPH regulator. The SPH format is the same for every MOTU
+// protocol version, so this runs for all of them.
+//
+// Stream boundaries: a new control generation (StartIO) starts the measurement
+// over, together with the bridge. Reset() -- receive activation, quiesce and
+// replay discontinuities -- stays inside the stream: it re-anchors the meter so
+// the step across the gap is not measured, and keeps the cumulative totals so
+// the bridge stays monotonic.
 class MotuRxTimingObserver final : public IRxDeviceTimingObserver {
 public:
     MotuRxTimingObserver() noexcept = default;
@@ -57,10 +71,12 @@ public:
             ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
             if (bindingSource_->CopyDirectAudioBinding(snapshot) && snapshot.control != nullptr) {
                 activeCache_ = &snapshot.control->motuEventOffsets;
-                diagnosticSampleRate_ = snapshot.sampleRateHz;
+                sampleRateHz_ = snapshot.sampleRateHz;
+                BindClockControl(snapshot.control);
             } else {
                 activeCache_ = nullptr;
-                diagnosticSampleRate_ = 0;
+                sampleRateHz_ = 0;
+                clockControl_ = nullptr;
             }
         }
     }
@@ -70,8 +86,7 @@ public:
         uint16_t rxTimestamp,
         std::span<const uint8_t> rawPayload) noexcept override {
         if (diagnosticCapture_ != nullptr) {
-            constexpr uint32_t kMotuCipPrefixBytes = 16;
-            diagnosticCapture_->RecordPacket(epoch, rxTimestamp, rawPayload, diagnosticStride_, kMotuCipPrefixBytes, diagnosticGuid_, diagnosticSampleRate_);
+            diagnosticCapture_->RecordPacket(epoch, rxTimestamp, rawPayload, diagnosticStride_, kMotuCipPrefixBytes, diagnosticGuid_, sampleRateHz_);
         }
     }
 
@@ -80,10 +95,10 @@ public:
         uint32_t strideQuadlets,
         uint32_t framesDecoded,
         uint16_t cycle) noexcept override {
+        MeasureRxClock(payload, framesDecoded);
         if (activeCache_ == nullptr) {
             return;
         }
-        constexpr uint32_t kMotuCipPrefixBytes = 16;
         const uint32_t cached = activeCache_->Capture(
             payload, strideQuadlets, framesDecoded, cycle, kMotuCipPrefixBytes);
         if (cached > 0) {
@@ -100,17 +115,107 @@ public:
         if (activeCache_ != nullptr) {
             activeCache_->Reset();
         }
+        rxClock_.Reanchor();
+        stallDetector_.Reset();
+        // Reset() also runs on quiesce, after which the control block may be
+        // unbound. Drop the view; the next OnBatchBegin re-binds it.
+        clockControl_ = nullptr;
     }
 
+    // Off the hot path, on the consumer's telemetry cadence.
+    void DrainTelemetry(uint32_t maxRecords) noexcept override {
+        (void)maxRecords;
+        CheckRxClockStall();
+    }
+
+    // Times the measurement was found behind the bridge, since construction.
+    [[nodiscard]] uint32_t RxClockStalls() const noexcept { return rxClockStalls_; }
+
 private:
+    // 8-byte isochronous receive prefix plus the 8-byte CIP header.
+    static constexpr uint32_t kMotuCipPrefixBytes = 16;
+
+    // StartIO advances the control generation, possibly reusing the same
+    // mapped control block, so the stream boundary is the generation, not
+    // the binding.
+    void BindClockControl(::ASFW::Audio::Runtime::AudioTransportControlBlock* control) noexcept {
+        const uint64_t generation = control->generation.load(std::memory_order_acquire);
+        if (control != clockGenerationControl_ || generation != clockGeneration_) {
+            rxClock_.Reset();
+            stallDetector_.Reset();
+            clockGenerationControl_ = control;
+            clockGeneration_ = generation;
+        }
+        clockControl_ = control;
+    }
+
+    // The first block's SPH and the packet's frame count; NO-DATA packets
+    // carry neither and are skipped by the meter.
+    void MeasureRxClock(std::span<const uint8_t> payload, uint32_t framesDecoded) noexcept {
+        if (framesDecoded == 0 || payload.size() < kMotuCipPrefixBytes + 4U) {
+            return;
+        }
+        const uint32_t sph = ::ASFW::Encoding::Motu::ReadSph(payload.subspan(kMotuCipPrefixBytes, 4));
+        rxClock_.Observe(sph, framesDecoded, sampleRateHz_);
+        if (clockControl_ == nullptr) {
+            return;
+        }
+        const auto cumulative = rxClock_.CumulativeSnapshot();
+        if (!cumulative.valid) {
+            return;
+        }
+        // Refused unless both totals moved forward, e.g. on the packet that
+        // re-anchors the meter: nothing new to publish then.
+        (void)clockControl_->motuRxSphClock.Publish({
+            .streamGeneration = clockControl_->generation.load(std::memory_order_acquire),
+            .rxFrames = cumulative.frames,
+            .rxTicks = cumulative.ticks,
+        });
+    }
+
+    void CheckRxClockStall() noexcept {
+        auto* control = clockControl_;
+        if (control == nullptr) {
+            return;
+        }
+        ::ASFW::Audio::Runtime::MotuRxSphClockSample bridge{};
+        uint64_t bridgeUpdates = 0;
+        if (!control->motuRxSphClock.ReadLatest(bridge, bridgeUpdates)) {
+            return;
+        }
+        ::ASFW::Audio::Runtime::MotuServoStallEvent event{};
+        if (!stallDetector_.Observe(control->generation.load(std::memory_order_acquire),
+                                    rxClock_.CumulativeSnapshot(), bridge, bridgeUpdates, event)) {
+            return;
+        }
+        ++rxClockStalls_;
+        ASFW_LOG(DirectAudio,
+                 "[MotuServoStall] reason=rx-meter-behind-bridge gen=%llu updates=%llu "
+                 "bridgeFrames=%llu bridgeTicks=%lld meterFrames=%llu meterTicks=%lld",
+                 event.streamGeneration, event.bridgeUpdates, event.bridgeFrames,
+                 static_cast<long long>(event.bridgeTicks), event.meterFrames,
+                 static_cast<long long>(event.meterTicks));
+    }
+
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     ::ASFW::Encoding::Motu::MotuEventOffsetCache* explicitCache_{nullptr};
     ::ASFW::Encoding::Motu::MotuEventOffsetCache* activeCache_{nullptr};
     MotuRxDiagnosticCapture* diagnosticCapture_{nullptr};
-    uint32_t diagnosticSampleRate_{0};
+    uint32_t sampleRateHz_{0};
     uint64_t diagnosticGuid_{0};
     uint32_t diagnosticStride_{0};
     bool timingEstablished_{false};
+
+    // The receive poll and the telemetry drain are serialized on the same
+    // dispatch queue, so these are plain state.
+    ::ASFW::Audio::Runtime::MotuRxSphRateMeter rxClock_{};
+    ::ASFW::Audio::Runtime::MotuServoStallDetector stallDetector_{};
+    ::ASFW::Audio::Runtime::AudioTransportControlBlock* clockControl_{nullptr};
+    // Compared only, never dereferenced: identifies the stream the meter's
+    // totals belong to.
+    const ::ASFW::Audio::Runtime::AudioTransportControlBlock* clockGenerationControl_{nullptr};
+    uint64_t clockGeneration_{0};
+    uint32_t rxClockStalls_{0};
 };
 
 class MotuTxTimingStamper final : public ::ASFW::Audio::ITxDeviceTimingStamper {
