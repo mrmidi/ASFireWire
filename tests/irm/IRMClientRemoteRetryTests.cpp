@@ -2,8 +2,8 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // IRMClientRemoteRetryTests.cpp - IRMClient against a remote IRM node: a read
-// or lock the IRM never answers (async timeout) is re-issued within the
-// policy's budget, a generation change is never retried, an unanswered
+// or lock the IRM never answers (async timeout) or turns away busy is re-issued
+// within the policy's budget, a generation change is never retried, an unanswered
 // release lock is never credited twice, and a resource release still frees the
 // channel when the bandwidth release fails.
 //
@@ -181,6 +181,15 @@ TEST_F(IRMClientRemoteRetryTest, ReleaseBandwidthReissuesALockTheIrmNeverAnswere
     bus_.lockFailures[Regs::kBandwidthAvailable] = Timeouts(1);  // request dropped, nothing applied
     EXPECT_EQ(ReleaseBandwidth(kUnits), AllocationStatus::Success);
     EXPECT_EQ(bus_.reads, 2U);  // a fresh read precedes the second lock
+    EXPECT_EQ(bus_.locks, 2U);
+    EXPECT_EQ(Bandwidth(), kMaxUnits);
+}
+
+TEST_F(IRMClientRemoteRetryTest, ReleaseBandwidthReissuesALockTheIrmAnsweredBusy) {
+    // A final ack_busy: the IRM never took the lock, so nothing was applied.
+    bus_.lockFailures[Regs::kBandwidthAvailable] = {AsyncStatus::kBusyRetryExhausted};
+    EXPECT_EQ(ReleaseBandwidth(kUnits), AllocationStatus::Success);
+    EXPECT_EQ(bus_.reads, 2U);
     EXPECT_EQ(bus_.locks, 2U);
     EXPECT_EQ(Bandwidth(), kMaxUnits);
 }

@@ -565,6 +565,10 @@ CMPStatus CMPClient::MapAsyncStatus(Async::AsyncStatus status) noexcept {
         case Async::AsyncStatus::kSuccess:
             return CMPStatus::Success;
         case Async::AsyncStatus::kTimeout:
+        // A final ack_busy means the plug never took the request, so it is
+        // reconciled and retried like a timeout (Linux sound/firewire/lib.c
+        // snd_fw_transaction retries RCODE_BUSY).
+        case Async::AsyncStatus::kBusyRetryExhausted:
             return CMPStatus::Timeout;
         case Async::AsyncStatus::kStaleGeneration:
             return CMPStatus::GenerationMismatch;
