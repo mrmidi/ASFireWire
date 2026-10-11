@@ -68,10 +68,11 @@ struct DICETcatRuntimePolicy final {
 
     // Re-load the device's own router program for every rate mode at the first
     // start after attach and after every rate change, as Focusrite's MixControl
-    // does for every Saffire (FFRouter::notifySystemChange ->
-    // IFFMatrix::downloadMatrix -> IFFUserDevice::writePatch, one load per rate
-    // mode). The tables written are the ones the device already holds.
-    bool reloadRouterAfterClockChange{false};
+    // does (FFRouter::notifySystemChange -> IFFMatrix::downloadMatrix ->
+    // IFFUserDevice::writePatch, one load per rate mode). The tables written are
+    // the ones the device already holds. On for every DICE device with a TCAT
+    // router; one without is logged and left alone.
+    bool reloadRouterAfterClockChange{true};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,

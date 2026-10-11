@@ -79,7 +79,6 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
     : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications,
             TCAT::DICETcatRuntimePolicy{
                 .clockChangeObserver = this,
-                .reloadRouterAfterClockChange = true,
             })
 {
     ASFW_LOG(DICE, "SPro24DspProtocol created for GUID=0x%016llx node=0x%04x", route.guid,
