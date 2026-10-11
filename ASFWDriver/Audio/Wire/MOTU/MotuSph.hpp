@@ -6,9 +6,8 @@
 // Every MOTU data block begins with a 32-bit SPH quadlet expressing a
 // presentation time on the 24.576 MHz cycle timeline: a 13-bit cycle count
 // (0..7999, wrapping each second) and a 12-bit intra-cycle tick offset
-// (0..3071). The host must capture device SPH timing and later replay it
-// (rebased) on the transmit stream; the pure arithmetic for both directions
-// lives here. Cross-validated with Linux amdtp-motu.c:19-25,303-393.
+// (0..3071). The pure arithmetic for both directions lives here.
+// Cross-validated with Linux amdtp-motu.c:19-25,303-393.
 
 #pragma once
 
@@ -40,8 +39,7 @@ inline constexpr uint32_t kSphOffsetMask = 0x00000fff;
 }
 
 /// Offset of an SPH presentation time relative to a base tick, accounting for
-/// wrap at the one-second boundary (amdtp-motu.c:312-321). Used when caching
-/// receive-side timing for later transmit replay.
+/// wrap at the one-second boundary (amdtp-motu.c:312-321).
 [[nodiscard]] constexpr uint32_t TickOffsetFromBase(uint32_t sph,
                                                     uint32_t baseTick) noexcept {
     uint32_t tick = TickFromSph(sph);
@@ -49,13 +47,6 @@ inline constexpr uint32_t kSphOffsetMask = 0x00000fff;
         tick += kTicksPerSecond;
     }
     return tick - baseTick;
-}
-
-/// Rebase a cached tick offset onto a new base for transmit replay
-/// (amdtp-motu.c:382-384).
-[[nodiscard]] constexpr uint32_t ReplaySph(uint32_t cachedOffset,
-                                           uint32_t baseTick) noexcept {
-    return SphFromTick((baseTick + cachedOffset) % kTicksPerSecond);
 }
 
 /// Any signed tick count, wrapped onto the one-second timeline.

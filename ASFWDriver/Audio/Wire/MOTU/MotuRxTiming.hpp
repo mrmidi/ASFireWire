@@ -15,7 +15,7 @@
 // (ASFWAudioDriverZts.cpp) consumes it without knowing the difference.
 //
 // This header is the pure arithmetic for that: no I/O, no state, so the wire truth can
-// be pinned by host tests. Rebasing for transmit lives in MotuSph.hpp (ReplaySph).
+// be pinned by host tests.
 
 #pragma once
 

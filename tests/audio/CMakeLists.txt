@@ -104,7 +104,7 @@ add_audio_test(MotuPayloadReaderTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
-# MOTU transmit-side SPH replay
+# MOTU transmit-side SPH arithmetic
 add_audio_test(MotuTxTimingTests
     MotuTxTimingTests.cpp
 )
