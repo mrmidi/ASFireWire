@@ -1,0 +1,50 @@
+{
+  "asfw-sampled-90s_host-to-device_ch0.csv": {
+    "source_sha256": "c8374c21c49dfbf4989235f5d43836959ca4aae3e0baf0278b11eee79e9cc5e8",
+    "first_cycle": 800,
+    "last_cycle": 696927,
+    "total_packets": 3840,
+    "data_packets": 2784,
+    "continuous": false
+  },
+  "asfw-start-0.5s_host-to-device_ch0.csv": {
+    "source_sha256": "37a69d54c167005c163c5194be440a0478f29e944fee8de02a8be7da0e5cac3f",
+    "first_cycle": 800,
+    "last_cycle": 4895,
+    "total_packets": 4096,
+    "data_packets": 1938,
+    "continuous": true
+  },
+  "vendor-sampled-90s_device-to-host_ch34.csv": {
+    "source_sha256": "b224463f6a47de4fd83324515cc072c9c401825f0b0bc18a477aeffa282f3cfe",
+    "first_cycle": 34041,
+    "last_cycle": 734200,
+    "total_packets": 3840,
+    "data_packets": 2880,
+    "continuous": false
+  },
+  "vendor-sampled-90s_host-to-device_ch33.csv": {
+    "source_sha256": "abc056e8719b52b5e8c350250c50ce5cdeab4c97dc964a5bfc96a1d511d2eeab",
+    "first_cycle": 34003,
+    "last_cycle": 734159,
+    "total_packets": 3840,
+    "data_packets": 2819,
+    "continuous": false
+  },
+  "vendor-start-0.5s_device-to-host_ch34.csv": {
+    "source_sha256": "49f55b4f9a4a011c2ded3c7ca82a2eaf5bfedda8ba8001b31f096716d1bdf89f",
+    "first_cycle": 20168,
+    "last_cycle": 24263,
+    "total_packets": 4096,
+    "data_packets": 3071,
+    "continuous": true
+  },
+  "vendor-start-0.5s_host-to-device_ch33.csv": {
+    "source_sha256": "f4d3859b2c3e96066832286a992860f6b66eb3d86ad0075182699cd34bd5e68d",
+    "first_cycle": 20126,
+    "last_cycle": 24221,
+    "total_packets": 4096,
+    "data_packets": 3013,
+    "continuous": true
+  }
+}

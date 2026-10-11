@@ -2,7 +2,6 @@
 
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
-#include "MotuPhaseTrace.hpp"
 #include "MotuRxSphClockSnapshot.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
@@ -566,12 +565,7 @@ struct AudioTransportControlBlock final {
     /// stamper. Armed per start generation in ResetForStart; unused by every
     /// other family.
     MotuRxSphClockLatest motuRxSphClock{};
-    /// MOTU TX presentation phase: the SPH released for one cadence period,
-    /// published at packet release, read by the RX telemetry drain.
-    MotuPhaseTraceLatest motuPhaseTrace{};
-    /// The conditioned TX-against-RX phase formed from it by the RX telemetry
-    /// drain, read back by the serialized TX producer.
-    MotuRelPhaseLatest motuRelPhase{};
+
     std::atomic<uint64_t> rxReplayEntries{0};
     std::atomic<uint64_t> rxReplayEpochResets{0};
 
@@ -742,8 +736,6 @@ struct AudioTransportControlBlock final {
         // is refused rather than read as this one's. ResetForStart runs before
         // the IT/IR contexts are armed, so no writer races these resets.
         motuRxSphClock.Reset(armedGeneration);
-        motuPhaseTrace.Reset(armedGeneration);
-        motuRelPhase.Reset(armedGeneration);
     }
 };
 

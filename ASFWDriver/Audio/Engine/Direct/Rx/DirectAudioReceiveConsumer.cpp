@@ -416,7 +416,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (timingObserver_ != nullptr && !configuration_.isSecondary) {
         timingObserver_->ObservePacket(
             std::span<const uint8_t>(packet.payload.data(), packet.payload.size()),
-            result.strideQuadlets, result.framesDecoded, cycleFields.cycle);
+            result.strideQuadlets, result.framesDecoded, cycleFields.cycle, replayEntry.firstAudioFrame);
     }
 
     if (result.hasValidCip && result.syt != 0xffff) {

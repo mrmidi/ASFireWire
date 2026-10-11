@@ -102,7 +102,8 @@ public:
         std::span<const uint8_t> payload,
         uint32_t strideQuadlets,
         uint32_t framesDecoded,
-        uint16_t cycle) noexcept = 0;
+        uint16_t cycle,
+        uint64_t firstAudioFrame) noexcept = 0;
 
     [[nodiscard]] virtual bool IsTimingEstablished() const noexcept = 0;
     virtual void Reset() noexcept = 0;

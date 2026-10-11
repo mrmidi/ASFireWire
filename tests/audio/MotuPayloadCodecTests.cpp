@@ -161,7 +161,7 @@ TEST(MotuPayloadCodecTests, DecodeBlockExtractsFloatSamplesAndHandlesDelay) {
 TEST(MotuPayloadCodecTests, TxTimingStamperStampsTheRegulatorClockAndZeroesBeforeTheSeed) {
     constexpr uint32_t kDbs = 4;
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, 0));
     EXPECT_TRUE(stamper.IsSytUnaware());
 
     // 1 slot: 8 bytes CIP + 2 blocks * 16 bytes, initialised with dirty memory.
@@ -216,7 +216,7 @@ TEST(MotuPayloadCodecTests, MissingTimingFallsBackToNoDataPacketInEngine) {
     // A configured stamper whose clock has no seed yet.
     constexpr uint32_t kDbs = 2;
     MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, std::nullopt));
+    ASSERT_TRUE(stamper.Configure(kDbs, 48000, kDefaultPresentationLeadTicks, 0));
     engine.BindTimingStamper(&stamper);
 
     // Timing requested Data with 8 blocks, but without a transmit time to
@@ -264,8 +264,7 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     MotuTxTimingStamper stamper{};
     const auto txPolicy = profile.TxStreamPolicy();
     ASSERT_TRUE(stamper.Configure(config.dbs, config.sampleRate, txPolicy.motuPresentationLeadTicks,
-                                  AbsolutePhaseSetpointTicksAtRate(
-                                      txPolicy.motuAbsolutePhaseSetpointTicks48k, config.sampleRate)));
+                                  txPolicy.motuPresentationOffsetFrames));
     engine.BindTimingStamper(&stamper);
     AmdtpTimingState timing{};
     timing.txClockValid = true;
@@ -300,8 +299,8 @@ TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLeadAndS
         ASSERT_NE(model, nullptr);
         EXPECT_EQ(profile.TxStreamPolicy().motuPresentationLeadTicks,
                   model->runtime.presentationLeadTicks);
-        EXPECT_EQ(profile.TxStreamPolicy().motuAbsolutePhaseSetpointTicks48k,
-                  model->runtime.absolutePhaseSetpointTicks48k);
+        EXPECT_EQ(profile.TxStreamPolicy().motuPresentationOffsetFrames,
+                  model->runtime.presentationOffsetFrames);
     }
 }
 
@@ -591,12 +590,12 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesTheDeviceClockToTheBridge) 
     constexpr int64_t kStart = 24576000 - 1000;
     observer.OnBatchBegin(nullptr);
     // The first packet only anchors the meter: nothing measured yet.
-    observer.ObservePacket(ReceivedMotuPacket(kStart, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(kStart, 8), 4, 8, 0, 0);
     EXPECT_FALSE(ReadClock(control).published);
 
-    observer.ObservePacket(ReceivedMotuPacket(kStart + 4096, 8), 4, 8, 1);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 0, 2);  // NO-DATA: skipped
-    observer.ObservePacket(ReceivedMotuPacket(kStart + 8193, 8), 4, 8, 3);
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 4096, 8), 4, 8, 1, 0);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 0, 2, 0);  // NO-DATA: skipped
+    observer.ObservePacket(ReceivedMotuPacket(kStart + 8193, 8), 4, 8, 3, 0);
 
     const auto clock = ReadClock(control);
     ASSERT_TRUE(clock.published);
@@ -616,15 +615,15 @@ TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheClockMonotonicAcrossResetWit
     MotuRxTimingObserver observer(&source);
 
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
-    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1, 0);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2, 0);
     ASSERT_EQ(ReadClock(control).sample.rxFrames, 16U);
 
     observer.Reset();
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(1048576, 8), 4, 8, 300);
-    observer.ObservePacket(ReceivedMotuPacket(1048576 + 4096, 8), 4, 8, 301);
+    observer.ObservePacket(ReceivedMotuPacket(1048576, 8), 4, 8, 300, 0);
+    observer.ObservePacket(ReceivedMotuPacket(1048576 + 4096, 8), 4, 8, 301, 0);
 
     const auto clock = ReadClock(control);
     EXPECT_EQ(clock.updates, 3U);
@@ -641,16 +640,16 @@ TEST(MotuPayloadCodecTests, RxTimingObserverStartsTheClockOverOnANewControlGener
     MotuRxTimingObserver observer(&source);
 
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
-    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1, 0);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2, 0);
 
     control.ResetForStart();
     const uint64_t nextGeneration = control.generation.load(std::memory_order_acquire);
     observer.Reset();
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(2097152, 8), 4, 8, 3);
-    observer.ObservePacket(ReceivedMotuPacket(2097152 + 4096, 8), 4, 8, 4);
+    observer.ObservePacket(ReceivedMotuPacket(2097152, 8), 4, 8, 3, 0);
+    observer.ObservePacket(ReceivedMotuPacket(2097152 + 4096, 8), 4, 8, 4, 0);
 
     const auto clock = ReadClock(control);
     ASSERT_TRUE(clock.published);
@@ -669,8 +668,8 @@ TEST(MotuPayloadCodecTests, RxTimingObserverMeasuresAtTheBoundRate) {
     MotuRxTimingObserver observer(&source);
 
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 16), 4, 16, 0);
-    observer.ObservePacket(ReceivedMotuPacket(4096, 16), 4, 16, 1);  // 16 frames x 256 ticks
+    observer.ObservePacket(ReceivedMotuPacket(0, 16), 4, 16, 0, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 16), 4, 16, 1, 0);  // 16 frames x 256 ticks
 
     const auto clock = ReadClock(control);
     ASSERT_TRUE(clock.published);
@@ -689,10 +688,10 @@ TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesTimingOnTheFirstDataPacke
     observer.OnBatchBegin(nullptr);
     EXPECT_FALSE(observer.IsTimingEstablished());
     // A NO-DATA packet carries no SPH; a truncated one has none to read.
-    observer.ObservePacket(std::vector<uint8_t>(16, 0), 4, 0, 0);
-    observer.ObservePacket(std::vector<uint8_t>(18, 0), 4, 1, 1);
+    observer.ObservePacket(std::vector<uint8_t>(16, 0), 4, 0, 0, 0);
+    observer.ObservePacket(std::vector<uint8_t>(18, 0), 4, 1, 1, 0);
     EXPECT_FALSE(observer.IsTimingEstablished());
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 2);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 2, 0);
     EXPECT_TRUE(observer.IsTimingEstablished());
 
     // Receive activation, quiesce and replay discontinuities start over.
@@ -700,7 +699,7 @@ TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesTimingOnTheFirstDataPacke
     EXPECT_FALSE(observer.IsTimingEstablished());
     observer.OnBatchBegin(nullptr);
     EXPECT_FALSE(observer.IsTimingEstablished());
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 3);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 3, 0);
     EXPECT_TRUE(observer.IsTimingEstablished());
 }
 
@@ -714,13 +713,13 @@ TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesPerGenerationAndOnlyWhile
     MotuRxTimingObserver observer(&source);
 
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0, 0);
     ASSERT_TRUE(observer.IsTimingEstablished());
 
     source.bound = false;
     observer.OnBatchBegin(nullptr);
     EXPECT_FALSE(observer.IsTimingEstablished());
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1, 0);
     EXPECT_FALSE(observer.IsTimingEstablished());
     source.bound = true;
     observer.OnBatchBegin(nullptr);
@@ -729,13 +728,13 @@ TEST(MotuPayloadCodecTests, RxTimingObserverEstablishesPerGenerationAndOnlyWhile
     control.ResetForStart();
     observer.OnBatchBegin(nullptr);
     EXPECT_FALSE(observer.IsTimingEstablished());
-    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2);
+    observer.ObservePacket(ReceivedMotuPacket(8192, 8), 4, 8, 2, 0);
     EXPECT_TRUE(observer.IsTimingEstablished());
 
     // Never without any binding source at all.
     MotuRxTimingObserver unbound{};
     unbound.OnBatchBegin(nullptr);
-    unbound.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
+    unbound.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0, 0);
     EXPECT_FALSE(unbound.IsTimingEstablished());
 }
 
@@ -747,199 +746,8 @@ TEST(MotuPayloadCodecTests, RxTimingObserverPublishesNothingWithoutABinding) {
     MotuRxTimingObserver observer(&source);
 
     observer.OnBatchBegin(nullptr);
-    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0);
-    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1);
+    observer.ObservePacket(ReceivedMotuPacket(0, 8), 4, 8, 0, 0);
+    observer.ObservePacket(ReceivedMotuPacket(4096, 8), 4, 8, 1, 0);
     observer.DrainTelemetry(16);
     EXPECT_FALSE(ReadClock(control).published);
-}
-
-// A bridge ahead of the meter in the same generation refuses every further
-// publication; the drain reports it once until the next Reset().
-// ---------------------------------------------------------------------------
-// The regulator's absolute phase `rel`, formed by the observer's drain from the
-// device's absolute receive phase and the transmit phase trace.
-// ---------------------------------------------------------------------------
-
-namespace {
-
-uint32_t CountLogLines(const char* needle) {
-    ASFW::Logging::LogRingQuery query{};
-    std::strncpy(query.contains, needle, sizeof(query.contains) - 1);
-    std::vector<ASFW::Logging::LogRecord> records(512);
-    return ASFW::Logging::LogRing::Shared()
-        .Query(query, records.data(), static_cast<uint32_t>(records.size()), 1U << 20)
-        .recordCount;
-}
-
-// A transmit cadence period as the publisher releases it: three DATA packets
-// 700 ticks into cycle 5, against a completion in cycle 10 of the same second.
-ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample TracePeriod(uint64_t generation) {
-    ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample period{};
-    period.streamGeneration = generation;
-    period.outputLastPacketIndex = 100;
-    period.outputLastCycleTimer = ASFW::Timing::encodeCycleTimer(0, 10, 0);
-    period.hasOutputLast = true;
-    period.presentationLeadTicks = kDefaultPresentationLeadTicks;
-    for (uint64_t packetIndex = 101; packetIndex <= 103; ++packetIndex) {
-        ASFW::Audio::Runtime::PushMotuPhaseTraceCadencePacket(
-            period, packetIndex, SphFromTick(5 * kTicksPerCycle + 700));
-    }
-    return period;
-}
-
-// A device whose clock moves exactly one bus cycle per packet of six frames
-// (48 kHz), presenting each packet `absPhaseTicks` after the cycle it arrives
-// in, for `seconds` of bus time. Drained once per HAL zero-timestamp period,
-// as the watchdog would at least.
-void DriveConstantPhaseDevice(MotuRxTimingObserver& observer, uint32_t seconds,
-                              int64_t absPhaseTicks, uint32_t sampleRateHz = 48000) {
-    constexpr uint32_t kFramesPerPacket = 6;
-    const uint32_t drainEvery =
-        ASFW::IsochTransport::HalBufferProfileForRate(sampleRateHz).zeroTimestampPeriodFrames /
-        kFramesPerPacket;
-    const uint32_t packets = seconds * kCyclesPerSecond;
-    for (uint32_t i = 0; i < packets; ++i) {
-        const uint32_t cycle = i % kCyclesPerSecond;
-        observer.ObservePacket(
-            ReceivedMotuPacket(int64_t{cycle} * kTicksPerCycle + absPhaseTicks, kFramesPerPacket),
-            4, kFramesPerPacket, static_cast<uint16_t>(cycle));
-        if ((i + 1) % drainEvery == 0) {
-            observer.DrainTelemetry(8);
-        }
-    }
-}
-
-} // namespace
-
-// End to end through the observer: the absolute receive phase sampled on the
-// packet path, the window closed in the drain on the first sample and then
-// every four seconds of device frames (frames 0, 196608, 393216 and 577536 in
-// 13 s), and `rel` = transmit residual - receive median, conditioned and
-// published from the conditioner's third sample on.
-TEST(MotuPayloadCodecTests, RxTimingObserverPublishesConditionedRelWithoutDrainingTelemetry) {
-    constexpr int64_t kAbsPhaseTicks = 9216;
-    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t generation = control.generation.load(std::memory_order_acquire);
-    ControlBindingSource source(&control, 48000);
-
-    const auto period = TracePeriod(generation);
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(period));
-    const auto residual = ASFW::Audio::Runtime::ComputeMotuTxPhaseResidualCadenceMean(period);
-    ASSERT_TRUE(residual.valid);
-    const int64_t expectedRel = TickDifference(residual.residualTicks, kAbsPhaseTicks);
-
-    ASFW::Logging::LogRing::Shared().Initialize();
-    const uint32_t relLinesBefore = CountLogLines("[RxPhaseRel]");
-    const uint32_t absLinesBefore = CountLogLines("[RxPhaseAbs]");
-    const uint32_t firstLinesBefore = CountLogLines("[RxPhaseBridge] first publish");
-
-    MotuRxTimingObserver observer(&source);
-    observer.OnBatchBegin(nullptr);
-    DriveConstantPhaseDevice(observer, 13, kAbsPhaseTicks);
-
-    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
-    EXPECT_EQ(observer.RelPhaseFormed(), 4U);
-    EXPECT_EQ(observer.RelPhasePublished(), 2U);
-    EXPECT_EQ(observer.RelPhaseRejected(), 0U);
-    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
-    uint64_t relUpdates = 0;
-    ASSERT_TRUE(control.motuRelPhase.ReadLatest(rel, relUpdates));
-    EXPECT_EQ(relUpdates, 2U);
-    EXPECT_EQ(rel.streamGeneration, generation);
-    EXPECT_EQ(rel.ticks, expectedRel);
-    EXPECT_EQ(rel.centerTicks, expectedRel);
-    EXPECT_EQ(CountLogLines("[RxPhaseRel]") - relLinesBefore, 0U);
-    EXPECT_EQ(CountLogLines("[RxPhaseAbs]") - absLinesBefore, 0U);
-    EXPECT_EQ(CountLogLines("[RxPhaseBridge] first publish") - firstLinesBefore, 0U);
-
-    // A new control generation starts the conditioner over: two windows in
-    // five seconds are short of its warm-up, so nothing is published even
-    // with the transmit term there.
-    control.ResetForStart();
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(
-        TracePeriod(control.generation.load(std::memory_order_acquire))));
-    observer.OnBatchBegin(nullptr);
-    DriveConstantPhaseDevice(observer, 5, kAbsPhaseTicks);
-    EXPECT_EQ(observer.PhaseWindowsClosed(), 6U);
-    EXPECT_EQ(observer.RelPhasePublished(), 0U);
-    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
-}
-
-// A `rel` the bridge refuses -- armed for another generation -- is counted
-// every time and logged once per start.
-TEST(MotuPayloadCodecTests, RxTimingObserverRejectsRelFromAnotherStartWithoutLogging) {
-    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t generation = control.generation.load(std::memory_order_acquire);
-    ControlBindingSource source(&control, 48000);
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
-    control.motuRelPhase.Reset(generation + 1);
-
-    ASFW::Logging::LogRing::Shared().Initialize();
-    const uint32_t rejectedBefore = CountLogLines("[RxPhaseBridge] rejected");
-    MotuRxTimingObserver observer(&source);
-    observer.OnBatchBegin(nullptr);
-    DriveConstantPhaseDevice(observer, 13, 9216);
-
-    EXPECT_EQ(observer.RelPhaseRejected(), 2U);
-    EXPECT_EQ(observer.RelPhasePublished(), 0U);
-    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
-    uint64_t relUpdates = 0;
-    EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
-    EXPECT_EQ(CountLogLines("[RxPhaseBridge] rejected") - rejectedBefore, 0U);
-}
-
-// `rel` needs the transmit term and the 48 kHz-family geometry; without either
-// the windows still close and report the receive phase, and nothing is formed.
-TEST(MotuPayloadCodecTests, RxTimingObserverFormsRelOnlyWithATraceAndWhereTheGeometryHolds) {
-    {
-        SCOPED_TRACE("no trace");
-        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-        control.ResetForStart();
-        ControlBindingSource source(&control, 48000);
-        MotuRxTimingObserver observer(&source);
-        observer.OnBatchBegin(nullptr);
-        DriveConstantPhaseDevice(observer, 9, 9216);
-        EXPECT_EQ(observer.PhaseWindowsClosed(), 0U);
-        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
-    }
-    {
-        SCOPED_TRACE("44.1 kHz");
-        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-        control.ResetForStart();
-        ControlBindingSource source(&control, 44100);
-        ASSERT_TRUE(control.motuPhaseTrace.Publish(
-            TracePeriod(control.generation.load(std::memory_order_acquire))));
-        MotuRxTimingObserver observer(&source);
-        observer.OnBatchBegin(nullptr);
-        DriveConstantPhaseDevice(observer, 9, 9216, 44100);
-        EXPECT_GE(observer.PhaseWindowsClosed(), 2U);
-        EXPECT_EQ(observer.RelPhaseFormed(), 0U);
-        ASFW::Audio::Runtime::MotuRelPhaseSampleRecord rel{};
-        uint64_t relUpdates = 0;
-        EXPECT_FALSE(control.motuRelPhase.ReadLatest(rel, relUpdates));
-    }
-}
-
-// Reset() inside a stream (receive activation, quiesce, a replay
-// discontinuity) restarts the sampling -- the next sample closes a window at
-// once -- but keeps the conditioner's operating point, so `rel` keeps flowing.
-TEST(MotuPayloadCodecTests, RxTimingObserverKeepsTheOperatingPointAcrossResetWithinAStream) {
-    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t generation = control.generation.load(std::memory_order_acquire);
-    ControlBindingSource source(&control, 48000);
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(TracePeriod(generation)));
-
-    MotuRxTimingObserver observer(&source);
-    observer.OnBatchBegin(nullptr);
-    DriveConstantPhaseDevice(observer, 9, 9216);
-    ASSERT_EQ(observer.RelPhasePublished(), 1U);
-
-    observer.Reset();
-    observer.OnBatchBegin(nullptr);
-    DriveConstantPhaseDevice(observer, 1, 9216);
-    EXPECT_EQ(observer.PhaseWindowsClosed(), 4U);
-    EXPECT_EQ(observer.RelPhasePublished(), 2U);
 }

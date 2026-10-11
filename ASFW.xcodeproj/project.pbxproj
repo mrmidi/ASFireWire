@@ -616,7 +616,6 @@
 		0D97F81936B9E88427C69E25 /* AmdtpPayloadWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AmdtpPayloadWriter.cpp; sourceTree = "<group>"; };
 		0E15E59914A4531C4DF4BA41 /* RingHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RingHelpers.hpp; sourceTree = "<group>"; };
 		0E29971B91B76C420357B5F3 /* ApogeeVendorCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeVendorCodec.hpp; sourceTree = "<group>"; };
-		0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuTxPhaseTracePublisher.hpp; sourceTree = "<group>"; };
 		0E63C96EE7B8535670E083C6 /* PhyCommand.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhyCommand.cpp; sourceTree = "<group>"; };
 		0E9534FDE6EA1C49B6D44A4B /* ASFWAudioDriverLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverLifecycle.cpp; sourceTree = "<group>"; };
 		0E9D9D9859BBCA2DA4256491 /* DiscoveryGraph.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryGraph.cpp; sourceTree = "<group>"; };
@@ -881,7 +880,6 @@
 		4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverTeardown.cpp; sourceTree = "<group>"; };
 		4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ATTrace.cpp; sourceTree = "<group>"; };
 		4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateValidation.hpp; sourceTree = "<group>"; };
-		4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRelPhaseConditioner.hpp; sourceTree = "<group>"; };
 		500873644296662233E0FA3C /* AvcDeviceGraph.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcDeviceGraph.hpp; sourceTree = "<group>"; };
 		500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalAnalyzerPlotView.swift; sourceTree = "<group>"; };
 		5072964C181ACD7B9EC2ABE3 /* FirefaceFamilyDriver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FirefaceFamilyDriver.hpp; sourceTree = "<group>"; };
@@ -1061,7 +1059,6 @@
 		77718C25B7597AEFA561E918 /* AudioDriverConfigPolicy.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioDriverConfigPolicy.cpp; sourceTree = "<group>"; };
 		77E0A0CD727F9B32F646D13A /* ConfigROMStager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMStager.cpp; sourceTree = "<group>"; };
 		77E8C63140AA1CA70700B0A0 /* StatusPublisher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = StatusPublisher.cpp; sourceTree = "<group>"; };
-		77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPhaseTrace.hpp; sourceTree = "<group>"; };
 		780289076436D559DE381E30 /* CSRContract.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRContract.hpp; sourceTree = "<group>"; };
 		7826C0490B2B0BD154EAED9F /* BeBoBBootloaderPreparation.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBBootloaderPreparation.cpp; sourceTree = "<group>"; };
 		782F6B3B8831C7D812DD7704 /* AsyncSubsystemBusReset.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemBusReset.cpp; sourceTree = "<group>"; };
@@ -2545,7 +2542,6 @@
 				7A73DB72F38AE4D2E61907F8 /* MotuPayloadWriter.cpp */,
 				3DA16292178C3C5E25E7978D /* MotuPayloadWriter.hpp */,
 				434649F778402B768C487C9F /* MotuPortLayout.hpp */,
-				4FC70E9EFE137F7A4F00B6AB /* MotuRelPhaseConditioner.hpp */,
 				B74AAA0C50CB9FA4E45F13AA /* MotuRxDiagnosticCapture.hpp */,
 				71D6784D5EAE51E7FAFD0A6D /* MotuRxTiming.hpp */,
 				BD3EC624D2DB2E19F2587BE2 /* MotuSph.hpp */,
@@ -3573,10 +3569,8 @@
 				BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */,
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
-				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
-				0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";

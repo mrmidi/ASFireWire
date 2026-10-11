@@ -80,7 +80,7 @@ AudioStreamTxPolicy MotuProfile::TxStreamPolicy() const noexcept {
     policy.motuPlaybackPorts = PlaybackPortsForSwVersion(unitSwVersion_);
     if (const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_)) {
         policy.motuPresentationLeadTicks = model->runtime.presentationLeadTicks;
-        policy.motuAbsolutePhaseSetpointTicks48k = model->runtime.absolutePhaseSetpointTicks48k;
+        policy.motuPresentationOffsetFrames = model->runtime.presentationOffsetFrames;
     }
     policy.dbcIsEndEvent = true;
     policy.preserveFdfInNoDataPackets = true;

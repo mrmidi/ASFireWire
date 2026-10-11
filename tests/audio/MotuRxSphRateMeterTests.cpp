@@ -58,22 +58,8 @@ TEST(MotuRxSphRateMeterTests, ReanchorPreservesTotalsAndResetStartsANewClock) {
 TEST(MotuRxSphRateMeterTests, MalformedSphCannotBecomeAClockOrPhaseSample) {
     MotuRxSphRateMeter meter;
     meter.Observe(0x02000000,8,48000);
-    meter.ObserveAbsolutePhase(0x02000000,0);
     EXPECT_FALSE(meter.CumulativeSnapshot().valid);
-    EXPECT_FALSE(meter.AbsolutePhaseSnapshot().valid);
     EXPECT_EQ(meter.Rejected(),1U);
-}
-TEST(MotuRxSphRateMeterTests, AbsoluteMedianIsBoundedAndSurvivesSecondWrap) {
-    MotuRxSphRateMeter meter;
-    const auto cycle=ASFW::Timing::encodeCycleTimer(0,7999,0);
-    for (int64_t phase : {5000,5100,10000,5050})
-        meter.ObserveAbsolutePhase(SphFromTick(WrapTick(7999LL*kTicksPerCycle+phase)),cycle);
-    const auto window=meter.AbsolutePhaseSnapshot();
-    ASSERT_TRUE(window.valid); EXPECT_EQ(window.medianTicks,5100);
-    EXPECT_EQ(window.minTicks,5000); EXPECT_EQ(window.maxTicks,10000);
-    for (int i=0;i<100;++i) meter.ObserveAbsolutePhase(SphFromTick(1),0);
-    EXPECT_EQ(meter.AbsolutePhaseSnapshot().stored,64U);
-    meter.BeginWindow();EXPECT_FALSE(meter.AbsolutePhaseSnapshot().valid);
 }
 TEST(MotuRxSphClockSnapshotTests, RefusesWrongGenerationAndNonadvancingCounts) {
     MotuRxSphClockLatest bridge;bridge.Reset(7);

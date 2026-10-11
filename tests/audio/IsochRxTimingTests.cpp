@@ -298,7 +298,7 @@ TEST(IsochRxTimingTests, ReceiveTelemetryDrainReachesTheTimingObserverForTheMast
         uint32_t drains{0};
         uint32_t lastMaxRecords{0};
         void ObservePacket(std::span<const uint8_t>, uint32_t, uint32_t,
-                           uint16_t) noexcept override {}
+                           uint16_t, uint64_t) noexcept override {}
         bool IsTimingEstablished() const noexcept override { return false; }
         void Reset() noexcept override {}
         void DrainTelemetry(uint32_t maxRecords) noexcept override {
@@ -750,16 +750,23 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
     // the bridge, with the packetizer following nominal exactly, so the true
     // phase error is zero.
     SphSynthesizer servo{};
-    ASSERT_TRUE(servo.Configure(kRate));
+    ASSERT_TRUE(servo.Configure(kRate, 0));
+    servo.BeginGeneration(streamGeneration);
+    ASSERT_TRUE(servo.SeedOnce(4096));
     uint64_t servoUpdates = 0;
+    uint64_t txFrame = 8;
     ASFW::Audio::Runtime::MotuRxSphClockSample observed{};
     const auto updateServo = [&](uint64_t newPublications) -> MotuSphServoDecision {
         uint64_t updates = 0;
         EXPECT_TRUE(rig.control.motuRxSphClock.ReadLatest(observed, updates));
         EXPECT_EQ(updates, servoUpdates + newPublications);
         servoUpdates = updates;
-        const bool updated = servo.Observe(observed.streamGeneration, updates,
-                                           observed.rxFrames, observed.rxTicks);
+        // Advance the TX owner to this exact RX frame before comparing.
+        while (txFrame < observed.firstAudioFrame) { (void)servo.NextSph(); ++txFrame; }
+        const bool updated = servo.Observe({.generation = observed.streamGeneration, .updates = updates,
+            .frames = observed.rxFrames, .ticks = observed.rxTicks,
+            .rxFirstFrame = observed.firstAudioFrame, .txFirstFrame = txFrame,
+            .sphTicks = observed.sphTicks, .replayEpoch = observed.replayEpoch});
         auto result = servo.Current();
         result.feedbackUpdated = updated && result.feedbackUpdated;
         return result;
@@ -800,11 +807,17 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
     // continue from the pre-gap high-water mark in the same generation.
     ++packetIndex;
     rig.Consume(300 + packetIndex, packetIndex * kTicksPerPacket);
+    // The discontinuity packet was discarded; this is the observer's first
+    // anchor after reset, so it still cannot publish a measured interval.
+    ASSERT_TRUE(rig.control.motuRxSphClock.ReadLatest(observed, updatesAfterGap));
+    EXPECT_EQ(updatesAfterGap, servoUpdates);
+    ++packetIndex;
+    rig.Consume(300 + packetIndex, packetIndex * kTicksPerPacket);
     const MotuSphServoDecision after = updateServo(1);
     EXPECT_EQ(observed.streamGeneration, streamGeneration);
     EXPECT_EQ(observed.rxFrames, kPreGapPackets * kMotuFramesPerPacket);
     EXPECT_EQ(observed.rxTicks, kPreGapPackets * kTicksPerPacket);
-    EXPECT_EQ(after.referenceCause, MotuSphReferenceCause::kNone);
+    EXPECT_EQ(after.referenceCause, MotuSphReferenceCause::kRxRebind);
     EXPECT_FALSE(after.feedbackUpdated); // one packet is shorter than the decision interval.
     EXPECT_FALSE(after.hardResyncRequired);
     EXPECT_EQ(after.phaseErrorTicks, 0);

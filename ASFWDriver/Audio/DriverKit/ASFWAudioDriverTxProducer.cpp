@@ -101,23 +101,14 @@ void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
 // included: it hands the stamper the latest generation-checked RX clock
 // sample and keeps the payload writer on the regulator's mute.
 void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
-                            ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+                            ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                            const ASFW::Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept {
     auto& stamper = ivars.runtime.motuTxTimingStamper;
 
     ASFW::Audio::Runtime::MotuRxSphClockSample rxClock{};
     uint64_t rxClockUpdates = 0;
     const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
     const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
-
-    // The conditioned absolute phase, from its own bridge, where the model has
-    // a setpoint at this rate (48 kHz); elsewhere the loop stays relative.
-    // Generation-checked like the clock sample: a `rel` measured in another
-    // stream describes a phase this one never had.
-    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord relPhase{};
-    uint64_t relPhaseUpdates = 0;
-    const bool haveRelPhase = stamper.HoldsAbsolutePhase() &&
-                              control.motuRelPhase.ReadLatest(relPhase, relPhaseUpdates) &&
-                              relPhase.streamGeneration == controlGeneration;
 
     const auto result = stamper.ApplyServoInput({
         .valid = haveRxClock,
@@ -126,30 +117,28 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
         .bridgeUpdates = rxClockUpdates,
         .rxFrames = rxClock.rxFrames,
         .rxTicks = rxClock.rxTicks,
-        .haveRelPhase = haveRelPhase,
-        .relPhaseTicks = relPhase.ticks,
-        .relPhaseCenterTicks = relPhase.centerTicks,
+        .rxFirstFrame = rxClock.firstAudioFrame,
+        .txFirstFrame = ivars.runtime.txStreamEngine.NextAudioFrame(),
+        .rxSphTicks = rxClock.sphTicks,
+        .replayEpoch = rxClock.replayEpoch,
+        .expectedReplayEpoch = control.rxSequenceReplay.Epoch(),
+        .isData = timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data,
+        .transmitCycleValid = timing.transmitCycleValid,
+        .transmitTicks = timing.transmitTicks,
     });
-    // The gate's state, not the result's: a dropped or early observation
-    // leaves the result without a decision while the gate may still be closed.
+    // Use the current mute state even when the observation did not advance.
     ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
     LogMotuSphEdges(ivars, result);
-    if (result.absolutePhaseAcquired) {
-        ASFW_LOG(DirectAudio, "[MotuSphSeed] gen=%llu rel=%lld center=%lld setpoint=%d err=%lld",
-                 controlGeneration, static_cast<long long>(relPhase.ticks),
-                 static_cast<long long>(relPhase.centerTicks),
-                 stamper.AbsolutePhaseSetpointTicks(),
-                 static_cast<long long>(result.decision.phaseErrorTicks));
-    }
+
 }
 
 // Coarse heartbeat only; control never depends on this log.
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto state = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
-    ASFW_LOG(DirectAudio, "[MotuSph] gen=%llu locked=%u muted=%u step=%lld err=%lld resync=%llu",
+    ASFW_LOG(DirectAudio, "[MotuSph] gen=%llu locked=%u muted=%u step=%lld err=%lld resync=%llu clamp=%u drops=%u",
              state.streamGeneration, state.locked ? 1u : 0u, state.outputMuted ? 1u : 0u,
              static_cast<long long>(state.stepQ32), static_cast<long long>(state.phaseErrorTicks),
-             state.phaseRepairs);
+             state.phaseRepairs, state.stepClamped ? 1u : 0u, state.observationDrops);
 }
 
 } // namespace
@@ -668,7 +657,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         if (motuSphActive) {
-            ApplyMotuSphServoInput(ivars, *directControl);
+            ApplyMotuSphServoInput(ivars, *directControl, timing);
         }
 
         const auto prepareResult =
@@ -872,9 +861,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
     ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
     ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
-    // Nothing observes release unless this start binds an observer below.
-    ivars.runtime.txSlotProvider.releaseObserver = nullptr;
-    ivars.runtime.motuTxPhaseTrace.Unbind();
 
     ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
 
@@ -892,8 +878,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         // configuration for cannot be timed at all.
         if (!ivars.runtime.motuTxTimingStamper.Configure(
                 txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks,
-                ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
-                    txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
+                txPolicy.motuPresentationOffsetFrames)) {
             ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
                      txConfig.sampleRate);
             return {kIOReturnUnsupported, "ConfigureMotuTxTiming"};
@@ -921,15 +906,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.motuPayloadWriter.SetPcmMuted(
             ivars.runtime.motuTxTimingStamper.IsOutputMuted());
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
-        // The transmit half of the absolute-phase measurement, where its
-        // cadence geometry holds: every released DATA packet's SPH, one
-        // cadence period at a time, to the RX timing observer.
-        if (ASFW::Audio::Runtime::MotuRelPhaseGeometryHolds(txConfig.sampleRate)) {
-            ivars.runtime.motuTxPhaseTrace.Bind(
-                control, &ivars.runtime.txExecutionTimeline,
-                ivars.runtime.motuTxTimingStamper.PresentationLeadTicks());
-            ivars.runtime.txSlotProvider.releaseObserver = &ivars.runtime.motuTxPhaseTrace;
-        }
         ivars.runtime.motuSphAcquireHostTicks = mach_absolute_time();
         ivars.runtime.motuSphLockPending = true;
         ivars.runtime.motuSphActive.store(true, std::memory_order_relaxed);

@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <thread>
 
 namespace {
 
@@ -17,8 +18,6 @@ using ASFW::Audio::Runtime::TxProducerFaultReason;
 using ASFW::Audio::Runtime::TxProducerFaultRecord;
 using ASFW::Audio::Runtime::TxProducerFaultStage;
 using ASFW::Audio::Runtime::AudioTelemetryEndpointSnapshot;
-using ASFW::Audio::Runtime::MotuPhaseTraceCadenceSample;
-using ASFW::Audio::Runtime::MotuRelPhaseSampleRecord;
 using ASFW::Audio::Runtime::MotuRxSphClockSample;
 using ASFW::Audio::Runtime::MotuRxSphRateMeter;
 using ASFW::Encoding::Motu::SphFromTick;
@@ -400,97 +399,30 @@ TEST(AudioTransportControlBlockTests,
     EXPECT_EQ(observed.rxTicks, afterReactivation.ticks);
 }
 
-// One phase-trace publication is a whole cadence period, so the round trip
-// carries every bucket and the OUTPUT_LAST reference, not just the newest.
-TEST(AudioTransportControlBlockTests, MotuPhaseTraceBridgeCarriesTheWholePeriodForItsGeneration) {
-    AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t streamGeneration = control.generation.load(std::memory_order_acquire);
-
-    MotuPhaseTraceCadenceSample period{};
-    uint64_t updates = 0;
-    EXPECT_FALSE(control.motuPhaseTrace.ReadLatest(period, updates));
-
-    MotuPhaseTraceCadenceSample published{
-        .streamGeneration = streamGeneration,
-        .packetIndex = {410, 411, 412},
-        .firstSph = {0x0f123454u, 0x0f123455u, 0x0f123456u},
-        .outputLastPacketIndex = 400,
-        .outputLastCycleTimer = 0x04234000u,
-        .hasOutputLast = true,
-        .count = 3,
-        .presentationLeadTicks = 9216,
-    };
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(published));
-    ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
-    EXPECT_EQ(updates, 1U);
-    EXPECT_EQ(period.streamGeneration, streamGeneration);
-    EXPECT_EQ(period.count, 3U);
-    for (uint32_t bucket = 0; bucket < ASFW::Audio::Runtime::kMotuPhaseTraceCadenceBuckets;
-         ++bucket) {
-        EXPECT_EQ(period.packetIndex[bucket], published.packetIndex[bucket]);
-        EXPECT_EQ(period.firstSph[bucket], published.firstSph[bucket]);
-    }
-    EXPECT_EQ(period.outputLastPacketIndex, 400U);
-    EXPECT_EQ(period.outputLastCycleTimer, 0x04234000u);
-    EXPECT_TRUE(period.hasOutputLast);
-    EXPECT_EQ(period.presentationLeadTicks, 9216U);
-
-    // A period from another generation, or claiming more buckets than exist.
-    auto stale = published;
-    stale.streamGeneration = streamGeneration + 1;
-    stale.packetIndex[2] = 999;
-    EXPECT_FALSE(control.motuPhaseTrace.Publish(stale));
-    auto oversized = published;
-    oversized.count = ASFW::Audio::Runtime::kMotuPhaseTraceCadenceBuckets + 1;
-    EXPECT_FALSE(control.motuPhaseTrace.Publish(oversized));
-    ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
-    EXPECT_EQ(updates, 1U);
-    EXPECT_EQ(period.packetIndex[2], 412U);
-
-    // A new start empties it and refuses the previous stream's periods.
-    control.ResetForStart();
-    EXPECT_FALSE(control.motuPhaseTrace.ReadLatest(period, updates));
-    EXPECT_FALSE(control.motuPhaseTrace.Publish(published));
-    published.streamGeneration = control.generation.load(std::memory_order_acquire);
-    ASSERT_TRUE(control.motuPhaseTrace.Publish(published));
-    ASSERT_TRUE(control.motuPhaseTrace.ReadLatest(period, updates));
-    EXPECT_EQ(updates, 1U);
-    EXPECT_EQ(period.streamGeneration, published.streamGeneration);
-}
-
-TEST(AudioTransportControlBlockTests, MotuRelPhaseBridgePublishesOnlyForItsGeneration) {
-    AudioTransportControlBlock control{};
-    control.ResetForStart();
-    const uint64_t streamGeneration = control.generation.load(std::memory_order_acquire);
-
-    MotuRelPhaseSampleRecord observed{};
-    uint64_t updates = 0;
-    EXPECT_FALSE(control.motuRelPhase.ReadLatest(observed, updates));
-
-    ASSERT_TRUE(control.motuRelPhase.Publish(
-        {.streamGeneration = streamGeneration, .ticks = -2048, .centerTicks = -1900}));
-    ASSERT_TRUE(control.motuRelPhase.ReadLatest(observed, updates));
-    EXPECT_EQ(updates, 1U);
-    EXPECT_EQ(observed.streamGeneration, streamGeneration);
-    EXPECT_EQ(observed.ticks, -2048);
-    EXPECT_EQ(observed.centerTicks, -1900);
-
-    EXPECT_FALSE(control.motuRelPhase.Publish(
-        {.streamGeneration = streamGeneration - 1, .ticks = 77, .centerTicks = 0}));
-    EXPECT_FALSE(control.motuRelPhase.Publish({.streamGeneration = 0, .ticks = 77}));
-
-    // Unlike the cumulative clock, `rel` may move either way.
-    ASSERT_TRUE(control.motuRelPhase.Publish(
-        {.streamGeneration = streamGeneration, .ticks = 512, .centerTicks = -1900}));
-    ASSERT_TRUE(control.motuRelPhase.ReadLatest(observed, updates));
-    EXPECT_EQ(updates, 2U);
-    EXPECT_EQ(observed.ticks, 512);
-
-    control.ResetForStart();
-    EXPECT_FALSE(control.motuRelPhase.ReadLatest(observed, updates));
-    EXPECT_FALSE(control.motuRelPhase.Publish(
-        {.streamGeneration = streamGeneration, .ticks = 512, .centerTicks = -1900}));
-}
-
 } // namespace
+
+TEST(MotuRxSphClockSnapshotTests, ConcurrentReaderNeverMixesClockFrameAndEpochTuples) {
+    ASFW::Audio::Runtime::MotuRxSphClockLatest bridge;
+    bridge.Reset(1);
+    std::atomic<bool> done{false};
+    std::atomic<unsigned> accepted{0};
+    std::thread reader([&] {
+        do {
+            MotuRxSphClockSample sample{}; uint64_t updates=0;
+            if (bridge.ReadLatest(sample,updates)) {
+                EXPECT_EQ(sample.rxFrames,updates*8);
+                EXPECT_EQ(sample.rxTicks,static_cast<int64_t>(updates)*4096);
+                EXPECT_EQ(sample.firstAudioFrame,100000+updates*8);
+                EXPECT_EQ(sample.sphTicks,updates%24576000);
+                EXPECT_EQ(sample.replayEpoch,1+updates%7);
+                ++accepted;
+            }
+        } while (!done.load());
+    });
+    for (uint64_t i=1;i<=100000;++i) {
+        EXPECT_TRUE(bridge.Publish({.streamGeneration=1,.rxFrames=i*8,.rxTicks=static_cast<int64_t>(i)*4096,
+            .firstAudioFrame=100000+i*8,.sphTicks=static_cast<uint32_t>(i%24576000),
+            .replayEpoch=static_cast<uint32_t>(1+i%7)}));
+    }
+    done.store(true);reader.join();EXPECT_GT(accepted.load(),0U);
+}

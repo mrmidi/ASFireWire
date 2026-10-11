@@ -17,15 +17,11 @@ enum class FetchRule : uint8_t { None, Traveler, Spartan, V3 };
 // assumed: three bus cycles for every model and at every rate. Seen on the
 // wire only for the 828mk3 at 48 kHz (k828mk3Policy).
 inline constexpr uint32_t kDefaultPresentationLeadTicks = 3 * kTicksPerCycle;
-// The absolute presentation phase the SPH regulator holds at 48 kHz, in ticks:
-// `rel`, the transmit presentation residual minus the device's absolute
-// receive phase, as MotuRxTimingObserver forms it. Seen on the wire only for
-// the 828mk3 (k828mk3Policy).
-// assumed: the same value for every other model.
-// assumed: our `rel` reads the quantity the official driver's capture was
-// analysed for (the same cadence-period mean); that the loop holds it is seen
-// only through that instrument.
-inline constexpr int32_t kDefaultAbsolutePhaseSetpointTicks48k = 510;
+// Device-relative presentation target in audio frames. Measured: paired
+// official-driver/device SPHs differ by 6656 ticks (13 frames) at 48 kHz,
+// 97.41% within one tick over 2044 same-cycle DATA pairs. Source: contributor
+// vendor-sampled-90s capture, 2026-08-22. Other models/rates: best effort.
+inline constexpr uint32_t kDefaultPresentationOffsetFrames = 13;
 struct RuntimePolicy final {
     bool requireTimingBeforeFetch{false};
     uint32_t minimumHostRunMs{0};
@@ -33,18 +29,8 @@ struct RuntimePolicy final {
     bool clearIsoCommLowBits{false};
     bool write48kStreamConfig{false};
     uint32_t presentationLeadTicks{kDefaultPresentationLeadTicks};
-    int32_t absolutePhaseSetpointTicks48k{kDefaultAbsolutePhaseSetpointTicks48k};
+    uint32_t presentationOffsetFrames{kDefaultPresentationOffsetFrames};
 };
-// The setpoint the regulator holds at a rate, or none. Only 48 kHz has one:
-// at every other rate the loop is relative and holds the phase the stream
-// started with.
-[[nodiscard]] constexpr std::optional<int32_t> AbsolutePhaseSetpointTicksAtRate(
-    int32_t setpointTicks48k, uint32_t sampleRateHz) noexcept {
-    if (sampleRateHz != 48'000) {
-        return std::nullopt;
-    }
-    return setpointTicks48k;
-}
 inline constexpr RuntimePolicy kTimingBeforeFetch{.requireTimingBeforeFetch = true};
 inline constexpr RuntimePolicy kOriginal828{.requireTimingBeforeFetch = true, .minimumHostRunMs = 100};
 inline constexpr RuntimePolicy k828mk3Policy{
@@ -53,9 +39,8 @@ inline constexpr RuntimePolicy k828mk3Policy{
     // vendor driver: the official driver's first DATA packet carries an SPH of
     // exactly its transmit cycle + 9216 ticks (bus capture, 828mk3, 48 kHz).
     .presentationLeadTicks = 3 * kTicksPerCycle,
-    // vendor driver: the official driver holds rel at +510 ticks with zero
-    // spread over 87.5 s on the wire (828mk3, 48 kHz).
-    .absolutePhaseSetpointTicks48k = 510};
+    // Paired vendor capture: 13 frames after the device stamp at 48 kHz.
+    .presentationOffsetFrames = 13};
 struct Model final {
     uint32_t unitVersion;
     const char* name;
