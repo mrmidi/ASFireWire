@@ -254,6 +254,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                  ASFW::Timing::kTicksPerCycle) %
                 ASFW::Timing::kCyclesPerSecond);
             timing.transmitCycleValid = true;
+            timing.transmitTicks = packetAnchorTicks;
 
             // A replay stall is transient, not fatal. RX bumps its replay epoch
             // on every rebind/discontinuity (aggregate StartIO/StopIO churn, a

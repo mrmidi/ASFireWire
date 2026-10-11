@@ -234,6 +234,13 @@ public:
     // packets are 8 or 296 bytes, device packets up to 552 = 8 x DBS 17).
     void FeedBlockingRx(uint32_t dataBlocksPerPacket) { rxBlocksPerPacket_ = dataBlocksPerPacket; }
 
+    // Sub-cycle offset of every OUTPUT_LAST completion stamp. Hardware stamps
+    // land anywhere in the cycle; the rig defaults to its start.
+    void SetCompletionOffset(uint32_t offset) { completionOffset_ = offset & 0xFFFU; }
+
+    // The bus cycle the rig's IT context started in.
+    [[nodiscard]] static constexpr uint64_t StartCycle() { return kStartCycle; }
+
     // CoreAudio's side of playback. Each IO cycle CoreAudio fills its output
     // ring for [sampleTime, sampleTime + ioFrames) and calls WriteEnd; this
     // plays that through the driver's real WriteEnd step
@@ -349,7 +356,7 @@ private:
             const auto& meta = metadata_[packet % numSlots_];
             const uint8_t* bytes = payload_.data() + (packet % numSlots_) * stride_;
             wire_.push_back({packet, std::vector<uint8_t>(bytes, bytes + meta.payloadLength)});
-            queue_->PushCompletionStamp(packet, CycleTimerFor(packet, 0));
+            queue_->PushCompletionStamp(packet, CycleTimerFor(packet, completionOffset_));
             // CoreAudio wakes on its own clock, not on our interrupt: give it
             // every packet time, after that packet has left.
             clockPacket_ = packet + 1;
@@ -510,6 +517,7 @@ private:
     bool stalled_{false};
     bool clockFromZts_{false};
 
+    uint32_t completionOffset_{0};
     uint32_t rxBlocksPerPacket_{0};
     uint64_t rxCycles_{0};
     uint64_t rxFrames_{0};
@@ -693,6 +701,59 @@ TEST(AudioDriverTxProducerTests, SaffireReplaysRxTimingOnceReplayEstablishes) {
     ASSERT_LT(firstData, wire.size());
     EXPECT_LE(firstData, Geometry::kTxSharedSlotPackets);
     EXPECT_GE(dataPackets, (wire.size() - firstData) * 3 / 4 - 1);
+}
+
+// A device timing stamper sees each DATA packet's transmit time twice: as the
+// bus cycle and in full ticks, with the sub-cycle phase of the completion stamp
+// the producer projected it from. A passive stamper (SYT-aware, not
+// applicable) changes nothing on the wire, so the replay path runs as above.
+TEST(AudioDriverTxProducerTests, TimingStateCarriesTheFullTransmitTime) {
+    struct RecordingStamper final : ASFW::Audio::ITxDeviceTimingStamper {
+        struct Seen final {
+            uint64_t packetIndex{0};
+            ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+        };
+        std::vector<Seen> seen;
+        ASFW::Audio::TxTimingStampResult StampPacket(
+            const ASFW::Protocols::Audio::AMDTP::TxPacketSlotView&,
+            const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet,
+            const ASFW::Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept override {
+            seen.push_back({packet.packetIndex, timing});
+            return ASFW::Audio::TxTimingStampResult::kNotApplicable;
+        }
+        bool IsSytUnaware() const noexcept override { return false; }
+    } stamper;
+
+    constexpr uint32_t kCompletionOffset = 1234;
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.SetCompletionOffset(kCompletionOffset);
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.Ivars().runtime.txStreamEngine.BindTimingStamper(&stamper);
+    rig.FeedBlockingRx(8);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    size_t checked = 0;
+    for (const auto& [packetIndex, timing] : stamper.seen) {
+        if (!timing.transmitCycleValid) {
+            continue;
+        }
+        // The rig's bus never crosses a second here, so the offset domain is
+        // the plain tick count of the packet's own cycle.
+        ASSERT_LT(TxProducerRig::StartCycle() + packetIndex, kCyclesPerSecond);
+        const int64_t expectedTicks =
+            static_cast<int64_t>(TxProducerRig::StartCycle() + packetIndex) *
+                ASFW::Timing::kTicksPerCycle +
+            kCompletionOffset;
+        ASSERT_EQ(timing.transmitTicks, expectedTicks) << "packet " << packetIndex;
+        ASSERT_EQ(timing.transmitCycle,
+                  static_cast<uint32_t>((timing.transmitTicks / ASFW::Timing::kTicksPerCycle) %
+                                        kCyclesPerSecond))
+            << "packet " << packetIndex;
+        ++checked;
+    }
+    EXPECT_GT(checked, kSteadyStatePackets / 2);
 }
 
 // ---------------------------------------------------------------------------
