@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -1086,6 +1087,96 @@ TEST(TxPacketIndexWidth, APacketPastTwoToTheThirtySecondCommitsItsOwnGeneration)
     EXPECT_EQ(meta.packetIndex, kPacket);
     EXPECT_EQ(meta.commitGeneration.load(), ASFW::Isoch::ExpectedTxCommitGeneration(kPacket, kSlots));
     EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
+}
+
+// A release observer reads each packet's final bytes from PublishSlot while
+// the slot is still the producer's: before the commit generation and the
+// committed cursor hand it to transport.
+TEST(TxPacketReleaseObserver, SeesTheReleasedBytesBeforeTheCommit) {
+    constexpr uint32_t kSlots = Geometry::kTxSharedSlotPackets;
+    constexpr uint32_t kStride = 296;
+    std::vector<uint8_t> payload(uint64_t{kSlots} * kStride);
+    std::vector<IsochTxPacketMeta> metadata(kSlots);
+    IsochTxQueueControl queue{};
+
+    struct Observer final : ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver {
+        const IsochTxPacketMeta* meta{nullptr};
+        const IsochTxQueueControl* queue{nullptr};
+        uint32_t calls{0};
+        uint64_t packetIndex{0};
+        std::vector<uint8_t> bytes;
+        bool committedBeforeRelease{false};
+        void OnRelease(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet,
+                       std::span<const uint8_t> packetBytes) noexcept override {
+            ++calls;
+            packetIndex = packet.packetIndex;
+            bytes.assign(packetBytes.begin(), packetBytes.end());
+            committedBeforeRelease =
+                meta->commitGeneration.load() ==
+                    ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex, kSlots) ||
+                queue->committedEnd.load() > packet.packetIndex;
+        }
+    } observer;
+
+    DextTxSlotProvider provider;
+    provider.payloadBase = payload.data();
+    provider.metadataRing = metadata.data();
+    provider.queueControl = &queue;
+    provider.numSlots = kSlots;
+    provider.slotStrideBytes = kStride;
+    provider.releaseObserver = &observer;
+
+    constexpr uint64_t kPacket = 3 * kSlots + 17;
+    observer.meta = &metadata[kPacket % kSlots];
+    observer.queue = &queue;
+    ASFW::Protocols::Audio::AMDTP::TxPacketSlotView slot{};
+    ASSERT_TRUE(provider.AcquireWritableSlot(kPacket, slot));
+    for (uint32_t i = 0; i < 16; ++i) {
+        slot.bytes[i] = static_cast<uint8_t>(0xA0 + i);
+    }
+
+    ASFW::Protocols::Audio::AMDTP::PreparedTxPacket packet{};
+    packet.packetIndex = kPacket;
+    packet.byteCount = 16;
+    packet.isData = true;
+    ASSERT_TRUE(provider.PublishSlot(packet));
+
+    EXPECT_EQ(observer.calls, 1U);
+    EXPECT_EQ(observer.packetIndex, kPacket);
+    ASSERT_EQ(observer.bytes.size(), 16U);
+    for (uint32_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(observer.bytes[i], 0xA0 + i) << "byte " << i;
+    }
+    EXPECT_FALSE(observer.committedBeforeRelease);
+    // ...and the commit still happens after it.
+    EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
+
+    // A rejected publication never reaches the observer.
+    packet.operation = ASFW::Protocols::Audio::AMDTP::PreparedTxPacket::Operation::SkipCycle;
+    EXPECT_FALSE(provider.PublishSlot(packet));
+    EXPECT_EQ(observer.calls, 1U);
+}
+
+// Arming a stream starts with no release observer: one left from a previous
+// start must not see this stream's packets.
+TEST(TxPacketReleaseObserver, ArmingTheProducerUnbindsAStaleObserver) {
+    struct Counter final : ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver {
+        uint32_t calls{0};
+        void OnRelease(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket&,
+                       std::span<const uint8_t>) noexcept override {
+            ++calls;
+        }
+    } stale;
+
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.Ivars().runtime.txSlotProvider.releaseObserver = &stale;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    EXPECT_EQ(rig.Ivars().runtime.txSlotProvider.releaseObserver, nullptr);
+    rig.FeedBlockingRx(8);
+    ASSERT_TRUE(rig.RunPackets(1000)) << rig.DescribeFault();
+    EXPECT_EQ(stale.calls, 0U);
 }
 
 // T7 (TX_OWNERSHIP.md §1g): the TX frame cursor starts at the projected frame.

@@ -762,6 +762,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
     ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
     ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
+    // Nothing observes release unless this start binds an observer below.
+    ivars.runtime.txSlotProvider.releaseObserver = nullptr;
 
     ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
 

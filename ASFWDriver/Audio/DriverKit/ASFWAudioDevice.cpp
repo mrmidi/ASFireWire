@@ -188,6 +188,7 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.txSlotProvider.metadataRing = nullptr;
     ivars.runtime.txSlotProvider.queueControl = nullptr;
     ivars.runtime.txSlotProvider.numSlots = 0;
+    ivars.runtime.txSlotProvider.releaseObserver = nullptr;
     ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
     // Secondary playback stream teardown. Drop txSecondaryActive first so the
@@ -307,6 +308,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.metadataRing = nullptr;
             ivars.runtime.txSlotProvider.queueControl = nullptr;
             ivars.runtime.txSlotProvider.numSlots = 0;
+            ivars.runtime.txSlotProvider.releaseObserver = nullptr;
             ivars.runtime.txExecutionTimeline.queueControl = nullptr;
 
             // Secondary playback stream resources.
