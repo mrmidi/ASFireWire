@@ -59,6 +59,12 @@ public:
                                    uint32_t reason)
         TYPE(ASFWAudioNub::IoRestartRequired);
 
+    // "Enable Core Audio volume controls" changed: add or remove the host
+    // volume and mute to match (HostOutputVolumePolicy.hpp).
+    virtual void HostVolumeSettingChanged(OSAction* action,
+                                          uint32_t enabled)
+        TYPE(ASFWAudioNub::HostVolumeSettingChanged);
+
     kern_return_t ApplyAvcFeatureControl(uint32_t token, bool muteControl,
                                         int32_t value, int32_t* outConfirmedValue) LOCALONLY;
     // Protocol-backed boolean control bridge (used by custom control subclass).

@@ -1165,6 +1165,16 @@ kern_return_t ASFWDriver::SetAudioAutoStart(uint32_t enabled) const {
     return kIOReturnSuccess;
 }
 
+kern_return_t ASFWDriver::SetCoreAudioVolumeControls(uint32_t enabled) {
+    if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG_INFO(Controller, "UserClient: Setting Core Audio volume controls to %{public}s",
+                  enabled ? "enabled" : "disabled");
+    ivars->context->audioCoordinator->SetCoreAudioVolumeControls(enabled != 0);
+    return kIOReturnSuccess;
+}
+
 kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity, uint32_t* hexDumpsEnabled,
                                        uint32_t* isochVerbosity) const {
     if (!asyncVerbosity || !hexDumpsEnabled || !isochVerbosity) {

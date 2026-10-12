@@ -21,6 +21,7 @@ public:
     void NotifyDeviceClockChanged(uint32_t) noexcept {}
     // No audio driver in the host suite: restarts stay in place.
     bool NotifyIoRestartRequired(uint32_t) noexcept { return false; }
+    bool NotifyHostVolumeSettingChanged(uint32_t) noexcept { return false; }
     void TxPreparationReady(OSAction*, uint64_t generation) {
         ++txPreparationRequests;
         lastTxPreparationGeneration = generation;
@@ -42,12 +43,14 @@ public:
     kern_return_t RegisterZtsAnchorAction(OSAction* action) { ztsAnchorAction = action; return kIOReturnSuccess; }
     kern_return_t RegisterDeviceClockChangedAction(OSAction* action) { deviceClockChangedAction = action; return kIOReturnSuccess; }
     kern_return_t RegisterIoRestartRequiredAction(OSAction* action) { ioRestartRequiredAction = action; return kIOReturnSuccess; }
+    kern_return_t RegisterHostVolumeSettingChangedAction(OSAction* action) { hostVolumeSettingChangedAction = action; return kIOReturnSuccess; }
 
     uint32_t stopStreamingCalls{0};
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* ioRestartRequiredAction{nullptr};
+    OSAction* hostVolumeSettingChangedAction{nullptr};
     uint64_t txPreparationRequests{0};
     uint64_t lastTxPreparationGeneration{0};
     uint64_t lastTimingRecoveryEpoch{0};

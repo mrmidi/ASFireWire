@@ -53,6 +53,9 @@ public:
     AudioCoordinator& operator=(const AudioCoordinator&) = delete;
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
+    // The user's "Enable Core Audio volume controls": stored for every later graph build
+    // and pushed to each running audio driver (HostOutputVolumePolicy.hpp).
+    void SetCoreAudioVolumeControls(bool enabled) noexcept;
     // The bus's IRM client; the audio session reserves stream resources with it.
     void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept { sessions_.SetIrmClient(client); }
 

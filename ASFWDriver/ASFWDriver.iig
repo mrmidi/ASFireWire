@@ -103,6 +103,9 @@ public:
     kern_return_t SetIsochVerbosity(uint32_t level) const LOCALONLY;
     kern_return_t SetHexDumps(uint32_t enabled) const LOCALONLY;
     kern_return_t SetAudioAutoStart(uint32_t enabled) const LOCALONLY;
+    // "Enable Core Audio volume controls" for the MOTU family; the app sends it
+    // on every connection (Audio/DriverKit/Runtime/HostOutputVolumePolicy.hpp).
+    kern_return_t SetCoreAudioVolumeControls(uint32_t enabled) LOCALONLY;
     kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
                               uint32_t* hexDumpsEnabled,
                               uint32_t* isochVerbosity) const LOCALONLY;

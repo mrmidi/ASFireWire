@@ -80,6 +80,7 @@ enum {
     kMethodSelectAudioObserver = 66,
     kMethodGetAudioObserverState = 67,
     kMethodGetAVCDiscoveryDocument = 68,
+    kMethodSetCoreAudioVolumeControls = 69,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -271,6 +272,9 @@ MethodDispatchResult DispatchDriverScalarSetters(ASFWDriver& driver,
                      : MethodDispatchResult{kIOReturnBadArgument};
     case kMethodSetAudioAutoStart:
         return value ? MethodDispatchResult{driver.SetAudioAutoStart(*value)}
+                     : MethodDispatchResult{kIOReturnBadArgument};
+    case kMethodSetCoreAudioVolumeControls:
+        return value ? MethodDispatchResult{driver.SetCoreAudioVolumeControls(*value)}
                      : MethodDispatchResult{kIOReturnBadArgument};
     default:
         return std::nullopt;

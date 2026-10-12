@@ -9,7 +9,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
-#include "Runtime/HostOutputGain.hpp"
+#include "Runtime/HostOutputVolumePolicy.hpp"
 #include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
@@ -68,8 +68,9 @@ struct AudioDriverDeviceState {
     // absent for every other device.
     OSSharedPtr<ASFWHostLevelControl> outputVolumeControl{};
     OSSharedPtr<ASFWProtocolBooleanControl> outputMuteControl{};
-    // The master output volume is realised in the host (profile HostOutputVolume) and its
-    // control is published; WriteEnd then runs the host gain stage.
+    // The master output volume is realised in the host (profile HostOutputVolume); WriteEnd
+    // then runs the host gain stage. The stage stays for the graph's life; its controls come
+    // and go with the user's "Enable Core Audio volume controls" (HostOutputVolumePolicy.hpp).
     bool hostOutputVolume{false};
     float hostOutputVolumeMinDb{0.0f};
 
@@ -358,6 +359,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
     OSSharedPtr<OSAction> ioRestartRequiredAction;
+    OSSharedPtr<OSAction> hostVolumeSettingChangedAction;
 
 
 
@@ -445,6 +447,15 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 /// object and nothing in the nub points back at it.
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
+/// Add the CoreAudio volume and mute of a host-realised master volume; the gain starts
+/// at the volume's initial level.
+[[nodiscard]] kern_return_t PublishHostOutputVolumeControls(ASFWAudioDriver& driver,
+                                                            ASFWAudioDriver_IVars& ivars) noexcept;
+/// Remove them again; the output returns to the level set on the device.
+void WithdrawHostOutputVolumeControls(ASFWAudioDriver_IVars& ivars) noexcept;
+/// Bring the published controls in line with CoreAudioVolumeSetting. Runs on the
+/// driver's queue (the nub's HostVolumeSettingChanged action); idempotent.
+void SyncHostOutputVolumeControls(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
 /// One [Timing] line per resolution (graph build, rate change). This replaces
 /// the old "TimingCursorPolicy (fallback, not applied)" line: it prints what is
 /// actually applied.

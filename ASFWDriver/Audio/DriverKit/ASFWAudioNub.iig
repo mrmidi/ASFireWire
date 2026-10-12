@@ -118,6 +118,14 @@ public:
     virtual kern_return_t RegisterIoRestartRequiredAction(
         OSAction* action TYPE(IoRestartRequired));
 
+    // The user changed "Enable Core Audio volume controls"
+    // (Runtime/HostOutputVolumePolicy.hpp): the audio driver adds or removes
+    // its host volume and mute on its own queue.
+    virtual void HostVolumeSettingChanged(OSAction* action TARGET,
+                                          uint32_t enabled);
+    virtual kern_return_t RegisterHostVolumeSettingChangedAction(
+        OSAction* action TYPE(HostVolumeSettingChanged));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
     void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
@@ -130,6 +138,10 @@ public:
     // Fire the registered IoRestartRequired action. False when no audio
     // driver is listening, so the caller restarts in place instead.
     bool NotifyIoRestartRequired(uint32_t reason) LOCALONLY;
+
+    // Fire the registered HostVolumeSettingChanged action. False when no
+    // audio driver is listening; its next graph build reads the setting.
+    bool NotifyHostVolumeSettingChanged(uint32_t enabled) LOCALONLY;
 
     // Host-side belief of the device rate (updated on publish and on every
     // successful RequestSampleRateChange). Used by the transport side to
@@ -215,6 +227,7 @@ struct ASFWAudioNub_IVars {
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* ioRestartRequiredAction{nullptr};
+    OSAction* hostVolumeSettingChangedAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

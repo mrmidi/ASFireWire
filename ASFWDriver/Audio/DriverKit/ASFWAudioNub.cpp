@@ -291,6 +291,10 @@ void ASFWAudioNub::free()
             ivars->ioRestartRequiredAction->release();
             ivars->ioRestartRequiredAction = nullptr;
         }
+        if (ivars->hostVolumeSettingChangedAction) {
+            ivars->hostVolumeSettingChangedAction->release();
+            ivars->hostVolumeSettingChangedAction = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -350,6 +354,10 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         if (ivars->ioRestartRequiredAction) {
             ivars->ioRestartRequiredAction->release();
             ivars->ioRestartRequiredAction = nullptr;
+        }
+        if (ivars->hostVolumeSettingChangedAction) {
+            ivars->hostVolumeSettingChangedAction->release();
+            ivars->hostVolumeSettingChangedAction = nullptr;
         }
         ivars->parentDriver = nullptr;
     }
@@ -547,6 +555,41 @@ bool ASFWAudioNub::NotifyIoRestartRequired(uint32_t reason)
              "ASFWAudioNub: NotifyIoRestartRequired reason=%u guid=0x%016llx",
              reason, ivars->guid);
     IoRestartRequired(ivars->ioRestartRequiredAction, reason);
+    return true;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterHostVolumeSettingChangedAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->hostVolumeSettingChangedAction;
+    ivars->hostVolumeSettingChangedAction = action;
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, HostVolumeSettingChanged)
+{
+    (void)action;
+    (void)enabled;
+}
+
+bool ASFWAudioNub::NotifyHostVolumeSettingChanged(uint32_t enabled)
+{
+    if (!ivars || !ivars->hostVolumeSettingChangedAction) {
+        return false;
+    }
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: NotifyHostVolumeSettingChanged enabled=%u guid=0x%016llx",
+             enabled, ivars->guid);
+    HostVolumeSettingChanged(ivars->hostVolumeSettingChangedAction, enabled);
     return true;
 }
 

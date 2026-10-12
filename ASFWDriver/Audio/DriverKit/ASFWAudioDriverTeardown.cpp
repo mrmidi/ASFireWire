@@ -101,11 +101,13 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
         (void)nub->RegisterZtsAnchorAction(nullptr);
         (void)nub->RegisterDeviceClockChangedAction(nullptr);
         (void)nub->RegisterIoRestartRequiredAction(nullptr);
+        (void)nub->RegisterHostVolumeSettingChangedAction(nullptr);
     }
     ivars.txPreparationAction.reset();
     ivars.txPreparationQueue.reset();
     ivars.deviceClockChangedAction.reset();
     ivars.ioRestartRequiredAction.reset();
+    ivars.hostVolumeSettingChangedAction.reset();
     ivars.ztsAnchorAction.reset();
     ivars.ztsQueue.reset();
     // Detach and drop the whole ADK graph here, not in free(). The device is

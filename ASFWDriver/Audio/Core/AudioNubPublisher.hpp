@@ -51,6 +51,10 @@ public:
     /// Return the GUID if exactly one nub is published (debug/bring-up helper).
     [[nodiscard]] std::optional<uint64_t> GetSingleGuid() const noexcept;
 
+    /// Fire HostVolumeSettingChanged on every published nub; returns how many had an
+    /// audio driver listening.
+    uint32_t NotifyHostVolumeSettingChanged(bool enabled) noexcept;
+
     /// Terminate and forget a nub if present.
     void TerminateNub(uint64_t guid, const char* reasonTag,
                       std::optional<IOReturn> remoteStopResult = std::nullopt) noexcept;

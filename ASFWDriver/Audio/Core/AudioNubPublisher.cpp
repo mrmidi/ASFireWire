@@ -217,6 +217,23 @@ std::optional<uint64_t> AudioNubPublisher::GetSingleGuid() const noexcept {
     return result;
 }
 
+uint32_t AudioNubPublisher::NotifyHostVolumeSettingChanged(bool enabled) noexcept {
+    if (!lock_) return 0;
+
+    // Under the lock, so no nub leaves the map while it is notified; the action itself
+    // only queues the work on the audio driver's queue.
+    uint32_t listening = 0;
+    IOLockLock(lock_);
+    for (const auto& [guid, nub] : nubsByGuid_) {
+        (void)guid;
+        if (nub && nub->NotifyHostVolumeSettingChanged(enabled ? 1u : 0u)) {
+            ++listening;
+        }
+    }
+    IOLockUnlock(lock_);
+    return listening;
+}
+
 void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag,
                                     std::optional<IOReturn> remoteStopResult) noexcept {
     if (!lock_ || guid == 0) return;

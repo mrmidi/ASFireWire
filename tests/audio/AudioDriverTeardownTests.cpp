@@ -137,19 +137,22 @@ TEST(AudioDriverTeardownTests, StopLeavesTheDriverFreeable) {
     ivars->device.audioNub = nub.get();
     OSSharedPtr<OSAction> actions[] = {
         {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain},
-        {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain}};
+        {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain},
+        {new OSAction(), OSNoRetain}};
     OSSharedPtr<IODispatchQueue> queues[] = {{new IODispatchQueue(), OSNoRetain},
                                              {new IODispatchQueue(), OSNoRetain}};
     ivars->txPreparationAction = actions[0];
     ivars->ztsAnchorAction = actions[1];
     ivars->deviceClockChangedAction = actions[2];
     ivars->ioRestartRequiredAction = actions[3];
+    ivars->hostVolumeSettingChangedAction = actions[4];
     ivars->txPreparationQueue = queues[0];
     ivars->ztsQueue = queues[1];
     nub->RegisterTxPreparationAction(actions[0].get());
     nub->RegisterZtsAnchorAction(actions[1].get());
     nub->RegisterDeviceClockChangedAction(actions[2].get());
     nub->RegisterIoRestartRequiredAction(actions[3].get());
+    nub->RegisterHostVolumeSettingChangedAction(actions[4].get());
     ivars->runtime.isRunning.store(true);
 
     StopAudioDriverGraph(*driver, *ivars);
@@ -159,6 +162,7 @@ TEST(AudioDriverTeardownTests, StopLeavesTheDriverFreeable) {
     EXPECT_EQ(nub->ztsAnchorAction, nullptr);
     EXPECT_EQ(nub->deviceClockChangedAction, nullptr);
     EXPECT_EQ(nub->ioRestartRequiredAction, nullptr);
+    EXPECT_EQ(nub->hostVolumeSettingChangedAction, nullptr);
     for (const auto& action : actions) EXPECT_EQ(action->GetRetainCount(), 1);
     for (const auto& queue : queues) EXPECT_EQ(queue->GetRetainCount(), 1);
     EXPECT_FALSE(ivars->runtime.isRunning.load());

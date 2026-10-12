@@ -1411,6 +1411,7 @@
 		D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPLiveDriverControl.swift; sourceTree = "<group>"; };
 		D14370CF27984ADE19CE1FD8 /* DebugViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewModel.swift; sourceTree = "<group>"; };
 		D191575DD205D54AC7BB44F8 /* BusResetCoordinatorDiscoveryDelay.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetCoordinatorDiscoveryDelay.cpp; sourceTree = "<group>"; };
+		D1D8096B164599C437CE5B77 /* HostOutputVolumePolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HostOutputVolumePolicy.hpp; sourceTree = "<group>"; };
 		D201F3FA5106101B24B7E101 /* CMPClient.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CMPClient.hpp; sourceTree = "<group>"; };
 		D2484CAF8B5D5E49D4584F56 /* IRMClient.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMClient.hpp; sourceTree = "<group>"; };
 		D35086A1BF0CD9E94DE04E10 /* AVCDiscovery.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCDiscovery.hpp; sourceTree = "<group>"; };
@@ -3588,6 +3589,7 @@
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
 				0A585A8D9D637B9C6A0CB8AD /* HostOutputGain.hpp */,
+				D1D8096B164599C437CE5B77 /* HostOutputVolumePolicy.hpp */,
 				77F240DABA54A67B22864546 /* MotuPhaseTrace.hpp */,
 				06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */,
 				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,

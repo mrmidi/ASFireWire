@@ -5,6 +5,7 @@
 
 #include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
+#include "../DriverKit/Runtime/HostOutputVolumePolicy.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
@@ -73,6 +74,13 @@ AudioCoordinator::~AudioCoordinator() noexcept {
 
 void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
     runtime_.SetCMPClient(client);
+}
+
+void AudioCoordinator::SetCoreAudioVolumeControls(bool enabled) noexcept {
+    Runtime::CoreAudioVolumeSetting::Shared().SetEnabled(enabled);
+    const uint32_t listening = publisher_.NotifyHostVolumeSettingChanged(enabled);
+    ASFW_LOG(Audio, "[HostVolume] setting coreAudioControls=%u notified=%u", enabled ? 1u : 0u,
+             listening);
 }
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {

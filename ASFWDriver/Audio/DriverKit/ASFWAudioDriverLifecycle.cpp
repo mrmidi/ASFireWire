@@ -43,9 +43,11 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
             (void)ivars->device.audioNub->RegisterIoRestartRequiredAction(nullptr);
+            (void)ivars->device.audioNub->RegisterHostVolumeSettingChangedAction(nullptr);
         }
         ivars->deviceClockChangedAction.reset();
         ivars->ioRestartRequiredAction.reset();
+        ivars->hostVolumeSettingChangedAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
@@ -161,6 +163,25 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterIoRestartRequiredAction");
     }
 
+    OSAction* rawHostVolumeSettingChangedAction = nullptr;
+    error = CreateActionHostVolumeSettingChanged(0, &rawHostVolumeSettingChangedAction);
+    if (error != kIOReturnSuccess || !rawHostVolumeSettingChangedAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionHostVolumeSettingChanged");
+    }
+    ivars->hostVolumeSettingChangedAction =
+        ASFW::Common::AdoptRetained(rawHostVolumeSettingChangedAction);
+    error = ivars->device.audioNub->RegisterHostVolumeSettingChangedAction(
+        ivars->hostVolumeSettingChangedAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->hostVolumeSettingChangedAction.reset();
+        return failStart(error, "RegisterHostVolumeSettingChangedAction");
+    }
+    // A change that landed between the graph build and this registration found
+    // no listener; catch up now.
+    ASFW::Audio::DriverKit::SyncHostOutputVolumeControls(*this, *ivars);
+
     return kIOReturnSuccess;
 }
 
@@ -180,6 +201,17 @@ void IMPL(ASFWAudioDriver, DeviceClockChanged)
                  "ASFWAudioDriver: external rate resync request failed: 0x%x (%{public}s)",
                  kr, ASFW::Logging::IOReturnName(kr));
     }
+}
+
+void IMPL(ASFWAudioDriver, HostVolumeSettingChanged)
+{
+    (void)action;
+    if (!ivars || !ivars->audioDevice) {
+        return;
+    }
+    ASFW_LOG(Audio, "ASFWAudioDriver: HostVolumeSettingChanged enabled=%u", enabled);
+    // The shared setting is the authority; the argument only names the change.
+    ASFW::Audio::DriverKit::SyncHostOutputVolumeControls(*this, *ivars);
 }
 
 void IMPL(ASFWAudioDriver, IoRestartRequired)
