@@ -110,6 +110,7 @@ extension ASFWDriverConnector {
 
         DispatchQueue.main.async { [weak self] in
             self?.isConnected = true
+            self?.applyStoredMotuSettings()
         }
         log("Connection established", level: .success)
     }

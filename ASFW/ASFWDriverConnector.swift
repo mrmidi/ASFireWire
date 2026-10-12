@@ -64,6 +64,8 @@ final class ASFWDriverConnector: ObservableObject {
         // One unit's FCP exchange log, paged (UserClient/WireFormats/AVCExchangeLogWire.hpp).
         case getFCPExchangeLog = 65
         case getAVCDiscoveryDocument = 68
+        // MOTU "Enable Core Audio volume controls" (scalar: 1 on, 0 off).
+        case setCoreAudioVolumeControls = 69
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.
