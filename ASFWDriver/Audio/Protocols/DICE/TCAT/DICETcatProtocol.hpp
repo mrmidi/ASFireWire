@@ -176,7 +176,6 @@ private:
                           const StreamConfig& rx) noexcept;
     void CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept;
     void ResetRuntimeCaps() noexcept;
-    [[nodiscard]] bool DeviceSupportsRate(uint32_t rateHz) const noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};

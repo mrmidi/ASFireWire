@@ -460,27 +460,6 @@ IOReturn DICETcatProtocol::LoadGeometry() {
                             teardownCancel_);
 }
 
-bool DICETcatProtocol::DeviceSupportsRate(uint32_t rateHz) const noexcept {
-    if (rateHz > 48000) {
-        const auto formations = RateFormations();
-        if (!formations || std::ranges::find(*formations, rateHz,
-            &Runtime::RateFormation::sampleRateHz) == formations->end()) return false;
-    }
-    // TCAT refuses a rate outside CLOCK_CAPABILITIES before touching the device
-    // (MidasFW SetNewSamplingRate). Before the first geometry read the mask is
-    // unknown, and the request goes through as it always has.
-    const uint32_t mask = deviceRateMask_.load(std::memory_order_relaxed);
-    if (mask == 0 || !runtimeCapsValid_.load(std::memory_order_acquire)) {
-        return true;
-    }
-    if (DiceClockCapsSupportRate(mask, rateHz)) {
-        return true;
-    }
-    ASFW_LOG(DICE, "DICETcatProtocol: device does not support %u Hz (rates=0x%02x); refused",
-             rateHz, mask);
-    return false;
-}
-
 std::optional<AudioStreamRuntimeCaps> DICETcatProtocol::RuntimeCaps() const {
     AudioStreamRuntimeCaps caps{};
     if (!GetRuntimeAudioStreamCaps(caps)) {
@@ -496,7 +475,7 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(clock, diceClock) || !DeviceSupportsRate(clock.sampleRateHz)) {
+    if (!MakeDiceClockConfiguration(clock, diceClock)) {
         return std::unexpected(kIOReturnUnsupported);
     }
 
@@ -810,7 +789,7 @@ std::expected<DuplexClockApplyResult, IOReturn> DICETcatProtocol::ApplyClockIdle
     }
 
     DiceClockConfiguration diceClock{};
-    if (!MakeDiceClockConfiguration(clock, diceClock) || !DeviceSupportsRate(clock.sampleRateHz)) {
+    if (!MakeDiceClockConfiguration(clock, diceClock)) {
         return std::unexpected(kIOReturnUnsupported);
     }
 

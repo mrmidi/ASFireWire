@@ -584,9 +584,7 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     EXPECT_EQ(outNames[1], "Main R");
 }
 
-// TCAT refuses a rate the device does not advertise before touching it
-// (MidasFW SetNewSamplingRate). This device supports 44.1 and 48 kHz only.
-TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraffic) {
+TEST(DICETcatProtocolTests, RefusesAnUnknownClockRateWithoutBusTraffic) {
     CountingFireWireBus bus;
     RouteState routeState;
     DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(),
@@ -595,7 +593,7 @@ TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraff
 
     ASFW::Audio::DICE::GlobalState global{};
     global.sampleRate = 48000;
-    global.clockCaps = 0x13000006;  // 44.1 + 48 kHz, as the Venice and StudioLive report
+    global.clockCaps = 0x13000006;
     global.hasClockCaps = true;
     ASFW::Audio::DICE::StreamConfig tx{};
     tx.numStreams = 1;
@@ -614,10 +612,10 @@ TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraff
     const int locksBefore = bus.lockCount;
     ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
     const auto started = family.Configure(ASFW::Audio::AudioDuplexChannels{},
-                                          AudioClockConfig{.sampleRateHz = 32000});
+                                          AudioClockConfig{.sampleRateHz = 12345});
     ASSERT_FALSE(started.has_value());
     EXPECT_EQ(started.error(), kIOReturnUnsupported);
-    const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = 32000});
+    const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = 12345});
     ASSERT_FALSE(applied.has_value());
     EXPECT_EQ(applied.error(), kIOReturnUnsupported);
     EXPECT_EQ(bus.readCount, readsBefore);

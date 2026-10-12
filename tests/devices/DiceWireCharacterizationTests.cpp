@@ -434,6 +434,40 @@ TEST(DiceInitialPreparation, ReadsObservedHighRateWithoutLowerAdvertisedFallback
     }
 }
 
+TEST(DiceInitialPreparation, RestoresHostRateWhenCurrentModeMaskExcludesIt) {
+    // Reproduce #190's changing clock-capability mask on the recorded layout.
+    // Exercise both a stream restart and a stopped-IO clock change.
+    for (const bool idleChange : {false, true}) {
+        SCOPED_TRACE(idleChange);
+        DiceRig rig(DiceDeviceImages::kStudiolive3242);
+        uint32_t selection = 0;
+        ASSERT_TRUE(DiceClockSelectForRate(88200, ClockSource::Internal, selection));
+        rig.SetClock(selection, ClockRateIndex::k88200, true);
+        rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockCaps,
+                                      ASFW::Audio::DICE::RateCaps::k88200);
+        ASSERT_EQ(rig.Run("initial", [&](auto done) {
+            rig.protocol->EnsureRuntimeStreamGeometry(done);
+        }), kIOReturnSuccess);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+        ASSERT_EQ(caps.sampleRateHz, 88200U);
+        rig.bus.ClearOperations();
+        if (idleChange) {
+            const auto applied = rig.family->ApplyClockIdle({.sampleRateHz = 48000});
+            ASSERT_TRUE(applied) << applied.error();
+            EXPECT_EQ(applied->runtimeCaps.sampleRateHz, 48000U);
+        } else {
+            const auto prepared = rig.family->Configure(rig.ChannelsFor(caps),
+                                                        {.sampleRateHz = 48000});
+            ASSERT_TRUE(prepared) << prepared.error();
+            EXPECT_EQ(prepared->runtimeCaps.sampleRateHz, 48000U);
+        }
+        EXPECT_EQ(std::ranges::count_if(rig.bus.Operations(), [](const auto& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xe0000074;
+        }), 1);
+    }
+}
+
 std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info) {
     std::string name = info.param->key;
     for (char& c : name) {
