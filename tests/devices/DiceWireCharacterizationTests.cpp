@@ -410,6 +410,30 @@ TEST(DiceInitialPreparation, PreservesObservedRateAndPreparesRestoredRateBeforeS
     }), 1);
 }
 
+TEST(DiceInitialPreparation, ReadsObservedHighRateWithoutLowerAdvertisedFallback) {
+    // Synthetic high-rate clock state on the recorded register layout. The
+    // stream widths here are test inputs, not measured high-rate hardware caps.
+    for (const auto& rate : ASFW::Audio::DICE::kDiceRateTable) {
+        if (rate.hz <= 48000) continue;
+        SCOPED_TRACE(rate.hz);
+        DiceRig rig(DiceDeviceImages::kStudiolive3242);
+        uint32_t selection = 0;
+        ASSERT_TRUE(DiceClockSelectForRate(rate.hz, ClockSource::Internal, selection));
+        rig.SetClock(selection, rate.rateIndex, true);
+        rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockCaps, rate.capsBit);
+        ASSERT_EQ(rig.Run("initial", [&](auto done) {
+            rig.protocol->EnsureRuntimeStreamGeometry(done);
+        }), kIOReturnSuccess);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.sampleRateHz, rate.hz);
+        const auto formations = rig.protocol->RateFormations();
+        ASSERT_TRUE(formations);
+        ASSERT_EQ(formations->size(), 1U);
+        EXPECT_EQ(formations->front().sampleRateHz, rate.hz);
+    }
+}
+
 std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info) {
     std::string name = info.param->key;
     for (char& c : name) {

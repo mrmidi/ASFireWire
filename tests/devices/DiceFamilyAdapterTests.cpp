@@ -413,6 +413,7 @@ TEST(DiceFamilyAdapterTests, StudioLiveWideStreamsAreDescribedWithoutTruncation)
     ASSERT_TRUE(result);
     const auto* device = std::get_if<ASFWAudioDevice>(&*result);
     ASSERT_NE(device, nullptr);
+    EXPECT_EQ(device->deviceName, "PreSonus StudioLive 32.4.2");
     EXPECT_EQ(device->inputChannelCount, 48U);
     EXPECT_EQ(device->outputChannelCount, 34U);
     ASSERT_EQ(device->captureStreams.size(), 1U);

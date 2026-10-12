@@ -155,13 +155,16 @@ void DICETcatProtocol::InitialClockOwner(const std::shared_ptr<InitialClockPrepa
         if (global.hasVersion && (global.version >> 24U) != kDiceSupportedMajorVersion) {
             FinishInitialClock(state, kIOReturnUnsupported); return;
         }
-        // Preserve the observed rate when this build can stream it. CoreAudio
-        // may restore another rate later through its stopped-IO change window.
-        const uint32_t rate = DiceRateIsStreamable(global.sampleRate)
+        // Inspect the observed mode before applying streaming admission. Its
+        // geometry is needed to build the rate formations, including high rates.
+        // Linux dice-stream.c:608-646 also reselects the current rate first.
+        const uint32_t rate = DiceRateMode(global.sampleRate)
             ? global.sampleRate : DiceInitialRate(DiceDeviceRateMask(global.hasClockCaps, global.clockCaps));
-        if (!MakeDiceClockConfiguration({.sampleRateHz = rate}, state->clock)) {
+        uint32_t clockSelect = 0;
+        if (!DiceClockSelectForRate(rate, ClockSource::Internal, clockSelect)) {
             FinishInitialClock(state, kIOReturnUnsupported); return;
         }
+        state->clock = {.sampleRateHz = rate, .clockSelect = clockSelect};
         if (!busInfo_.GetLocalNodeID().IsValid()) { FinishInitialClock(state, kIOReturnNotReady); return; }
         state->owner = ((0xFFC0ULL | (busInfo_.GetLocalNodeID().value & 0x3FU)) << kOwnerNodeShift) |
                        kNotificationHandlerOffset;

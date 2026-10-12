@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -315,9 +316,11 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
 
     // Name the device now that its geometry is known. For a range sharing one
     // identity (Midas Venice F16/F24/F32) the measured capture width is the
-    // only thing that tells the variants apart.
+    // only thing that tells the variants apart. The profile's default label
+    // does not replace a discovered model name.
     if (const char* resolvedName =
-            profile.NameForGeometry(dev.inputChannelCount, dev.outputChannelCount)) {
+            profile.NameForGeometry(dev.inputChannelCount, dev.outputChannelCount);
+        resolvedName && std::string_view(resolvedName) != profile.Name()) {
         if (dev.deviceName != resolvedName) {
             ASFW_LOG(Audio,
                      "DiceAudioBackend::EnsureNubForGuid: named from geometry "
