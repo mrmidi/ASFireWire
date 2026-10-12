@@ -7,6 +7,9 @@ R ffff.e0000028 8 @s400
 R ffff.e0200000 72 @s400
 W ffff.e0000074 0000010c @s400
 # notify 0x33
+R ffff.e0000000 40 @s400
+R ffff.e0000028 104 @s400
+R ffff.e0000028 104 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 380 @s400
 R ffff.e0000028 380 @s400
@@ -18,7 +21,6 @@ R ffff.e00005dc 512 @s400
 R ffff.e00007dc 104 @s400
 ## -> 0x00000000 streaming=0
 ## StartStreaming
-R ffff.e0000000 40 @s400
 R ffff.e0000028 104 @s400
 R ffff.e00001a4 512 @s400
 R ffff.e00003a4 56 @s400

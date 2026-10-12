@@ -31,6 +31,45 @@ TEST(ResolvedAudioConfigurationTests, AllRatesBothModesResolveOneCoherentGeometr
     }
 }
 
+TEST(ResolvedAudioConfigurationTests, ObservedCatalogAddsExactRateWithoutChangingLiveFormat) {
+    using namespace ASFW::Audio;
+    Model::ASFWAudioDevice prior{};
+    prior.currentSampleRate = 48000;
+    prior.sampleRates = {48000};
+    prior.rateFormationCandidates = {Formation(48000, 16)};
+    const auto committed = Model::WithRateFormation(prior, 48000);
+    ASSERT_TRUE(committed);
+    const auto catalog = Model::WithObservedRateCatalog(*committed, Formation(88200, 12));
+    ASSERT_TRUE(catalog);
+    EXPECT_EQ(catalog->currentSampleRate, 48000U);
+    EXPECT_EQ(catalog->inputChannelCount, 16U);
+    EXPECT_EQ(catalog->playbackStreams, committed->playbackStreams);
+    EXPECT_EQ(catalog->captureStreams, committed->captureStreams);
+    EXPECT_EQ(catalog->sampleRates, (std::vector<uint32_t>{48000, 88200}));
+    ASSERT_EQ(catalog->rateFormationCandidates.size(), 2U);
+    const auto next = Model::WithRateFormation(*catalog, 88200);
+    ASSERT_TRUE(next);
+    EXPECT_EQ(next->inputChannelCount, 12U);
+    EXPECT_EQ(next->outputChannelCount, 12U);
+    EXPECT_FALSE(Model::WithRateFormation(*catalog, 96000));
+}
+
+TEST(ResolvedAudioConfigurationTests, ObservedCatalogDoesNotOverwriteKnownGeometry) {
+    using namespace ASFW::Audio;
+    Model::ASFWAudioDevice prior{};
+    prior.currentSampleRate = 48000;
+    prior.sampleRates = {48000, 96000};
+    prior.rateFormationCandidates = {Formation(48000, 16), Formation(96000, 12)};
+    EXPECT_FALSE(Model::WithObservedRateCatalog(prior, Formation(96000, 16)));
+    const auto unchanged = Model::WithObservedRateCatalog(prior, Formation(96000, 12));
+    ASSERT_TRUE(unchanged);
+    EXPECT_EQ(unchanged->rateFormationCandidates.size(), 2U);
+    EXPECT_EQ(unchanged->currentSampleRate, 48000U);
+    auto invalid = Formation(88200, 12);
+    invalid.playback[0].dataBlockSize = 1;
+    EXPECT_FALSE(Model::WithObservedRateCatalog(prior, invalid));
+}
+
 TEST(ResolvedAudioConfigurationTests, UsesRateSpecificAdatChannelsInsteadOfScaling) {
     std::array formations{Formation(48000, 16), Formation(96000, 12)};
     const auto low = ResolveAudioConfiguration(48000, formations, policy, allocation, 1);

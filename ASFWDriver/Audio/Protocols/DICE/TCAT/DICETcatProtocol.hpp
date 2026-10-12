@@ -259,7 +259,20 @@ private:
     void PublishRateFormations(std::shared_ptr<const std::vector<Runtime::RateFormation>> snapshot) {
         if (!rateFormatsLock_) return;
         IOLockLock(rateFormatsLock_);
-        rateFormations_.swap(snapshot);
+        if (!snapshot) {
+            rateFormations_.reset();
+            IOLockUnlock(rateFormatsLock_);
+            return;
+        }
+        auto retained = rateFormations_ ? *rateFormations_ : std::vector<Runtime::RateFormation>{};
+        for (const auto& formation : *snapshot) {
+            const auto existing = std::ranges::find(retained, formation.sampleRateHz,
+                &Runtime::RateFormation::sampleRateHz);
+            if (existing == retained.end()) retained.push_back(formation);
+            else *existing = formation;
+        }
+        std::ranges::sort(retained, {}, &Runtime::RateFormation::sampleRateHz);
+        rateFormations_ = std::make_shared<const std::vector<Runtime::RateFormation>>(std::move(retained));
         IOLockUnlock(rateFormatsLock_);
     }
     IOLock* rateFormatsLock_{IOLockAlloc()};

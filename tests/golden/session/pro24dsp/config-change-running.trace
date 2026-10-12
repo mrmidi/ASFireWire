@@ -66,6 +66,7 @@ R ffff.e00007dc 104 @s400
 ## -> 0x00000000 streaming=1
 ## DeviceNotification 0x03
 # notify 0x03
+R ffff.e0000028 104 @s400
 ## -> 0x00000000 streaming=1
 ## QuietPeriod
 H stop rx

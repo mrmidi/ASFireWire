@@ -42,4 +42,30 @@ WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
     return next;
 }
 
+// Add one measured formation without changing the committed live format.
+// A known formation must agree: stale registers must not overwrite an EAP
+// catalog. The caller supplies a stable, route-checked hardware observation.
+[[nodiscard]] inline std::expected<ASFWAudioDevice, Runtime::ConfigurationError>
+WithObservedRateCatalog(const ASFWAudioDevice& prior, const Runtime::RateFormation& observed) {
+    auto next = prior;
+    const auto existing = std::ranges::find(next.rateFormationCandidates,
+        observed.sampleRateHz, &Runtime::RateFormation::sampleRateHz);
+    if (existing == next.rateFormationCandidates.end()) {
+        next.rateFormationCandidates.push_back(observed);
+        std::ranges::sort(next.rateFormationCandidates, {}, &Runtime::RateFormation::sampleRateHz);
+    }
+    const auto selected = WithRateFormation(next, observed.sampleRateHz);
+    if (!selected) return std::unexpected(selected.error());
+    const auto& retained = *std::ranges::find(next.rateFormationCandidates,
+        observed.sampleRateHz, &Runtime::RateFormation::sampleRateHz);
+    if (retained.mode != observed.mode || retained.playback != observed.playback ||
+        retained.capture != observed.capture)
+        return std::unexpected(Runtime::ConfigurationError::InvalidFormation);
+    if (std::ranges::find(next.sampleRates, observed.sampleRateHz) == next.sampleRates.end()) {
+        next.sampleRates.push_back(observed.sampleRateHz);
+        std::ranges::sort(next.sampleRates);
+    }
+    return next;
+}
+
 } // namespace ASFW::Audio::Model

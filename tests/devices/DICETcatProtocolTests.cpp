@@ -934,8 +934,15 @@ TEST(DICETcatProtocolTests, RateObservationUsesFreshClockAndRejectsUnconfirmedSe
     const auto mismatched = observe();
     EXPECT_EQ(mismatched.caps.sampleRateHz, 96000);
     EXPECT_FALSE(mismatched.clockConfirmed);
+    const auto before = protocol.RateFormations();
+    ASSERT_TRUE(before);
+    EXPECT_EQ(std::ranges::find(*before, 96000U,
+        &ASFW::Audio::Runtime::RateFormation::sampleRateHz), before->end());
     ASSERT_TRUE(ASFW::Audio::DICE::DiceClockSelectForRate(96000, ClockSource::Internal, bus.clockSelect_));
     EXPECT_TRUE(observe().clockConfirmed);
+    const auto retained = protocol.RateFormations();
+    ASSERT_TRUE(retained);
+    EXPECT_TRUE(retained->empty()) << "this clock-only bus reports no usable stream geometry";
     bus.status_ &= ~ASFW::Audio::DICE::StatusBits::kSourceLocked;
     EXPECT_FALSE(observe().clockConfirmed);
     EXPECT_EQ(bus.writeCount, 0);

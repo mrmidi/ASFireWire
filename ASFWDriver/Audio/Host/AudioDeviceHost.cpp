@@ -389,6 +389,8 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                            0, detail);
                 } else if constexpr (std::is_same_v<T, KeepCommitted>) {
                     Record(guid, family, HostEvent::Publish, HostOutcome::KeptCommittedFormation);
+                    if (KindForGuid(guid) == AudioBackendKind::Dice)
+                        OnDeviceEvent(guid, DeviceEvent::kClockStatusChanged, 0);
                 } else if constexpr (std::is_same_v<T, DescribedWithNote>) {
                     publish(value.device, value.note);
                 } else {
@@ -429,6 +431,18 @@ void AudioDeviceHost::OnDeviceResumed(uint64_t guid) noexcept {
             Record(guid, family, HostEvent::Rebind, HostOutcome::Cancelled, kIOReturnAborted);
             FinishRecovery(guid);
             return;
+        }
+        if (KindForGuid(guid) == AudioBackendKind::Dice && publisher_.GetNub(guid) &&
+            runtime_.FindShared(guid)) {
+            const auto clock = ProbeClock(guid, family, 0, false);
+            if (clock != ClockProbeResult::Settled) {
+                if (clock == ClockProbeResult::AwaitingLock)
+                    QueueClockProbe(guid, family, 0, true);
+                Record(guid, family, HostEvent::Rebind, HostOutcome::Declined,
+                       kIOReturnSuccess, 0, "reason=device-clock-refresh");
+                FinishRecovery(guid);
+                return;
+            }
         }
         const IOReturn status = sessions_.RequestRestart(guid, DuplexRestartReason::kBusResetRebind);
         Record(guid, family, HostEvent::Rebind, RestartOutcome(status), status);
@@ -510,8 +524,10 @@ void AudioDeviceHost::OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t d
 
     if (event == DeviceEvent::kStreamConfigChanged) {
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ConfigChange, kIOReturnSuccess, 0, text);
-        OnRuntimeFault(guid, DuplexRestartReason::kDeviceConfigChange);
-        return;
+        if (kind != AudioBackendKind::Dice) {
+            OnRuntimeFault(guid, DuplexRestartReason::kDeviceConfigChange);
+            return;
+        }
     }
 
     PublicationGate::AdmissionScope admission(gate_);
@@ -519,23 +535,66 @@ void AudioDeviceHost::OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t d
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::Cancelled, kIOReturnAborted, 0, text);
         return;
     }
-    // Only a streaming device's clock health matters; an idle one re-reads its
-    // clock at the next start (DiceAudioBackend HandleDeviceNotification).
-    if (!sessions_.IsStreaming(guid)) {
+    // DICE front-panel changes also need to reach the HAL while IO is stopped.
+    if (kind != AudioBackendKind::Dice && !sessions_.IsStreaming(guid)) {
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::NotStreaming, kIOReturnSuccess, 0, text);
         return;
     }
     Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ClockProbe, kIOReturnSuccess, 0, text);
-    Dispatch([this, guid, family, detail] { ProbeClock(guid, family, detail); });
+    QueueClockProbe(guid, family, detail, event == DeviceEvent::kStreamConfigChanged);
 }
 
-void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t detail) noexcept {
+void AudioDeviceHost::QueueClockProbe(uint64_t guid, const char* family, uint32_t detail,
+                                     bool configChanged) noexcept {
+    if (!lock_) return;
+    IOLockLock(lock_);
+    const auto [it, inserted] = clockProbes_.try_emplace(guid);
+    (void)inserted;
+    const bool queue = !it->second.queued;
+    it->second.detail |= detail;
+    it->second.configChanged |= configChanged;
+    it->second.dirty = true;
+    it->second.queued = true;
+    IOLockUnlock(lock_);
+    if (!queue) return;
+    Dispatch([this, guid, family] {
+        for (;;) {
+            IOLockLock(lock_);
+            const auto it = clockProbes_.find(guid);
+            if (it == clockProbes_.end()) { IOLockUnlock(lock_); return; }
+            const auto request = it->second;
+            it->second = {.queued = true};
+            IOLockUnlock(lock_);
+            const auto result = ProbeClock(guid, family, request.detail, request.configChanged);
+            IOLockLock(lock_);
+            const auto pending = clockProbes_.find(guid);
+            if (pending != clockProbes_.end() && result == ClockProbeResult::AwaitingLock)
+                pending->second.configChanged |= request.configChanged;
+            const bool again = pending != clockProbes_.end() && pending->second.dirty && !Stopping();
+            if (!again) {
+                if (pending != clockProbes_.end() && pending->second.configChanged && !Stopping())
+                    pending->second.queued = false; // resume on the next lock notification
+                else clockProbes_.erase(guid);
+            }
+            IOLockUnlock(lock_);
+            if (!again) return;
+        }
+    });
+}
+
+AudioDeviceHost::ClockProbeResult AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t detail,
+                                bool configChanged) noexcept {
     char text[96];
     snprintf(text, sizeof(text), "detail=0x%08x", detail);
     HostFaultContext context(*this, guid);
     if (context.Cancelled()) {
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::Cancelled, kIOReturnAborted, 0, text);
-        return;
+        return ClockProbeResult::Settled;
+    }
+    const auto route = registry_.CurrentRoute(guid);
+    if (!route) {
+        Record(guid, family, HostEvent::DeviceEvent, HostOutcome::Cancelled, kIOReturnAborted);
+        return ClockProbeResult::Settled;
     }
     const auto health = context.ReadHealth(kHealthReadTimeoutMs);
     if (!health) {
@@ -544,7 +603,12 @@ void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t det
                (status == kIOReturnAborted && context.Cancelled()) ? HostOutcome::Cancelled
                                                                    : HostOutcome::ProbeFailed,
                status, 0, text);
-        return;
+        return ClockProbeResult::AwaitingLock;
+    }
+
+    if (context.Cancelled() || !registry_.IsCurrent(*route) || health->generation != route->generation) {
+        Record(guid, family, HostEvent::DeviceEvent, HostOutcome::Cancelled, kIOReturnAborted);
+        return ClockProbeResult::Settled;
     }
 
     if (!health->sourceLocked || !health->clockReferenceHealthy) {
@@ -554,7 +618,7 @@ void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t det
                  detail, health->sourceLocked ? 1U : 0U, health->clockReferenceHealthy ? 1U : 0U,
                  health->status, health->extStatus);
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ClockDegraded, kIOReturnSuccess, 0, text);
-        return;
+        return ClockProbeResult::AwaitingLock;
     }
 
     // Healthy, but the device may have moved to another rate on its own
@@ -573,15 +637,18 @@ void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t det
                                       session->desiredClock.sampleRateHz == deviceRateHz);
         if (echoesHostClock || sessions_.IsReconciling(guid)) {
             Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ClockEcho, kIOReturnSuccess, 0, text);
-            return;
+            return ClockProbeResult::Settled;
         }
         Record(guid, family, HostEvent::DeviceEvent, HostOutcome::DeviceRateChange, kIOReturnSuccess, 0, text);
         nub->NotifyDeviceClockChanged(deviceRateHz);
-        return;
+        return ClockProbeResult::RateChanged;
     }
     snprintf(text, sizeof(text), "detail=0x%08x status=0x%08x ext=0x%08x", detail, health->status,
              health->extStatus);
     Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ClockHealthy, kIOReturnSuccess, 0, text);
+    if (configChanged && sessions_.IsStreaming(guid) && !sessions_.IsReconciling(guid))
+        OnRuntimeFault(guid, DuplexRestartReason::kDeviceConfigChange);
+    return ClockProbeResult::Settled;
 }
 
 // --- Removal and teardown -------------------------------------------------
@@ -590,6 +657,7 @@ void AudioDeviceHost::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (guid == 0 || !lock_) return;
     IOLockLock(lock_);
     recoveringGuids_.erase(guid);
+    clockProbes_.erase(guid);
     discoveredByGuid_.erase(guid);
     IOLockUnlock(lock_);
 }

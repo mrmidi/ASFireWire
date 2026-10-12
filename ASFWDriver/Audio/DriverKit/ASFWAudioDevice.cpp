@@ -24,6 +24,7 @@
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSDictionary.h>
 
 // The audio completion group (frames per interrupt, input-safety floor, ZTS
 // tiling) and the transport's IOC cadence must be the same number of cycles.
@@ -1139,6 +1140,33 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     }
     ivars.device.currentSampleRate = rate;
 
+    // Observed-only DICE devices learn formats after publication. Declare the
+    // expanded catalog inside this stopped-IO window, before selecting it.
+    if (!programHardware && ivars.device.usesRateFormations) {
+        std::array<IOUserAudioStreamBasicDescription, 8> inputs{}, outputs{};
+        const uint32_t count = ivars.device.sampleRateCount;
+        if (!count || count > inputs.size()) return kIOReturnUnsupported;
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto formation = std::ranges::find(ivars.device.rateFormationCandidates,
+                static_cast<uint32_t>(ivars.device.sampleRates[i]),
+                &ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+            if (formation == ivars.device.rateFormationCandidates.end()) return kIOReturnUnsupported;
+            uint32_t capture = 0, playback = 0;
+            for (const auto& stream : formation->capture) capture += stream.pcmChannels;
+            for (const auto& stream : formation->playback) playback += stream.pcmChannels;
+            ASFW::Audio::DriverKit::FillFloat32Format(inputs[i], formation->sampleRateHz, capture);
+            ASFW::Audio::DriverKit::FillFloat32Format(outputs[i], formation->sampleRateHz, playback);
+        }
+        if ((kr = device.SetAvailableSampleRates(ivars.device.sampleRates, count)) != kIOReturnSuccess)
+            return kr;
+        if (ivars.inputStream &&
+            (kr = ivars.inputStream->SetAvailableStreamFormats(inputs.data(), count)) != kIOReturnSuccess)
+            return kr;
+        if (ivars.outputStream &&
+            (kr = ivars.outputStream->SetAvailableStreamFormats(outputs.data(), count)) != kIOReturnSuccess)
+            return kr;
+    }
+
     // The validated ADK contract (ADKVirtualAudioLab) moves the active format
     // with SetSampleRate; the base implementation does nothing more.
     if ((kr = device.SetSampleRate(rate)) != kIOReturnSuccess) {
@@ -1289,6 +1317,12 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
             if (!prior) { IOLockUnlock(local.rateLock); return prior.error(); }
             local.rateMachine.state = Idle{{ivars.device.guid, ivars.device.rateBusGeneration, 0, *prior}};
         }
+        if (hardwareObservation) {
+            // CopyObservedRateCatalog validated this new route. A reset changes
+            // the route generation, not the committed HAL format or revision.
+            if (auto* idle = std::get_if<Idle>(&local.rateMachine.state))
+                idle->committed.routeGeneration = ivars.device.rateBusGeneration;
+        }
         auto staged = Reduce(local.rateMachine, CoreAudioRateIntent{
             ivars.device.guid, ivars.device.rateBusGeneration, rateHz});
         if (!staged) { IOLockUnlock(local.rateLock); return kIOReturnBusy; }
@@ -1371,6 +1405,34 @@ kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz)
         return kIOReturnNotReady;
     }
     auto& driverIvars = *this->ivars->driverIvars;
+    if (driverIvars.device.usesRateFormations) {
+        if (!driverIvars.device.audioNub) return kIOReturnNotReady;
+        if (nominalRateHz == static_cast<uint32_t>(driverIvars.device.currentSampleRate))
+            return kIOReturnSuccess;
+        IOLockLock(ivars->rateLock);
+        const bool pending = !std::holds_alternative<ASFW::Configuration::Idle>(ivars->rateMachine.state) &&
+            !std::holds_alternative<ASFW::Configuration::Uninitialized>(ivars->rateMachine.state);
+        IOLockUnlock(ivars->rateLock);
+        if (pending) return kIOReturnBusy;
+        OSDictionary* rawProperties = nullptr;
+        const auto status = driverIvars.device.audioNub->CopyObservedRateCatalog(nominalRateHz, &rawProperties);
+        const auto properties = OSSharedPtr(rawProperties, OSNoRetain);
+        if (status != kIOReturnSuccess) return status;
+        ASFW::Isoch::Audio::ParsedAudioDriverConfig catalog{};
+        ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(catalog);
+        ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(properties.get(), catalog);
+        if (catalog.guid != driverIvars.device.guid ||
+            catalog.rateRouteIncarnation != driverIvars.device.rateRouteIncarnation ||
+            std::ranges::find(catalog.rateFormationCandidates, nominalRateHz,
+                &ASFW::Audio::Runtime::RateFormation::sampleRateHz) == catalog.rateFormationCandidates.end())
+            return kIOReturnAborted;
+        driverIvars.device.rateFormationCandidates = std::move(catalog.rateFormationCandidates);
+        driverIvars.device.sampleRateCount = catalog.sampleRateCount;
+        std::ranges::copy(std::span{catalog.sampleRates, catalog.sampleRateCount},
+                          driverIvars.device.sampleRates);
+        driverIvars.device.rateRouteEpoch = catalog.rateRouteEpoch;
+        driverIvars.device.rateBusGeneration = catalog.rateBusGeneration;
+    }
     if (!driverIvars.device.rateFormationCandidates.empty())
         return StageSampleRate(nominalRateHz, true);
 

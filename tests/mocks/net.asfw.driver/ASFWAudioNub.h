@@ -18,7 +18,12 @@ public:
     void SetStreamMode(uint32_t) {}
     void SetGuid(uint64_t) {}
     [[nodiscard]] uint32_t GetCurrentSampleRateHz() const noexcept { return 48000; }
-    void NotifyDeviceClockChanged(uint32_t) noexcept {}
+    void NotifyDeviceClockChanged(uint32_t rate) noexcept {
+        ++clockChangeNotifications;
+        lastObservedRate = rate;
+    }
+    uint32_t clockChangeNotifications{0};
+    uint32_t lastObservedRate{0};
     // No audio driver in the host suite: restarts stay in place.
     bool NotifyIoRestartRequired(uint32_t) noexcept { return false; }
     void TxPreparationReady(OSAction*, uint64_t generation) {

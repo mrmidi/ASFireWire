@@ -127,7 +127,8 @@ void DICETcatProtocol::PrepareInitialClock(VoidCallback callback) {
     }
     CancelInitialClock();
     ResetRuntimeCaps();
-    PublishRateFormations({});
+    // A reset invalidates the live observation, not previously measured rate
+    // layouts for this protocol instance. Shutdown clears the retained catalog.
     sectionsLoaded_ = false;
     auto state = std::make_shared<InitialClockPreparation>();
     state->route = route;
@@ -436,8 +437,18 @@ void DICETcatProtocol::ReadRateObservation(
                 const bool locked = (!runtimePolicy_.requireSourceLockAtConfirm || IsSourceLocked(after.status)) &&
                     ((after.clockSelect & ClockSelect::kSourceMask) != static_cast<uint32_t>(ClockSource::ARX1) ||
                      (IsArx1Locked(after.extStatus) && !HasArx1Slip(after.extStatus)));
-                callback(kIOReturnSuccess, {MakeDiceRuntimeCaps(after, observed.txStreams,
-                    observed.rxStreams, runtimePolicy_.exposeDeviceToHostToCoreAudio), stable && locked});
+                const auto caps = MakeDiceRuntimeCaps(after, observed.txStreams,
+                    observed.rxStreams, runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                if (stable && locked) {
+                    const auto measured = DiceObservedRateFormation(caps,
+                        runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                    const auto known = RateFormations();
+                    if (measured && (!known || std::ranges::find(*known, measured->sampleRateHz,
+                        &Runtime::RateFormation::sampleRateHz) == known->end()))
+                        PublishRateFormations(std::make_shared<const std::vector<Runtime::RateFormation>>(
+                            std::vector<Runtime::RateFormation>{*measured}));
+                }
+                callback(kIOReturnSuccess, {caps, stable && locked});
             });
     });
 }

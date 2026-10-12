@@ -468,6 +468,35 @@ TEST(DiceInitialPreparation, RestoresHostRateWhenCurrentModeMaskExcludesIt) {
     }
 }
 
+TEST(DiceInitialPreparation, ExternalRateObservationRetainsBothMeasuredRates) {
+    DiceRig rig(DiceDeviceImages::kStudiolive3242);
+    ASSERT_EQ(rig.Run("initial", [&](auto done) {
+        rig.protocol->EnsureRuntimeStreamGeometry(done);
+    }), kIOReturnSuccess);
+    rig.SetClock(kClockSelect44kInternal, ClockRateIndex::k44100, true);
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockCaps,
+                                  ASFW::Audio::DICE::RateCaps::k44100);
+    rig.bus.ClearOperations();
+    ASSERT_EQ(rig.Run("external-rate", [&](auto done) {
+        rig.protocol->ReadRateObservation([done](IOReturn status, auto observed) {
+            EXPECT_TRUE(observed.clockConfirmed);
+            EXPECT_EQ(observed.caps.sampleRateHz, 44100U);
+            EXPECT_EQ(observed.caps.hostInputPcmChannels, 48U);
+            EXPECT_EQ(observed.caps.hostOutputPcmChannels, 34U);
+            done(status);
+        });
+    }), kIOReturnSuccess);
+    ASSERT_EQ(rig.family->LoadGeometry(), kIOReturnSuccess);
+    const auto formations = rig.protocol->RateFormations();
+    ASSERT_TRUE(formations);
+    ASSERT_EQ(formations->size(), 2U);
+    EXPECT_EQ(formations->front().sampleRateHz, 44100U);
+    EXPECT_EQ(formations->back().sampleRateHz, 48000U);
+    EXPECT_EQ(std::ranges::count_if(rig.bus.Operations(), [](const auto& op) {
+        return op.kind == OpKind::Write || op.kind == OpKind::Lock;
+    }), 0);
+}
+
 std::string KeyName(const ::testing::TestParamInfo<const DiceDeviceImage*>& info) {
     std::string name = info.param->key;
     for (char& c : name) {
