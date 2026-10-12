@@ -45,7 +45,17 @@ The `ROMScanner` is the top-level orchestrator for discovering remote nodes. It 
 - **Bounded Concurrency**: Limits the number of in-flight ROM reads to prevent bus saturation (default: 4).
 - **Session-Driven**: Each bus reset triggers a new session, ensuring late callbacks from previous generations are safely ignored.
 - **FSM-Driven Discovery**: Each node progresses through a state machine (`ROMScanNodeStateMachine`):
-  `Idle` → `ReadingBIB` → `VerifyingIRM` → `ReadingRootDir` → `ReadingDetails` → `Complete`.
+  `Idle` → `ReadingBIB` → optional `ProbingSpeed` → optional `VerifyingIRM` → `ReadingRootDir` → `ReadingDetails` → `Complete`.
+- **Operational Speed**: Read the BIB at S100 without recording it as a speed
+  ceiling. Then select the topology path maximum, bounded by `startSpeed`
+  (default S800) and any failure-derived limit already learned this generation.
+  Following Linux `core-device.c:593-644`, probe ROM quadlet 0 when ROM link speed
+  is below the path speed, on an S800/beta path, or with beta repeaters. Start at
+  the selected maximum and step down until a read succeeds; S100 is already
+  verified by the initial BIB read. Read the remaining
+  ROM and perform IRM checks at that speed. Abort/stale-generation results stop
+  probing without learning a slower ceiling. A missing topology path stays at
+  S100; later ROM and protocol failures can still lower the operational speed.
 - **IRM Verification**: Optionally verifies Isochronous Resource Manager capability by performing a `CompareSwap` test on the `CHANNELS_AVAILABLE_63_32` register.
 
 ### ROMReader

@@ -58,6 +58,10 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
 
     void StartBIBRead(ROMScanNodeStateMachine& node);
     void HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result);
+    void SelectOperationalSpeed(ROMScanNodeStateMachine& node);
+    void StartSpeedProbe(ROMScanNodeStateMachine& node);
+    void HandleSpeedProbeComplete(uint8_t nodeId, ROMReader::ReadResult result);
+    void FinishSpeedSelection(ROMScanNodeStateMachine& node);
     void ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId);
     [[nodiscard]] bool IsRootNode(uint8_t nodeId) const noexcept;
     void NotifyRootBIBPending(uint8_t nodeId);

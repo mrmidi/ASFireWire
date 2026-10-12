@@ -10,6 +10,7 @@ class ROMScanNodeStateMachine {
     enum class State : uint8_t {
         Idle,
         ReadingBIB,
+        ProbingSpeed,
         WaitingConfigROMReady,
         VerifyingIRM_Read,
         VerifyingIRM_Lock,
@@ -79,8 +80,10 @@ class ROMScanNodeStateMachine {
         case Idle:
             return next == ReadingBIB || next == Failed;
         case ReadingBIB:
-            return next == WaitingConfigROMReady || next == VerifyingIRM_Read ||
+            return next == ProbingSpeed || next == WaitingConfigROMReady || next == VerifyingIRM_Read ||
                    next == ReadingRootDir || next == Complete || next == Idle || next == Failed;
+        case ProbingSpeed:
+            return next == VerifyingIRM_Read || next == ReadingRootDir || next == Failed;
         case WaitingConfigROMReady:
             return next == Idle || next == ReadingRootDir || next == Failed;
         case VerifyingIRM_Read:

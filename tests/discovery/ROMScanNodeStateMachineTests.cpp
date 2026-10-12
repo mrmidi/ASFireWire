@@ -29,6 +29,16 @@ TEST(ROMScanNodeStateMachineTests, RejectsInvalidTransition) {
     EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
 }
 
+TEST(ROMScanNodeStateMachineTests, SpeedProbeSitsBetweenBibAndDirectoryOrIrm) {
+    for (const auto next : {ROMScanNodeStateMachine::State::ReadingRootDir,
+                            ROMScanNodeStateMachine::State::VerifyingIRM_Read}) {
+        ROMScanNodeStateMachine node;
+        ASSERT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingBIB));
+        ASSERT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ProbingSpeed));
+        EXPECT_TRUE(node.TransitionTo(next));
+    }
+}
+
 TEST(ROMScanNodeStateMachineTests, AcceptsConfigROMReadyRetryTransitions) {
     ROMScanNodeStateMachine node(6, Generation{12}, FwSpeed::S100, 2);
 
