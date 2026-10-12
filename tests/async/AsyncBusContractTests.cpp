@@ -330,3 +330,159 @@ TEST(AsyncBusContract, StaleBitmapRecoveryPreservesGeneration) {
     EXPECT_EQ(10u, tracker.GetCurrentState().generation8);
     EXPECT_EQ(10u, tracker.GetCurrentState().generation16);
 }
+
+// Reproduce the observed PHASE 88 event sequence without hardware: the request
+// is accepted (ACK_PENDING), followed by silence or a delayed write response.
+TEST(AsyncBusContract, PendingUsesOneSplitDeadlineFromTransmissionForReadsAndWrites) {
+    for (const uint8_t tCode : {uint8_t{0x1}, uint8_t{0x4}}) {
+        DummyCompletionQueue queue;
+        LabelAllocator allocator;
+        TransactionManager manager;
+        ASSERT_TRUE(manager.Initialize());
+        auto timing = std::make_shared<ASFW::FW::SplitTimeout>();
+        Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue, nullptr, timing);
+        unsigned callbacks = 0;
+        AsyncStatus result = AsyncStatus::kSuccess;
+        TxMetadata meta{};
+        meta.generation = 1; meta.destinationNodeID = 0xffc1; meta.tCode = tCode;
+        meta.completionStrategy = tCode == 0x4 ? CompletionStrategy::CompleteOnAR : CompletionStrategy::CompleteOnAT;
+        meta.callback = [&](AsyncHandle, AsyncStatus status, uint8_t, std::span<const uint8_t>) {
+            ++callbacks; result = status;
+        };
+        const auto handle = tracking.RegisterTx(meta);
+        ASSERT_TRUE(handle);
+        const auto label = static_cast<uint8_t>(handle.value - 1);
+        tracking.OnTxPosted(handle, 1000, 500000);
+        tracking.OnTxCompletion(TxCompletion{.eventCode = OHCIEventCode::kAckPending, .tLabel = label}, 2000);
+        tracking.OnTxCompletion(TxCompletion{.eventCode = OHCIEventCode::kAckPending, .tLabel = label}, 900000);
+        tracking.OnTimeoutTick(501000); // original submission watchdog must no longer expire it
+        EXPECT_EQ(callbacks, 0u);
+        manager.WithTransaction(TLabel{label}, [&](Transaction* txn) {
+            EXPECT_EQ(txn->deadlineUs(), 2002000u);
+            EXPECT_EQ(txn->state(), TransactionState::AwaitingAR);
+            EXPECT_EQ(txn->retryCount(), 0u);
+        });
+        tracking.OnTimeoutTick(2001999);
+        EXPECT_EQ(callbacks, 0u);
+        tracking.OnTimeoutTick(2002000);
+        EXPECT_EQ(callbacks, 1u);
+        EXPECT_EQ(result, AsyncStatus::kTimeout);
+        EXPECT_EQ(manager.Count(), 0u);
+        EXPECT_FALSE(allocator.HasAnyLabelsInUse());
+        tracking.OnTimeoutTick(3000000);
+        tracking.OnRxResponse(RxResponse{.generation = 1, .sourceNodeID = 0xffc1, .tLabel = label});
+        EXPECT_EQ(callbacks, 1u); // a late response cannot revive an expired attempt
+    }
+}
+
+TEST(AsyncBusContract, DelayedResponseDuringConfiguredSplitWaitCompletesOnce) {
+    DummyCompletionQueue queue; LabelAllocator allocator; TransactionManager manager;
+    ASSERT_TRUE(manager.Initialize());
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+    unsigned callbacks = 0;
+    TxMetadata meta{}; meta.generation = 1; meta.destinationNodeID = 0xffc1; meta.tCode = 0x1;
+    meta.callback = [&](AsyncHandle, AsyncStatus status, uint8_t, std::span<const uint8_t>) {
+        ++callbacks; EXPECT_EQ(status, AsyncStatus::kSuccess);
+    };
+    const auto handle = tracking.RegisterTx(meta);
+    const auto label = static_cast<uint8_t>(handle.value - 1);
+    tracking.OnTxPosted(handle, 1000, 500000);
+    tracking.OnTxCompletion(TxCompletion{.eventCode = OHCIEventCode::kAckPending, .tLabel = label}, 2000);
+    tracking.OnTimeoutTick(1500000); // beyond the old 1.25-second extension budget
+    EXPECT_EQ(callbacks, 0u);
+    tracking.OnRxResponse(RxResponse{.generation = 1, .sourceNodeID = 0xffc1, .tLabel = label});
+    tracking.OnTimeoutTick(3000000);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(AsyncBusContract, ARBeforeATThenDelayedPendingCannotRecreateTransaction) {
+    DummyCompletionQueue queue; LabelAllocator allocator; TransactionManager manager;
+    ASSERT_TRUE(manager.Initialize());
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+    unsigned callbacks = 0;
+    TxMetadata meta{}; meta.generation = 1; meta.destinationNodeID = 0xffc1; meta.tCode = 0x1;
+    meta.callback = [&](AsyncHandle, AsyncStatus, uint8_t, std::span<const uint8_t>) { ++callbacks; };
+    const auto handle = tracking.RegisterTx(meta);
+    const auto label = static_cast<uint8_t>(handle.value - 1);
+    tracking.OnTxPosted(handle, 1000, 500000);
+    tracking.OnRxResponse(RxResponse{.generation = 1, .sourceNodeID = 0xffc1, .tLabel = label});
+    tracking.OnTxCompletion(TxCompletion{.eventCode = OHCIEventCode::kAckPending, .tLabel = label}, 2000);
+    EXPECT_EQ(callbacks, 1u);
+    EXPECT_EQ(manager.Count(), 0u);
+}
+
+TEST(AsyncBusContract, PendingBusResetCancelsWithoutWaitingOrReplay) {
+    DummyCompletionQueue queue; LabelAllocator allocator; TransactionManager manager;
+    ASSERT_TRUE(manager.Initialize());
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+    unsigned callbacks = 0;
+    TxMetadata meta{}; meta.generation = 1; meta.destinationNodeID = 0xffc1; meta.tCode = 0x1;
+    meta.callback = [&](AsyncHandle, AsyncStatus status, uint8_t, std::span<const uint8_t>) {
+        ++callbacks; EXPECT_EQ(status, AsyncStatus::kAborted);
+    };
+    const auto handle = tracking.RegisterTx(meta);
+    tracking.OnTxPosted(handle, 1000, 500000);
+    tracking.OnTxCompletion(TxCompletion{.eventCode = OHCIEventCode::kAckPending,
+        .tLabel = static_cast<uint8_t>(handle.value - 1)}, 2000);
+    tracking.CancelByGeneration(1);
+    tracking.OnTimeoutTick(3000000);
+    EXPECT_EQ(callbacks, 1u);
+    EXPECT_EQ(manager.Count(), 0u);
+}
+
+TEST(AsyncBusContract, ExpiredLabelIsProtectedForSameNodeAcrossAllocatorWrap) {
+    LabelAllocator allocator;
+    const auto label = allocator.Allocate(0xffc1, 1000);
+    ASSERT_EQ(label, 0u);
+    allocator.Quarantine(label, 0xffc1, 4002000);
+    allocator.Free(label);
+    for (unsigned i = 0; i < 64; ++i) {
+        const auto next = allocator.Allocate(0xffc1, 3000000);
+        ASSERT_NE(next, LabelAllocator::kInvalidLabel);
+        EXPECT_NE(next, label);
+        allocator.Free(next);
+    }
+    allocator.ClearBitmap(); // stale-bitmap recovery must preserve the protection
+    EXPECT_EQ(allocator.Allocate(0xffc0, 3000000), label); // another node is independent
+    allocator.Free(label);
+    allocator.ClearBitmap();
+    EXPECT_EQ(allocator.Allocate(0xffc1, 4002000), label);
+}
+
+TEST(AsyncBusContract, DelayedATTimestampCorrelationAccountsForEightSecondWrap) {
+    using ASFW::FW::SplitTimeout;
+    const uint16_t stamp = static_cast<uint16_t>((7u << 13) | 7990u);
+    const uint32_t current = 10u << 12;
+    EXPECT_EQ(SplitTimeout::RequestTimeUs(stamp, current, 1000000), 997625u);
+    EXPECT_EQ(SplitTimeout::RequestTimeUs(100, 100u << 12, 1000000), 1000000u);
+}
+
+TEST(AsyncBusContract, TimeoutHistoryForAnotherNodeDoesNotEraseEarlierProtection) {
+    LabelAllocator allocator;
+    allocator.Quarantine(0, 0xffc1, 4000000);
+    allocator.Quarantine(0, 0xffc2, 3500000);
+    EXPECT_NE(allocator.Allocate(0xffc1, 3600000), 0);
+    allocator.ClearBitmap();
+    EXPECT_EQ(allocator.Allocate(0xffc2, 3600000), 0);
+}
+
+TEST(AsyncBusContract, NegativeATEventsTerminateReadRatherThanWaitingForData) {
+    for (const auto event : {OHCIEventCode::kAckDataError, OHCIEventCode::kAckTypeError,
+                             OHCIEventCode::kEvtFlushed, OHCIEventCode::kEvtMissingAck}) {
+        DummyCompletionQueue queue; LabelAllocator allocator; TransactionManager manager;
+        ASSERT_TRUE(manager.Initialize());
+        Track_Tracking<DummyCompletionQueue> tracking(&allocator, &manager, queue);
+        unsigned callbacks = 0;
+        TxMetadata meta{}; meta.generation = 1; meta.destinationNodeID = 0xffc1; meta.tCode = 0x4;
+        meta.completionStrategy = CompletionStrategy::CompleteOnAR;
+        meta.callback = [&](AsyncHandle, AsyncStatus status, uint8_t, std::span<const uint8_t>) {
+            ++callbacks; EXPECT_NE(status, AsyncStatus::kSuccess);
+        };
+        const auto handle = tracking.RegisterTx(meta);
+        tracking.OnTxPosted(handle, 1000, 500000);
+        tracking.OnTxCompletion(TxCompletion{.eventCode = event, .ackCode = 0x1,
+            .tLabel = static_cast<uint8_t>(handle.value - 1)});
+        EXPECT_EQ(callbacks, 1u);
+        EXPECT_EQ(manager.Count(), 0u);
+    }
+}

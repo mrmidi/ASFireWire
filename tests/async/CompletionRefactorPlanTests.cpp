@@ -147,7 +147,6 @@ TEST(CompletionRefactorPlan, ReadRequiresAR_EvenIfAckComplete) {
     auto* txn = h.AllocateTxn(/*label=*/4, /*gen=*/4, /*node=*/0x4444,
                               /*tcode=*/0x4, CompletionStrategy::CompleteOnAR, cb);
     ASSERT_NE(txn, nullptr);
-    txn->SetSkipATCompletion(true);  // mimic RegisterTx behavior for reads
 
     h.handler.OnATCompletion(MakeTx(/*label=*/4, /*ackCode=*/0x0));
 
@@ -169,7 +168,6 @@ TEST(CompletionRefactorPlan, ARResponseMatchesWhenOnlyBusBitsDiffer) {
     auto* txn = h.AllocateTxn(/*label=*/6, /*gen=*/6, /*node=*/0xffc2,
                               /*tcode=*/0x9, CompletionStrategy::CompleteOnAR, cb);
     ASSERT_NE(txn, nullptr);
-    txn->SetSkipATCompletion(true);  // mimic RegisterTx behavior for lock/read operations
     txn->TransitionTo(TransactionState::ATCompleted, "test");
     txn->TransitionTo(TransactionState::AwaitingAR, "test");
 
@@ -196,7 +194,6 @@ TEST(CompletionRefactorPlan, ARResponseRejectsDifferentNodeNumber) {
     auto* txn = h.AllocateTxn(/*label=*/7, /*gen=*/7, /*node=*/0xffc2,
                               /*tcode=*/0x9, CompletionStrategy::CompleteOnAR, cb);
     ASSERT_NE(txn, nullptr);
-    txn->SetSkipATCompletion(true);
     txn->TransitionTo(TransactionState::ATCompleted, "test");
     txn->TransitionTo(TransactionState::AwaitingAR, "test");
 

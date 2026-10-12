@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FireWireBusPort.hpp"
+#include "BusyReadRetry.hpp"
 #include "../../Common/WireFormat.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 
@@ -62,16 +63,17 @@ public:
             return {};
         }
         const auto route = route_;
+        auto* registry = &routeRegistry_;
         return busOps_.ReadQuad(route.generation,
                                 NodeId(),
                                 address,
                                 ResolveSpeed(speedOverride),
-                                [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                  std::span<const uint8_t> payload) mutable {
                                     if (!callback) {
                                         return;
                                     }
-                                    if (!routeRegistry_.IsCurrent(route)) {
+                                    if (!registry->IsCurrent(route)) {
                                         callback(Async::AsyncStatus::kStaleGeneration, 0U);
                                         return;
                                     }
@@ -85,6 +87,20 @@ public:
                                     }
                                     callback(Async::AsyncStatus::kSuccess, FW::ReadBE32(payload.data()));
                                 });
+    }
+
+    // Opt-in BUSY recovery; owns a fixed route for the complete logical read.
+    // Caller publishes ownership before Begin and cancels before its callback owner dies.
+    [[nodiscard]] std::shared_ptr<BusyReadRetry> CreateQuadBEBusyRead(
+        Scheduling::ITimerScheduler* scheduler, Async::FWAddress address, QuadReadCallback callback)
+    {
+        auto io = *this;
+        return BusyReadRetry::Create(scheduler,
+            [io, address](QuadReadCallback completion) mutable {
+                return io.ReadQuadBE(address, std::move(completion));
+            },
+            [bus = &busOps_](Async::AsyncHandle handle) { (void)bus->Cancel(handle); },
+            [io] { return io.IsRouteCurrent(); }, std::move(callback));
     }
 
     // RME Fireface vendor registers are little-endian quadlets. Keep these

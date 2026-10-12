@@ -5,6 +5,7 @@
 #include "Contexts/ATResponseContext.hpp"
 
 #include "../Logging/Logging.hpp"
+#include "../Hardware/HardwareInterface.hpp"
 #include "../Shared/Memory/DMAMemoryManager.hpp"
 
 namespace ASFW::Async {
@@ -23,7 +24,13 @@ uint32_t AsyncSubsystem::DrainTxCompletions(const char* reason) {
             return;
         }
         while (auto completion = ctx->ScanCompletion()) {
-            tracking_->OnTxCompletion(*completion);
+            uint64_t requestTimeUs = GetCurrentTimeUsec();
+            if (hardware_ && completion->eventCode == OHCIEventCode::kAckPending) {
+                const auto cycleTimer = hardware_->ReadCycleTime();
+                requestTimeUs = FW::SplitTimeout::RequestTimeUs(completion->timeStamp, cycleTimer,
+                                                               GetCurrentTimeUsec());
+            }
+            tracking_->OnTxCompletion(*completion, requestTimeUs);
             ++drained;
         }
     };

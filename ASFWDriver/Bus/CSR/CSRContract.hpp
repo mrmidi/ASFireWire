@@ -62,6 +62,8 @@ inline constexpr CSRRegisterContract kBusManagerCSRContract[] = {
      "NODE_IDS"},
     {FW::kCSR_ResetStart, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::WriteOnly,
      "RESET_START"},
+    {FW::kCSR_SplitTimeoutHi, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadWrite, "SPLIT_TIMEOUT_HI"},
+    {FW::kCSR_SplitTimeoutLo, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadWrite, "SPLIT_TIMEOUT_LO"},
     {FW::kCSR_BusManagerID, 4, CSRRegisterOwner::HardwareOHCI, CSRAccessPolicy::ReadLock,
      "BUS_MANAGER_ID"},
     {FW::kCSR_BandwidthAvailable, 4, CSRRegisterOwner::HardwareOHCI,

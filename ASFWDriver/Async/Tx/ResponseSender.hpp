@@ -5,6 +5,8 @@
 #include <atomic>
 
 #include "../ResponseCode.hpp"
+#include "../../Bus/Timing/SplitTimeout.hpp"
+#include <memory>
 #include "../Rx/PacketRouter.hpp"
 
 namespace ASFW::Async {
@@ -22,7 +24,8 @@ public:
     ResponseSender(DescriptorBuilder& builder,
                    Tx::Submitter& submitter,
                    Engine::ContextManager& ctxMgr,
-                   Bus::GenerationTracker& generationTracker) noexcept;
+                   Bus::GenerationTracker& generationTracker,
+                   std::shared_ptr<FW::SplitTimeout> splitTimeout = std::make_shared<FW::SplitTimeout>()) noexcept;
 
     /// Build and transmit a WrResp for the given request packet.
     /// Skips transmission for broadcast requests (destID=0xFFFF).
@@ -64,6 +67,7 @@ private:
     Tx::Submitter& submitter_;
     Engine::ContextManager& ctxMgr_;
     Bus::GenerationTracker& generationTracker_;
+    std::shared_ptr<FW::SplitTimeout> splitTimeout_;
     ScratchRegion lockResponseScratch_;
 };
 

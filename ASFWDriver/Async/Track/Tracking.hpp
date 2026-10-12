@@ -65,7 +65,8 @@ public:
     Track_Tracking(LabelAllocator* allocator,
                    TransactionManager* txnMgr,
                    TCompletionQueue& completionQueue,
-                   Engine::ContextManager* contextManager = nullptr)
+                   Engine::ContextManager* contextManager = nullptr,
+                   std::shared_ptr<FW::SplitTimeout> splitTimeout = std::make_shared<FW::SplitTimeout>())
         : labelAllocator_(allocator),
           txnMgr_(txnMgr),
           completionQueue_(completionQueue),
@@ -88,7 +89,7 @@ public:
         }
 
         // Create TransactionCompletionHandler with both txnMgr and labelAllocator
-        txnHandler_ = std::make_unique<TransactionCompletionHandler>(txnMgr, allocator);
+        txnHandler_ = std::make_unique<TransactionCompletionHandler>(txnMgr, allocator, std::move(splitTimeout));
     }
 
     ~Track_Tracking() {
@@ -112,7 +113,7 @@ public:
         }
 
         // Allocate a free label from the bitmap allocator to avoid collisions
-        uint8_t label = labelAllocator_->Allocate();
+        uint8_t label = labelAllocator_->Allocate(meta.destinationNodeID);
         if (label == LabelAllocator::kInvalidLabel) {
             ::IOLockUnlock(lock_);
             ASFW_LOG(Async, "ERROR: RegisterTx failed - no available tLabels");
@@ -146,13 +147,6 @@ public:
         txn->SetTimeout(200);  // TODO: Get from config or meta
         txn->SetTCode(meta.tCode);  // Store tCode for IsReadOperation() check
         txn->SetCompletionStrategy(meta.completionStrategy);
-
-        // EXPLICIT: Mark read operations to skip AT completion
-        if (meta.completionStrategy == CompletionStrategy::CompleteOnAR) {
-            txn->SetSkipATCompletion(true);
-            ASFW_LOG_V3(Async, "🔍 [RegisterTx] Read operation: will skip AT completion, strategy=%{public}s",
-                        ToString(meta.completionStrategy));
-        }
 
         ASFW_LOG_V3(Async, "🔍 [RegisterTx] meta.callback valid=%d for tLabel=%u",
                     meta.callback ? 1 : 0, label);
@@ -253,16 +247,6 @@ public:
         bool found = txnMgr_->WithTransaction(TLabel{label}, [&](Transaction* txn) {
             // Transition to ATPosted state
             txn->TransitionTo(TransactionState::ATPosted, "OnTxPosted");
-
-            // EXPLICIT: Read operations bypass AT completion (go straight to AwaitingAR)
-            // This matches Apple's IOFWReadQuadCommand gotAck() pattern:
-            // - gotAck() stores ackCode but doesn't complete
-            // - gotPacket() completes the command with response data
-            if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnAR) {
-                txn->TransitionTo(TransactionState::ATCompleted, "OnTxPosted: CompleteOnAR bypass");
-                txn->TransitionTo(TransactionState::AwaitingAR, "OnTxPosted: CompleteOnAR bypass");
-                ASFW_LOG_V3(Async, "  📤 Read operation: bypassing AT completion, going to AwaitingAR");
-            }
 
             // Set deadline for timeout
             txn->SetDeadline(nowUsec + timeoutUsec);
@@ -422,13 +406,13 @@ public:
 
     LabelAllocator* GetLabelAllocator() const { return labelAllocator_; }
 
-    void OnTxCompletion(const TxCompletion& completion) {
+    void OnTxCompletion(const TxCompletion& completion, uint64_t requestTimeUs = Engine::NowUs()) {
         if (!txnHandler_) {
             return;
         }
 
         // Phase 2.0: Transaction-only path
-        txnHandler_->OnATCompletion(completion);
+        txnHandler_->OnATCompletion(completion, requestTimeUs);
     }
 
     // Accessors

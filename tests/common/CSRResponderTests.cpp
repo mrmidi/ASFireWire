@@ -374,3 +374,22 @@ TEST(CSRResponder, BroadcastChannel_NullDep_ReturnsInitial) {
     const auto res = rsp.ReadQuadlet(FW::kCSR_BroadcastChannel);
     EXPECT_EQ(res.readValue, FW::kBroadcastChannelInitial);
 }
+
+TEST(CSRResponder, SplitTimeoutCSRsDriveResponseDeadlineAndHonorMasksAndMinimum) {
+    auto timing = std::make_shared<FW::SplitTimeout>();
+    CSRResponder responder(CSRResponder::Deps{.splitTimeout = timing});
+    EXPECT_EQ(responder.ReadQuadlet(FW::kCSR_SplitTimeoutHi).readValue, 2u);
+    EXPECT_EQ(responder.ReadQuadlet(FW::kCSR_SplitTimeoutLo).readValue, 0u);
+    EXPECT_EQ(timing->Microseconds(), 2000000u);
+    EXPECT_EQ(timing->ResponseDeadline(static_cast<uint16_t>((7u << 13) | 7900u)),
+              static_cast<uint16_t>((1u << 13) | 7900u));
+    EXPECT_EQ(responder.WriteQuadlet(FW::kCSR_SplitTimeoutHi, 0).rcode, ResponseCode::Complete);
+    EXPECT_EQ(responder.WriteQuadlet(FW::kCSR_SplitTimeoutLo, 800u << 19).rcode, ResponseCode::Complete);
+    EXPECT_EQ(timing->Microseconds(), 100000u);
+    (void)responder.WriteQuadlet(FW::kCSR_SplitTimeoutLo, 1u);
+    EXPECT_EQ(responder.ReadQuadlet(FW::kCSR_SplitTimeoutLo).readValue, 0u);
+    EXPECT_EQ(timing->Microseconds(), 100000u); // retain stored value, clamp effective timeout
+    (void)responder.WriteQuadlet(FW::kCSR_SplitTimeoutHi, 0xffffffffu);
+    EXPECT_EQ(responder.ReadQuadlet(FW::kCSR_SplitTimeoutHi).readValue, 7u);
+    EXPECT_EQ(timing->Microseconds(), 3000000u); // OHCI expiry window, like Linux
+}

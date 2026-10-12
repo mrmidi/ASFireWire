@@ -51,6 +51,7 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
     }
 }
 MotuProtocol::~MotuProtocol() {
+    if (confirmRead_) confirmRead_->Cancel();
     if (notifications_ && notifications_->Valid()) notifications_->Cancel();
 }
 
@@ -80,6 +81,7 @@ IOReturn MotuProtocol::Initialize() {
 IOReturn MotuProtocol::Shutdown() {
     initialized_ = false;
     shuttingDown_.store(true, std::memory_order_release);
+    if (confirmRead_) confirmRead_->Cancel();
     if (notifications_ && notifications_->Valid()) notifications_->Cancel();
     cachedSampleRateHz_.store(0, std::memory_order_release);
 
@@ -110,6 +112,7 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
                                           std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
     (void)avcUnit; // MOTU is register-based; no AV/C.
     if (route == route_) return;
+    if (confirmRead_) confirmRead_->Cancel();
     route_ = route;
     io_.UpdateRoute(route);
     if (notifications_ && notifications_->Valid()) notifications_->UpdateRoute(route);
@@ -751,9 +754,12 @@ void MotuProtocol::ReadDuplexConfirmation(ConfirmCallback callback) {
     const uint32_t expectedRx = deviceRxChannel_.load(std::memory_order_acquire);
     const uint32_t expectedTx = deviceTxChannel_.load(std::memory_order_acquire);
 
-    (void)io_.ReadQuadBE(
-        AddressOf(Reg::IsocCommControl),
-        [this, expectedRx, expectedTx, callback = std::move(callback)](Async::AsyncStatus status,
+    const auto generation = route_.generation;
+    const auto runtimeCaps = MakeRuntimeCaps();
+    const auto rate = preparedRateHz_.load(std::memory_order_acquire);
+    // The completion owns its result inputs; it never dereferences the protocol
+    // after a cancellation/destruction race on another service queue.
+    auto completion = [expectedRx, expectedTx, generation, runtimeCaps, rate, callback = std::move(callback)](Async::AsyncStatus status,
                                                                        uint32_t value) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
@@ -777,17 +783,28 @@ void MotuProtocol::ReadDuplexConfirmation(ConfirmCallback callback) {
             }
 
             DuplexConfirmResult result{};
-            result.generation = busInfo_.GetGeneration();
+            result.generation = generation;
             result.channels.hostToDeviceIsoChannel = static_cast<uint8_t>(expectedRx);
             result.channels.deviceToHostIsoChannel = static_cast<uint8_t>(expectedTx);
             result.appliedClock =
-                AudioClockConfig{.sampleRateHz = preparedRateHz_.load(std::memory_order_acquire)};
-            result.runtimeCaps = MakeRuntimeCaps();
+                AudioClockConfig{.sampleRateHz = rate};
+            result.runtimeCaps = runtimeCaps;
             result.status = value;
             if (callback) {
                 callback(ok ? kIOReturnSuccess : kIOReturnNotReady, result);
             }
-        });
+        };
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        completion(Async::AsyncStatus::kAborted, 0);
+        return;
+    }
+    if (confirmRead_ && !confirmRead_->Done()) {
+        completion(Async::AsyncStatus::kBusyRetryExhausted, 0);
+        return;
+    }
+    confirmRead_ = io_.CreateQuadBEBusyRead(timerScheduler_, AddressOf(Reg::IsocCommControl),
+                                             std::move(completion));
+    confirmRead_->Begin();
 }
 
 void MotuProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,

@@ -207,6 +207,7 @@ private:
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     const uint32_t unitSwVersion_;
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    std::shared_ptr<Protocols::Ports::BusyReadRetry> confirmRead_;
     std::shared_ptr<NotificationMailbox> notifications_;
     uint64_t notificationAddress_{0};
     Discovery::DeviceRouteToken route_;

@@ -5,11 +5,13 @@ namespace ASFW::Async {
 ResponseSender::ResponseSender(DescriptorBuilder& builder,
                                Tx::Submitter& submitter,
                                Engine::ContextManager& ctxMgr,
-                               Bus::GenerationTracker& generationTracker) noexcept
+                               Bus::GenerationTracker& generationTracker,
+                               std::shared_ptr<FW::SplitTimeout> splitTimeout) noexcept
     : builder_(builder)
     , submitter_(submitter)
     , ctxMgr_(ctxMgr)
-    , generationTracker_(generationTracker) {}
+    , generationTracker_(generationTracker)
+    , splitTimeout_(std::move(splitTimeout)) {}
 
 void ResponseSender::SendWriteResponse(const ARPacketView& request, ResponseCode rcode) noexcept {
     // Stub implementation

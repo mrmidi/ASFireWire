@@ -172,8 +172,8 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     }
     
     // Step 10: Schedule timeout
-    // Increased from 250ms to 500ms: with retries, this aligns better with
-    // FCP timeout windows and avoids expiring just before valid AR responses.
+    // Transmit watchdog only. ACK_PENDING replaces this with the controller
+    // split-response deadline; AV/C response timing belongs to FCPTransport.
     const uint64_t now = subsys.GetCurrentTimeUsec();
     constexpr uint64_t kDefaultTimeoutUsec = 500'000;  // 500ms per attempt
     subsys.GetTracking()->OnTxPosted(handle, now, kDefaultTimeoutUsec);

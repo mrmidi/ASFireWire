@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <map>
+#include <latch>
+#include <thread>
 #include <optional>
 #include <string>
 #include <vector>
@@ -1450,4 +1452,228 @@ TEST(MotuV3Protocol, ResetDuringRegistrationCannotPublishStaleRegisteredState) {
     bus.CompleteNextWrite();
     EXPECT_EQ(result, kIOReturnOffline);
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
+}
+
+TEST(MotuV2DuplexTests, ConfirmBusyDuringClockNotificationRetriesAfterTwentyMilliseconds) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnSuccess);
+    });
+    const auto firstReadCount = bus.reads.size();
+    EXPECT_EQ(callbacks, 0u);
+    timer.Advance(19'999'999);
+    EXPECT_EQ(bus.reads.size(), firstReadCount);
+    bus.readStatus = AsyncStatus::kSuccess;
+    timer.Advance(1);
+    EXPECT_EQ(bus.reads.size(), firstReadCount + 1);
+    EXPECT_EQ(callbacks, 1u);
+    EXPECT_EQ(timer.PendingCount(), 0u);
+}
+
+TEST(MotuV2DuplexTests, ConfirmBusyStopsAfterThreeAttemptsWithoutBlockingTimerQueue) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+    const auto before = bus.reads.size();
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnBusy);
+    });
+    bool unrelatedWork = false;
+    (void)timer.ScheduleAfter(1'000'000, [&] { unrelatedWork = true; });
+    timer.Advance(1'000'000);
+    EXPECT_TRUE(unrelatedWork);
+    EXPECT_EQ(callbacks, 0u);
+    timer.Advance(39'000'000);
+    EXPECT_EQ(bus.reads.size(), before + 3);
+    EXPECT_EQ(callbacks, 1u);
+    EXPECT_EQ(timer.PendingCount(), 0u);
+}
+
+TEST(MotuV2DuplexTests, ShutdownCancelsBusyBackoffBeforeAnotherRead) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnAborted);
+    });
+    const auto before = bus.reads.size();
+    EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
+    timer.Advance(100'000'000);
+    EXPECT_EQ(bus.reads.size(), before);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(MotuV2DuplexTests, ConfirmTimeoutIsNotReplayedByBusyRecovery) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kTimeout;
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnTimeout);
+    });
+    const auto before = bus.reads.size();
+    timer.Advance(100'000'000);
+    EXPECT_EQ(bus.reads.size(), before);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(MotuV2DuplexTests, BusResetDuringBusyBackoffDoesNotReadReusedNodeID) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnOffline);
+    });
+    const auto before = bus.reads.size();
+    routes.registry.InvalidateLiveMappingsForBusReset();
+    timer.Advance(20'000'000);
+    EXPECT_EQ(bus.reads.size(), before);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(MotuV2DuplexTests, DestroyDuringBusyBackoffCancelsTimerAndCompletesOnce) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    unsigned callbacks = 0;
+    {
+        MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+        protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+        bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+        protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+            ++callbacks; EXPECT_EQ(status, kIOReturnAborted);
+        });
+    }
+    const auto before = bus.reads.size();
+    EXPECT_EQ(timer.PendingCount(), 0u);
+    timer.Advance(100'000'000);
+    EXPECT_EQ(bus.reads.size(), before);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(MotuV2DuplexTests, CancelInFlightRetryIgnoresItsLaterCompletion) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnAborted);
+    });
+    bus.readStatus = AsyncStatus::kSuccess;
+    bus.deferReads = true;
+    timer.Advance(20'000'000);
+    ASSERT_EQ(bus.deferredReads.size(), 1u);
+    EXPECT_EQ(protocol.Shutdown(), kIOReturnSuccess);
+    bus.CompleteNextRead();
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(BusyReadRetry, CancelDuringSubmissionCancelsHandleWhenSubmissionReturns) {
+    ASFW::Testing::FakeTimerScheduler timer;
+    using Operation = ASFW::Protocols::Ports::BusyReadRetry;
+    Operation::Callback pending;
+    std::latch submitting{1}, release{1};
+    unsigned attempts = 0, callbacks = 0, cancellations = 0;
+    auto operation = Operation::Create(&timer,
+        [&](Operation::Callback completion) {
+            ++attempts;
+            if (attempts == 1) {
+                pending = std::move(completion);
+                return AsyncHandle{1};
+            }
+            submitting.count_down();
+            release.wait();
+            return AsyncHandle{42};
+        },
+        [&](AsyncHandle handle) { EXPECT_EQ(handle.value, 42u); ++cancellations; },
+        [] { return true; },
+        [&](AsyncStatus status, uint32_t) { ++callbacks; EXPECT_EQ(status, AsyncStatus::kAborted); });
+    operation->Begin();
+    pending(AsyncStatus::kBusyRetryExhausted, 0);
+    std::thread control([&] { timer.Advance(20'000'000); });
+    submitting.wait();
+    operation->Cancel();
+    release.count_down();
+    control.join();
+    EXPECT_EQ(callbacks, 1u);
+    EXPECT_EQ(cancellations, 1u);
+    EXPECT_TRUE(operation->Done());
+}
+
+TEST(BusyReadRetry, CancelDuringTimerInsertionCancelsTokenWhenSchedulerReturns) {
+    using Operation = ASFW::Protocols::Ports::BusyReadRetry;
+    struct Scheduler final : ASFW::Scheduling::ITimerScheduler {
+        ASFW::Testing::FakeTimerScheduler backing;
+        std::latch inserting{1}, release{1};
+        ASFW::Scheduling::TimerToken ScheduleAfter(uint64_t delay, std::function<void()> fn) override {
+            const auto token = backing.ScheduleAfter(delay, std::move(fn));
+            inserting.count_down(); release.wait();
+            return token;
+        }
+        void Cancel(ASFW::Scheduling::TimerToken token) override { backing.Cancel(token); }
+        uint64_t NowNs() const noexcept override { return backing.NowNs(); }
+    } timer;
+    Operation::Callback pending;
+    unsigned callbacks = 0, attempts = 0;
+    auto operation = Operation::Create(&timer,
+        [&](Operation::Callback completion) { ++attempts; pending = std::move(completion); return AsyncHandle{1}; },
+        [](AsyncHandle) {}, [] { return true; },
+        [&](AsyncStatus status, uint32_t) { ++callbacks; EXPECT_EQ(status, AsyncStatus::kAborted); });
+    operation->Begin();
+    std::thread control([&] { pending(AsyncStatus::kBusyRetryExhausted, 0); });
+    timer.inserting.wait();
+    operation->Cancel();
+    timer.release.count_down();
+    control.join();
+    EXPECT_EQ(timer.backing.PendingCount(), 0u);
+    timer.backing.Advance(100'000'000);
+    EXPECT_EQ(attempts, 1u);
+    EXPECT_EQ(callbacks, 1u);
+}
+
+TEST(MotuV2DuplexTests, ReentrantConfirmKeepsTheNewBusyOperationOwned) {
+    RecordingBus bus; RouteState routes; ASFW::Testing::FakeTimerScheduler timer;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptNone, kOptNone);
+    bus.readValues[LowOf(Reg::PacketFormat)] = 0;
+    bus.readValues[LowOf(Reg::IsocCommControl)] = 0xC5C90000U;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion, nullptr, &timer);
+    protocol.PrepareDuplex(MakeChannels(), kClock48k, [](IOReturn, DuplexPrepareResult) {});
+    unsigned callbacks = 0;
+    protocol.ConfirmDuplexStart([&](IOReturn status, DuplexConfirmResult) {
+        ++callbacks; EXPECT_EQ(status, kIOReturnSuccess);
+        bus.readStatus = AsyncStatus::kBusyRetryExhausted;
+        protocol.ConfirmDuplexStart([&](IOReturn nestedStatus, DuplexConfirmResult) {
+            ++callbacks; EXPECT_EQ(nestedStatus, kIOReturnSuccess);
+        });
+    });
+    EXPECT_EQ(callbacks, 1u);
+    bus.readStatus = AsyncStatus::kSuccess;
+    timer.Advance(20'000'000);
+    EXPECT_EQ(callbacks, 2u);
 }

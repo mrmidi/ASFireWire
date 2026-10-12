@@ -352,7 +352,7 @@ kern_return_t AsyncSubsystem::InitializeCoreStartState(size_t completionQueueCap
     completionQueue_->Activate();
 
     tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
-        labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
+        labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr, splitTimeout_);
 
     asyncTraceCapture_ = std::make_unique<Debug::AsyncTraceCapture>();
     std::memset(&inboundCSRStats_, 0, sizeof(inboundCSRStats_));
@@ -427,7 +427,7 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
                                            *generationTracker_, *packetRouter_);
 
     responseSender_ = std::make_unique<ResponseSender>(*descriptorBuilderResponse_, *submitter_,
-                                                       *contextManager_, *generationTracker_);
+                                                       *contextManager_, *generationTracker_, splitTimeout_);
     packetRouter_->SetResponseSender(responseSender_.get());
 
     ASFW_LOG(Async, "✓ ContextManager provisioned");
@@ -696,12 +696,13 @@ void AsyncSubsystem::OnTimeoutTick() {
 
     const uint64_t nowUsec = GetCurrentMonotonicTimeUsec();
 
+    const uint32_t drainedByWatchdog = DrainTxCompletions("watchdog");
+
     // Delegate timeout processing to Tracking actor
     if (tracking_) {
         tracking_->OnTimeoutTick(nowUsec);
     }
 
-    const uint32_t drainedByWatchdog = DrainTxCompletions("watchdog");
     const bool contextsRearmed = EnsureATContextsRunning("timeout-watchdog");
 
     watchdogTickCount_.fetch_add(1, std::memory_order_relaxed);
