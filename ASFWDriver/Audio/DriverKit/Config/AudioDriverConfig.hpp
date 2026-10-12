@@ -54,6 +54,7 @@ struct ParsedWireStream {
     uint32_t channelOffset{0};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};
     bool hasPcmSlotMap{false};
+    uint32_t packedPcmChunks{0};
 };
 
 struct ParsedAudioDriverConfig {

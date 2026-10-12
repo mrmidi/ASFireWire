@@ -27,6 +27,7 @@ struct RateWireStream final {
     Wire::PcmSlotMap pcmSlots{};
     // DICE multiplexes up to eight physical ports into one AM824 slot.
     uint32_t midiPortCount{0};
+    uint32_t packedPcmChunks{0}; // MOTU wire width, including padding; zero means pcmChannels.
     friend bool operator==(const RateWireStream&, const RateWireStream&) = default;
 };
 
@@ -120,8 +121,9 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
                 (selected->packedPcm
                     ? (stream.midiSlots != 0 || !stream.pcmSlots.IsIdentity() ||
                        messageChunks > 2 ||
-                       stream.dataBlockSize != 1 + ((messageChunks + stream.pcmChannels) * 3 + 3) / 4)
-                    : (stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
+                       (stream.packedPcmChunks && (stream.packedPcmChunks < stream.pcmChannels || stream.packedPcmChunks > kMaxPackedPcmChannels)) ||
+                       stream.dataBlockSize != 1 + ((messageChunks + (stream.packedPcmChunks ? stream.packedPcmChunks : stream.pcmChannels)) * 3 + 3) / 4)
+                    : (stream.packedPcmChunks != 0 || stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
                        !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))))
                 return std::unexpected(ConfigurationError::InvalidFormation);
             static_assert(Encoding::kMaxAmdtpDbs <= 64);

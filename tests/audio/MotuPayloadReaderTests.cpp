@@ -165,3 +165,15 @@ TEST(MotuPayloadReaderTests, NullOutputIsIgnored) {
 }
 
 } // namespace
+
+TEST(MotuPayloadReaderTests, UltraLiteMk3InputsMatchReportedAnalogAndReturnPositions) {
+    using namespace ASFW::Encoding::Motu;
+    std::vector<float> wire(18);
+    for (uint32_t i=0;i<18;++i) wire[i]=float(i+1)/32;
+    const auto block=MakeBlock(wire,DataBlockBytes(18));
+    const auto* layout=PortLayoutFor(0x19,48000,18,true);
+    std::array<float,14> out{};
+    DecodeMotuBlock(block,18,0,out.data(),14,layout->Map());
+    const std::array<uint8_t,14> chunks{2,3,4,5,6,7,8,9,10,11,0,1,12,13};
+    for (uint32_t i=0;i<14;++i) EXPECT_NEAR(out[i],wire[chunks[i]],1e-6f);
+}

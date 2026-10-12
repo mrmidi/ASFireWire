@@ -28,7 +28,7 @@ WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
         uint32_t offset = 0;
         for (const auto& stream : direction) {
             result.push_back({stream.pcmChannels, stream.dataBlockSize,
-                stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots});
+                stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots, stream.packedPcmChunks});
             offset += stream.pcmChannels;
         }
         return result;

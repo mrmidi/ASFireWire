@@ -33,6 +33,7 @@ struct AudioStreamConfig final {
     bool cipSph{false};
     uint8_t motuMessageChunks{2};
     uint8_t motuPcmByteOffset{10};
+    uint8_t motuPcmChunks{0};
     uint8_t sourceChannelOffset{0};
     Encoding::AudioPacketFraming packetFraming{Encoding::AudioPacketFraming::kCip};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};
@@ -52,7 +53,7 @@ struct AudioStreamTxPolicy final {
     uint32_t cadenceSlotWord{0xCF000000};
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
-    Encoding::Motu::MotuPortMap motuPlaybackPorts{};
+    uint32_t motuUnitVersion{0};
     /// MOTU only: the model's transmit presentation lead (RuntimePolicy).
     uint32_t motuPresentationLeadTicks{Encoding::Motu::kDefaultPresentationLeadTicks};
     /// MOTU only: the model's device-relative presentation offset in frames (RuntimePolicy).

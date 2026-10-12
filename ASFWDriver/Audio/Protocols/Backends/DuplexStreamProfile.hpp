@@ -338,7 +338,7 @@ class DuplexStreamProfileResolver final {
             // directory and so can name a version no single unit published.
             const auto choice = policy->plan.unitVersion;
             profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
-                choice != 0 ? choice : record.unitSwVersion.value_or(0U));
+                choice != 0 ? choice : record.unitSwVersion.value_or(0U), caps.sampleRateHz, profile.captureMotuPcmChunks);
         }
 
         // Runtime-conditional on purpose: this device switches wire format with

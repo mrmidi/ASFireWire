@@ -376,7 +376,8 @@ TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuPacked);
     EXPECT_EQ(profile.captureMotuPcmChunks, 14U);
     ASSERT_EQ(profile.captureMotuPorts.size(), 14U);
-    EXPECT_EQ(profile.captureMotuPorts.data(), ASFW::Encoding::Motu::kUltraLiteCapture);
+    EXPECT_EQ(profile.captureMotuPorts[0].chunk, 2U);
+    EXPECT_EQ(profile.captureMotuPorts[10].chunk, 0U);
 }
 
 TEST(DuplexStreamProfileTests, NonMotuDevicesCarryNoPortMap) {

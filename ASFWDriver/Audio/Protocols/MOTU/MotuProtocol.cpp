@@ -409,8 +409,10 @@ bool MotuProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) co
     const auto mode = Encoding::Motu::IndexToMode(static_cast<uint32_t>(Encoding::Motu::RateToIndex(outCaps.sampleRateHz)));
     const auto chunks = ResolvePcmChunks(static_cast<uint32_t>(snapshot), mode, unitSwVersion_);
     if (!chunks.opticalDecoded || !chunks.tx || !chunks.rx) return false;
-    outCaps.hostInputPcmChannels = outCaps.deviceToHostPcmChunks = chunks.tx;
-    outCaps.hostOutputPcmChannels = outCaps.hostToDevicePcmChunks = chunks.rx;
+    outCaps.deviceToHostPcmChunks = chunks.tx;
+    outCaps.hostInputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, outCaps.sampleRateHz, chunks.tx, true);
+    outCaps.hostToDevicePcmChunks = chunks.rx;
+    outCaps.hostOutputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, outCaps.sampleRateHz, chunks.rx, false);
     return true;
 }
 
@@ -433,8 +435,10 @@ std::shared_ptr<const std::vector<Runtime::RateFormation>> MotuProtocol::RateFor
         formation.packedPcm = true;
         formation.packedCaptureMessageChunks = Encoding::Motu::MessageChunks(unitSwVersion_, true);
         formation.packedPlaybackMessageChunks = Encoding::Motu::MessageChunks(unitSwVersion_, false);
-        formation.capture.push_back({chunks.tx, Encoding::Motu::DataBlockQuadlets(chunks.tx, formation.packedCaptureMessageChunks)});
-        formation.playback.push_back({chunks.rx, Encoding::Motu::DataBlockQuadlets(chunks.rx, formation.packedPlaybackMessageChunks)});
+        formation.capture.push_back({Encoding::Motu::HostChannelsFor(unitSwVersion_, rate, chunks.tx, true),
+            Encoding::Motu::DataBlockQuadlets(chunks.tx, formation.packedCaptureMessageChunks), 0, {}, 0, chunks.tx});
+        formation.playback.push_back({Encoding::Motu::HostChannelsFor(unitSwVersion_, rate, chunks.rx, false),
+            Encoding::Motu::DataBlockQuadlets(chunks.rx, formation.packedPlaybackMessageChunks), 0, {}, 0, chunks.rx});
         formations->push_back(std::move(formation));
     }
     return formations;
@@ -447,8 +451,10 @@ void MotuProtocol::ReadRateObservation(std::function<void(IOReturn, RateHardware
         if (index >= 0) {
             const auto chunks = ResolvePcmChunks(static_cast<uint32_t>(opticalSnapshot_.load(std::memory_order_acquire)),
                 Encoding::Motu::IndexToMode(static_cast<uint32_t>(index)), unitSwVersion_);
-            observation.caps.hostInputPcmChannels = observation.caps.deviceToHostPcmChunks = chunks.tx;
-            observation.caps.hostOutputPcmChannels = observation.caps.hostToDevicePcmChunks = chunks.rx;
+            observation.caps.deviceToHostPcmChunks = chunks.tx;
+            observation.caps.hostInputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, clock.sampleRateHz, chunks.tx, true);
+            observation.caps.hostToDevicePcmChunks = chunks.rx;
+            observation.caps.hostOutputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, clock.sampleRateHz, chunks.rx, false);
         }
         observation.caps.sampleRateHz = clock.sampleRateHz;
         observation.clockConfirmed = status == kIOReturnSuccess && clock.sampleRateHz != 0;
@@ -458,35 +464,31 @@ void MotuProtocol::ReadRateObservation(std::function<void(IOReturn, RateHardware
 
 bool MotuProtocol::GetChannelLabels(std::vector<std::string>& inNames,
                                       std::vector<std::string>& outNames) const {
-    const Encoding::Motu::MotuPortMap capture =
-        Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(unitSwVersion_);
-    const Encoding::Motu::MotuPortMap playback =
-        Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(unitSwVersion_);
-    if (capture.empty() && playback.empty()) {
-        return false;
-    }
-    inNames.clear();
-    outNames.clear();
-    for (const Encoding::Motu::MotuPort& port : capture) {
-        inNames.emplace_back(port.name);
-    }
-    for (const Encoding::Motu::MotuPort& port : playback) {
-        outNames.emplace_back(port.name);
-    }
+    AudioStreamRuntimeCaps caps{};
+    if (!GetRuntimeAudioStreamCaps(caps)) return false;
+    const auto capture = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
+        unitSwVersion_, caps.sampleRateHz, caps.deviceToHostPcmChunks);
+    const auto playback = Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+        unitSwVersion_, caps.sampleRateHz, caps.hostToDevicePcmChunks);
+    if (capture.empty() || playback.empty()) return false;
+    inNames.clear(); outNames.clear();
+    for (uint32_t i = 0; i < caps.hostInputPcmChannels; ++i) inNames.emplace_back(capture[i].name);
+    for (uint32_t i = 0; i < caps.hostOutputPcmChannels; ++i) outNames.emplace_back(playback[i].name);
     return true;
 }
 
 AudioStreamRuntimeCaps MotuProtocol::MakeRuntimeCaps() const noexcept {
     AudioStreamRuntimeCaps caps{};
-    caps.hostInputPcmChannels = txPcmChunks_.load(std::memory_order_acquire);
-    caps.hostOutputPcmChannels = rxPcmChunks_.load(std::memory_order_acquire);
+    caps.deviceToHostPcmChunks = txPcmChunks_.load(std::memory_order_acquire);
+    caps.hostToDevicePcmChunks = rxPcmChunks_.load(std::memory_order_acquire);
     // MOTU does not carry AM824 slots: its data blocks are 3-byte chunks past an SPH
     // quadlet. The slot fields stay zero so nothing mistakes this for an AM824 stream.
     caps.deviceToHostAm824Slots = 0;
     caps.hostToDeviceAm824Slots = 0;
-    caps.deviceToHostPcmChunks = caps.hostInputPcmChannels;
-    caps.hostToDevicePcmChunks = caps.hostOutputPcmChannels;
+
     caps.sampleRateHz = preparedRateHz_.load(std::memory_order_acquire);
+    caps.hostInputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, caps.sampleRateHz, caps.deviceToHostPcmChunks, true);
+    caps.hostOutputPcmChannels = Encoding::Motu::HostChannelsFor(unitSwVersion_, caps.sampleRateHz, caps.hostToDevicePcmChunks, false);
     return caps;
 }
 

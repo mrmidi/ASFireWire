@@ -1066,23 +1066,27 @@ TEST(MotuV2DuplexTests, The828mk2SkipsTheFetchingModeWrite) {
 TEST(MotuProtocolChannelLabelTests, UltraLiteNamesFollowHostChannelOrder) {
     RecordingBus bus;
     RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 8;
+    bus.readValues[LowOf(Reg::InOutConfV2)] = 0;
     MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+    protocol.EnsureRuntimeStreamGeometry([](IOReturn status) { EXPECT_EQ(status, kIOReturnSuccess); });
+    bus.reads.clear();
 
     std::vector<std::string> inNames;
     std::vector<std::string> outNames;
     ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
-    ASSERT_EQ(inNames.size(), 14U);
+    ASSERT_EQ(inNames.size(), 12U);
     ASSERT_EQ(outNames.size(), 14U);
     EXPECT_EQ(inNames[0], "Mic 1");
     EXPECT_EQ(inNames[1], "Mic 2");
     EXPECT_EQ(outNames[0], "Main L");
     EXPECT_EQ(outNames[1], "Main R");
     EXPECT_EQ(outNames[12], "Phones L");
-    // Labels are static, so no register traffic is needed to answer.
+    // Labels use the cached formation, with no new register traffic.
     EXPECT_TRUE(bus.reads.empty());
 }
 
-TEST(MotuProtocolChannelLabelTests, UnmappedModelsReportNoLabels) {
+TEST(MotuProtocolChannelLabelTests, UnobservedGeometryReportsNoLabels) {
     RecordingBus bus;
     RouteState routes;
     MotuProtocol protocol(bus, bus, routes.registry, routes.route, /*896HD*/ 0x000005U);
@@ -1205,7 +1209,8 @@ TEST(MotuV2GeometryTests, PublishedFormationsFollowCurrentRateAndEightPreWidths)
     ASSERT_TRUE(caps);
     EXPECT_EQ(caps->sampleRateHz, 96000U);
     EXPECT_EQ(caps->hostInputPcmChannels, 18U);
-    EXPECT_EQ(caps->hostOutputPcmChannels, 14U);
+    EXPECT_EQ(caps->hostOutputPcmChannels, 12U); // two wire padding slots are not host outputs
+    EXPECT_EQ(caps->hostToDevicePcmChunks, 14U);
     const auto forms = protocol.RateFormations();
     ASSERT_TRUE(forms); ASSERT_EQ(forms->size(), 4U);
     EXPECT_EQ(forms->back().sampleRateHz, 96000U);
@@ -1676,4 +1681,33 @@ TEST(MotuV2DuplexTests, ReentrantConfirmKeepsTheNewBusyOperationOwned) {
     bus.readStatus = AsyncStatus::kSuccess;
     timer.Advance(20'000'000);
     EXPECT_EQ(callbacks, 2u);
+}
+
+TEST(MotuProtocolChannelLabelTests, UltraLiteMk3RateTransitionsUpdateNamesAndKeepWirePadding) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)]=0x100;
+    bus.readValues[LowOf(Reg::OpticalBanksV3)]=0;
+    MotuProtocol protocol(bus,bus,routes.registry,routes.route,0x19);
+    ASSERT_EQ(protocol.Initialize(),kIOReturnSuccess);
+    for (const auto& test : std::array<std::array<uint32_t,5>,3>{{
+        {0x100,48000,14,14,18},{0x300,96000,14,14,14},{0x500,192000,10,12,10}}}) {
+        bus.readValues[LowOf(Reg::ClockStatusV2)]=test[0];
+        ASSERT_EQ(protocol.LoadGeometry(),kIOReturnSuccess);
+        const auto caps=protocol.RuntimeCaps(); ASSERT_TRUE(caps);
+        EXPECT_EQ(caps->sampleRateHz,test[1]);
+        EXPECT_EQ(caps->hostInputPcmChannels,test[2]);
+        EXPECT_EQ(caps->hostOutputPcmChannels,test[3]);
+        EXPECT_EQ(caps->deviceToHostPcmChunks,test[4]);
+        EXPECT_EQ(caps->hostToDevicePcmChunks,14U);
+        std::vector<std::string> inNames,outNames;
+        ASSERT_TRUE(protocol.GetChannelLabels(inNames,outNames));
+        ASSERT_EQ(inNames.size(),test[2]); ASSERT_EQ(outNames.size(),test[3]);
+        EXPECT_EQ(inNames[0],"Analog 1"); EXPECT_EQ(outNames[0],"Main L");
+        EXPECT_EQ(outNames[outNames.size()-2],"Phones L");
+        const auto forms=protocol.RateFormations(); ASSERT_TRUE(forms);
+        const auto found=std::ranges::find(*forms,test[1],&ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+        ASSERT_NE(found,forms->end());
+        EXPECT_EQ(found->capture[0].pcmChannels,test[2]);
+        EXPECT_EQ(found->capture[0].packedPcmChunks,test[4]);
+    }
 }

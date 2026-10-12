@@ -91,9 +91,10 @@ struct MotuTx final {
                                policy.motuPresentationOffsetFrames)) {
             return false;
         }
-        writer.Configure({.pcmChunks = txConfig.pcmChannels,
+        writer.Configure({.pcmChunks = txConfig.motuPcmChunks,
                           .sourceChannelOffset = txConfig.sourceChannelOffset,
-                          .ports = policy.motuPlaybackPorts,
+                          .ports = ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+                              policy.motuUnitVersion, txConfig.sampleRate, txConfig.motuPcmChunks),
                           .pcmByteOffset = txConfig.motuPcmByteOffset});
         writer.SetPcmMuted(stamper.IsOutputMuted());
         writer.BindTimeline(&engine.Timeline());
@@ -119,8 +120,9 @@ struct MotuTx final {
 
     // Byte offset, from the CIP header, of host channel 0's PCM in `block`.
     [[nodiscard]] size_t HostChannelZeroAt(uint32_t block) const {
-        const auto ports = EffectivePortMap(profile.TxStreamPolicy().motuPlaybackPorts,
-                                            txConfig.pcmChannels);
+        const auto ports = EffectivePortMap(ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+            profile.TxStreamPolicy().motuUnitVersion, txConfig.sampleRate, txConfig.motuPcmChunks),
+            txConfig.motuPcmChunks);
         return 8 + block * txConfig.dbs * 4 + txConfig.motuPcmByteOffset +
                ChunkForHostChannel(ports, 0) * kBytesPerChunk;
     }

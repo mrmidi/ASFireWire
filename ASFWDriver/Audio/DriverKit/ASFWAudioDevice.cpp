@@ -4,6 +4,7 @@
 //
 // IOUserAudioDevice subclass implementing StartIO/StopIO for transport lifecycle.
 //
+#include "Config/MOTU/MotuProfile.hpp"
 #include <expected>
 #include <cmath>
 #include <new>
@@ -1057,12 +1058,25 @@ void InstallDriverFormation(ASFWAudioDriver_IVars& driver,
         for (uint32_t i = 0; i < count; ++i) {
             destination[i] = {.pcmChannels = streams[i].pcmChannels,
                 .am824Slots = streams[i].dataBlockSize, .midiPorts = streams[i].midiPortCount ? streams[i].midiPortCount : streams[i].midiSlots,
-                .channelOffset = offset, .pcmSlotMap = streams[i].pcmSlots, .hasPcmSlotMap = true};
+                .channelOffset = offset, .pcmSlotMap = streams[i].pcmSlots, .hasPcmSlotMap = true, .packedPcmChunks = streams[i].packedPcmChunks};
             offset += streams[i].pcmChannels;
         }
     };
     copy(resolved.formation.playback, state.playbackStreams, state.playbackStreamCount);
     copy(resolved.formation.capture, state.captureStreams, state.captureStreamCount);
+    if (resolved.formation.packedPcm && state.profile) {
+        const auto version = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(state.profile)->TxStreamPolicy().motuUnitVersion;
+        const auto names = [&](const auto& stream, bool capture, auto& destination) {
+            const auto chunks = stream.packedPcmChunks ? stream.packedPcmChunks : stream.pcmChannels;
+            const auto* layout = ASFW::Encoding::Motu::PortLayoutFor(
+                version, resolved.formation.sampleRateHz, chunks, capture);
+            if (!layout) return;
+            for (uint32_t i = 0; i < stream.pcmChannels; ++i)
+                snprintf(destination[i], sizeof(destination[i]), "%s", layout->ports[i].name);
+        };
+        names(resolved.formation.capture.front(), true, state.inputChannelNames);
+        names(resolved.formation.playback.front(), false, state.outputChannelNames);
+    }
 }
 
 // Validation shared by the request (HandleChangeSampleRate, external resync)

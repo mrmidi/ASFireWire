@@ -73,13 +73,15 @@ BuildResolvedTxStreamConfig(const IAudioStreamProfile& profile,
 
     const ParsedWireStream& wire = resolvedStreams[index];
     const bool packed = profile.TxWireFormat() == Encoding::AudioWireFormat::kMotuPacked;
+    const auto chunks = wire.packedPcmChunks ? wire.packedPcmChunks : wire.pcmChannels;
     if (wire.pcmChannels == 0 || wire.pcmChannels > 255 || wire.am824Slots > 255 ||
-        (packed ? (wire.midiPorts != 0 || !wire.pcmSlotMap.IsIdentity() ||
-            wire.am824Slots != ::ASFW::Encoding::Motu::DataBlockQuadlets(wire.pcmChannels, outConfig.motuMessageChunks)) : wire.am824Slots < wire.pcmChannels) || wire.midiPorts > 255 || wire.channelOffset > 255 ||
+        (packed ? (chunks < wire.pcmChannels || chunks > 34 || wire.midiPorts != 0 || !wire.pcmSlotMap.IsIdentity() ||
+            wire.am824Slots != ::ASFW::Encoding::Motu::DataBlockQuadlets(chunks, outConfig.motuMessageChunks)) : wire.am824Slots < wire.pcmChannels) || wire.midiPorts > 255 || wire.channelOffset > 255 ||
         !wire.pcmSlotMap.FitsWithin(wire.pcmChannels, wire.am824Slots)) return false;
     outConfig.pcmSlotMap = wire.pcmSlotMap;
     outConfig.hasPcmSlotMap = wire.hasPcmSlotMap;
     outConfig.pcmChannels = static_cast<uint8_t>(wire.pcmChannels);
+    outConfig.motuPcmChunks = packed ? static_cast<uint8_t>(chunks) : 0;
     outConfig.midiSlots = static_cast<uint8_t>(wire.midiPorts ? wire.am824Slots - wire.pcmChannels : 0);
     outConfig.dbs = static_cast<uint8_t>(wire.am824Slots);
     // The publisher computed this as the running sum of preceding stream

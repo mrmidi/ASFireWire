@@ -41,6 +41,7 @@ struct ASFWAudioWireStream {
     uint32_t midiPorts{0};
     uint32_t channelOffset{0};
     Wire::PcmSlotMap pcmSlotMap{};
+    uint32_t packedPcmChunks{0};
 
     friend bool operator==(const ASFWAudioWireStream&,
                            const ASFWAudioWireStream&) noexcept = default;
@@ -208,7 +209,7 @@ struct ASFWAudioDevice {
                     uint32_t offset = 0;
                     for (const auto& stream : direction) {
                         result.push_back({stream.pcmChannels, stream.dataBlockSize,
-                            stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots});
+                            stream.midiPortCount ? stream.midiPortCount : stream.midiSlots, offset, stream.pcmSlots, stream.packedPcmChunks});
                         offset += stream.pcmChannels;
                     }
                     return result;
@@ -286,7 +287,8 @@ private:
             auto slots = OSSharedPtr(OSNumber::withNumber(stream.am824Slots, 32), OSNoRetain);
             auto midi = OSSharedPtr(OSNumber::withNumber(stream.midiPorts, 32), OSNoRetain);
             auto offset = OSSharedPtr(OSNumber::withNumber(stream.channelOffset, 32), OSNoRetain);
-            if (!entry || !pcm || !slots || !midi || !offset) {
+            auto chunks = OSSharedPtr(OSNumber::withNumber(stream.packedPcmChunks, 32), OSNoRetain);
+            if (!entry || !pcm || !slots || !midi || !offset || !chunks) {
                 // A partial array describes a device that does not exist. The
                 // caller turns this into a failed publication rather than a
                 // published device with the wrong shape.
@@ -304,6 +306,7 @@ private:
             entry->setObject(PropertyKeys::kStreamAm824Slots, slots.get());
             entry->setObject(PropertyKeys::kStreamMidiPorts, midi.get());
             entry->setObject(PropertyKeys::kStreamChannelOffset, offset.get());
+            if (stream.packedPcmChunks) entry->setObject("ASFWMotuPcmChunks", chunks.get());
             array->setObject(entry.get());
         }
         properties->setObject(key, array.get());

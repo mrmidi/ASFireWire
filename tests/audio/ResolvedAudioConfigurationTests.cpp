@@ -289,3 +289,18 @@ TEST(ResolvedAudioConfigurationTests, RepublishIsDiffedAgainstTheCommittedFormat
     EXPECT_EQ(ClassifyAgainstCommitted(*committed, *missingAt48), GeometryRefreshDecision::kGeometryChanged)
         << "the committed rate is no longer described";
 }
+
+TEST(ResolvedAudioConfigurationTests, PackedPaddingDoesNotAllocateExtraHostChannels) {
+    RateFormation formation{};
+    formation.sampleRateHz=48000;formation.protocolSupported=true;formation.packedPcm=true;
+    formation.playback={{14,13,0,{},0,14}};
+    formation.capture={{14,16,0,{},0,18}};
+    const auto resolved=ResolveAudioConfiguration(48000,{&formation,1},policy,
+        {49152,14,14,4104},0,ConfigurationValidationPolicy::HardwareBatch);
+    ASSERT_TRUE(resolved);
+    EXPECT_EQ(resolved->captureChannels,14U);
+    EXPECT_EQ(resolved->formation.capture[0].dataBlockSize,16U);
+    formation.capture[0].packedPcmChunks=12;
+    EXPECT_FALSE(ResolveAudioConfiguration(48000,{&formation,1},policy,
+        {49152,14,14,4104},0,ConfigurationValidationPolicy::HardwareBatch));
+}

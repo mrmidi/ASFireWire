@@ -8,6 +8,7 @@
 // redesigns this side.
 //
 
+#include "Config/MOTU/MotuProfile.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -885,9 +886,11 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         }
         ivars.runtime.motuPayloadWriter.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
-                .pcmChunks = txConfig.pcmChannels,
+                .pcmChunks = txConfig.motuPcmChunks ? txConfig.motuPcmChunks : txConfig.pcmChannels,
                 .sourceChannelOffset = txConfig.sourceChannelOffset,
-                .ports = txPolicy.motuPlaybackPorts,
+                .ports = ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+                    txPolicy.motuUnitVersion, txConfig.sampleRate,
+                    txConfig.motuPcmChunks ? txConfig.motuPcmChunks : txConfig.pcmChannels),
                 .pcmByteOffset = txConfig.motuPcmByteOffset});
         ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
         ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);

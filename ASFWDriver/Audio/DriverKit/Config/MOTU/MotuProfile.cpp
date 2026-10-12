@@ -21,7 +21,9 @@ void FillStreamConfig(AudioStreamConfig& outConfig, AudioStreamDirection directi
     outConfig.sampleRate = 48000;
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
     outConfig.sid = 0;
-    outConfig.pcmChannels = static_cast<uint8_t>(chunks);
+    outConfig.pcmChannels = static_cast<uint8_t>(::ASFW::Encoding::Motu::HostChannelsFor(
+        version, 48000, chunks, direction == AudioStreamDirection::DeviceToHost));
+    outConfig.motuPcmChunks = static_cast<uint8_t>(chunks);
     // MIDI rides in the data block's second-quadlet message slot rather than an AM824
     // MIDI conformant block, so it costs no PCM chunk here (motu-stream.c:117-131).
     outConfig.midiSlots = 0;
@@ -76,8 +78,8 @@ AudioStreamTxPolicy MotuProfile::TxStreamPolicy() const noexcept {
     // slots -- its message chunks are plain bytes -- so nothing should be pre-filled.
     policy.initializeNonAudioSlots = false;
     policy.defaultNonAudioSlotWord = 0;
-    // Wire order puts the headphone pair first; the map moves Main to host channels 1-2.
-    policy.motuPlaybackPorts = PlaybackPortsForSwVersion(unitSwVersion_);
+    // The producer resolves the port map against its actual rate and wire width.
+    policy.motuUnitVersion = unitSwVersion_;
     if (const auto* model = ::ASFW::Encoding::Motu::FindModel(unitSwVersion_)) {
         policy.motuPresentationLeadTicks = model->runtime.presentationLeadTicks;
         policy.motuPresentationOffsetFrames = model->runtime.presentationOffsetFrames;

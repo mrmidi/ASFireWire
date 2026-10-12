@@ -25,27 +25,15 @@
 namespace ASFW::Isoch::Audio::MOTU::Profiles {
 
 /// Host-to-device port map for a model, by its unit directory software version.
-[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap PlaybackPortsForSwVersion(uint32_t swVersion) noexcept {
-    switch (swVersion) {
-    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
-    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
-        return ::ASFW::Encoding::Motu::kV2Playback;
-    case 0x15: return ::ASFW::Encoding::Motu::k828mk3Playback;
-    default:
-        return {};
-    }
+[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap PlaybackPortsForSwVersion(uint32_t swVersion, uint32_t rateHz = 48000, uint32_t chunks = 0) noexcept {
+    const auto* layout = ::ASFW::Encoding::Motu::PortLayoutFor(swVersion, rateHz, chunks, false);
+    return layout ? layout->Map() : ::ASFW::Encoding::Motu::MotuPortMap{};
 }
 
-/// Device-to-host port map for a model, by its unit directory software version.
-[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap CapturePortsForSwVersion(uint32_t swVersion) noexcept {
-    switch (swVersion) {
-    case DeviceProfiles::Audio::kMotu828mk2SwVersion:
-        return ::ASFW::Encoding::Motu::k828mk2Capture;
-    case DeviceProfiles::Audio::kMotuUltraliteSwVersion:
-        return ::ASFW::Encoding::Motu::kUltraLiteCapture;
-    default:
-        return {};
-    }
+[[nodiscard]] constexpr ::ASFW::Encoding::Motu::MotuPortMap CapturePortsForSwVersion(
+    uint32_t swVersion, uint32_t rateHz = 48000, uint32_t chunks = 0) noexcept {
+    const auto* layout = ::ASFW::Encoding::Motu::PortLayoutFor(swVersion, rateHz, chunks, true);
+    return layout ? layout->Map() : ::ASFW::Encoding::Motu::MotuPortMap{};
 }
 
 class MotuProfile final : public IAudioStreamProfile {

@@ -883,10 +883,9 @@ uint32_t CountLogLines(const char* needle) {
 }
 
 // The byte of host channel 0's PCM in a MOTU data block, from the block start.
-size_t MotuHostChannelZeroOffset(const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile& profile,
-                                 uint32_t unitVersion, uint32_t pcmChannels) {
+size_t MotuHostChannelZeroOffset(uint32_t unitVersion, uint32_t pcmChannels) {
     const auto ports = ASFW::Encoding::Motu::EffectivePortMap(
-        profile.TxStreamPolicy().motuPlaybackPorts, pcmChannels);
+        ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(unitVersion,48000,pcmChannels), pcmChannels);
     return ASFW::Encoding::Motu::PcmByteOffset(unitVersion) +
            ASFW::Encoding::Motu::ChunkForHostChannel(ports, 0) *
                ASFW::Encoding::Motu::kBytesPerChunk;
@@ -919,7 +918,7 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
 
         const uint32_t dbs = rig.Dbs();
         const size_t dataBytes = 8 + 8 * dbs * 4;
-        const size_t mainAt = MotuHostChannelZeroOffset(profile, version, rig.PcmChannels());
+        const size_t mainAt = MotuHostChannelZeroOffset(version, rig.PcmChannels());
         const auto blockSph = [dbs](const WirePacket& packet, uint32_t block) {
             return packet.Quadlet(8 + block * dbs * 4);
         };
@@ -1562,5 +1561,40 @@ TEST(MotuTxCaptureGolden, VendorStartupRxThroughRealProducer) {
     EXPECT_TRUE(state.locked); EXPECT_EQ(state.hardResyncRequests,0U);
     EXPECT_FALSE(rig.Ivars().runtime.motuPayloadWriter.IsPcmMuted());
     if (!leadingNoData) ASFW::Testing::ExpectTextMatchesGolden(trace,"tx/motu-828mk3/vendor-start-rx-48k.txt");
+    }
+}
+
+TEST(AudioDriverTxProducerTests, MotuMappedHostChannelsReachTheRealTransmitProducer) {
+    for (uint32_t version : {0x19U,0xfU}) {
+        SCOPED_TRACE(version);
+        ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile(version);
+        TxProducerRig rig;
+        ASFW::Isoch::Audio::ParsedWireStream stream{};
+        stream.pcmChannels=version==0x19 ? 14 : 12;
+        stream.packedPcmChunks=14; stream.am824Slots=13;
+        rig.SetResolvedPlayback(stream);
+        ASSERT_TRUE(rig.Start(profile,version==0x19 ? ProfileBuilderId::MotuUltraliteMk3 : ProfileBuilderId::Motu8pre,48000));
+        rig.FeedMotuRx(8); rig.EnableHostOutput({});
+        ASSERT_TRUE(rig.RunPackets(4000)) << rig.DescribeFault();
+        ASSERT_FALSE(rig.Ivars().runtime.motuPayloadWriter.IsPcmMuted());
+        uint32_t checked=0;
+        for (size_t i=rig.Wire().size()-500; i<rig.Wire().size(); ++i) {
+            const auto& packet=rig.Wire()[i];
+            if (packet.bytes.size()!=8+8*13*4) continue;
+            const auto chunk=[&](uint32_t n) {
+                const auto at=8+10+3*n;
+                return (uint32_t{packet.bytes[at]}<<16)|(uint32_t{packet.bytes[at+1]}<<8)|packet.bytes[at+2];
+            };
+            if (version==0x19) {
+                EXPECT_NE(chunk(0),0U);
+                EXPECT_EQ(chunk(10)-chunk(12),2U); // host Phones 13 versus S/PDIF 11
+            } else {
+                EXPECT_EQ(chunk(4),0U); EXPECT_EQ(chunk(5),0U);
+                EXPECT_NE(chunk(6),0U); // host optical output 5 survives interior padding
+                EXPECT_EQ(chunk(0)-chunk(2),2U); // host Phones 3 versus Main 1
+            }
+            ++checked;
+        }
+        EXPECT_GT(checked,300U);
     }
 }
