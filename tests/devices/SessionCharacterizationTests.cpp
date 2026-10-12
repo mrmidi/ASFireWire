@@ -216,6 +216,30 @@ constexpr SessionShape kMultimixTwoPlaybackShape{
     "multimix-two-playback", Ids::kAlesisVendorId, Ids::kAlesisMultiMixModelId,
     Ids::kAlesisVendorId, kDiceUnitVersion, &SyntheticDiceImages::kMultimixTwoPlayback, false};
 
+TEST(SessionStudioLive3242, RecordedReportPublishesAndStartsFullWidthDuplex) {
+    const SessionShape shape{"studiolive-3242", Ids::kPreSonusVendorId,
+        Ids::kStudioLive3242ModelId, Ids::kPreSonusVendorId, kDiceUnitVersion,
+        &DiceDeviceImages::kStudiolive3242, false};
+    SessionRig rig(shape);
+    rig.Mark("## Publish recorded presonus3242.txt");
+    ASSERT_TRUE(rig.deviceHost);
+    rig.deviceHost->RefreshPublication(rig.guid);
+    rig.timer.Advance(400'000'000ULL);
+    const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
+    ASSERT_NE(endpoint, nullptr) << "recorded formation must pass publication";
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    ASSERT_TRUE(endpoint->CopyConfig(config));
+    EXPECT_EQ(config.inputChannelCount, 48U);
+    EXPECT_EQ(config.outputChannelCount, 34U);
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    EXPECT_TRUE(rig.IsStreaming());
+    EXPECT_EQ(rig.bus.Device().Enable(), 1U);
+    ASSERT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_FALSE(rig.IsStreaming());
+    EXPECT_EQ(rig.bus.Device().Enable(), 0U);
+    ExpectMatchesGolden(rig.bus.Trace(), "session/studiolive-3242/publish-start-stop.trace");
+}
+
 // Publication resolves the geometry; a refusal returns before the endpoint
 // exists, so CoreAudio would never see the device.
 TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {

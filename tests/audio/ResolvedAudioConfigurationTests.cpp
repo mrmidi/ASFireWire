@@ -43,6 +43,66 @@ TEST(ResolvedAudioConfigurationTests, UsesRateSpecificAdatChannelsInsteadOfScali
     EXPECT_EQ(high->timing.zeroTimestampPeriodFrames, 24576);
 }
 
+TEST(ResolvedAudioConfigurationTests, StudioLive48Capture34PlaybackSurvivesPublication) {
+    // Issue #190: the device reports one 48-slot TX and one 34-slot RX stream.
+    ASFW::Audio::Model::ASFWAudioDevice device;
+    for (uint32_t rate : {44100U, 48000U}) {
+        auto formation = Formation(rate);
+        formation.capture = {{48, 48, 0, {}}};
+        formation.playback = {{34, 34, 0, {}}};
+        device.rateFormationCandidates.push_back(formation);
+    }
+    const auto maximum = MaximumFormationAllocation(device.rateFormationCandidates, {});
+    ASSERT_TRUE(maximum);
+    EXPECT_EQ(maximum->captureChannelCapacity, 48U);
+    EXPECT_EQ(maximum->playbackChannelCapacity, 34U);
+    EXPECT_EQ(maximum->maxPacketBytes, 1544U);
+    for (uint32_t rate : {44100U, 48000U}) {
+        const auto resolved = ResolveAudioConfiguration(rate, device.rateFormationCandidates,
+                                                       policy, *maximum, 1);
+        ASSERT_TRUE(resolved) << rate;
+        EXPECT_EQ(resolved->captureChannels, 48U);
+        EXPECT_EQ(resolved->playbackChannels, 34U);
+        const auto published = ASFW::Audio::Model::WithRateFormation(device, rate);
+        ASSERT_TRUE(published) << rate;
+        EXPECT_EQ(published->inputChannelCount, 48U);
+        EXPECT_EQ(published->outputChannelCount, 34U);
+    }
+}
+
+TEST(ResolvedAudioConfigurationTests, All64SlotsResolveInBothDirectionsWithIdentityAndReverseMaps) {
+    auto formation = Formation(48000);
+    formation.capture = formation.playback = {{64, 64, 0, {}}};
+    const ConfigurationAllocation wide{49152, 64, 64, 4104};
+    for (bool reverse : {false, true}) {
+        if (reverse) {
+            std::array<uint8_t, 64> slots{};
+            for (uint32_t i = 0; i < slots.size(); ++i) slots[i] = 63U - i;
+            ASSERT_TRUE(formation.capture[0].pcmSlots.SetSlots(slots));
+            ASSERT_TRUE(formation.playback[0].pcmSlots.SetSlots(slots));
+        }
+        const auto resolved = ResolveAudioConfiguration(48000, {&formation, 1}, policy, wide, 1);
+        ASSERT_TRUE(resolved) << "reverse=" << reverse;
+        EXPECT_EQ(resolved->captureChannels, 64U);
+        EXPECT_EQ(resolved->playbackChannels, 64U);
+    }
+}
+
+TEST(ResolvedAudioConfigurationTests, UpperHalfSlotsAreDistinctAndDuplicateSlotsStillFail) {
+    auto formation = Formation(48000, 3);
+    formation.capture[0].dataBlockSize = formation.playback[0].dataBlockSize = 64;
+    ASSERT_TRUE(formation.capture[0].pcmSlots.SetSlots(std::array<uint8_t, 3>{0, 32, 63}));
+    ASSERT_TRUE(formation.playback[0].pcmSlots.SetSlots(std::array<uint8_t, 3>{0, 32, 63}));
+    ASSERT_TRUE(ResolveAudioConfiguration(48000, {&formation, 1}, policy, allocation, 1));
+    for (uint8_t duplicate : {uint8_t{0}, uint8_t{32}, uint8_t{63}}) {
+        ASSERT_TRUE(formation.capture[0].pcmSlots.SetSlots(
+            std::array<uint8_t, 3>{duplicate, 1, duplicate}));
+        const auto result = ResolveAudioConfiguration(48000, {&formation, 1}, policy, allocation, 1);
+        ASSERT_FALSE(result);
+        EXPECT_EQ(result.error(), ConfigurationError::InvalidFormation);
+    }
+}
+
 TEST(ResolvedAudioConfigurationTests, CapabilityAndHardwareGatesRejectBeforeSideEffects) {
     auto formation = Formation(48000);
     EXPECT_EQ(ResolveAudioConfiguration(32000, {&formation, 1}, policy, allocation, 1).error(), ConfigurationError::RateNotOffered);

@@ -124,9 +124,10 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
                     : (stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
                        !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))))
                 return std::unexpected(ConfigurationError::InvalidFormation);
-            uint32_t used = 0;
+            static_assert(Encoding::kMaxAmdtpDbs <= 64);
+            uint64_t used = 0;
             for (uint32_t channel = 0; !selected->packedPcm && channel < stream.pcmChannels; ++channel) {
-                const uint32_t bit = uint32_t{1} << stream.pcmSlots.SlotFor(channel);
+                const uint64_t bit = uint64_t{1} << stream.pcmSlots.SlotFor(channel);
                 if (used & bit) return std::unexpected(ConfigurationError::InvalidFormation);
                 used |= bit;
             }

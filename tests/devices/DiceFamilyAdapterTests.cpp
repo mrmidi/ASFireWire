@@ -403,6 +403,31 @@ TEST_F(DescribeFixture, PublicationPreservesThePreparedHardwareRate) {
     EXPECT_EQ(rig.bus.Enable(), 0U);
 }
 
+TEST(DiceFamilyAdapterTests, StudioLiveWideStreamsAreDescribedWithoutTruncation) {
+    const SessionShape shape{"studiolive-3242", 0x000a92, 0x000014, 0x000a92,
+        ASFW::Testing::Session::kDiceUnitVersion,
+        &ASFW::Testing::DICE::DiceDeviceImages::kStudiolive3242, false};
+    SessionRig rig(shape);
+    DiceFamilyAdapter adapter{rig.notifications};
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
+    ASSERT_TRUE(result);
+    const auto* device = std::get_if<ASFWAudioDevice>(&*result);
+    ASSERT_NE(device, nullptr);
+    EXPECT_EQ(device->inputChannelCount, 48U);
+    EXPECT_EQ(device->outputChannelCount, 34U);
+    ASSERT_EQ(device->captureStreams.size(), 1U);
+    ASSERT_EQ(device->playbackStreams.size(), 1U);
+    EXPECT_EQ(device->captureStreams[0].am824Slots, 48U);
+    EXPECT_EQ(device->playbackStreams[0].am824Slots, 34U);
+    EXPECT_EQ(device->sampleRates, std::vector<uint32_t>{48000});
+    ASSERT_EQ(device->inputChannelNames.size(), 48U);
+    EXPECT_EQ(device->inputChannelNames[32], "AUX1");
+    EXPECT_EQ(device->inputChannelNames.back(), "AUX16");
+    ASSERT_EQ(device->outputChannelNames.size(), 34U);
+    EXPECT_EQ(device->outputChannelNames[32], "2TrackL");
+    EXPECT_EQ(device->outputChannelNames.back(), "2TrackR");
+}
+
 TEST_F(DescribeFixture, MissingProtocolIsRefusedAsNoProtocol) {
     DescribeInput in = MakeInput(rig);
     in.protocol = nullptr;
