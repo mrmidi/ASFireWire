@@ -131,12 +131,26 @@ independent preparation queue while StartIO waits. Timeout and teardown unwind s
 before fetch is enabled. Original 828 also retains its 100 ms host-packet settling
 interval.
 
+The 828mk3's CoreAudio master volume and mute are realised in the host, as the official
+driver does on that model: with "Enable Core Audio volume controls" on, its meters follow
+the volume keys while the MONITOR level and LCD stay put, and no command reaches the
+device. The profile lists the models (`kHostOutputVolumeSwVersions`, today 0x15 only); for
+them the graph publishes a level control (-80 to 0 dB, the floor plays silence) and a mute
+(`ASFWHostLevelControl`, `'hmut'`), and `HostOutputGain` scales the PCM CoreAudio wrote in
+`WriteEnd`, ramped on the IO thread, so the transport and the wire codecs see ordinary PCM.
+The app's MOTU section holds one "Enable Core Audio volume controls" setting for the family
+and sends it on every connection (user client selector 69); off withdraws both controls and
+returns the gain to unity, leaving the level to the device (MONITOR) or CueMix. It never
+falls back to a device control, which on the 828mk3 would be the MONITOR level
+(`HostOutputVolumePolicy.hpp`).
+
 ## Remaining validation and work
 
 - Hardware checks for activation, audible playback/capture, all supported rates,
   optical combinations, and unplug/reset recovery for each newly enabled model.
 - Automatic graph reconfiguration for unsolicited clock/optical notifications.
-- Model-specific DSP, MIDI, volume and physical labels beyond existing port maps.
+- Model-specific DSP, MIDI, volume (beyond the 828mk3's host volume) and physical labels
+  beyond existing port maps.
 - Original 828 status interpretation beyond reserving the documented tail bytes.
 - Reconcile original 896 optical behavior and complete the vendor SPH phase bridge.
 
