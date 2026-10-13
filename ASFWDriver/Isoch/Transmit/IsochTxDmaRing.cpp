@@ -546,6 +546,49 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12);
         controlBlock->PushCompletionStamp(currentAbsIdx,
                                           completionCycleTimer);
+        // Observe before releasing completionCursor: that release permits
+        // the producer to reuse this payload slot. Transport copies opaque
+        // bytes only; content decoding and logging belong to the producer.
+        if (CaptureTxDiagnosticPacket(currentAbsIdx) &&
+            controlBlock->diagnosticCaptureEnabled.load(std::memory_order_relaxed)) {
+            const uint32_t count = controlBlock->diagnosticPacketCount.load(std::memory_order_relaxed);
+            if (count < kTxDiagnosticCapacity) {
+                auto& sample = controlBlock->diagnosticPackets[count];
+                sample = {};
+                sample.packetIndex = currentAbsIdx;
+                sample.cycleTimestamp = completionCycleTimer;
+                sample.statusWord = desc2->statusWord;
+                const auto* immediate = reinterpret_cast<const OHCIDescriptorImmediate*>(
+                    slab_.GetDescriptorPtr(completedPktSlot * Layout::kBlocksPerPacket));
+                sample.immediateHeader[0] = immediate->immediateData[0];
+                sample.immediateHeader[1] = immediate->immediateData[1];
+                const uint32_t slot = TxQueueSlotIndexFor(currentAbsIdx, numSlots);
+                const auto& meta = metadataRing[slot];
+                sample.metadataMatches = meta.commitGeneration.load(std::memory_order_acquire) ==
+                    ExpectedTxCommitGeneration(currentAbsIdx, numSlots);
+                if (sample.metadataMatches) {
+                    sample.metadataPacketIndex = meta.packetIndex;
+                    sample.metadataMatches = meta.packetIndex == currentAbsIdx;
+                    sample.payloadLength = meta.payloadLength;
+                    const auto* first = slab_.GetDescriptorPtr(
+                        completedPktSlot * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+                    std::array<TxPayloadDmaFragment, 2> fragments{};
+                    const uint64_t offset = static_cast<uint64_t>(slot) * controlBlock->slotStrideBytes;
+                    sample.descriptorMatches = meta.operation == IsochTxOperation::Packet &&
+                        meta.payloadLength <= controlBlock->slotStrideBytes &&
+                        payloadDmaMap.ResolveTwoFragments(offset, meta.payloadLength, fragments) &&
+                        first->dataAddress == fragments[0].deviceAddress &&
+                        desc2->dataAddress == fragments[1].deviceAddress &&
+                        (first->control & 0xffffU) == fragments[0].length &&
+                        (desc2->control & 0xffffU) == fragments[1].length;
+                    if (sample.metadataMatches && sample.descriptorMatches && payloadBase) {
+                        sample.prefixLength = std::min<uint32_t>(meta.payloadLength, sizeof(sample.prefix));
+                        std::memcpy(sample.prefix, payloadBase + offset, sample.prefixLength);
+                    }
+                }
+                controlBlock->diagnosticPacketCount.store(count + 1, std::memory_order_release);
+            }
+        }
     }
     if (observedCompleted > 0) {
         controlBlock->completionCursor.store(newCompletedAbsIdx, std::memory_order_release);

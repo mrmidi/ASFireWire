@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 6;
+inline constexpr uint32_t kTxQueueAbiVersion = 7;
 
 /// Neutral OHCI queue operation for one packet slot. Numeric zero is Packet
 /// for value-initialized current publishers. The queue contract version still
@@ -108,6 +108,29 @@ enum class IsochTxQueueStatus : uint32_t {
     kDeadContext = 3,
 };
 
+// Bounded, payload-opaque completion evidence. Records are immutable after
+// publication until the next arm, when both services have quiesced the run.
+// No circular overwrite: a slow reader loses no previously captured evidence.
+struct IsochTxDiagnosticPacket final {
+    uint64_t packetIndex{0};
+    uint64_t metadataPacketIndex{0};
+    uint32_t cycleTimestamp{0};
+    uint32_t statusWord{0};
+    uint32_t immediateHeader[2]{};
+    uint32_t payloadLength{0};
+    uint32_t prefixLength{0};
+    bool metadataMatches{false};
+    bool descriptorMatches{false};
+    uint8_t prefix[64]{};
+};
+
+inline constexpr uint32_t kTxDiagnosticCapacity = 512;
+// Adjacent pairs avoid aliasing the producer's DATA/NO-DATA cadence. Stop
+// after 7.68 s at 8000 packets/s; the first 16 packets are captured in full.
+[[nodiscard]] constexpr bool CaptureTxDiagnosticPacket(uint64_t packet) noexcept {
+    return packet < 61440 && (packet < 16 || packet % 257 < 2 || packet == 61439);
+}
+
 /// Fixed, neutral third shared descriptor of the three-descriptor TX RPC.
 /// Geometry is initialized by transport. Producer-owned and consumer-owned
 /// progress are reset independently to prevent one side from erasing the
@@ -129,6 +152,9 @@ struct IsochTxQueueControl final {
     std::atomic<uint64_t> completionCursor{0};
     std::atomic<uint64_t> completionStampCount{0};
     IsochTxCompletionStamp completionStamps[kIsochTxCompletionStampSlots]{};
+    std::atomic<bool> diagnosticCaptureEnabled{false};
+    std::atomic<uint32_t> diagnosticPacketCount{0};
+    IsochTxDiagnosticPacket diagnosticPackets[kTxDiagnosticCapacity]{};
     std::atomic<uint64_t> refillRequestGeneration{0};
     std::atomic<uint64_t> refillHandledGeneration{0};
     std::atomic<uint64_t> refillRequestHostTicks{0};
@@ -153,6 +179,7 @@ struct IsochTxQueueControl final {
         startFirstPacketIndex.store(0, std::memory_order_relaxed);
         completionCursor.store(0, std::memory_order_relaxed);
         completionStampCount.store(0, std::memory_order_relaxed);
+        diagnosticPacketCount.store(0, std::memory_order_relaxed);
         refillRequestGeneration.store(0, std::memory_order_relaxed);
         refillHandledGeneration.store(0, std::memory_order_relaxed);
         refillRequestHostTicks.store(0, std::memory_order_relaxed);

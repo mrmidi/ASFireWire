@@ -806,6 +806,7 @@
 		3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPHardwareSmokeRunnerTests.swift; sourceTree = "<group>"; };
 		3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionIRM.cpp; sourceTree = "<group>"; };
 		3D26D51E676FCE0D7C7747FD /* InterruptDispatcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = InterruptDispatcher.hpp; sourceTree = "<group>"; };
+		3D547ADD7E216001ADD36FE1 /* TxStartupTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxStartupTrace.hpp; sourceTree = "<group>"; };
 		3D6F81F4D6F67BA694F51F03 /* ApogeeParamsSerdes.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeParamsSerdes.cpp; sourceTree = "<group>"; };
 		3DA16292178C3C5E25E7978D /* MotuPayloadWriter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPayloadWriter.hpp; sourceTree = "<group>"; };
 		3DB5FD61FCF8686B7CB449D3 /* CompletionQueue.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CompletionQueue.hpp; sourceTree = "<group>"; };
@@ -3740,6 +3741,7 @@
 				88D6BD97ADB99F287CA2A904 /* ResolvedTimingGeometry.hpp */,
 				FBE4833B65F8742236FCCE28 /* Seqlock.hpp */,
 				790F88B19E2C68FF684F5356 /* TxCompletionStampDrain.hpp */,
+				3D547ADD7E216001ADD36FE1 /* TxStartupTrace.hpp */,
 				69F6BB42F81D1FFC8653F3B1 /* WireRetention.hpp */,
 				D783CA293D481BE11F1DE208 /* Configuration */,
 			);

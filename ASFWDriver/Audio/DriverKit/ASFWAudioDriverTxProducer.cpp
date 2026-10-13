@@ -917,6 +917,23 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txPlacementLogged = false;
     ivars.runtime.txSytLogged = false;
+    ++ivars.runtime.txStartupEpoch;
+    ivars.runtime.txStartupTrace = {};
+    // Scope the temporary cold-start capture to Focusrite. Transport's
+    // diagnostic contract is neutral and disabled for other producers.
+    ivars.runtime.txSlotProvider.queueControl->diagnosticCaptureEnabled.store(
+        ivars.device.vendorId == 0x00130eU, std::memory_order_release);
+    if (ivars.device.vendorId == 0x00130eU) {
+        ivars.runtime.txStartupClientTrace.ArmJoin();
+        ASFW_LOG(DirectAudio,
+                 "[TxStartup] stage=reset epoch=%llu rate=%u binding=%u slots=%u write=%llu read=%llu committed=%llu",
+                 ivars.runtime.txStartupEpoch, txConfig.sampleRate,
+                 ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ? 1U : 0U,
+                 ivars.runtime.txSlotProvider.numSlots,
+                 control->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                 control->playbackRingReadFrame.load(std::memory_order_relaxed),
+                 ivars.runtime.txSlotProvider.queueControl->committedEnd.load(std::memory_order_relaxed));
+    }
     ivars.runtime.txFilledFrameEnd = 0;
     // The interval minimum belongs to one stream: drop the previous one's.
     (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
@@ -960,6 +977,80 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     control->txTransferDelayTicks.store(timing.txTransferDelayTicks,
                                         std::memory_order_relaxed);
     return {};
+}
+
+void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    if (!queue || !queue->diagnosticCaptureEnabled.load(std::memory_order_relaxed)) return;
+    auto& client = ivars.runtime.txStartupClientTrace;
+    const uint32_t clientCount = client.count.load(std::memory_order_acquire);
+    while (client.readCursor < clientCount) {
+        const auto& write = client.samples[client.readCursor++];
+        ASFW_LOG(DirectAudio,
+                 "[TxStartupClient] join=%llu sample=%llu frames=%u host=%llu filledBefore=%llu exposed=%llu write=%llu capacity=%u anchor=%llu anchorEpoch=%llu",
+                 write.join, write.sampleFrame, write.frames, write.hostTicks, write.filledBefore,
+                 write.exposedFrameEnd, write.writtenFrameEnd, write.capacity,
+                 write.anchorFrame, write.anchorEpoch);
+    }
+    auto& trace = ivars.runtime.txStartupTrace;
+    const uint32_t count = std::min(queue->diagnosticPacketCount.load(std::memory_order_acquire),
+                                    ASFW::Isoch::kTxDiagnosticCapacity);
+    while (trace.cursor < count) {
+        const auto& raw = queue->diagnosticPackets[trace.cursor++];
+        const auto packet = ASFW::Audio::Runtime::DecodeTxStartupPacket(raw);
+        const bool firstData = trace.data == 0 && packet.blocks != 0 && packet.valid;
+        const bool firstContent = trace.nonzeroPrefixes == 0 && packet.peakQ24 != 0;
+        const bool firstFault = trace.invalid == 0 && !packet.valid;
+        trace.Observe(raw, packet);
+        if (trace.cursor == 1 || firstData || firstContent || firstFault) {
+            const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(raw.packetIndex);
+            const bool timelineMatches = slot && slot->packetIndex == raw.packetIndex;
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupPacket] epoch=%llu pkt=%llu ct=%08x status=%08x h0=%08x len=%u meta=%u dma=%u dbs=%u dbc=%u fdf=%02x syt=%04x lead=%d",
+                     ivars.runtime.txStartupEpoch, raw.packetIndex, raw.cycleTimestamp,
+                     raw.statusWord, packet.isochHeader, raw.payloadLength, raw.metadataMatches ? 1U : 0U,
+                     raw.descriptorMatches ? 1U : 0U, packet.dbs, packet.dbc, packet.fdf,
+                     packet.syt, packet.sytLeadTicks);
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupPcm] epoch=%llu pkt=%llu event0=%08x event1=%08x prefix=%u peak=%u frame=%llu timeline=%u",
+                     ivars.runtime.txStartupEpoch, raw.packetIndex,
+                     packet.firstEventWords[0], packet.firstEventWords[1], raw.prefixLength, packet.peakQ24,
+                     timelineMatches ? slot->firstAudioFrame : 0, timelineMatches ? 1U : 0U);
+        }
+        const uint32_t second = static_cast<uint32_t>(raw.packetIndex / ASFW::Timing::kCyclesPerSecond);
+        if (second != trace.lastReportSecond || raw.packetIndex == 61439) {
+            trace.lastReportSecond = second;
+            auto* control = ivars.runtime.directAudioGraph.control;
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupSummary] epoch=%llu sec=%u n=%u data=%u noData=%u pcmPrefixes=%u invalid=%u metaBad=%u dmaBad=%u dbcPairErrors=%u timed=%u lead=%d/%d write=%llu read=%llu",
+                     ivars.runtime.txStartupEpoch, second, trace.cursor, trace.data, trace.noData,
+                     trace.nonzeroPrefixes, trace.invalid, trace.metadataMismatch, trace.mappingMismatch,
+                     trace.dbcDiscontinuities, trace.timedPackets,
+                     trace.timedPackets ? trace.minimumLead : 0,
+                     trace.timedPackets ? trace.maximumLead : 0,
+                     control ? control->playbackRingWriteFrame.load(std::memory_order_relaxed) : 0,
+                     control ? control->playbackRingReadFrame.load(std::memory_order_relaxed) : 0);
+            TxPlacementSample placement{};
+            if (MeasureTxPlacement(ivars, placement)) {
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupPlacement] epoch=%llu pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.firstAudioFrame,
+                         placement.halSampleTime, placement.offsetFrames,
+                         ivars.runtime.txStreamEngine.StreamConfig().sampleRate);
+            }
+            if (control) {
+                ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+                const bool anchorValid = control->hostClockAnchor.TryReadLatest(0, anchor);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupClock] epoch=%llu hwEpoch=%llu source=%u rxValid=%u nextTxFrame=%llu anchorValid=%u anchorEpoch=%llu anchorFrame=%llu",
+                         ivars.runtime.txStartupEpoch, control->hardwareTimeline.Epoch(),
+                         static_cast<unsigned>(control->hardwareTimeline.Source()),
+                         control->hardwareTimeline.ObservationValid() ? 1U : 0U,
+                         control->hardwareTimeline.NextTxFrame(), anchorValid ? 1U : 0U,
+                         anchor.timelineEpoch, anchor.sampleFrame);
+            }
+        }
+    }
 }
 
 bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) noexcept {
@@ -1038,6 +1129,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     if (!txControl || numSlots == 0) {
         return;
     }
+    ASFW::Audio::DriverKit::DrainTxStartupDiagnostics(*ivars);
 
     const uint64_t requested =
         txControl->refillRequestGeneration.load(

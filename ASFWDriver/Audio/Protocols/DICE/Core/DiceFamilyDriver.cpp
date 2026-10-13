@@ -978,6 +978,8 @@ IOReturn DiceFamilyDriver::ProgramTxStreamsAndEnable() {
         !enabled) {
         return Rollback(enabled.error());
     }
+    ASFW_LOG(DICE, "[DiceStart] GLOBAL_ENABLE=1 write completed rate=%u gen=%u",
+             session_.desiredClock.sampleRateHz, session_.generation.value);
     session_.deviceTxArmed = true;
     session_.phase = DuplexRestartPhase::kDeviceTxArmed;
     return kIOReturnSuccess;

@@ -70,6 +70,22 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     }
     control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
     PublishPlaybackRingWriteEnd(ivars.runtime.directAudioGraph, control);
+    if (ivars.device.vendorId == 0x00130eU &&
+        ivars.runtime.txStartupClientTrace.pending.load(std::memory_order_relaxed)) {
+        ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+        (void)control.hostClockAnchor.TryReadLatest(0, anchor);
+        ivars.runtime.txStartupClientTrace.Publish({
+            .sampleFrame = sampleTime,
+            .hostTicks = hostTime,
+            .filledBefore = ivars.runtime.txFilledFrameEnd,
+            .exposedFrameEnd = ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd(),
+            .writtenFrameEnd = control.playbackRingWriteFrame.load(std::memory_order_acquire),
+            .anchorFrame = anchor.sampleFrame,
+            .anchorEpoch = anchor.timelineEpoch,
+            .frames = ioBufferFrameSize,
+            .capacity = ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
+        });
+    }
 
     // Fill here, on CoreAudio's IO thread, not on the TX preparation queue: a
     // frame has ~1 ms between this write and its packet's deadline, and queue

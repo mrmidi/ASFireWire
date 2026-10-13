@@ -239,6 +239,7 @@ kern_return_t ReleaseKeptWire(ASFWAudioDriver_IVars& ivars,
 void ResetClientWriteSide(ASFWAudioDriver_IVars& ivars,
                           ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
     control.client.Reset();
+    if (ivars.device.vendorId == 0x00130eU) ivars.runtime.txStartupClientTrace.ArmJoin();
     control.playbackRingWriteFrame.store(0, std::memory_order_relaxed);
     control.playbackRingReadFrame.store(0, std::memory_order_relaxed);
     control.playbackRingOldestValidFrame.store(0, std::memory_order_release);
@@ -407,6 +408,16 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
                     static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
                 const uint32_t budgetMs = profile ? profile->InitialClockAnchorTimeoutMs() : 500U;
                 ResetClientWriteSide(ivars, *control);
+                if (ivars.device.vendorId == 0x00130eU) {
+                    ASFW_LOG(DirectAudio,
+                             "[TxStartup] stage=rejoin epoch=%llu join=%llu rate=%u completion=%llu committed=%llu write=%llu read=%llu",
+                             ivars.runtime.txStartupEpoch,
+                             ivars.runtime.txStartupClientTrace.join.load(std::memory_order_relaxed), startRateHz,
+                             ivars.runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire),
+                             ivars.runtime.txSlotProvider.queueControl->committedEnd.load(std::memory_order_acquire),
+                             control->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                             control->playbackRingReadFrame.load(std::memory_order_relaxed));
+                }
                 uint32_t waitMs = 0;
                 while (ivars.runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_acquire) == 0 &&
                        waitMs < budgetMs) {
@@ -719,6 +730,13 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
 
         // --- Prefill TX ring ---
         ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(ivars);
+        if (ivars.device.vendorId == 0x00130eU) {
+            ASFW_LOG(DirectAudio,
+                     "[TxStartup] stage=prefill epoch=%llu rate=%u committed=%llu slots=%u filled=%llu",
+                     ivars.runtime.txStartupEpoch, startRateHz,
+                     ivars.runtime.txSlotProvider.queueControl->committedEnd.load(std::memory_order_acquire),
+                     ivars.runtime.txSlotProvider.numSlots, ivars.runtime.txFilledFrameEnd);
+        }
 
         auto* prefillControl = ivars.runtime.txSlotProvider.queueControl;
         const uint64_t prefillExpose =
@@ -753,6 +771,14 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
                      startKr);
             kr = failStart(startKr, "StartAudioStreaming");
             return;
+        }
+        if (ivars.device.vendorId == 0x00130eU) {
+            ASFW_LOG(DirectAudio,
+                     "[TxStartup] stage=wire-started epoch=%llu rate=%u generation=%u completion=%llu committed=%llu",
+                     ivars.runtime.txStartupEpoch, startRateHz,
+                     ivars.runtime.txSlotProvider.queueControl->streamGeneration.load(std::memory_order_acquire),
+                     ivars.runtime.txSlotProvider.queueControl->completionCursor.load(std::memory_order_acquire),
+                     ivars.runtime.txSlotProvider.queueControl->committedEnd.load(std::memory_order_acquire));
         }
 
         // StartAudioStreaming initializes the shared transport control block.

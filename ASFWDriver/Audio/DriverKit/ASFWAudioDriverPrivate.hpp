@@ -14,6 +14,7 @@
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
 #include "../Runtime/TxCompletionStampDrain.hpp"
+#include "../Runtime/TxStartupTrace.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
@@ -236,6 +237,9 @@ struct AudioDriverRuntimeState {
     // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
     bool txPlacementLogged{false};
     bool txSytLogged{false};
+    uint64_t txStartupEpoch{0};
+    ASFW::Audio::Runtime::TxStartupTrace txStartupTrace{};
+    ASFW::Audio::Runtime::TxStartupClientTrace txStartupClientTrace{};
     // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.

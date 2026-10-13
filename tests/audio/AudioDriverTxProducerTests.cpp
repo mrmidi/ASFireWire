@@ -1598,3 +1598,26 @@ TEST(AudioDriverTxProducerTests, MotuMappedHostChannelsReachTheRealTransmitProdu
         EXPECT_GT(checked,300U);
     }
 }
+
+TEST(AudioDriverTxProducerTests, FocusriteCapturesFirstRealWriteEndWithoutFillingOrRestartingForTheTrace) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.Ivars().device.vendorId = 0x00130e;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.EnableHostOutput({.ioFrames = 64});
+    auto& ivars = rig.Ivars();
+    auto& control = rig.MutableControl();
+    const uint64_t exposed = ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+    ASSERT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(ivars, control, 4096, 100000, 64));
+    const auto& trace = ivars.runtime.txStartupClientTrace;
+    ASSERT_EQ(trace.count.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(trace.samples[0].sampleFrame, 4096U);
+    EXPECT_EQ(trace.samples[0].frames, 64U);
+    EXPECT_EQ(trace.samples[0].filledBefore, 0U);
+    EXPECT_EQ(trace.samples[0].exposedFrameEnd, exposed);
+    EXPECT_EQ(trace.samples[0].writtenFrameEnd, 4160U);
+    EXPECT_EQ(trace.samples[0].capacity, ivars.runtime.directAudioGraph.memory.outputFrameCapacity);
+    ASSERT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(ivars, control, 4160, 100100, 64));
+    EXPECT_EQ(trace.count.load(std::memory_order_acquire), 1U);
+}
