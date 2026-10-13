@@ -391,4 +391,34 @@ TEST(DeviceIdentityEvidence, DuplicateGuidQuarantineInvalidatesResolvedPolicyRou
     EXPECT_FALSE(registry.IsCurrent(oldRoute));
 }
 
+TEST(DeviceRegistryPayloadTests, RemoteMaxRecCapsPayloadAndSurvivesSpeedDemotion) {
+    DeviceRegistry registry{};
+    ConfigROM rom = MakeRom();
+    rom.bib.maxRec = 7;
+    LinkPolicy link{};
+    link.localToNode = ASFW::FW::FwSpeed::S400;
+    link.isochToNode = ASFW::FW::FwSpeed::S400;
+    link.maxPayloadBytes = 2048;
+
+    const auto published = registry.UpsertFromROM(rom, link);
+    EXPECT_EQ(published.link.maxPayloadBytes, 256U);
+    const auto route = registry.CurrentRoute(published.guid);
+    ASSERT_TRUE(route.has_value());
+    ASSERT_TRUE(registry.LowerVerifiedLinkSpeed(*route, ASFW::FW::FwSpeed::S200));
+    const auto demoted = registry.SnapshotByGuid(published.guid);
+    ASSERT_TRUE(demoted.has_value());
+    EXPECT_EQ(demoted->link.maxPayloadBytes, 256U);
+}
+
+TEST(DeviceRegistryPayloadTests, RemoteMaxRecDoesNotRaiseSmallerLinkPayloadLimit) {
+    DeviceRegistry registry{};
+    ConfigROM rom = MakeRom();
+    rom.bib.maxRec = 9;
+    LinkPolicy link{};
+    link.maxPayloadBytes = 512;
+
+    const auto published = registry.UpsertFromROM(rom, link);
+    EXPECT_EQ(published.link.maxPayloadBytes, 512U);
+}
+
 } // namespace

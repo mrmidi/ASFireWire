@@ -345,7 +345,7 @@ TEST(DICETcatProtocolTests, FirstSectionReadProbesDownAndRetainsVerifiedSpeed) {
     RouteState routeState;
     ASFW::Discovery::ConfigROM rom{};
     rom.bib.guid = routeState.route.guid;
-    rom.bib.maxRec = 7;  // Allows 1024-byte async payloads at S200.
+    rom.bib.maxRec = 9;  // Allows 1024-byte async payloads at S200.
     rom.gen = routeState.route.generation;
     rom.nodeId = routeState.route.nodeId;
     ASFW::Discovery::LinkPolicy link{};
