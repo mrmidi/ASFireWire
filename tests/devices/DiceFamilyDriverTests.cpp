@@ -258,7 +258,9 @@ TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     // The reference trace rewrites CLOCK_SELECT during prepare, and so does
     // ASFW: TCAT RestartStreaming and Linux select_clock both write it on every
     // start, and skipping it left a Saffire Pro 24 DSP capturing digital zero
-    // (hardware, 2026-10-11). ASFW deviates in two ways:
+    // (hardware, 2026-10-11). ASFW also disables GLOBAL_ENABLE before
+    // clock selection to reset firmware startup state (Linux first reserve).
+    // The captured reference window lacks that command. Other differences:
     //  1. DoAwaitStreamingClockLock adds one extra global-state read after the
     //     clock is confirmed, so streams are never enabled on a still-relocking
     //     clock. That read consumes one extra scripted response, locked at target.
@@ -276,6 +278,11 @@ TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     std::vector<ResponseStep> responses(refResponses.begin() + 1, refResponses.end());
     ASSERT_GT(responses.size(), 5U);
     responses.insert(responses.begin() + 6, responses[5]); // second locked global read
+
+    constexpr std::array<uint8_t, 4> disabledPayload{};
+    requests.insert(requests.begin() + 5, ExpectedRequest{
+        OpKind::Write, 0xFFFFU, 0xE0000078U, 4U, FwSpeed::S400, 0U,
+        {disabledPayload.data(), disabledPayload.size()}});
 
     rig.bus.SetScript(requests, responses);
 
@@ -978,3 +985,36 @@ TEST(DiceFamilyDriverTests, SkippedRedundantIdleClockWriteDoesNotCallTheObserver
 }
 
 } // namespace
+
+TEST(DiceFamilyDriverTests, FreshPrepareDisablesBeforeClockEvenWhenEnableIsZero) {
+    DuplexRig rig;
+    ASSERT_EQ(rig.bus.Enable(), 0U);
+    const auto prepared = rig.driver.Prepare(
+        {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(prepared.has_value());
+    const auto& ops = rig.bus.Operations();
+    const auto disable = std::ranges::find_if(ops, [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000078U &&
+               op.payload.size() == 4 && ASFW::FW::ReadBE32(op.payload.data()) == 0;
+    });
+    const auto clock = std::ranges::find_if(ops, [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+    });
+    ASSERT_NE(disable, ops.end());
+    ASSERT_NE(clock, ops.end());
+    EXPECT_LT(disable, clock);
+}
+
+TEST(DiceFamilyDriverTests, FailedPrepareDisableNeverWritesClock) {
+    DuplexRig rig;
+    rig.bus.FailNext(OpKind::Write, 0xE0000078U, AsyncStatus::kTimeout);
+    const auto prepared = rig.driver.Prepare(
+        {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_FALSE(prepared.has_value());
+    EXPECT_EQ(prepared.error(), kIOReturnTimeout);
+    EXPECT_FALSE(std::ranges::any_of(rig.bus.Operations(), [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+    }));
+}

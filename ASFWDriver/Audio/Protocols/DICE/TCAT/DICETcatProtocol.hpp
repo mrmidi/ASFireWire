@@ -164,6 +164,7 @@ private:
     void PrepareInitialClock(VoidCallback callback);
     void InitialClockOwner(const std::shared_ptr<InitialClockPreparation>& state);
     void InitialClockDsp(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockDisable(const std::shared_ptr<InitialClockPreparation>& state);
     void InitialClockWrite(const std::shared_ptr<InitialClockPreparation>& state);
     void InitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state);
     void ScheduleInitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state,

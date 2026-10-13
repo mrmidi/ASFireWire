@@ -187,14 +187,14 @@ void DICETcatProtocol::InitialClockOwner(const std::shared_ptr<InitialClockPrepa
                         return;
                     }
                     state->priorGlobalNotifications = global.notification;
-                    if (!runtimePolicy_.waitForInitialDsp) { InitialClockWrite(state); return; }
+                    if (!runtimePolicy_.waitForInitialDsp) { InitialClockDisable(state); return; }
                     diceReader_.ReadExtensionSections([this, state](IOReturn status, ExtensionSections ext) {
                         if (!state->active.load(std::memory_order_acquire)) return;
                         if (!InitialClockCurrent(state)) return;
                         state->dspBase = ExtensionAbsoluteOffset(ext.application);
                         if (status != kIOReturnSuccess || state->dspBase == kDICEExtensionOffset ||
                             ext.application.size <= Focusrite::Offsets::kDspStatus) {
-                            InitialClockWrite(state); return;
+                            InitialClockDisable(state); return;
                         }
                         state->startedNs = preparationScheduler_->NowNs();
                         InitialClockDsp(state);
@@ -224,11 +224,31 @@ void DICETcatProtocol::InitialClockDsp(const std::shared_ptr<InitialClockPrepara
             if (!InitialClockCurrent(state)) return;
             const bool ready = status == Async::AsyncStatus::kSuccess &&
                 (value & Focusrite::DspStatus::kRunning) && !(value & Focusrite::DspStatus::kBusy);
-            if (ready) { InitialClockWrite(state); return; }
+            if (ready) { InitialClockDisable(state); return; }
             if (preparationScheduler_->NowNs() - state->startedNs >= 5'000'000'000ULL) {
                 FinishInitialClock(state, kIOReturnTimeout); return;
             }
             ScheduleInitialClockPoll(state, 50, true);
+        });
+}
+
+void DICETcatProtocol::InitialClockDisable(const std::shared_ptr<InitialClockPreparation>& state) {
+    if (!InitialClockCurrent(state)) return;
+    // NEVER DELETE OR SKIP THIS WRITE, EVEN IF GLOBAL_ENABLE ALREADY READS 0.
+    // It is a firmware command: DDR_MSG_DISABLE clears the board's started
+    // latch (Pro24DSP 0x31278). A stale latch suppresses unmute on a same-rate
+    // cold start. Linux dice-stream.c:256-294 also clears enable before clock
+    // selection on the first reservation. Regression: DiceInitialPreparation.
+    // DisablesDeviceBeforeColdClockEvenWhenAlreadyDisabled.
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+        0U, [this, state](Async::AsyncStatus status) {
+            if (!InitialClockCurrent(state)) return;
+            if (status != Async::AsyncStatus::kSuccess) {
+                FinishInitialClock(state, Protocols::Ports::MapAsyncStatusToIOReturn(status)); return;
+            }
+            ASFW_LOG(DICE, "[DiceInit] GLOBAL_ENABLE=0 before clock rate=%u gen=%u",
+                     state->clock.sampleRateHz, state->route.generation.value);
+            InitialClockWrite(state);
         });
 }
 

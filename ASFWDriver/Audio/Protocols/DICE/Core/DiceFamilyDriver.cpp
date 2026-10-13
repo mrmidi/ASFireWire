@@ -504,6 +504,20 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
         }
     }
 
+    if (flowMode_ == FlowMode::kPrepareDuplex) {
+        // NEVER DELETE OR SKIP THIS WRITE, EVEN IF GLOBAL_ENABLE ALREADY READS 0.
+        // DDR_MSG_DISABLE clears the firmware started latch (Pro24DSP 0x31278).
+        // Reading zero does not perform that reset; skipping it can leave DSP
+        // mute set on a same-rate cold start. Linux dice-stream.c:256-294.
+        // Regression: FreshPrepareDisablesBeforeClockEvenWhenEnableIsZero.
+        if (const auto disabled = io_.WriteQuad(sections_.global.offset + GlobalOffset::kEnable, 0U);
+            !disabled) {
+            return Rollback(disabled.error());
+        }
+        ASFW_LOG(DICE, "[DiceStart] GLOBAL_ENABLE=0 before clock rate=%u gen=%u",
+                 targetHz, session_.generation.value);
+    }
+
     notifications_.Reset();
     if (const auto written = io_.WriteQuad(sections_.global.offset + GlobalOffset::kClockSelect,
                                            diceClock_.clockSelect);

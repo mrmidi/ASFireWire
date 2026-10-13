@@ -251,6 +251,45 @@ TEST(DiceInitialPreparation, JoinsCallbacksWithoutSleepingAndTheStartWritesTheCl
     EXPECT_EQ(clockWrites(), 1);
 }
 
+TEST(DiceInitialPreparation, DisablesDeviceBeforeColdClockEvenWhenAlreadyDisabled) {
+    for (const uint32_t initialEnable : {0U, 1U}) {
+        SCOPED_TRACE(initialEnable);
+        DiceRig rig(DiceDeviceImages::kVeniceF24);
+        rig.bus.Device().SetGlobalQuad(GlobalOffset::kEnable, initialEnable);
+        ASSERT_EQ(rig.Run("initial", [&](auto done) {
+            rig.protocol->EnsureRuntimeStreamGeometry(done);
+        }), kIOReturnSuccess);
+        const auto& ops = rig.bus.Operations();
+        const auto disable = std::ranges::find_if(ops, [](const auto& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xE0000078U &&
+                   op.payload.size() == 4 && ASFW::FW::ReadBE32(op.payload.data()) == 0;
+        });
+        const auto clock = std::ranges::find_if(ops, [](const auto& op) {
+            return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+        });
+        ASSERT_NE(disable, ops.end());
+        ASSERT_NE(clock, ops.end());
+        EXPECT_LT(disable, clock);
+        EXPECT_EQ(rig.bus.Enable(), 0U);
+        EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    }
+}
+
+TEST(DiceInitialPreparation, FailedDisableStopsBeforeClockAndCompletesOnce) {
+    DiceRig rig(DiceDeviceImages::kVeniceF24);
+    rig.bus.FailNext(OpKind::Write, 0xE0000078U, ASFW::Async::AsyncStatus::kTimeout);
+    unsigned completions = 0;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) {
+        EXPECT_EQ(status, kIOReturnTimeout);
+        ++completions;
+    });
+    rig.timer.Advance(500'000'000ULL);
+    EXPECT_EQ(completions, 1U);
+    EXPECT_FALSE(std::ranges::any_of(rig.bus.Operations(), [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+    }));
+}
+
 TEST(DiceInitialPreparation, AcceptanceDoesNotCompleteBeforeRelock) {
     DiceRig rig(DiceDeviceImages::kVeniceF24);
     rig.bus.SetClockSelectWriteHandler([&] {
