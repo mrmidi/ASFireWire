@@ -118,11 +118,15 @@ inline constexpr uint32_t kRouterEntryCount =
 // is the one a host without a control panel can use: one playback channel per
 // line output, and a mix of everything on the headphones.
 //
-// Cells that must stay silent are written as explicit zeros. The device keeps
-// whatever its factory map or an earlier program left - on a cold start the
-// factory map feeds the analog inputs to the S/PDIF outputs and the S/PDIF
-// input to the monitor bus under the front-panel knob - so writing only the
-// non-zero cells would leave that content summed in.
+// Cells the earlier program summed into the monitor bus are written as
+// explicit zeros, because the device keeps whatever was left there.
+//
+// Four cells are deliberately NOT written. out0<-in6 and out1<-in7 are where
+// the firmware stores the front-panel monitor knob, which governs the analog
+// outputs: zeroing them silenced every analog output on hardware, with the
+// router and the rest of the matrix correct and the stream running. out6<-in0
+// and out7<-in1 are the factory analog-in feeds on the S/PDIF outputs, never
+// tested as zeros. All four belong to the device, not to a startup program.
 using MixerCoefficient = TCAT::DiceStartupMixerCell;
 inline constexpr MixerCoefficient kStartupMixerCoefficients[] = {
     // Line outs 1-6: one playback channel each, at unity.
@@ -140,12 +144,11 @@ inline constexpr MixerCoefficient kStartupMixerCoefficients[] = {
     {171, 0x1000}, {173, 0x1000}, {175, 0x1000}, {177, 0x1000},
     {188, 0x1000}, {190, 0x1000}, {192, 0x1000}, {194, 0x1000},
     {207, 0x1000}, {209, 0x1000}, {211, 0x1000}, {213, 0x1000},
-    // Silence what these outputs could otherwise still carry.
-    {6, 0}, {9, 0}, {10, 0}, {11, 0}, {12, 0},
+    // Silence the rest of what the monitor bus was summing.
+    {9, 0}, {10, 0}, {11, 0}, {12, 0},
     {13, 0}, {14, 0}, {15, 0}, {16, 0},
-    {25, 0}, {26, 0}, {28, 0}, {29, 0}, {30, 0},
+    {26, 0}, {28, 0}, {29, 0}, {30, 0},
     {31, 0}, {32, 0}, {33, 0}, {34, 0},
-    {108, 0}, {127, 0},
 };
 inline constexpr uint32_t kStartupMixerCoefficientCount =
     static_cast<uint32_t>(sizeof(kStartupMixerCoefficients) /
