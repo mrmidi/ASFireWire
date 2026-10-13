@@ -15,6 +15,7 @@
 #include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "tests/mocks/FakeTimerScheduler.hpp"
+#include "MotuChannelMappingFixtures.hpp"
 
 #include <algorithm>
 #include <map>
@@ -1757,7 +1758,7 @@ TEST(MotuProtocolChannelLabelTests, UltraLiteMk3RateTransitionsUpdateNamesAndKee
     MotuProtocol protocol(bus,bus,routes.registry,routes.route,0x19);
     ASSERT_EQ(protocol.Initialize(),kIOReturnSuccess);
     for (const auto& test : std::array<std::array<uint32_t,5>,3>{{
-        {0x100,48000,14,14,18},{0x300,96000,14,14,14},{0x500,192000,10,12,10}}}) {
+        {0x100,48000,14,14,18},{0x300,96000,12,14,14},{0x500,192000,10,12,10}}}) {
         bus.readValues[LowOf(Reg::ClockStatusV2)]=test[0];
         ASSERT_EQ(protocol.LoadGeometry(),kIOReturnSuccess);
         const auto caps=protocol.RuntimeCaps(); ASSERT_TRUE(caps);
@@ -1777,4 +1778,52 @@ TEST(MotuProtocolChannelLabelTests, UltraLiteMk3RateTransitionsUpdateNamesAndKee
         EXPECT_EQ(found->capture[0].pcmChannels,test[2]);
         EXPECT_EQ(found->capture[0].packedPcmChunks,test[4]);
     }
+}
+
+TEST(MotuProtocolChannelLabelTests, EverySupportedModelPublishesConsistentNamesAcrossRateTransitions) {
+    using namespace ASFW::Encoding::Motu;
+    unsigned models = 0;
+    for (const auto& model : kModels) {
+        if (!FireWireOnly(model.unitVersion)) continue;
+        ++models;
+        RecordingBus bus; RouteState routes;
+        MotuProtocol protocol(bus,bus,routes.registry,routes.route,model.unitVersion);
+        ASSERT_EQ(protocol.Initialize(),kIOReturnSuccess);
+        for (uint32_t rate : kClockRates) {
+            if (!SupportsRate(model,rate)) continue;
+            SCOPED_TRACE(std::string(model.name)+" rate="+std::to_string(rate));
+            const auto mode = IndexToMode(static_cast<uint32_t>(RateToIndex(rate)));
+            uint32_t clock;
+            if (model.protocol == ProtocolVersion::V1) clock = *ASFW::Audio::Motu::EncodeRateV1(0,rate,model.unitVersion);
+            else if (model.protocol == ProtocolVersion::V2) clock = *ASFW::Audio::Motu::EncodeRateV2(0,rate);
+            else clock = static_cast<uint32_t>(RateToIndex(rate))<<8;
+            bus.readValues[LowOf(model.unitVersion == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2)] = clock;
+            if (model.protocol == ProtocolVersion::V2) bus.readValues[LowOf(Reg::InOutConfV2)] = 0x500;
+            if (model.protocol == ProtocolVersion::V3) bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0x303;
+            ASSERT_EQ(protocol.LoadGeometry(),kIOReturnSuccess);
+            const auto caps = protocol.RuntimeCaps(); ASSERT_TRUE(caps);
+            EXPECT_EQ(caps->sampleRateHz,rate);
+            std::vector<std::string> inNames,outNames;
+            ASSERT_TRUE(protocol.GetChannelLabels(inNames,outNames));
+            EXPECT_EQ(inNames.size(),caps->hostInputPcmChannels);
+            EXPECT_EQ(outNames.size(),caps->hostOutputPcmChannels);
+            for (const auto& group : MotuChannelFixtures::groups) {
+                if (group.version != model.unitVersion) continue;
+                const auto& names = group.capture ? inNames : outNames;
+                for (const auto& name : group.names) {
+                    const auto found = std::ranges::find(names,name);
+                    if (group.firstChunk[mode] < 0) EXPECT_EQ(found,names.end()) << name;
+                    else EXPECT_NE(found,names.end()) << name;
+                }
+            }
+            const auto forms = protocol.RateFormations(); ASSERT_TRUE(forms);
+            const auto active = std::ranges::find(*forms,rate,&ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+            ASSERT_NE(active,forms->end());
+            EXPECT_EQ(active->capture[0].pcmChannels,caps->hostInputPcmChannels);
+            EXPECT_EQ(active->capture[0].packedPcmChunks,caps->deviceToHostPcmChunks);
+            EXPECT_EQ(active->playback[0].pcmChannels,caps->hostOutputPcmChannels);
+            EXPECT_EQ(active->playback[0].packedPcmChunks,caps->hostToDevicePcmChunks);
+        }
+    }
+    EXPECT_EQ(models,11U);
 }

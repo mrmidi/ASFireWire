@@ -9,6 +9,7 @@
 #include "Audio/Wire/MOTU/MotuPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "MotuChannelMappingFixtures.hpp"
 
 #include <gtest/gtest.h>
 
@@ -396,4 +397,41 @@ TEST(MotuPayloadWriterTests, UltraLiteMk3VendorOrderReachesSpdifAndPhones) {
     const auto* block=harness.bytes.data()+8;
     EXPECT_EQ(ReadChunk(block,12),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(0.25f))<<8));
     EXPECT_EQ(ReadChunk(block,10),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(0.5f))<<8));
+}
+
+TEST(MotuPayloadWriterTests, EverySupportedModelEncodesTheNamedPhysicalChunksAndZeroesPadding) {
+    using namespace MotuChannelFixtures;
+    EachFormation(false,[&](const Model& model,uint32_t rate,uint32_t mode,uint32_t wire,uint32_t extra) {
+        SCOPED_TRACE(std::string(model.name)+" rate="+std::to_string(rate)+" wire="+std::to_string(wire));
+        const auto* layout = PortLayoutFor(model.unitVersion,rate,wire,false);
+        ASSERT_NE(layout,nullptr);
+        const auto offset = PcmByteOffset(model.unitVersion);
+        TimelineHarness h{1,0,DataBlockQuadlets(wire,MessageChunks(model.unitVersion,false))};
+        MotuPayloadWriter writer;
+        writer.Configure({.pcmChunks=wire,.ports=layout->Map(),.pcmByteOffset=offset});
+        writer.BindTimeline(&h.timeline);
+        std::vector<float> host(layout->hostChannels);
+        for (uint32_t i=0;i<host.size();++i) host[i]=float(i+1)/64;
+        HostAudioBufferView view{};
+        view.interleavedFloat32=host.data(); view.frameCount=1; view.frameCapacity=1;
+        view.channels=layout->hostChannels;
+        writer.WriteFloat32Interleaved(view,0);
+        const auto ports = MotuPortMap{layout->ports.data(),layout->hostChannels};
+        const auto* block = h.bytes.data()+kCipHeaderBytes;
+        for (const auto& group : groups) {
+            if (group.capture || group.version != model.unitVersion || group.firstChunk[mode] < 0) continue;
+            for (size_t i=0;i<group.names.size();++i) {
+                const auto found = std::ranges::find_if(ports,[&](const auto& p) { return p.name == group.names[i]; });
+                ASSERT_NE(found,ports.end()) << group.names[i];
+                const auto chunk = group.firstChunk[mode]+i+(group.followsOptical ? extra : 0);
+                const auto raw = ASFW::Encoding::Motu::ReadPcmSample(std::span<const uint8_t>(block+offset+chunk*3,3));
+                const auto expected = static_cast<int32_t>(static_cast<uint32_t>(
+                    PcmSlotCodec::Float32ToSigned24(host[found-ports.begin()]))<<8);
+                EXPECT_EQ(raw,expected) << group.names[i];
+            }
+        }
+        for (uint32_t i=layout->hostChannels;i<wire;++i)
+            EXPECT_EQ(ASFW::Encoding::Motu::ReadPcmSample(std::span<const uint8_t>(
+                block+offset+layout->ports[i].chunk*3,3)),0);
+    });
 }

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// MotuPortLayout.hpp - Which physical port each MOTU v2 PCM chunk carries, and the order
-// CoreAudio sees them in.
+// MotuPortLayout.hpp - Physical ports and CoreAudio order for MOTU FireWire models.
 //
 // The wire order is the device's, not the user's: an UltraLite's first playback chunks
 // are its headphone pair and its first capture chunks are the CueMix return, so a host
@@ -17,8 +16,9 @@
 // space but creating no port (motu_avdevice.cpp:1839-1862):
 //   - 828mk2:    PortGroups_828MKII,   motu_avdevice.cpp:111-121
 //   - UltraLite: PortGroups_ULTRALITE, motu_avdevice.cpp:135-145
-// Linux sound/firewire/motu carries the same chunk counts (motu-protocol-v2.c:274-310) but
-// does not name ports, so FFADO is the only reference for which chunk is which jack.
+// Vendor CreateStreams/SetupStrmFwIds supply physical identities where FFADO's
+// older tables differ. Evidence and per-model addresses: documentation/research/
+// motu-channel-map-audit.md. Linux supplies independent packet geometry.
 
 #pragma once
 
@@ -109,7 +109,9 @@ static_assert(IsChunkPermutation(kV2Playback));
 static_assert(IsChunkPermutation(kUltraLiteCapture));
 static_assert(IsChunkPermutation(k828mk2Capture));
 
-// Physical group order is cross-checked against FFADO motu_avdevice.cpp:91–280.
+// Physical groups follow the vendor's stream indices, excluding leading status
+// chunks on V2/V3. Original 828 status is trailing; 896 has none.
+// FFADO is a secondary cross-check.
 // Unknown groups stay visible as unknown; only explicitly identified padding is hidden.
 // Layouts are immutable static storage: the RX/TX queues retain spans, never a
 // temporary vector or a view into another service's mutable state.
@@ -157,8 +159,12 @@ inline constexpr const char* kOpticalNames[] = {
     const auto aes = [&](uint32_t first) { pair("AES/EBU 1", "AES/EBU 2", first); };
     const auto reverb = [&](uint32_t first) { pair("Reverb L", "Reverb R", first); };
     uint64_t padding = 0;
-    if (version == 1) {
-        analog(0); spdif(8); optical(fixed);
+    if (version == 1 || version == 2) {
+        // Box::CreateStreams 0x11430, SetOpticalMode 0x10c00: digital follows
+        // ADAT, and moves back to chunk 8 when ADAT is disabled.
+        analog(0);
+        if (version == 1) spdif(8 + extra); else aes(8 + extra);
+        optical(8);
     } else if (version == 3 || version == 0xd) {
         const auto base = capture ? (version == 3 ? MotuPortMap{k828mk2Capture} : MotuPortMap{kUltraLiteCapture})
                                   : MotuPortMap{kV2Playback};
@@ -171,10 +177,9 @@ inline constexpr const char* kOpticalNames[] = {
     } else if (version == 5) {
         if (mode == 2) analog(0);
         else if (capture) {
-            analog(2); aes(out.wireChunks - 2); mix(0);
-            pair("Unknown 1", "Unknown 2", 10); optical(12);
+            analog(2); aes(10); mix(0); optical(12);
         } else {
-            main(10); analog(2); aes(out.wireChunks - 2); phones(0); optical(12);
+            main(10); analog(2); aes(12); phones(0); optical(14);
         }
     } else if (version == 9) {
         if (mode == 2) analog(0);
@@ -190,8 +195,11 @@ inline constexpr const char* kOpticalNames[] = {
     } else if (version == 0x19) {
         if (capture) {
             analog(2); if (mode < 2) spdif(10); mix(0);
-            if (mode < 2) reverb(12);
-            if (mode == 0) padding = uint64_t{15} << 14;
+            // SetupStrmFwIds 0x41a40 reserves a gap before Reverb; SetupStreams
+            // 0x41df4 enables Reverb only at 1x. Remaining slots are alignment.
+            if (mode == 0) reverb(14);
+            if (mode < 2) padding = uint64_t{3} << 12;
+            if (mode == 0) padding |= uint64_t{3} << 16;
         } else {
             main(0); analog(2); if (mode < 2) spdif(12); phones(10);
             if (mode == 2) padding = uint64_t{3} << 12;
@@ -199,31 +207,30 @@ inline constexpr const char* kOpticalNames[] = {
     } else if (version == 0x15) {
         if (capture) {
             pair("Mic 1", "Mic 2", 0); analog(2);
-            if (mode < 2) spdif(12);
-            mix(10); if (mode < 2) reverb(14);
-            // FFADO puts the 2x unknown pair after the optical banks.
-            optical(mode == 1 ? 16 : fixed);
+            if (mode == 0) reverb(10);
+            mix(12);
+            if (mode < 2) spdif(14);
+            optical(fixed);
         } else if (mode < 2) {
-            main(10); analog(2); phones(0); spdif(12); optical(fixed);
+            main(10); analog(2); if (mode == 0) phones(0);
+            spdif(12); optical(fixed);
         } else {
             // No Main pair is identified at 4x; never label unknown slots as Main.
             analog(2);
         }
     } else if (version == 0x1b) {
-        // FFADO's optical details are unfinished; fixed known groups are named,
-        // and the optical/unknown slots remain explicit rather than guessed jacks.
         analog(2); if (mode < 2) { aes(10); spdif(12); }
-        if (capture) { mix(0); if (mode == 0) reverb(14); }
+        if (capture) { mix(0); if (mode == 0) reverb(16); }
         else phones(0);
         optical(fixed);
     } else if (version == 0x17) {
-        // FFADO calls this table provisional. Preserve the fixed wire positions
-        // with generic names; do not install an unverified physical permutation.
-        for (uint32_t chunk = 0; chunk < fixed; ++chunk) add("Unknown", chunk);
+        // Vendor SetupStrmFwIds 0x3f080: Main precedes Analog at every rate.
+        if (!capture) main(0);
+        analog(2);
+        if (mode < 2) { aes(10); spdif(12); }
+        if (capture) { mix(0); if (mode == 0) reverb(16); }
+        else if (mode == 0) phones(14);
         optical(fixed);
-    } else if (version == 2) {
-        for (uint32_t chunk = 0; chunk < fixed; ++chunk) add("Unknown", chunk);
-        optical(fixed); // No original-896 physical group table in FFADO.
     }
     // Preserve unclassified slots; unlike known padding these remain host channels.
     uint64_t used = padding;

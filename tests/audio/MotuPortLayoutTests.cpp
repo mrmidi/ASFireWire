@@ -8,6 +8,7 @@
 
 #include "Audio/Wire/MOTU/MotuPortLayout.hpp"
 #include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "MotuChannelMappingFixtures.hpp"
 
 #include <gtest/gtest.h>
 
@@ -100,14 +101,14 @@ TEST(MotuPortLayoutTests, PermutationCheckRejectsDuplicatesAndGaps) {
 TEST(MotuPortLayoutTests, UltraLiteMk3MatchesTheReportedJacksAndVendorOrder) {
     const auto capture = CapturePortsForSwVersion(0x19, 48000, 18);
     const auto playback = PlaybackPortsForSwVersion(0x19, 48000, 14);
-    const std::array<uint8_t, 14> expectedCapture{2,3,4,5,6,7,8,9,10,11,0,1,12,13};
+    const std::array<uint8_t, 14> expectedCapture{2,3,4,5,6,7,8,9,10,11,0,1,14,15};
     const std::array<uint8_t, 14> expectedPlayback{0,1,2,3,4,5,6,7,8,9,12,13,10,11};
     for (uint32_t i = 0; i < 14; ++i) {
         EXPECT_EQ(capture[i].chunk, expectedCapture[i]);
         EXPECT_EQ(playback[i].chunk, expectedPlayback[i]);
     }
     EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0x19,48000,18,true),14U);
-    EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0x19,96000,14,true),14U);
+    EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0x19,96000,14,true),12U);
     EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0x19,192000,10,true),10U);
     EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0x19,192000,14,false),12U);
     EXPECT_EQ(std::string_view(playback[10].name),"S/PDIF 1");
@@ -121,11 +122,11 @@ TEST(MotuPortLayoutTests, EightPreOpticalChannelsMoveAheadOfWirePadding) {
     EXPECT_EQ(ASFW::Encoding::Motu::HostChannelsFor(0xf,48000,14,false),12U);
 }
 
-TEST(MotuPortLayoutTests, The896HdAesPairFollowsOpticalOnTheWire) {
+TEST(MotuPortLayoutTests, The896HdVendorAesPairPrecedesOpticalOnTheWire) {
     const auto capture = CapturePortsForSwVersion(5,48000,22);
     const auto playback = PlaybackPortsForSwVersion(5,48000,22);
-    EXPECT_EQ(capture[8].chunk,20U); EXPECT_EQ(capture[9].chunk,21U);
-    EXPECT_EQ(playback[10].chunk,20U); EXPECT_EQ(playback[11].chunk,21U);
+    EXPECT_EQ(capture[8].chunk,10U); EXPECT_EQ(capture[9].chunk,11U);
+    EXPECT_EQ(playback[10].chunk,12U); EXPECT_EQ(playback[11].chunk,13U);
     EXPECT_EQ(PlaybackPortsForSwVersion(5,192000,8)[0].chunk,0U);
 }
 
@@ -162,4 +163,35 @@ TEST(MotuPortLayoutTests, TravelerSharedDigitalPairDoesNotClaimOnlyCoaxSpdif) {
     const auto ports=CapturePortsForSwVersion(9,48000,14);
     EXPECT_EQ(ports[10].chunk,12U);
     EXPECT_EQ(std::string_view(ports[10].name),"Digital 1");
+}
+
+TEST(MotuPortLayoutTests, EverySupportedModelNamesTheVendorPhysicalGroupsAtEveryFormation) {
+    using namespace MotuChannelFixtures;
+    std::array<bool,kModels.size()> covered{};
+    for (bool capture : {false,true}) EachFormation(capture,
+        [&](const Model& model,uint32_t rate,uint32_t mode,uint32_t wire,uint32_t extra) {
+            SCOPED_TRACE(std::string(model.name)+" rate="+std::to_string(rate)+
+                         " capture="+std::to_string(capture)+" wire="+std::to_string(wire));
+            const auto* layout = PortLayoutFor(model.unitVersion,rate,wire,capture);
+            ASSERT_NE(layout,nullptr);
+            EXPECT_TRUE(IsChunkPermutation(layout->Map()));
+            bool hasEvidence = false;
+            for (const auto& group : groups) {
+                if (group.version != model.unitVersion || group.capture != capture) continue;
+                hasEvidence = true;
+                for (size_t i=0;i<group.names.size();++i) {
+                    const auto visible = MotuPortMap{layout->ports.data(),layout->hostChannels};
+                    const auto found = std::ranges::find_if(visible,
+                        [&](const auto& port) { return port.name == group.names[i]; });
+                    if (group.firstChunk[mode] < 0) { EXPECT_EQ(found,visible.end()) << group.names[i]; continue; }
+                    ASSERT_NE(found,visible.end()) << group.names[i];
+                    EXPECT_EQ(found->chunk,group.firstChunk[mode]+i+(group.followsOptical ? extra : 0))
+                        << group.names[i];
+                }
+            }
+            EXPECT_TRUE(hasEvidence);
+            const auto it = std::ranges::find_if(kModels,[&](const auto& item) { return item.unitVersion == model.unitVersion; });
+            covered[static_cast<size_t>(it-kModels.begin())] = true;
+        });
+    EXPECT_EQ(std::ranges::count(covered,true),11);
 }
