@@ -407,6 +407,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     // preparation must not retain MMIO permission or trigger nested scopes.
     const Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
+    uint64_t readBeforeHost = 0;
+    uint64_t readAfterHost = 0;
     uint32_t refillCycleTimer = 0;
     uint32_t ctrl = 0;
     uint32_t cmdPtr = 0;
@@ -416,7 +418,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             out.failureReason = RefillFailureReason::InvalidSharedContract;
             return out;
         }
+        readBeforeHost = mach_absolute_time();
         refillCycleTimer = access.Read(Register32::kCycleTimer);
+        readAfterHost = mach_absolute_time();
         ctrl = access.Read(ctrlReg);
         cmdPtr = access.Read(cmdPtrReg);
     }
@@ -428,6 +432,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         IsochTxClockPairSample sample{};
         sample.hostTimeMid = hostTime;
         sample.cycleTimer32 = refillCycleTimer;
+        sample.readBeforeHost = readBeforeHost;
+        sample.readAfterHost = readAfterHost;
         controlBlock->clockPair.Publish(sample);
     }
 

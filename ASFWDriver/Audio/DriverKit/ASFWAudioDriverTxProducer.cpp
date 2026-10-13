@@ -918,6 +918,9 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txPlacementLogged = false;
     ivars.runtime.txSytLogged = false;
     ++ivars.runtime.txStartupEpoch;
+    ivars.runtime.txStartupRawPcm = txPolicy.hostToDevicePcmEncoding ==
+        ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
+    ivars.runtime.txStartupFillTrace.count.store(0, std::memory_order_relaxed);
     ivars.runtime.txStartupTrace = {};
     // Scope the temporary cold-start capture to Focusrite. Transport's
     // diagnostic contract is neutral and disabled for other producers.
@@ -997,7 +1000,9 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
                                     ASFW::Isoch::kTxDiagnosticCapacity);
     while (trace.cursor < count) {
         const auto& raw = queue->diagnosticPackets[trace.cursor++];
-        const auto packet = ASFW::Audio::Runtime::DecodeTxStartupPacket(raw);
+        const auto packet = ASFW::Audio::Runtime::DecodeTxStartupPacket(
+            raw, ivars.runtime.txStartupRawPcm,
+            ivars.runtime.txStreamEngine.StreamConfig().pcmChannels);
         const bool firstData = trace.data == 0 && packet.blocks != 0 && packet.valid;
         const bool firstContent = trace.nonzeroPrefixes == 0 && packet.peakQ24 != 0;
         const bool firstFault = trace.invalid == 0 && !packet.valid;
@@ -1017,6 +1022,32 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
                      packet.firstEventWords[0], packet.firstEventWords[1], raw.prefixLength, packet.peakQ24,
                      timelineMatches ? slot->firstAudioFrame : 0, timelineMatches ? 1U : 0U);
         }
+        // First-block source and encoded words from the same packet, not an
+        // unrelated writer peak. Lack of a match means no captured first-block
+        // fill, not silence. Partial first blocks are deliberately excluded.
+        const auto& fills = ivars.runtime.txStartupFillTrace;
+        const uint32_t fillCount = fills.count.load(std::memory_order_acquire);
+        for (uint32_t n = 0; n < fillCount; ++n) {
+            const auto& fill = fills.samples[n];
+            if (fill.packet != raw.packetIndex || !packet.valid || raw.prefixLength < 16) continue;
+            const bool same = fill.encodedWords[0] == packet.firstEventWords[0] &&
+                              fill.encodedWords[1] == packet.firstEventWords[1];
+            ++trace.matchedFills;
+            trace.changedFills += !same;
+            if (trace.matchReports < 2 || (!same && trace.matchReports < 8)) {
+                ++trace.matchReports;
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupMatch] epoch=%llu pkt=%llu frame=%llu filled=%08x/%08x completed=%08x/%08x same=%u rawPcm=%u",
+                         ivars.runtime.txStartupEpoch, fill.packet, fill.frame,
+                         fill.encodedWords[0], fill.encodedWords[1], packet.firstEventWords[0],
+                         packet.firstEventWords[1], same ? 1U : 0U, ivars.runtime.txStartupRawPcm ? 1U : 0U);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupSource] epoch=%llu pkt=%llu frame=%llu offset=%llu writable=%llu srcBits=%08x/%08x",
+                         ivars.runtime.txStartupEpoch, fill.packet, fill.frame, fill.payloadOffset,
+                         fill.firstWritable, fill.sourceBits[0], fill.sourceBits[1]);
+            }
+            break;
+        }
         const uint32_t second = static_cast<uint32_t>(raw.packetIndex / ASFW::Timing::kCyclesPerSecond);
         if (second != trace.lastReportSecond || raw.packetIndex == 61439) {
             trace.lastReportSecond = second;
@@ -1030,6 +1061,9 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
                      trace.timedPackets ? trace.maximumLead : 0,
                      control ? control->playbackRingWriteFrame.load(std::memory_order_relaxed) : 0,
                      control ? control->playbackRingReadFrame.load(std::memory_order_relaxed) : 0);
+            ASFW_LOG(DirectAudio, "[TxStartupFillSummary] epoch=%llu sec=%u matches=%u changed=%u capturedFills=%u rawPcm=%u",
+                     ivars.runtime.txStartupEpoch, second, trace.matchedFills, trace.changedFills,
+                     fillCount, ivars.runtime.txStartupRawPcm ? 1U : 0U);
             TxPlacementSample placement{};
             if (MeasureTxPlacement(ivars, placement)) {
                 ASFW_LOG(DirectAudio,
@@ -1037,6 +1071,17 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
                          ivars.runtime.txStartupEpoch, placement.packetIndex, placement.firstAudioFrame,
                          placement.halSampleTime, placement.offsetFrames,
                          ivars.runtime.txStreamEngine.StreamConfig().sampleRate);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupTiming] epoch=%llu pkt=%llu completion=%08x pair=%08x pairHost=%llu spanNs=%llu lagNs=%llu busDelta=%lld txHost=%llu",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.completionCycle,
+                         placement.pairCycle, placement.pairHost, placement.pairSpanNs, placement.pairLagNs,
+                         placement.pairDeltaTicks, placement.txHost);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupAnchor] epoch=%llu pkt=%llu host=%llu frame=%llu gen=%llu anchorEpoch=%llu hwEpoch=%llu deltaNs=%lld slopeQ8=%u nominalOffset=%lld measuredOffset=%lld",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.anchorHost, placement.anchorFrame,
+                         placement.anchorGeneration, placement.anchorEpoch, placement.wireEpoch,
+                         placement.anchorDeltaNs, placement.slopeQ8, placement.offsetFrames, placement.measuredOffsetFrames);
+
             }
             if (control) {
                 ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
@@ -1109,6 +1154,26 @@ bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) no
     out.firstAudioFrame = slot->firstAudioFrame;
     out.halSampleTime = static_cast<int64_t>(anchor.sampleFrame) + (after ? frames : -frames);
     out.offsetFrames = static_cast<int64_t>(slot->firstAudioFrame) - out.halSampleTime;
+    const int64_t measuredFrames = anchor.hostNanosPerSampleQ8 == 0 ? frames :
+        static_cast<int64_t>(static_cast<__uint128_t>(hostNanos) * 256 / anchor.hostNanosPerSampleQ8);
+    out.measuredOffsetFrames = static_cast<int64_t>(slot->firstAudioFrame) -
+        (static_cast<int64_t>(anchor.sampleFrame) + (after ? measuredFrames : -measuredFrames));
+    out.anchorDeltaNs = after ? static_cast<int64_t>(hostNanos) : -static_cast<int64_t>(hostNanos);
+    out.pairDeltaTicks = busDelta;
+    out.txHost = txHost;
+    out.pairHost = pair.hostTimeMid;
+    out.pairSpanNs = pair.readAfterHost >= pair.readBeforeHost
+        ? ASFW::Timing::hostTicksToNanos(pair.readAfterHost - pair.readBeforeHost) : 0;
+    out.pairLagNs = pair.hostTimeMid >= pair.readAfterHost && pair.readAfterHost != 0
+        ? ASFW::Timing::hostTicksToNanos(pair.hostTimeMid - pair.readAfterHost) : 0;
+    out.anchorHost = anchor.hostTicks;
+    out.anchorFrame = anchor.sampleFrame;
+    out.anchorGeneration = anchor.generation;
+    out.anchorEpoch = anchor.timelineEpoch;
+    out.wireEpoch = control->hardwareTimeline.Epoch();
+    out.completionCycle = stamp;
+    out.pairCycle = pair.cycleTimer32;
+    out.slopeQ8 = anchor.hostNanosPerSampleQ8;
     return true;
 }
 

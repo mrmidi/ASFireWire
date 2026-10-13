@@ -1362,6 +1362,24 @@ TEST(TxOwnershipGolden, PlacementMeterAgreesWithTheWire) {
                 (unsigned long long)sample.packetIndex, (unsigned long long)sample.firstAudioFrame,
                 (long long)sample.halSampleTime, (long long)sample.offsetFrames);
 
+    // Diagnostics must distinguish nominal-rate projection from measured slope,
+    // including backwards projection to a completion preceding the anchor.
+    auto& queue = *rig.Ivars().runtime.txSlotProvider.queueControl;
+    queue.clockPair.Publish({.hostTimeMid = sample.pairHost, .cycleTimer32 = sample.pairCycle,
+                             .readBeforeHost = sample.pairHost - 200,
+                             .readAfterHost = sample.pairHost - 100});
+    ASSERT_TRUE(rig.MutableControl().hostClockAnchor.Publish(
+        100000, sample.txHost + 100000000, 10666667, 42).accepted);
+    ASFW::Audio::DriverKit::TxPlacementSample measured{};
+    ASSERT_TRUE(ASFW::Audio::DriverKit::MeasureTxPlacement(rig.Ivars(), measured));
+    EXPECT_EQ(measured.anchorDeltaNs, -100000000);
+    EXPECT_EQ(measured.halSampleTime, 95200);
+    EXPECT_EQ(measured.offsetFrames, static_cast<int64_t>(measured.firstAudioFrame) - 95200);
+    EXPECT_EQ(measured.measuredOffsetFrames, static_cast<int64_t>(measured.firstAudioFrame) - 97601);
+    EXPECT_EQ(measured.pairSpanNs, 100U);
+    EXPECT_EQ(measured.pairLagNs, 100U);
+    EXPECT_EQ(measured.anchorEpoch, 42U);
+
 }
 
 // The transport maps absolute 64-bit packets and accepts a slot only at
@@ -1620,4 +1638,25 @@ TEST(AudioDriverTxProducerTests, FocusriteCapturesFirstRealWriteEndWithoutFillin
     EXPECT_EQ(trace.samples[0].capacity, ivars.runtime.directAudioGraph.memory.outputFrameCapacity);
     ASSERT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(ivars, control, 4160, 100100, 64));
     EXPECT_EQ(trace.count.load(std::memory_order_acquire), 1U);
+}
+
+TEST(AudioDriverTxProducerTests, FocusriteMatchesActualHostSamplesWithFilledPacketWords) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    rig.Ivars().device.vendorId = 0x00130e;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560});
+    ASSERT_TRUE(rig.RunPackets(6000)) << rig.DescribeFault();
+    const auto& trace = rig.Ivars().runtime.txStartupFillTrace;
+    ASSERT_GT(trace.count.load(), 0U);
+    bool nonzero = false;
+    for (uint32_t i = 0; i < trace.count.load(); ++i) {
+        const auto& sample = trace.samples[i];
+        EXPECT_GE(sample.packet, sample.firstWritable);
+        EXPECT_TRUE(ASFW::Isoch::CaptureTxDiagnosticPacket(sample.packet));
+        nonzero |= (sample.encodedWords[0] & 0xffffffU) != 0;
+    }
+    EXPECT_TRUE(nonzero);
 }

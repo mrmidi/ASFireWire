@@ -49,6 +49,23 @@ struct TxStartupClientTrace final {
     }
 };
 
+// IO publishes once per sampled packet; preparation reads immutable evidence.
+// Reset only on a fresh wire arm after IO has quiesced, never on a rejoin.
+struct TxStartupFillSample final {
+    uint64_t packet{0}, frame{0}, payloadOffset{0}, firstWritable{0};
+    uint32_t sourceBits[2]{}, encodedWords[2]{};
+};
+struct TxStartupFillTrace final {
+    std::atomic<uint32_t> count{0};
+    TxStartupFillSample samples[Isoch::kTxDiagnosticCapacity]{};
+    void Publish(const TxStartupFillSample& sample) noexcept {
+        const uint32_t n = count.load(std::memory_order_relaxed);
+        if (n == Isoch::kTxDiagnosticCapacity || (n && samples[n - 1].packet == sample.packet)) return;
+        samples[n] = sample;
+        count.store(n + 1, std::memory_order_release);
+    }
+};
+
 // Decode transport's immutable raw completion sample on the audio side.
 // A prefix is content evidence, not a capture of the whole packet on the bus.
 struct TxStartupPacket final {
@@ -65,7 +82,8 @@ struct TxStartupPacket final {
 };
 
 [[nodiscard]] inline TxStartupPacket DecodeTxStartupPacket(
-    const Isoch::IsochTxDiagnosticPacket& sample) noexcept {
+    const Isoch::IsochTxDiagnosticPacket& sample, bool rawSigned24 = false,
+    uint32_t pcmChannels = UINT32_MAX) noexcept {
     TxStartupPacket out{};
     if (!sample.metadataMatches || !sample.descriptorMatches ||
         sample.prefixLength < 8 || sample.prefixLength > sizeof(sample.prefix) ||
@@ -93,7 +111,8 @@ struct TxStartupPacket final {
                 (uint32_t{p[offset + 1]} << 16) | (uint32_t{p[offset + 2]} << 8) | p[offset + 3];
         }
         // AM824 MBLA label; MIDI and other event types are not PCM.
-        if (p[offset] != 0x40) continue;
+        const uint32_t channel = ((offset - 8) / 4) % out.dbs;
+        if (channel >= pcmChannels || (!rawSigned24 && p[offset] != 0x40)) continue;
         const uint32_t raw = (uint32_t{p[offset + 1]} << 16) |
             (uint32_t{p[offset + 2]} << 8) | p[offset + 3];
         const uint32_t magnitude = (raw & 0x800000U) ? 0x1000000U - raw : raw;
@@ -113,6 +132,7 @@ struct TxStartupPacket final {
 
 struct TxStartupTrace final {
     uint32_t cursor{0};
+    uint32_t matchedFills{0}, changedFills{0}, matchReports{0};
     uint32_t invalid{0};
     uint32_t mappingMismatch{0};
     uint32_t metadataMismatch{0};

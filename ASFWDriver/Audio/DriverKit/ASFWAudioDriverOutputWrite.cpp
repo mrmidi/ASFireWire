@@ -181,6 +181,43 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
 
     const uint64_t fillStarted = TxHostNow();
     ivars.runtime.txStreamEngine.FillFromHostOutput(hostBuffer, firstWritable);
+    // Match the completion sampling schedule. Copy evidence on the IO writer
+    // after filling, while these frames are still ahead of finality. No logging.
+    if (ivars.device.vendorId == 0x00130eU &&
+        firstWritable < 61440 && memory.outputChannels >= 2) {
+        auto& trace = ivars.runtime.txStartupFillTrace;
+        uint64_t frame = hostBuffer.firstFrame;
+        const uint64_t endFrame = frame + hostBuffer.frameCount;
+        while (frame < endFrame) {
+            ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot snap{};
+            if (!ivars.runtime.txStreamEngine.Timeline().SnapshotSlotForAudioFrame(frame, snap)) break;
+            const uint64_t next = snap.firstAudioFrame + snap.framesInPacket;
+            if (next <= frame) break;
+            if (frame == snap.firstAudioFrame && snap.packetIndex >= firstWritable &&
+                ASFW::Isoch::CaptureTxDiagnosticPacket(snap.packetIndex) && snap.packetSizeBytes >= 16) {
+                ASFW::Audio::Runtime::TxStartupFillSample sample{};
+                sample.packet = snap.packetIndex;
+                sample.frame = frame;
+                sample.firstWritable = firstWritable;
+                sample.payloadOffset = reinterpret_cast<uintptr_t>(snap.packetBytes) -
+                    reinterpret_cast<uintptr_t>(ivars.runtime.txSlotProvider.payloadBase);
+                const float* source = memory.outputBase +
+                    (frame % memory.outputFrameCapacity) * memory.outputChannels;
+                for (uint32_t ch = 0; ch < 2; ++ch) {
+                    sample.sourceBits[ch] = std::bit_cast<uint32_t>(source[ch]);
+                    const auto* bytes = snap.packetBytes + 8 + ch * 4;
+                    sample.encodedWords[ch] = (uint32_t{bytes[0]} << 24) |
+                        (uint32_t{bytes[1]} << 16) | (uint32_t{bytes[2]} << 8) | bytes[3];
+                }
+                if (snap.slot->generation.load(std::memory_order_acquire) == snap.generation &&
+                    snap.slot->state.load(std::memory_order_acquire) ==
+                        ASFW::Protocols::Audio::AMDTP::PacketSlotState::ExposedForAudio) {
+                    trace.Publish(sample);
+                }
+            }
+            frame = next;
+        }
+    }
     // The secondary stream carries host channels [16, 32) of the same frames
     // (its writer's sourceChannelOffset), so both streams take one decision.
     if (ivars.runtime.txSecondaryActive) {

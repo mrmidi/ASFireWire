@@ -414,3 +414,32 @@ TEST(TxStartupTraceTests, RejectsIsochHeaderLengthThatDisagreesWithCompletedPayl
     raw.immediateHeader[1] = 296U << 16;
     EXPECT_FALSE(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).valid);
 }
+
+TEST(TxStartupTraceTests, RawPcmIsCountedWithoutAm824LabelAndMidiIsExcluded) {
+    ASFW::Isoch::IsochTxDiagnosticPacket raw{};
+    raw.metadataMatches = raw.descriptorMatches = true;
+    raw.payloadLength = raw.prefixLength = 20;
+    raw.immediateHeader[1] = 20U << 16;
+    const uint8_t bytes[] = {0, 3, 0, 0, 0x90, 2, 0xff, 0xff,
+                            0, 0, 0, 5, 0xff, 0xff, 0xff, 0xf9,
+                            0x80, 0x7f, 0xff, 0xff};
+    std::copy(std::begin(bytes), std::end(bytes), raw.prefix);
+    EXPECT_EQ(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).peakQ24, 0U);
+    const auto decoded = ASFW::Audio::Runtime::DecodeTxStartupPacket(raw, true, 2);
+    ASSERT_TRUE(decoded.valid);
+    EXPECT_EQ(decoded.peakQ24, 7U);
+    EXPECT_EQ(decoded.firstEventWords[0], 5U);
+    EXPECT_EQ(decoded.firstEventWords[1], 0xfffffff9U);
+}
+
+TEST(TxStartupTraceTests, FillEvidenceNeverOverwritesWhenItsBudgetIsExhausted) {
+    ASFW::Audio::Runtime::TxStartupFillTrace trace{};
+    trace.Publish({.packet = 257, .frame = 100, .encodedWords = {5, 7}});
+    trace.Publish({.packet = 257, .frame = 101, .encodedWords = {9, 10}});
+    EXPECT_EQ(trace.count.load(), 1U);
+    EXPECT_EQ(trace.samples[0].encodedWords[0], 5U);
+    for (uint32_t i = 1; i <= ASFW::Isoch::kTxDiagnosticCapacity; ++i)
+        trace.Publish({.packet = 257 + i});
+    EXPECT_EQ(trace.count.load(), ASFW::Isoch::kTxDiagnosticCapacity);
+    EXPECT_EQ(trace.samples[0].frame, 100U);
+}

@@ -238,6 +238,8 @@ struct AudioDriverRuntimeState {
     bool txPlacementLogged{false};
     bool txSytLogged{false};
     uint64_t txStartupEpoch{0};
+    bool txStartupRawPcm{false};
+    ASFW::Audio::Runtime::TxStartupFillTrace txStartupFillTrace;
     ASFW::Audio::Runtime::TxStartupTrace txStartupTrace{};
     ASFW::Audio::Runtime::TxStartupClientTrace txStartupClientTrace{};
     // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
@@ -372,9 +374,14 @@ struct TxPlacementSample final {
     uint64_t packetIndex{0};
     uint64_t firstAudioFrame{0};
     int64_t halSampleTime{0};
-    // firstAudioFrame - halSampleTime. Negative: the frame left after its HAL
-    // time, so output is late by that many frames.
+    // Estimate at cycle start, not a measured intra-cycle lateness.
     int64_t offsetFrames{0};
+    int64_t measuredOffsetFrames{0};
+    int64_t anchorDeltaNs{0};
+    int64_t pairDeltaTicks{0};
+    uint64_t txHost{0}, pairHost{0}, pairSpanNs{0}, pairLagNs{0};
+    uint64_t anchorHost{0}, anchorFrame{0}, anchorGeneration{0}, anchorEpoch{0}, wireEpoch{0};
+    uint32_t completionCycle{0}, pairCycle{0}, slopeQ8{0};
 };
 
 // Runs on the TX preparation queue, the timeline's only writer. False when

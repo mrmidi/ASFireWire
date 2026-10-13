@@ -14,7 +14,7 @@
 
 namespace ASFW::Isoch {
 
-inline constexpr uint32_t kTxQueueAbiVersion = 7;
+inline constexpr uint32_t kTxQueueAbiVersion = 8;
 
 /// Neutral OHCI queue operation for one packet slot. Numeric zero is Packet
 /// for value-initialized current publishers. The queue contract version still
@@ -58,6 +58,8 @@ static_assert(std::atomic<uint64_t>::is_always_lock_free);
 struct IsochTxClockPairSample final {
     uint64_t hostTimeMid{0};
     uint32_t cycleTimer32{0};
+    uint64_t readBeforeHost{0};
+    uint64_t readAfterHost{0};
 };
 
 struct IsochTxClockPairSeqlock final {
@@ -65,11 +67,16 @@ struct IsochTxClockPairSeqlock final {
     std::atomic<uint64_t> hostTimeMid{0};
     std::atomic<uint32_t> cycleTimer32{0};
 
+    std::atomic<uint64_t> readBeforeHost{0};
+    std::atomic<uint64_t> readAfterHost{0};
+
     void Publish(const IsochTxClockPairSample& sample) noexcept {
         const uint32_t sequenceBefore = sequence.load(std::memory_order_relaxed);
         sequence.store(sequenceBefore + 1, std::memory_order_release);
         hostTimeMid.store(sample.hostTimeMid, std::memory_order_relaxed);
         cycleTimer32.store(sample.cycleTimer32, std::memory_order_relaxed);
+        readBeforeHost.store(sample.readBeforeHost, std::memory_order_relaxed);
+        readAfterHost.store(sample.readAfterHost, std::memory_order_relaxed);
         sequence.store(sequenceBefore + 2, std::memory_order_release);
     }
 
@@ -81,6 +88,8 @@ struct IsochTxClockPairSeqlock final {
             const IsochTxClockPairSample sample{
                 .hostTimeMid = hostTimeMid.load(std::memory_order_relaxed),
                 .cycleTimer32 = cycleTimer32.load(std::memory_order_relaxed),
+                .readBeforeHost = readBeforeHost.load(std::memory_order_relaxed),
+                .readAfterHost = readAfterHost.load(std::memory_order_relaxed),
             };
             std::atomic_thread_fence(std::memory_order_acquire);
             if (sequence.load(std::memory_order_relaxed) == before) {
