@@ -170,3 +170,41 @@ TEST(WireRetention, ReleaseResetsEverything) {
     EXPECT_FALSE(w.IoRestartPending());
     EXPECT_EQ(w.PlanStart(k48k, true, nullptr), WireStartPlan::kFreshStart);
 }
+
+TEST(WireRetention, PreparedDeviceJoinsWithoutAnEarlierCoreAudioStart) {
+    WireRetention wire;
+    wire.OnPrepared(k48k);
+    EXPECT_EQ(wire.State(), WireState::kRetained);
+    EXPECT_EQ(wire.ConsecutiveStartTimeouts(), 0U);
+    EXPECT_EQ(wire.PlanStart(k48k, true, nullptr), WireStartPlan::kRejoin);
+    wire.OnStarted(k48k);
+    EXPECT_EQ(wire.PlanStop(true, true, nullptr), WireStopPlan::kRetain);
+    wire.OnRetained();
+    EXPECT_EQ(wire.PlanStart(k48k, true, nullptr), WireStartPlan::kRejoin);
+}
+
+TEST(WireRetention, IdleRecoveryRebuildsWireBeforeNextClientJoins) {
+    WireRetention wire;
+    wire.OnPrepared(k48k);
+    EXPECT_TRUE(wire.MustReleaseOnInvalidation());
+    wire.OnIoRestartRequested();
+    EXPECT_EQ(wire.PlanStart(k48k, true, nullptr), WireStartPlan::kReleaseThenFresh);
+    wire.OnReleased();
+    wire.OnPrepared(k44k);
+    EXPECT_FALSE(wire.IoRestartPending());
+    EXPECT_EQ(wire.PlanStart(k44k, true, nullptr), WireStartPlan::kRejoin);
+    EXPECT_EQ(wire.PlanStart(k48k, true, nullptr), WireStartPlan::kReleaseThenFresh);
+    EXPECT_TRUE(wire.MustReleaseOnInvalidation());
+}
+
+TEST(WireRetention, RateChangeStopsLiveWireBeforeConfigurationCommit) {
+    auto wire = LiveAt(k48k);
+    wire.OnRateChangeRequested();
+    WireReleaseReason reason{};
+    EXPECT_EQ(wire.PlanStop(true, true, &reason), WireStopPlan::kRelease);
+    EXPECT_EQ(reason, WireReleaseReason::kRateChange);
+    wire.OnReleased();
+    wire.OnPrepared(k44k);
+    EXPECT_EQ(wire.PlanStart(k44k, true, nullptr), WireStartPlan::kRejoin);
+    EXPECT_EQ(wire.PlanStop(true, true, nullptr), WireStopPlan::kRetain);
+}

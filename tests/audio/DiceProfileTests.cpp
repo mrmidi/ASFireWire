@@ -543,3 +543,18 @@ TEST(DiceProfileTests, GenericDiceUsesThePacketScaledLadder) {
 }
 
 } // namespace
+
+TEST(DiceProfileTests, EveryDiceBuilderStartsAndRetainsWireIndependentlyOfClients) {
+    using ASFW::DeviceProfiles::Audio::AudioDeviceCatalog;
+    for (const auto& definition : AudioDeviceCatalog::Definitions()) {
+        const auto builder = static_cast<uint32_t>(definition.profileBuilder);
+        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(builder);
+        if (!profile) continue;
+        EXPECT_TRUE(profile->StartsWireBeforePublication()) << builder;
+        EXPECT_TRUE(profile->RetainsWireAcrossStopIO()) << builder;
+    }
+    const auto* motu = AudioProfileRegistry::ProfileForBuilderId(
+        static_cast<uint32_t>(ProfileBuilderId::Motu828mk2));
+    ASSERT_NE(motu, nullptr);
+    EXPECT_FALSE(static_cast<const IAudioStreamProfile*>(motu)->StartsWireBeforePublication());
+}

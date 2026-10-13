@@ -264,6 +264,10 @@ kern_return_t ReleaseIdleKeptWire(ASFWAudioDevice_IVars& local,
     RunOnWorkQueue(ivars, ^{
         if (local.wire.MustReleaseOnInvalidation()) {
             kr = ReleaseKeptWire(ivars, local.transportStopStatus, local.wire, reason);
+        } else if (reason == ASFW::Audio::Runtime::WireReleaseReason::kRateChange) {
+            // The host must release a live old-rate wire at StopIO, before
+            // Perform changes formats and bindings underneath transport.
+            local.wire.OnRateChangeRequested();
         }
     });
     return kr;
@@ -272,6 +276,19 @@ kern_return_t ReleaseIdleKeptWire(ASFWAudioDevice_IVars& local,
 } // namespace
 
 kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
+    return StartOrJoinWire(in_flags, true);
+}
+
+kern_return_t ASFWAudioDevice::PrepareWire() {
+    if (!ivars || !ivars->driverIvars) return kIOReturnNotReady;
+    const auto* profile = static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(
+        ivars->driverIvars->device.profile);
+    if (!profile || !profile->StartsWireBeforePublication()) return kIOReturnSuccess;
+    return StartOrJoinWire(IOUserAudioStartStopFlags::None, false);
+}
+
+kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flags,
+                                              bool startClientIO) {
     if (!ivars || !ivars->driverIvars) {
         ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - no driver ivars");
         return kIOReturnNotReady;
@@ -292,7 +309,11 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     auto& local = *this->ivars;
     __block kern_return_t kr = kIOReturnSuccess;
 
-    ivars.workQueue->DispatchSync(^{
+    RunOnWorkQueue(ivars, ^{
+        if (!startClientIO && ivars.runtime.isRunning.load(std::memory_order_acquire)) {
+            kr = kIOReturnBusy;
+            return;
+        }
         using ASFW::Audio::Runtime::WireReleaseReason;
         using ASFW::Audio::Runtime::WireStartPlan;
         using ASFW::Audio::Runtime::WireStopPlan;
@@ -380,6 +401,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     return;
                 }
             } else if (plan == WireStartPlan::kRejoin) {
+                if (!startClientIO) return;
                 auto* control = ivars.runtime.directAudioGraph.control;
                 const auto* profile =
                     static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
@@ -820,12 +842,13 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     TransportHealthy(ivars, local.transportStopStatus.load(std::memory_order_acquire)),
                     &timeoutReason) == WireStopPlan::kRetain) {
                 ivars.runtime.isRunning.store(false, std::memory_order_release);
-                local.wire.OnStartTimedOutRetained(startRateHz);
+                if (startClientIO) local.wire.OnStartTimedOutRetained(startRateHz);
+                else local.wire.OnPrepared(startRateHz);
                 ASFW_LOG(Audio,
                          "[WireRetain] phase=start-timeout action=keep guid=0x%016llx rate=%u waitMs=%u timeouts=%u",
                          ivars.device.guid, startRateHz, ztsWaitMs,
                          local.wire.ConsecutiveStartTimeouts());
-                kr = kIOReturnTimeout;
+                kr = startClientIO ? kIOReturnTimeout : kIOReturnSuccess;
                 return;
             }
             kr = failStart(kIOReturnTimeout, "WaitForInitialHardwareZts");
@@ -839,6 +862,13 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 std::memory_order_acquire),
             initialZtsHostTicks,
             ztsWaitMs);
+
+        if (!startClientIO) {
+            local.wire.OnPrepared(startRateHz);
+            ASFW_LOG(Audio, "[WireRetain] phase=prepared guid=0x%016llx rate=%u",
+                     ivars.device.guid, startRateHz);
+            return;
+        }
 
         // Hardware-specific setup must finish before super::StartIO updates
         // ADK's IO state. Open the RT gate first so callbacks arriving as part
@@ -867,7 +897,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                  static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice));
     });
 
-    if (kr == kIOReturnSuccess) {
+    if (kr == kIOReturnSuccess && startClientIO) {
         const auto inputFormat = ivars.inputStream
             ? ivars.inputStream->GetCurrentStreamFormat()
             : IOUserAudioStreamBasicDescription{};
@@ -1652,7 +1682,9 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         return failure;
     }
     if (change_action == kConfigChangeActionIoRestart) {
-        ASFW_LOG(Audio, "ASFWAudioDevice: IO restart window (StopIO done; StartIO follows)");
+        ASFW_LOG(Audio, "ASFWAudioDevice: IO restart window (StopIO done; preparing wire)");
+        const auto prepared = PrepareWire();
+        if (prepared != kIOReturnSuccess) return prepared;
         return super::PerformDeviceConfigurationChange(change_action, in_change_info);
     }
     if (change_action != kConfigChangeActionSampleRate || !ivars ||
@@ -1683,6 +1715,7 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     ASFW_LOG(Audio,
              "ASFWAudioDevice: sample rate change to %u Hz %{public}s (0x%x (%{public}s))",
              rateHz, kr == kIOReturnSuccess ? "committed" : "FAILED", kr, ASFW::Logging::IOReturnName(kr));
+    if (kr == kIOReturnSuccess) kr = PrepareWire();
     const kern_return_t superKr =
         super::PerformDeviceConfigurationChange(change_action, in_change_info);
     return kr != kIOReturnSuccess ? kr : superKr;

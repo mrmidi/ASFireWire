@@ -71,6 +71,7 @@ public:
     // (Saffire.kext 4.3.0 performAudioEngineStart @0x4c12, performAudioEngineStop
     // @0x4e6a). Every TCAT kext does this; none branches per model.
     [[nodiscard]] bool RetainsWireAcrossStopIO() const noexcept override { return true; }
+    [[nodiscard]] bool StartsWireBeforePublication() const noexcept override { return true; }
 
     // Playback streams to insist on, or zero to take the device's count.
 

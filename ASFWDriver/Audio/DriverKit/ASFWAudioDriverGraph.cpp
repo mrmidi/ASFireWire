@@ -895,23 +895,6 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              "ADK GRAPH state=device.GetZeroTimestampPeriod value=%u",
              configuredZtsPeriod);
 
-    error = driver.AddObject(ivars.audioDevice.get());
-    if (!requireAdkSuccess("driver.AddObject(device)", error)) {
-        return error;
-    }
-    state.audioDeviceAdded = true;
-
-    error = driver.RegisterService();
-    if (!requireAdkSuccess("driver.RegisterService", error)) {
-        return error;
-    }
-
-    ASFW_LOG(Audio,
-             "✅ ASFWAudioDriver: Started - device '%{public}s' (in=%u out=%u aggregate=%u)",
-             ivars.device.deviceName,
-             ivars.device.inputChannelCount,
-             ivars.device.outputChannelCount,
-             ivars.device.channelCount);
     return kIOReturnSuccess;
 }
 

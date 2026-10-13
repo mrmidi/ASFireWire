@@ -31,6 +31,10 @@ public:
     virtual kern_return_t StartIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
     virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
 
+    // Prepare a profile-owned persistent wire with HAL sample delivery closed.
+    kern_return_t PrepareWire() LOCALONLY;
+    kern_return_t StartOrJoinWire(IOUserAudioStartStopFlags in_flags, bool startClientIO) LOCALONLY;
+
     // CoreAudio sample-rate selection: program the device's DICE clock to the
     // new rate (via the transport-side coordinator) before accepting it.
     virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;

@@ -135,6 +135,10 @@ public:
     // family is verified on hardware.
     [[nodiscard]] virtual bool RetainsWireAcrossStopIO() const noexcept { return false; }
 
+    // Establish transport before HAL publication and rebuild it in the stopped
+    // configuration window, independently of whether a client is running.
+    [[nodiscard]] virtual bool StartsWireBeforePublication() const noexcept { return false; }
+
     // Sum the streams the device actually carries. The previous form was
     // pcmChannels * StreamCount(), which silently assumes every stream has
     // stream 0's width: the recorded Venice F24 carries 16 + 8, so that form
