@@ -22,6 +22,15 @@ namespace ASFW::Audio::Motu {
 namespace {
 constexpr uint16_t kAddrHi = static_cast<uint16_t>(kAddrBase >> 32);
 constexpr uint32_t kAddrLo = static_cast<uint32_t>(kAddrBase);
+// MOTUFireWireAudio 1.6 83634: Command::Submit 0x264a0 repeats synchronous
+// register commands 17 times. FWReadQuad::Callback 0x25810 repeats asynchronous
+// read timeouts 16 times with a 10 ms timer; SubmitNow 0x25780 delays a coalesced
+// read by 5 ms. Apple's three BUSY retries remain the inner budget.
+constexpr Async::TransactionRetryPolicy kControlCommandRecovery{
+    .repeat = Async::CommandRepeat::Failure, .commandAttempts = 17};
+constexpr Async::TransactionRetryPolicy kAsyncReadRecovery{
+    .repeat = Async::CommandRepeat::Timeout, .commandAttempts = 16,
+    .repeatDelayNs = 10'000'000, .coalescedDelayNs = 5'000'000};
 } // namespace
 
 Async::FWAddress MotuProtocol::AddressOf(Reg reg) noexcept {
@@ -51,7 +60,8 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
     }
 }
 MotuProtocol::~MotuProtocol() {
-    if (confirmRead_) confirmRead_->Cancel();
+    shuttingDown_.store(true, std::memory_order_release);
+    registerCommands_.CancelAll(true);
     if (notifications_ && notifications_->Valid()) notifications_->Cancel();
 }
 
@@ -81,7 +91,7 @@ IOReturn MotuProtocol::Initialize() {
 IOReturn MotuProtocol::Shutdown() {
     initialized_ = false;
     shuttingDown_.store(true, std::memory_order_release);
-    if (confirmRead_) confirmRead_->Cancel();
+    registerCommands_.CancelAll(true);
     if (notifications_ && notifications_->Valid()) notifications_->Cancel();
     cachedSampleRateHz_.store(0, std::memory_order_release);
 
@@ -112,7 +122,7 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
                                           std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
     (void)avcUnit; // MOTU is register-based; no AV/C.
     if (route == route_) return;
-    if (confirmRead_) confirmRead_->Cancel();
+    registerCommands_.CancelAll(true, Async::AsyncStatus::kStaleGeneration);
     route_ = route;
     io_.UpdateRoute(route);
     if (notifications_ && notifications_->Valid()) notifications_->UpdateRoute(route);
@@ -120,10 +130,27 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
     opticalSnapshot_.store(0, std::memory_order_release);
     cachedSampleRateHz_.store(0, std::memory_order_release);
     preparedRateHz_.store(0, std::memory_order_release);
+    if (!shuttingDown_.load(std::memory_order_acquire)) registerCommands_.Reopen();
+}
+
+void MotuProtocol::ReadRegister(Async::FWAddress address,
+    Protocols::Ports::ProtocolRegisterIO::QuadReadCallback callback) {
+    const auto command = io_.CreateQuadBERead(timerScheduler_, kControlCommandRecovery,
+                                             address, std::move(callback));
+    registerCommands_.Begin(command);
+}
+
+void MotuProtocol::WriteRegister(Async::FWAddress address, uint32_t value,
+    Protocols::Ports::ProtocolRegisterIO::WriteCallback callback, RegisterRecovery recovery) {
+    const auto policy = recovery == RegisterRecovery::Control ? kControlCommandRecovery
+                                                              : Async::TransactionRetryPolicy{};
+    const auto command = io_.CreateQuadBEWrite(timerScheduler_, policy,
+                                              address, value, std::move(callback));
+    registerCommands_.Begin(command);
 }
 
 void MotuProtocol::ReadClockStatus(ClockStatusCallback callback) {
-    (void)io_.ReadQuadBE(
+    ReadRegister(
         AddressOf(ClockRegister()),
         [this, callback = std::move(callback)](Async::AsyncStatus status, uint32_t value) mutable {
             const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
@@ -182,7 +209,7 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
             return;
         }
 
-        (void)io_.WriteQuadBE(
+        WriteRegister(
             AddressOf(ClockRegister()),
             *encoded,
             [this, rateHz, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
@@ -229,7 +256,7 @@ void MotuProtocol::SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionC
             });
         });
         if (!wait) { if (callback) callback(kIOReturnBusy); return; }
-        (void)io_.WriteQuadBE(AddressOf(ClockRegister()), value,
+        WriteRegister(AddressOf(ClockRegister()), value,
             [this, wait](Async::AsyncStatus status) {
                 const auto result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
                 wait->Ack(result);
@@ -240,14 +267,14 @@ void MotuProtocol::SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionC
                     });
                     if (token == Scheduling::kInvalidTimerToken) wait->Fail(kIOReturnNoResources);
                 }
-            });
+            }, RegisterRecovery::Asynchronous);
     });
 }
 
 void MotuProtocol::WriteAsyncAddrPair(AsyncAddrValues values,
                                         bool registered,
                                         CompletionCallback callback) {
-    (void)io_.WriteQuadBE(
+    WriteRegister(
         AddressOf(Reg::AsyncAddrHi),
         values.hi,
         [this, operationRoute = route_, values, registered, callback = std::move(callback)](
@@ -262,7 +289,7 @@ void MotuProtocol::WriteAsyncAddrPair(AsyncAddrValues values,
                 return;
             }
 
-            (void)io_.WriteQuadBE(
+            WriteRegister(
                 AddressOf(Reg::AsyncAddrLo),
                 values.lo,
                 [this, operationRoute, registered, callback = std::move(callback)](
@@ -307,7 +334,7 @@ void MotuProtocol::ReleaseAsyncMessageAddress(CompletionCallback callback) {
 void MotuProtocol::ModifyRegister(Reg reg,
                                     std::function<uint32_t(uint32_t)> transform,
                                     CompletionCallback callback) {
-    (void)io_.ReadQuadBE(
+    ReadRegister(
         AddressOf(reg),
         [this, reg, transform = std::move(transform), callback = std::move(callback)](
             Async::AsyncStatus status, uint32_t current) mutable {
@@ -318,7 +345,7 @@ void MotuProtocol::ModifyRegister(Reg reg,
                 }
                 return;
             }
-            (void)io_.WriteQuadBE(
+            WriteRegister(
                 AddressOf(reg),
                 transform(current),
                 [callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
@@ -361,7 +388,7 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
     // are unavailable.
     opticalSnapshot_.store(0U, std::memory_order_release);
 
-    (void)io_.ReadQuadBE(
+    ReadRegister(
         AddressOf(OpticalRegister()),
         [this, callback = std::move(callback)](Async::AsyncStatus status,
                                                uint32_t optRaw) mutable {
@@ -565,7 +592,7 @@ void MotuProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
             }
             ASFW_LOG(Audio, "MotuProtocol: clock rate set to %u before prepare", rateHz);
 
-    (void)io_.ReadQuadBE(
+    ReadRegister(
         AddressOf(OpticalRegister()),
         [this, speedCode, rateHz, mode, callback = std::move(callback)](
             Async::AsyncStatus status, uint32_t optRaw) mutable {
@@ -728,7 +755,7 @@ void MotuProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
             result.runtimeCaps = MakeRuntimeCaps();
             if (callback) {
                 if (Encoding::Motu::FindModel(unitSwVersion_)->runtime.write48kStreamConfig && preparedRateHz_.load(std::memory_order_acquire) == 48000) {
-                    (void)io_.WriteQuadBE(AddressOf(Reg::StreamConfigV3), 0x00120000,
+                    WriteRegister(AddressOf(Reg::StreamConfigV3), 0x00120000,
                         [result, callback = std::move(callback)](Async::AsyncStatus status) mutable {
                             callback(Protocols::Ports::MapAsyncStatusToIOReturn(status), result);
                         });
@@ -800,13 +827,13 @@ void MotuProtocol::ReadDuplexConfirmation(ConfirmCallback callback) {
         completion(Async::AsyncStatus::kAborted, 0);
         return;
     }
-    if (confirmRead_ && !confirmRead_->Done()) {
-        completion(Async::AsyncStatus::kBusyRetryExhausted, 0);
+    Async::TransactionRetry<uint32_t>::Callback confirmCallback = std::move(completion);
+    if (confirmRead_ && confirmRead_->Coalesce(confirmCallback)) {
         return;
     }
-    confirmRead_ = io_.CreateQuadBEBusyRead(timerScheduler_, AddressOf(Reg::IsocCommControl),
-                                             std::move(completion));
-    confirmRead_->Begin();
+    confirmRead_ = io_.CreateQuadBERead(timerScheduler_, kAsyncReadRecovery,
+        AddressOf(Reg::IsocCommControl), std::move(confirmCallback));
+    registerCommands_.Begin(confirmRead_);
 }
 
 void MotuProtocol::ApplyClockConfig(const AudioClockConfig& desiredClock,
@@ -863,7 +890,7 @@ IOReturn MotuProtocol::StopDuplex() {
         !duplexPrepared_.load(std::memory_order_acquire)) return kIOReturnSuccess;
     // Never report a successful stop while device writes are still in flight.
     // Mute fetching before deactivation; both completions belong to this stage.
-    const IOReturn result = AwaitStageStatus([this](auto callback) {
+    const IOReturn result = WaitRegisterStageStatus([this](auto callback) {
         ApplyFetchingModeIfNeeded(false, [this, callback = std::move(callback)](IOReturn fetchStatus) mutable {
             ModifyRegister(Reg::IsocCommControl,
                 [](uint32_t value) { return EncodeIsoCommStop(value); },
@@ -871,7 +898,7 @@ IOReturn MotuProtocol::StopDuplex() {
                     callback(fetchStatus != kIOReturnSuccess ? fetchStatus : stopStatus);
                 });
         });
-    }, teardownCancel_);
+    });
     if (result == kIOReturnSuccess) {
         duplexActive_.store(false, std::memory_order_release);
         duplexPrepared_.store(false, std::memory_order_release);
@@ -888,13 +915,23 @@ void MotuProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexc
     teardownCancel_ = cancel;
 }
 
+void MotuProtocol::CancelAbandonedStage(IOReturn status) {
+    if (status != kIOReturnTimeout && status != kIOReturnAborted) return;
+    // A family wait can expire before a chain has exhausted all register budgets.
+    // Close admission while cancellation callbacks unwind that chain.
+    registerCommands_.CancelAll(true);
+    if (!shuttingDown_.load(std::memory_order_acquire) &&
+        !(teardownCancel_ && teardownCancel_->load(std::memory_order_acquire)))
+        registerCommands_.Reopen();
+}
+
 IOReturn MotuProtocol::LoadGeometry() {
-    return AwaitStageStatus([this](auto callback) {
+    return WaitRegisterStageStatus([this](auto callback) {
         ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus) mutable {
             if (status != kIOReturnSuccess) { callback(status); return; }
             EnsureRuntimeStreamGeometry(std::move(callback));
         });
-    }, teardownCancel_);
+    });
 }
 
 std::optional<AudioStreamRuntimeCaps> MotuProtocol::RuntimeCaps() const {
@@ -907,9 +944,9 @@ std::optional<AudioStreamRuntimeCaps> MotuProtocol::RuntimeCaps() const {
 
 std::expected<DuplexPrepareResult, IOReturn> MotuProtocol::Configure(
     const AudioDuplexChannels& channels, const AudioClockConfig& clock) {
-    return AwaitStage<DuplexPrepareResult>(
+    return WaitRegisterStage<DuplexPrepareResult>(
         [&](auto callback) { PrepareDuplex(channels, clock, std::move(callback)); },
-        teardownCancel_);
+        kFamilyStageTimeoutMs);
 }
 
 std::expected<AudioDuplexChannels, IOReturn> MotuProtocol::AssignChannels(const AudioDuplexChannels& channels) {
@@ -918,26 +955,26 @@ std::expected<AudioDuplexChannels, IOReturn> MotuProtocol::AssignChannels(const 
 }
 
 std::expected<DuplexHealthResult, IOReturn> MotuProtocol::ReadHealth(uint32_t timeoutMs) {
-    return AwaitStage<DuplexHealthResult>(
-        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, teardownCancel_, timeoutMs);
+    return WaitRegisterStage<DuplexHealthResult>(
+        [&](auto callback) { ReadDuplexHealth(std::move(callback)); }, timeoutMs);
 }
 
 std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceRx() {
     if (const auto* model = Encoding::Motu::FindModel(unitSwVersion_); model && model->runtime.deactivateBeforeStart) {
-        const auto status = AwaitStageStatus([this](auto callback) {
+        const auto status = WaitRegisterStageStatus([this](auto callback) {
             ModifyRegister(Reg::IsocCommControl, [](uint32_t) { return kChangeRxState | kChangeTxState; }, std::move(callback));
-        }, teardownCancel_);
+        });
         if (status != kIOReturnSuccess) return std::unexpected(status);
         IOSleep(20); // PR #172 MOTU828Mk3Protocol.cpp:270-299, off Default.
         if (teardownCancel_ && teardownCancel_->load(std::memory_order_acquire)) return std::unexpected(kIOReturnAborted);
     }
-    return AwaitStage<DuplexStageResult>(
-        [&](auto callback) { ProgramRx(std::move(callback)); }, teardownCancel_);
+    return WaitRegisterStage<DuplexStageResult>(
+        [&](auto callback) { ProgramRx(std::move(callback)); });
 }
 
 std::expected<DuplexStageResult, IOReturn> MotuProtocol::ArmDeviceTxAndEnable() {
-    return AwaitStage<DuplexStageResult>(
-        [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); }, teardownCancel_);
+    return WaitRegisterStage<DuplexStageResult>(
+        [&](auto callback) { ProgramTxAndEnableDuplex(std::move(callback)); });
 }
 
 FamilyDriver::StartReadinessPolicy MotuProtocol::GetStartReadinessPolicy() const noexcept {
@@ -947,14 +984,14 @@ FamilyDriver::StartReadinessPolicy MotuProtocol::GetStartReadinessPolicy() const
 }
 
 std::expected<DuplexConfirmResult, IOReturn> MotuProtocol::Confirm() {
-    return AwaitStage<DuplexConfirmResult>(
-        [&](auto callback) { ConfirmDuplexStart(std::move(callback)); }, teardownCancel_);
+    return WaitRegisterStage<DuplexConfirmResult>(
+        [&](auto callback) { ConfirmDuplexStart(std::move(callback)); });
 }
 
 std::expected<DuplexClockApplyResult, IOReturn> MotuProtocol::ApplyClockIdle(
     const AudioClockConfig& clock) {
-    return AwaitStage<DuplexClockApplyResult>(
-        [&](auto callback) { ApplyClockConfig(clock, std::move(callback)); }, teardownCancel_);
+    return WaitRegisterStage<DuplexClockApplyResult>(
+        [&](auto callback) { ApplyClockConfig(clock, std::move(callback)); });
 }
 
 IOReturn MotuProtocol::DisconnectPlayback() {

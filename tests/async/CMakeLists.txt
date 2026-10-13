@@ -9,6 +9,8 @@ macro(add_async_test TARGET_NAME)
     gtest_discover_tests(${TARGET_NAME})
 endmacro()
 
+add_async_test(TransactionRetryTests TransactionRetryTests.cpp)
+
 # ASFW Packet Tests (using packet serdes library)
 add_executable(ASFWPacketTests
     PacketSerDesTests.cpp

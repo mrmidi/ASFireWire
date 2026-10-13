@@ -553,6 +553,7 @@
 		00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MotuProtocol.cpp; sourceTree = "<group>"; };
 		00D5EC5AEB7989BC5DBE3E15 /* BusResetHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetHandler.cpp; sourceTree = "<group>"; };
 		014A17CB7700D5C50E88C21F /* FireWireBusPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FireWireBusPort.hpp; sourceTree = "<group>"; };
+		016CF324286C8BA2DE5574F4 /* TransactionRetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TransactionRetry.hpp; sourceTree = "<group>"; };
 		018751CF8CA051FDDE9B2B06 /* ASFWAudioDriverControls.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverControls.cpp; sourceTree = "<group>"; };
 		020F14C4AC2D07707A5AA226 /* ASFWAudioDevice.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDevice.cpp; sourceTree = "<group>"; };
 		02144B4C4EA2BAF93390486A /* HardwareSampleTimeline.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareSampleTimeline.hpp; sourceTree = "<group>"; };
@@ -698,7 +699,6 @@
 		24C51BF6EE330424420F145E /* AvcFamilyAdapter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcFamilyAdapter.hpp; sourceTree = "<group>"; };
 		24D862D68560EF93416643C2 /* MAudio.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MAudio.hpp; sourceTree = "<group>"; };
 		2517CB94A197EF0279E10F9A /* PowerLinkPolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PowerLinkPolicyCoordinator.hpp; sourceTree = "<group>"; };
-		25525BD9B57F8381EBEAD6B1 /* BusyReadRetry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusyReadRetry.hpp; sourceTree = "<group>"; };
 		256EA87824CECF3FF30445BB /* LockPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockPolicy.hpp; sourceTree = "<group>"; };
 		2580F370B9A0FCCB7AB371DE /* PacketHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PacketHelpers.hpp; sourceTree = "<group>"; };
 		258569E0435DE3FF824B9AC4 /* RuntimeIdentity.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RuntimeIdentity.hpp; sourceTree = "<group>"; };
@@ -3632,6 +3632,7 @@
 				4B88D66FB60D411C99BECB93 /* Transaction.hpp */,
 				A564F1D1FD37AFCF06BE08F6 /* TransactionManager.cpp */,
 				1301C9CE4C3BF9D915E506C2 /* TransactionManager.hpp */,
+				016CF324286C8BA2DE5574F4 /* TransactionRetry.hpp */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -3674,7 +3675,6 @@
 		F89D20562AC5657132CF8259 /* Ports */ = {
 			isa = PBXGroup;
 			children = (
-				25525BD9B57F8381EBEAD6B1 /* BusyReadRetry.hpp */,
 				014A17CB7700D5C50E88C21F /* FireWireBusPort.hpp */,
 				34F8FD7C181607ACAC9FE621 /* FireWireRxPort.hpp */,
 				568C1C9BB3A24413FC85D1B3 /* ProtocolRegisterIO.hpp */,
