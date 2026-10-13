@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleIdentifier</key><string>local.pro40.silence-lab</string>
+    <key>CFBundleExecutable</key><string>Pro40SilenceLab</string>
+    <key>CFBundleName</key><string>Pro40 Silence Lab</string>
+    <key>CFBundlePackageType</key><string>BNDL</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFPlugInDynamicRegistration</key><string>NO</string>
+    <key>CFPlugInFactories</key><dict>
+        <key>9EC1681B-D26E-4E92-A88A-D54B349B197E</key><string>Pro40SilenceRegisteredFactory</string>
+    </dict>
+    <key>CFPlugInTypes</key><dict>
+        <key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key><array>
+            <string>9EC1681B-D26E-4E92-A88A-D54B349B197E</string>
+        </array>
+    </dict>
+</dict></plist>
