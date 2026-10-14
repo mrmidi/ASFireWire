@@ -13,8 +13,8 @@ Contributors have since helped extend it to DV cameras and film scanners.
 
 **[Download ASFW and read the installation guide →](https://www.asfw.net/install/)**
 
-The hosted signed and notarized builds run with SIP enabled. The website maintains
-current downloads, installation requirements, upgrade instructions, and release notes.
+The website provides signed and notarized builds, installation requirements,
+upgrade instructions, and release notes.
 Its tester guide covers Apple silicon Macs running macOS 26 or later.
 
 Local development builds and older unsigned GitHub packages use a different signing
@@ -34,6 +34,12 @@ The project is free and open source, but the work behind it isn't free. Financia
 contributions help cover my everyday living expenses and development tools, making
 it possible for me to continue developing and maintaining ASFireWire.
 
+ASFireWire is also a comprehensive real-world implementation built on Apple's
+DriverKit frameworks. Its public source brings together controller initialization,
+DMA, interrupts, device discovery, protocol handling, audio, and SCSI integration
+in one stack, providing a practical reference for low-level driver development on
+modern macOS. [Read more about the work](https://www.asfw.net/support/).
+
 If ASFireWire has helped you keep your hardware running, or you believe this kind of
 independent engineering work deserves to continue, please consider supporting it.
 
@@ -48,7 +54,7 @@ independent engineering work deserves to continue, please consider supporting it
 - DV capture to `.dv` files and AV/C tape transport control.
 - SBP-2/SCSI integration for storage devices and scanners.
 
-Contributors have verified DV capture from a Panasonic MiniDV camcorder and scanning
+Contributors have verified DV capture from various MiniDV camcorders and scanning
 with Nikon Coolscan 4000 and 9000 devices. These are results for particular devices,
 not guarantees for an entire protocol family.
 
