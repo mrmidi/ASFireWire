@@ -94,8 +94,8 @@ the math is ready, and are not a validation gate.
 > **WARNING: Three different clocks appear in this system. They are NOT the
 > same oscillator.** Confusing FireWire ticks with host ticks introduces a
 > systematic 2.3% error on Apple Silicon — half of F9's observed 4478 ppm.
-> See `documentation/ZTS_AND_SYT.md` §2 Step 4 for the authoritative
-> conversion pipeline.
+> The earlier `documentation/ZTS_AND_SYT.md` research note is now historical.
+> The current conversion helpers live in `ASFWDriver/Common/TimingUtils.hpp`.
 
 ### The three clocks
 
@@ -131,7 +131,7 @@ hostTicks = nanos * timebase.denom / timebase.numer;
 ASFW's `TimingUtils.hpp` does this correctly via `FireWireTicksToNanos()` →
 `nanosToHostTicks()`, both using runtime-queried `mach_timebase_info`. The
 full worked example with real telemetry values is in
-`documentation/ZTS_AND_SYT.md` §6B (age=2519 FW ticks → 2459 host ticks on
+the historical `99a1fbc0:documentation/ZTS_AND_SYT.md` §6B (age=2519 FW ticks → 2459 host ticks on
 Silicon, matching the 125/128 ratio).
 
 ### Professional audio devices and PLLs

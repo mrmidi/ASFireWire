@@ -8,8 +8,10 @@ timestamps.
 
 Vocabulary (`RTL_raw`, `RTL_ts`, scheduling distance, residual, reference
 planes) is shared with the rest of the project: see
-[`documentation/LATENCY_VOCABULARY.md`](../../documentation/LATENCY_VOCABULARY.md).
-Baseline procedure: [`documentation/MEASUREMENT_BASELINE.md`](../../documentation/MEASUREMENT_BASELINE.md).
+the measurement fields in [`rtl_core.h`](rtl_core.h).
+The [baseline capture helper](../baseline/capture_baseline.sh) collects a labeled run;
+use its output-directory option to keep new measurements under `build/` rather than
+the retained `documentation/fixtures/` evidence.
 
 ## Contents
 

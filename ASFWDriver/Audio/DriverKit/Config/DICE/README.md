@@ -2,7 +2,7 @@
 
 The audio-side description of TCAT DICE devices. A DICE device reports its own
 stream geometry, rates, clock and channel names from its registers
-(`documentation/DICE_TCAT_ARCHITECTURE.md` §4.1), so what lives here is only what
+(see `Audio/Host/DiceFamilyAdapter.cpp`), so what lives here is only what
 the device cannot report.
 
 ## Layout

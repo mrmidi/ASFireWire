@@ -7,7 +7,7 @@ requests are honoured. It needs **no dext rebuild and no privileges**.
 
 It is the declared-side companion of [`../rtl/`](../rtl/README.md), which
 measures the physical round trip. Vocabulary:
-[`documentation/LATENCY_VOCABULARY.md`](../../documentation/LATENCY_VOCABULARY.md).
+see the [round-trip tool](../rtl/README.md) and its [measurement fields](../rtl/rtl_core.h).
 
 | File | What it is |
 |---|---|

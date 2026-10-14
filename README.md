@@ -108,8 +108,8 @@ Contributors remain responsible for understanding and validating AI-assisted wor
 | Troubleshooting | [Troubleshooting](https://github.com/mrmidi/ASFireWire/wiki/Troubleshooting) |
 | Developer onboarding and optional MCP diagnostics | [Development](https://github.com/mrmidi/ASFireWire/wiki/Development) |
 
-Implementation contracts remain versioned with the source. `documentation/` also
-contains research and experiments; their presence does not establish current behavior.
+Implementation contracts live alongside source. `documentation/fixtures/` retains
+captured hardware reports and test evidence; public technical guides live in the wiki.
 [CHANGELOG.md](CHANGELOG.md) records changes associated with releases.
 
 ## License

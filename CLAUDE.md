@@ -107,7 +107,7 @@ CoreAudio / HAL
 | `Audio/Wire/` | Content framing: `IEC61883`, `CIP`, `AMDTP`, `AM824`, `RawPcm24In32`. Builds the CIP-headered stream handed to transport. CIP spans DV/MPEG/audio — **provisional home, not transport** |
 | `Audio/Runtime/` | Timing/buffer geometry: `HostClockAnchor`, `PlaybackRingRange` |
 | `Audio/Ports/` | Seam interfaces: `IAmdtpTxSlotProvider`, `ICycleTimeline` |
-| `Audio/Host/` | `AudioDeviceHost`: the one publication/recovery/teardown shell (queue `com.asfw.audio.host`, `[AudioHost]` log lines), plus one stateless `FamilyAdapter` per family (DICE, AV/C, MOTU, RME). See `documentation/AUDIO_DEVICE_HOST.md` |
+| `Audio/Host/` | `AudioDeviceHost`: the one publication/recovery/teardown shell (queue `com.asfw.audio.host`, `[AudioHost]` log lines), plus one stateless `FamilyAdapter` per family (DICE, AV/C, MOTU, RME). See `Audio/Host/AudioDeviceHost.hpp` |
 | `Audio/Engine/`, `Audio/Core/`, `Audio/Model/`, `Audio/Config/`, `Audio/Protocols/` | Engine wiring, runtime model, config |
 
 **Composition / cross-cutting:**
@@ -116,7 +116,7 @@ CoreAudio / HAL
 | `Service/` | `DriverContext` (the `ServiceContext`/DI root), `LocalRequestWiring` |
 | `Scheduling/` | `Scheduler`, `WatchdogCoordinator` (timer/dispatch) |
 | `DeviceProfiles/` | Device capability profiles: `Audio`, `Common` |
-| `Diagnostics/` | `DiagnosticsService`, metric sinks. Audio telemetry contract: `Audio/Runtime/AudioTelemetrySnapshot.hpp`; inventory: `documentation/OBSERVABILITY_INVENTORY.md` |
+| `Diagnostics/` | `DiagnosticsService`, metric sinks. Audio telemetry contract: `Audio/Runtime/AudioTelemetrySnapshot.hpp`; the snapshot header documents the telemetry layout and ownership rules |
 | `Debug/` | `AsyncTraceCapture`, `BusResetPacketCapture` |
 | `Snapshot/` | State snapshot |
 | `UserClient/` | DriverKit user-client: `Core`, `Handlers`, `Storage`, `WireFormats` |
