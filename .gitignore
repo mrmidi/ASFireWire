@@ -108,3 +108,7 @@ __pycache__/
 /mcp_log_query.json
 /mcp_log_query_latest.json
 /captures/**/*.json
+
+# Local development projects and editor settings
+/ADKVirtualAudioLab/
+/.vscode/

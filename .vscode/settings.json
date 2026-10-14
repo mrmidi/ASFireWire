@@ -1,7 +1,0 @@
-{
-  "sonarlint.connectedMode.project": {
-    "connectionId": "mrmidi",
-    "projectKey": "mrmidi_ASFireWire"
-  },
-  "sonarlint.pathToCompileCommands": "${workspaceFolder}/compile_commands.json"
-}
