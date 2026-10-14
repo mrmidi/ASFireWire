@@ -8,7 +8,6 @@ and SCSIControllerDriverKit for SBP-2 devices.
 
 I started it to keep useful FireWire audio hardware running on modern Macs.
 Contributors have since helped extend it to DV cameras and film scanners.
-[Watch the demonstration](https://youtu.be/Q1TbehOGnW0).
 
 ## Download and installation
 
