@@ -47,6 +47,7 @@ struct ModernContentView: View {
 
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case about = "About ASFireWire"
         case busInspector = "Bus Inspector"
         case avcUnits = "AV/C Units"
         case avcCommands = "AV/C Commands"
@@ -72,6 +73,7 @@ struct ModernContentView: View {
         var systemImage: String {
             switch self {
             case .overview: return "info.circle"
+            case .about: return "heart.text.square"
             case .busInspector: return "network"
             case .avcUnits: return "music.note"
             case .avcCommands: return "command"
@@ -96,7 +98,7 @@ struct ModernContentView: View {
 
         var group: SidebarGroup {
             switch self {
-            case .overview: .general
+            case .overview, .about: .general
             case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
             case .dvCapture: .video
             case .diagnostics, .diceReport, .avcReport: .reports
@@ -161,6 +163,8 @@ struct ModernContentView: View {
                 case .overview:
                     OverviewView(viewModel: driverVM,
                                  requireNewerBuild: $requireNewerBuild)
+                case .about:
+                    AboutView()
                 case .busInspector:
                     BusInspectorView(debugViewModel: debugVM, topologyViewModel: topologyVM, romViewModel: romExplorerVM)
                 case .avcUnits:

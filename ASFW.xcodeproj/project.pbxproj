@@ -424,6 +424,7 @@
 		C968B0AE4DF429C7C5C2CB9C /* MetalAnalyzerPlotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */; };
 		C9DEE8C6C159F576AEA8338E /* PacketRouter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 87A636BF87B26D494F771DA2 /* PacketRouter.cpp */; };
 		CA69F50B06136DEBD7F2EA52 /* ASFWMCPToolDispatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B644C7B7FE0269C2B618741 /* ASFWMCPToolDispatch.swift */; };
+		CA821C57D2E47EC3EF1EF8F6 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582D5F842C386CB0E1695C0F /* AboutView.swift */; };
 		CB1690BE35AE11A346AA9086 /* AnalyzerTimingStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11961DC2923BEDC3982A12C /* AnalyzerTimingStatisticsTests.swift */; };
 		CB8257DAF7764AEA3E05061D /* IsochService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C2160D5ABD13DF14A6FBA1E3 /* IsochService.cpp */; };
 		CBB34DBF08EA78876CD02FB6 /* DriverConnector+DVCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9908FBA7D8EDB1785B713E0 /* DriverConnector+DVCapture.swift */; };
@@ -934,6 +935,7 @@
 		581B0959C626D7BB8C2B75CA /* ControllerStateMachine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerStateMachine.cpp; sourceTree = "<group>"; };
 		58270AA2B471122F849C5F2E /* SaffireproCommon.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SaffireproCommon.cpp; sourceTree = "<group>"; };
 		582742484D61634C43CE6873 /* BusResetWireFormats.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetWireFormats.hpp; sourceTree = "<group>"; };
+		582D5F842C386CB0E1695C0F /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		59E5457F9203C72E40C4F72C /* AvcGraphBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AvcGraphBuilder.cpp; sourceTree = "<group>"; };
 		5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuNotificationMailbox.hpp; sourceTree = "<group>"; };
 		5A48BB418AED6FDF98DAD440 /* DuplexIRMReservations.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DuplexIRMReservations.hpp; sourceTree = "<group>"; };
@@ -2101,6 +2103,7 @@
 		44AC4B41852D90033542176C /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				582D5F842C386CB0E1695C0F /* AboutView.swift */,
 				E9974B82AFD436D3408D03CB /* AnalyzerLivePanel.swift */,
 				321A63C17C6A3EFA58FF449C /* AnalyzerPanelCanvas.swift */,
 				BCCC16C6B560CCA8DCD16838 /* AnalyzerPlotAxes.swift */,
@@ -4304,6 +4307,7 @@
 				BCC377A8BC71F82C85384962 /* ASFWMCPTransactionSchemas.swift in Sources */,
 				CFBBAD244AEB98E20F3A0EC7 /* ASFWMCPWritePolicy.swift in Sources */,
 				26A75A60505D8A595CE72B24 /* AVCCommandView.swift in Sources */,
+				CA821C57D2E47EC3EF1EF8F6 /* AboutView.swift in Sources */,
 				A14EC1048F8ABF63B8B54C13 /* AdvancedToolsSettings.swift in Sources */,
 				00CA983D134982805DA55753 /* AnalyzerCalibrationState.swift in Sources */,
 				9099951F78BB476861C84DAA /* AnalyzerDisplaySmoother.swift in Sources */,
@@ -4475,7 +4479,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4496,7 +4500,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4579,7 +4583,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4625,7 +4629,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4667,7 +4671,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4777,7 +4781,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 23;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
