@@ -234,7 +234,7 @@ constexpr DiceFixture kFixtures[] = {
     },
     {
         .name = "Alesis MultiMix",
-        .dump = "documentation/fixtures/alesismultimix.txt",
+        .dump = "documentation/fixtures/DICE/alesismultimix.txt",
         .guid = 0x00059504000005FEULL,
         .clockCaps = 0x11000006,
         .role = {.discriminatesAggregation = true,

@@ -77,7 +77,7 @@ struct AvcUnitsRenderTests {
 
     @Test func capturedDuetLegacyDocumentDecodesWithoutLosingDescriptors() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("documentation/avc-rebuild/fixtures/duet_discovery_6253bee_2026-10-03.json")
+            .appendingPathComponent("documentation/fixtures/AVC/duet_discovery_6253bee_2026-10-03.json")
         let document = try #require(AvcUnitDocument.decode(Data(contentsOf: url)))
         let unit = AvcUnitDashboard(guid: 0x0003DB0A0000D112, nodeID: 1, vendorID: 0x0003DB, modelID: 0x01DDDD, vendorName: "Apogee", modelName: "Duet", deviceState: "ready", wireUnit: nil, document: document)
         #expect(unit.needsDocumentUpdate)
