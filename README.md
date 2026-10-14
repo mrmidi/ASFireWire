@@ -10,11 +10,6 @@ I started it to keep useful FireWire audio hardware running on modern Macs.
 Contributors have since helped extend it to DV cameras and film scanners.
 [Watch the demonstration](https://youtu.be/Q1TbehOGnW0).
 
-> [!WARNING]
-> ASFireWire is experimental. Support depends on the device, hardware revision,
-> host, and build. A low-level driver can crash macOS or cause a kernel panic.
-> Use a test machine; do not rely on it during paid sessions or on a production Mac.
-
 ## Download and installation
 
 **[Download ASFW and read the installation guide →](https://www.asfw.net/install/)**
@@ -23,7 +18,7 @@ The hosted signed and notarized builds run with SIP enabled. The website maintai
 current downloads, installation requirements, upgrade instructions, and release notes.
 Its tester guide covers Apple silicon Macs running macOS 26 or later.
 
-Experimental local builds and older unsigned GitHub packages use a different signing
+Local development builds and older unsigned GitHub packages use a different signing
 and installation path. Do not apply their SIP-disabled instructions to the hosted
 signed build. See [Installing](https://github.com/mrmidi/ASFireWire/wiki/Installing)
 and [Building and Signing](https://github.com/mrmidi/ASFireWire/wiki/Building-and-Signing).
