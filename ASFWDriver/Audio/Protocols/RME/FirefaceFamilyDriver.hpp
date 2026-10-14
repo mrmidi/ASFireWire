@@ -113,20 +113,10 @@ public:
         if (Cancelled()) return std::unexpected(kIOReturnAborted);
         initialized_ = true; // An uncertain init completion must be reset on rollback.
         // The FF800 takes the sample-transfer frequency before the packet
-        // format: Linux writes FF800_STF alone and then sleeps 100 ms, because
-        // "if starting isochronous communication immediately, change of STF has
-        // no effect" (ff800_allocate_resources, ff-protocol-former.c:335-345).
-        // Sent as one 3-quadlet block (FFADO's order) this card answered
-        // 0xffffffff at 0x801c0008 for the whole 500 ms deadline, seven starts
-        // out of seven (field log 2026-10-11, flash rate 44.1 kHz).
+        // format, and needs the settle window between the two: the ordering and
+        // the evidence are in InitializeFf800TransmitStream.
         if (model_ == FirefaceModel::kFF800) {
-            if (const IOReturn kr = WriteWords(InitAddress(),
-                    std::span<const uint32_t>(words.data(), 1)); kr != kIOReturnSuccess)
-                return std::unexpected(kr);
-            if (const IOReturn kr = WaitForConfigured48k(); kr != kIOReturnSuccess)
-                return std::unexpected(kr);
-            if (const IOReturn kr = WriteWords(Register::kFF800PacketFormat,
-                    std::span<const uint32_t>(words.data() + 1, 2)); kr != kIOReturnSuccess)
+            if (const IOReturn kr = InitializeFf800TransmitStream(words); kr != kIOReturnSuccess)
                 return std::unexpected(kr);
         } else if (const IOReturn kr = WriteWords(InitAddress(), words); kr != kIOReturnSuccess) {
             return std::unexpected(kr);
@@ -142,36 +132,50 @@ public:
         if (!ClockReady(*afterInit)) return std::unexpected(kIOReturnNotReady);
         if (model_ == FirefaceModel::kFF800) {
             // Device selects its transmit channel; the host binds it without an IRM claim.
-            const uint64_t deadline = Session::UptimeMilliseconds() + 500U;
-            while (Session::UptimeMilliseconds() < deadline) {
-                if (Cancelled()) return std::unexpected(kIOReturnAborted);
-                const uint64_t now = Session::UptimeMilliseconds();
-                const uint32_t remaining = static_cast<uint32_t>(deadline - now);
-                auto q = Read(Register::kStatus + 8, remaining);
-                if (!q) return std::unexpected(q.error());
-                if (*q != 0xffffffffU) {
-                    const uint8_t channel = static_cast<uint8_t>(*q & 0x3fU);
-                    if (!IsValidAssignedChannel(model_, channel)) return std::unexpected(kIOReturnBadArgument);
-                    channels_.deviceToHostIsoChannel = channel;
-                    channels_.captureIsoChannels[0] = channel;
-                    caps_.deviceToHostIsoChannel = channel;
-                    ASFW_LOG(Audio, "[RME] FF800 started: device transmits on channel %u, "
-                             "host transmits on channel %u", channel, channels_.hostToDeviceIsoChannel);
-                    return channels_;
+            auto channel = WaitForDeviceTransmitChannel();
+            if (!channel && channel.error() == kIOReturnTimeout) {
+                // A start that fails here can leave the card refusing to
+                // allocate its transmit stream for every later attempt. The
+                // drained ring has 33 starts that publish their channel with the
+                // card already at 48 kHz, then one start from 44.1 kHz that does
+                // not, then nine more that do not either -- card back at
+                // 48 kHz, init words byte-identical to a working start, every
+                // one of them answering 0xffffffff at 0x801c0008. FFADO writes
+                // the end block before a start (hardware_stop_streaming,
+                // fireface_hw.cpp) to clear the device's stream state; the driver
+                // does the same and gives the init one more full attempt, so a
+                // single bad init cannot own the card until a power cycle.
+                ASFW_LOG(Audio, "[RME] FF800 published no transmit channel; resetting the "
+                         "device's stream state and retrying the init once");
+                if (const IOReturn kr = ResetDeviceStreamState(); kr != kIOReturnSuccess)
+                    return std::unexpected(kr);
+                if (const IOReturn kr = InitializeFf800TransmitStream(words); kr != kIOReturnSuccess)
+                    return std::unexpected(kr);
+                channel = WaitForDeviceTransmitChannel();
+            }
+            if (!channel) {
+                if (channel.error() == kIOReturnTimeout) {
+                    // The device's own words make the next field report decisive:
+                    // the first two are the clock it is running at, the third the
+                    // channel it never published.
+                    if (auto status = ReadWords(Register::kStatus, 4)) {
+                        ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel in either "
+                                 "500 ms window (status %08x %08x %08x %08x)", status->words[0],
+                                 status->words[1], status->words[2], status->words[3]);
+                    } else {
+                        ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel in either "
+                                 "500 ms window");
+                    }
                 }
-                IOSleep(5);
+                return std::unexpected(channel.error());
             }
-            // The device's own words make the next field report decisive: the
-            // first two are the clock it is running at, the third the channel
-            // it never published.
-            if (auto words = ReadWords(Register::kStatus, 4)) {
-                ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms "
-                         "(status %08x %08x %08x %08x)", words->words[0], words->words[1],
-                         words->words[2], words->words[3]);
-            } else {
-                ASFW_LOG(Audio, "[RME] FF800 never reported its transmit channel within 500 ms");
-            }
-            return std::unexpected(kIOReturnTimeout);
+            const uint8_t assigned = *channel;
+            channels_.deviceToHostIsoChannel = assigned;
+            channels_.captureIsoChannels[0] = assigned;
+            caps_.deviceToHostIsoChannel = assigned;
+            ASFW_LOG(Audio, "[RME] FF800 started: device transmits on channel %u, "
+                     "host transmits on channel %u", assigned, channels_.hostToDeviceIsoChannel);
+            return channels_;
         }
         if (requested.hostToDeviceIsoChannel > 7 || requested.deviceToHostIsoChannel > 7)
             return std::unexpected(kIOReturnBadArgument);
@@ -242,10 +246,9 @@ public:
     [[nodiscard]] IOReturn Stop() override {
         SyncGeneration();
         if (!initialized_) { configured_ = false; return kIOReturnSuccess; }
-        const std::array<uint32_t, 3> ff800{};
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
-            ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
+            ? ResetDeviceStreamState() : WriteWords(Register::kFF400Stop, ff400);
         if (kr != kIOReturnSuccess) { ASFW_LOG(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
         ASFW_LOG(Audio, "[RME] stopped");
         enabled_ = false; initialized_ = false; configured_ = false; lastHealthy_.reset();
@@ -271,23 +274,87 @@ private:
     }
     [[nodiscard]] bool Cancelled() const noexcept { return cancel_ && cancel_->load(std::memory_order_acquire); }
     [[nodiscard]] uint64_t InitAddress() const noexcept { return model_ == FirefaceModel::kFF800 ? Register::kFF800Init : Register::kFF400Init; }
+    // The FF800 init block, in the order the card takes it: the sample-transfer
+    // frequency alone, the settle window Linux covers with msleep(100), then the
+    // packet format and the size of the stream the card transmits. Linux writes
+    // FF800_STF alone and then sleeps because "if starting isochronous
+    // communication immediately, change of STF has no effect"
+    // (ff800_allocate_resources, ff-protocol-former.c:335-345). Sent as one
+    // 3-quadlet block (FFADO's order) this card answered 0xffffffff at
+    // 0x801c0008 for the whole 500 ms deadline, seven starts out of seven
+    // (field log 2026-10-11, flash rate 44.1 kHz).
+    [[nodiscard]] IOReturn InitializeFf800TransmitStream(std::span<const uint32_t> words) {
+        // Stamped before the write, so the settle window is measured from the
+        // frequency going out rather than from after it landed.
+        const uint64_t frequencyWrittenAtMs = Session::UptimeMilliseconds();
+        if (const IOReturn kr = WriteWords(InitAddress(),
+                std::span<const uint32_t>(words.data(), 1)); kr != kIOReturnSuccess)
+            return kr;
+        if (const IOReturn kr = WaitForConfigured48k(frequencyWrittenAtMs); kr != kIOReturnSuccess)
+            return kr;
+        return WriteWords(Register::kFF800PacketFormat,
+                          std::span<const uint32_t>(words.data() + 1, 2));
+    }
+    // The end block FFADO writes to clear the device's stream state before a
+    // start and on stop: three zero quadlets at RME_FF800_STREAM_END_REG
+    // (hardware_stop_streaming, fireface_hw.cpp).
+    [[nodiscard]] IOReturn ResetDeviceStreamState() {
+        const std::array<uint32_t, 3> end{};
+        return WriteWords(Register::kFF800Stop, end);
+    }
+    // Bounded wait for the transmit channel the card publishes at 0x801c0008 once
+    // it has allocated its stream.
+    [[nodiscard]] std::expected<uint8_t, IOReturn> WaitForDeviceTransmitChannel() {
+        const uint64_t deadline = Session::UptimeMilliseconds() + 500U;
+        while (Session::UptimeMilliseconds() < deadline) {
+            // Cancellation keeps the precedence it had in the loop this was
+            // extracted from: a teardown reports aborted, not a timeout, even
+            // when the deadline has passed meanwhile.
+            if (Cancelled()) return std::unexpected(kIOReturnAborted);
+            const uint64_t now = Session::UptimeMilliseconds();
+            const uint32_t remaining = static_cast<uint32_t>(deadline - now);
+            auto q = Read(Register::kStatus + 8, remaining);
+            if (!q) return std::unexpected(q.error());
+            if (*q != 0xffffffffU) {
+                const uint8_t channel = static_cast<uint8_t>(*q & 0x3fU);
+                if (!IsValidAssignedChannel(model_, channel)) return std::unexpected(kIOReturnBadArgument);
+                return channel;
+            }
+            IOSleep(5);
+        }
+        return std::unexpected(kIOReturnTimeout);
+    }
     // Bounded wait for the sample-transfer frequency the driver just wrote to
-    // take effect on the card. The rate is already readable in the status words
-    // the driver polls for the clock anyway, so this costs two reads per start
-    // and cannot pass while the card is still at its stored 44.1 kHz. A card
-    // that never gets there is not failed here: the clock gate after the packet
-    // format owns that verdict, exactly as before.
-    [[nodiscard]] IOReturn WaitForConfigured48k() {
-        const uint64_t deadline = Session::UptimeMilliseconds() + Register::kFF800RateSettleTimeoutMs;
+    // take effect on the card: the window Linux covers with a flat msleep(100)
+    // in ff800_allocate_resources.
+    //
+    // Reading the rate back is not a substitute for that sleep. The status words
+    // report the new frequency before the change is in effect, so a format
+    // written as soon as the read-back looks right still reaches a card that is
+    // not there yet: in the drained ring a start from 44.1 kHz sends its packet
+    // format within 25 ms of the frequency write, the rate already reading
+    // 48 kHz, and never allocates its transmit stream -- nor do the nine starts
+    // after it -- while the same driver on a card already at 48 kHz (no change to
+    // settle) started 33 times out of 33. Both conditions are required, then: the
+    // rate visible, and the settle window elapsed since the frequency went out.
+    //
+    // A card that never gets there is not failed here: the clock gate after the
+    // packet format owns that verdict, exactly as before.
+    [[nodiscard]] IOReturn WaitForConfigured48k(uint64_t frequencyWrittenAtMs) {
+        const uint64_t settleAt = frequencyWrittenAtMs + Register::kFF800RateSettleMs;
+        const uint64_t deadline = frequencyWrittenAtMs + Register::kFF800RateSettleTimeoutMs;
+        bool rateVisible = false;
         for (;;) {
             if (Cancelled()) return kIOReturnAborted;
             auto s = ReadClockStatus();
             if (!s) return s.error();
-            if (s->configured48k) return kIOReturnSuccess;
-            if (Session::UptimeMilliseconds() >= deadline) {
-                ASFW_LOG(Audio, "[RME] FF800 not at 48 kHz %u ms after the frequency write; "
-                         "sending the packet format anyway (status0=0x%08x status1=0x%08x)",
-                         Register::kFF800RateSettleTimeoutMs, s->q0, s->q1);
+            if (s->configured48k) rateVisible = true;
+            const uint64_t now = Session::UptimeMilliseconds();
+            if (rateVisible && now >= settleAt) return kIOReturnSuccess;
+            if (now >= deadline) {
+                ASFW_LOG(Audio, "[RME] FF800 not at 48 kHz %llu ms after the frequency write; "
+                         "sending the packet format anyway (rate%s visible, status0=0x%08x status1=0x%08x)",
+                         now - frequencyWrittenAtMs, rateVisible ? " was" : " never", s->q0, s->q1);
                 return kIOReturnSuccess;
             }
             IOSleep(Register::kFF800RateSettlePollMs);
