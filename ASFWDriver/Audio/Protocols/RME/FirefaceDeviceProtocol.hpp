@@ -16,11 +16,12 @@ public:
                            Protocols::Ports::FireWireBusInfo& busInfo,
                            Discovery::DeviceRegistry& registry,
                            const Discovery::DeviceRouteToken& route,
-                           FirefaceModel model, bool s800) noexcept
-        : registry_(registry), model_(model), io_(busOps, busInfo, registry, route), family_(io_, model, s800) {}
+                           FirefaceModel model, bool s800, Scheduling::ITimerScheduler* scheduler = nullptr) noexcept
+        : registry_(registry), model_(model), io_(busOps, busInfo, registry, route), family_(io_, model, s800, scheduler) {}
 
     IOReturn Initialize() override { return family_.LoadGeometry(); }
-    IOReturn Shutdown() override { return kIOReturnSuccess; }
+    IOReturn Shutdown() override { family_.CancelPendingStart(true); return kIOReturnSuccess; }
+    void CancelPendingPreparation() override { family_.CancelPendingStart(true); }
     const char* GetName() const override {
         return model_ == FirefaceModel::kFF800 ? "RME Fireface 800" : "RME Fireface 400";
     }

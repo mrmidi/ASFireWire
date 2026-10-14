@@ -208,7 +208,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
             const auto model = definition == DeviceProfiles::Audio::DeviceDefinitionId::RmeFireface800
                 ? RME::FirefaceModel::kFF800 : RME::FirefaceModel::kFF400;
             return std::make_unique<RME::FirefaceDeviceProtocol>(
-                busOps, busInfo, routeRegistry, route, model, isS800);
+                busOps, busInfo, routeRegistry, route, model, isS800, timerScheduler);
         }
 
         case ProtocolImplementationId::GenericAvc:

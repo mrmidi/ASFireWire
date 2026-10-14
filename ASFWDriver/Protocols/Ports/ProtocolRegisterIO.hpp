@@ -377,6 +377,8 @@ public:
         return routeRegistry_.LowerVerifiedLinkSpeed(route_, speed);
     }
 
+    [[nodiscard]] bool CancelTransaction(Async::AsyncHandle handle) { return busOps_.Cancel(handle); }
+
     void UpdateRoute(const Discovery::DeviceRouteToken& route) noexcept {
         route_ = route;
     }

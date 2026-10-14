@@ -105,6 +105,7 @@ targets:
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.
       # Includes the common MOTU register/profile, model table and SPH regulator.
+      # Includes the owned FF800 timer-driven transmit start and shared Fireface clock decoder.
       # Includes Bus/Timing/SplitTimeout.hpp and Async/Core/TransactionRetry.hpp for callback-based recovery.
       - path: ASFWDriver
         excludes:
