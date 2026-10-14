@@ -1,0 +1,52 @@
+name: Hardware result or bug
+description: Report working hardware, a regression, or a reproducible device/install failure.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Successful tests and failed tests both help. Include evidence from the actual
+        running build: descriptions provide context, but usually cannot diagnose a failure alone.
+        See [Reporting Issues](https://github.com/mrmidi/ASFireWire/wiki/Reporting-Issues)
+        and [Logging](https://github.com/mrmidi/ASFireWire/wiki/Logging).
+  - type: textarea
+    id: device
+    attributes:
+      label: Device and connection
+      description: Exact model, hardware/chipset revision and firmware if known; adapter chain, cables, bus power/external power, and other attached devices.
+      placeholder: Include the controller or PCIe card model/IDs if relevant. Unknown revisions are fine; do not guess.
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Mac architecture
+      options:
+        - Apple silicon
+        - Intel
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Mac, macOS, and ASFW builds
+      description: Mac model; macOS version and build; ASFW app version/build; actual loaded driver version/build. Note signed hosted or local build, SIP state, and patched macOS/OCLP if applicable.
+      placeholder: Attach systemextensionsctl list output and the driver build from startup logs. App version alone does not establish which driver is running.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Steps and actual result
+      description: Expected versus observed behavior, reproduction steps and approximate time. Say what was physically verified and what was not tested.
+      placeholder: "Audio: playback AND capture results, physical ports, rates/channels, DAW or app, clock source, and test duration. DV/scanner/storage: capture or scan result and application. Include power-cycle/reconnect conditions and last working build for a regression. Discovery or moving telemetry alone is not working audio."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, diagnostics, and other evidence
+      description: Drag files into this field. Attach startup and reproduction logs, relevant DICE/AV/C reports, useful 1394 diagnostics, crash reports, recordings/screenshots or measurements. If unavailable, explain why.
+      placeholder: "System Logs → Export Logs. DICE Report or AV/C Report when applicable. 1394 Diagnostics only when it contains useful connected-driver/bus data; a blank 'driver not loaded' report does not diagnose the device. For load failures, attach systemextensionsctl list and system/crash logs instead. Keep originals and label their build and test conditions."
+    validations:
+      required: true
