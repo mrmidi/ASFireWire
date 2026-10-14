@@ -240,6 +240,51 @@ TEST(SessionStudioLive3242, RecordedReportPublishesAndStartsFullWidthDuplex) {
     ExpectMatchesGolden(rig.bus.Trace(), "session/studiolive-3242/publish-start-stop.trace");
 }
 
+TEST(SessionStudioLive3242, CaptureSpeedMatchesBandwidthReservationAndHostPlaybackSpeed) {
+    // Recorded 48-in/34-out geometry. At 48 kHz the maximum CIP payloads are
+    // 1544/1096 bytes. Apple IOFWIsochChannel.cpp:664 charges 1556/1108 units
+    // at S400, and half that at S800. Linux dice-stream.c:192-194, :359-369
+    // reserves and programs device TX using the same resolved speed.
+    struct SpeedCase {
+        FwSpeed speed;
+        uint32_t playbackUnits;
+        uint32_t captureUnits;
+    };
+    for (const auto& test : {SpeedCase{FwSpeed::S400, 1108U, 1556U},
+                             SpeedCase{FwSpeed::S800, 554U, 778U}}) {
+        SCOPED_TRACE(static_cast<uint32_t>(test.speed));
+        const SessionShape shape{"studiolive-3242", Ids::kPreSonusVendorId,
+            Ids::kStudioLive3242ModelId, Ids::kPreSonusVendorId, kDiceUnitVersion,
+            &DiceDeviceImages::kStudiolive3242, false};
+        SessionRig rig(shape);
+        rig.link.localToNode = test.speed;
+        rig.link.isochToNode = test.speed;
+        rig.bus.SetSpeed(NodeId{0x02}, test.speed);
+        rig.Install(Generation{1});
+
+        ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+        ASSERT_TRUE(rig.IsStreaming());
+        const auto& lines = rig.bus.Trace().Lines();
+        EXPECT_NE(std::ranges::find(lines,
+            "H reserve playback allowed=00000000ffffffff bw=" +
+                std::to_string(test.playbackUnits) + " -> ch=0"), lines.end());
+        EXPECT_NE(std::ranges::find(lines,
+            "H reserve capture allowed=00000000ffffffff bw=" +
+                std::to_string(test.captureUnits) + " -> ch=1"), lines.end());
+        EXPECT_NE(std::ranges::find(lines,
+            std::string("H prepare tx ch=0 sid=0 @") + SessionSpeedName(test.speed)), lines.end());
+        EXPECT_EQ(rig.bus.Device().TxSpeed(0), static_cast<uint32_t>(test.speed))
+            << "Device capture must use the speed its bandwidth was reserved for";
+        EXPECT_EQ(rig.bus.Device().Enable(), 1U);
+
+        ASSERT_EQ(rig.Stop(), kIOReturnSuccess);
+        EXPECT_FALSE(rig.IsStreaming());
+        EXPECT_EQ(rig.bus.Device().TxSpeed(0), static_cast<uint32_t>(test.speed));
+        EXPECT_EQ(rig.bus.Device().Enable(), 0U);
+        EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+    }
+}
+
 // Publication resolves the geometry; a refusal returns before the endpoint
 // exists, so CoreAudio would never see the device.
 TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {

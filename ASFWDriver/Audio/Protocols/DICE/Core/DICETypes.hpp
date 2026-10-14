@@ -486,7 +486,7 @@ namespace TxOffset {
     constexpr uint32_t kIsochronous  = 0x08;  // Isoch channel (-1 = disabled)
     constexpr uint32_t kNumberAudio  = 0x0C;  // Number of audio channels
     constexpr uint32_t kNumberMidi   = 0x10;  // Number of MIDI ports
-    constexpr uint32_t kSpeed        = 0x14;  // Transmission speed (0=S100..2=S400)
+    constexpr uint32_t kSpeed        = 0x14;  // Transmission speed code (0=S100, 1=S200, 2=S400, 3=S800)
     constexpr uint32_t kNames        = 0x18;  // Channel names (256 bytes)
 }
 

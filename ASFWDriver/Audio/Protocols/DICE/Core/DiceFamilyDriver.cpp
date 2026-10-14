@@ -1184,11 +1184,11 @@ uint64_t DiceFamilyDriver::OwnerValue() const noexcept {
 }
 
 uint32_t DiceFamilyDriver::ResolvedTxSpeed() const noexcept {
-    // Program TX transmission speed according to the resolved operational speed of the link
-    // between local controller and DICE device (e.g. S200 for Midas Venice F24), clamped to
-    // DICE hardware maximum (S400 == 2). Cross-validated with Linux ALSA dice-stream.c:329-363.
-    const FW::FwSpeed speed = busInfo_.GetSpeed(io_.RegisterIo().NodeId());
-    return std::min(static_cast<uint32_t>(speed), 2U);
+    // Device TX is host capture. Use the resolved operational link speed,
+    // including slower verified links and S800, without a family-wide cap.
+    // Cross-validated with Linux dice-stream.c:329, :359-369; its resource
+    // reservation uses the same device max_speed at :192-194.
+    return static_cast<uint32_t>(busInfo_.GetSpeed(io_.RegisterIo().NodeId()));
 }
 
 void DiceFamilyDriver::RecordStopTeardownAbort(const char* stage) const noexcept {
