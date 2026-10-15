@@ -137,6 +137,11 @@ public:
     // detect device-initiated clock moves.
     uint32_t GetCurrentSampleRateHz() const LOCALONLY;
 
+    // Re-read rate and channel counts from the nub's properties. Create()
+    // starts the nub before the publisher can set them, so Start alone only
+    // ever sees the defaults; the publisher calls this after SetProperties.
+    void RefreshFromProperties() LOCALONLY;
+
     // Set channel count directly (called by AVCDiscovery after Create())
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;

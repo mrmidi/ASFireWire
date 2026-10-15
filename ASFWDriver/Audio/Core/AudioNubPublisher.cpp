@@ -80,7 +80,8 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
         return false;
     }
 
-    // Populate properties on the nub BEFORE it starts.
+    // Create() has already started the nub, and its Start read these
+    // properties before they existed; RefreshFromProperties below re-reads them.
     OSDictionary* propertiesRaw = nullptr;
     kr = nubService->CopyProperties(&propertiesRaw);
     OSSharedPtr<OSDictionary> properties = OSSharedPtr(propertiesRaw, OSNoRetain);
@@ -135,6 +136,9 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
     // Stream mode and GUID are LOCALONLY helpers; channel topology is derived from nub properties.
     audioNub->SetStreamMode(static_cast<uint32_t>(config.streamMode));
     audioNub->SetGuid(config.guid);
+    // Without this the nub keeps its 48 kHz default as the device rate, and
+    // AudioDeviceHost::ProbeClock compares device moves against it (#190).
+    audioNub->RefreshFromProperties();
 
     IOLockLock(lock_);
     nubsByGuid_[guid] = audioNub;

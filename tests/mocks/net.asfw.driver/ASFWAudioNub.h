@@ -5,7 +5,12 @@
 
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSAction.h>
+#include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSNumber.h>
+#include <DriverKit/OSSharedPtr.h>
+#include <atomic>
 #include <cstdint>
+#include "Audio/Model/AudioPropertyKeys.hpp"
 #include "Audio/Runtime/RemoteDeviceStopResult.hpp"
 
 class ASFWAudioNub : public IOService {
@@ -17,7 +22,22 @@ public:
     virtual ~ASFWAudioNub() = default;
     void SetStreamMode(uint32_t) {}
     void SetGuid(uint64_t) {}
-    [[nodiscard]] uint32_t GetCurrentSampleRateHz() const noexcept { return 48000; }
+    // Mirrors the real nub: 48 kHz until RefreshFromProperties finds the
+    // published rate in the properties CopyProperties returns.
+    [[nodiscard]] uint32_t GetCurrentSampleRateHz() const noexcept { return currentRateHz; }
+    void RefreshFromProperties() {
+        ++refreshes;
+        OSDictionary* raw = nullptr;
+        if (CopyProperties(&raw) != kIOReturnSuccess || raw == nullptr) return;
+        OSSharedPtr<OSDictionary> props(raw, OSNoRetain);
+        if (auto* rate = OSDynamicCast(OSNumber,
+                                       props->getObject(ASFW::Audio::Model::PropertyKeys::kCurrentSampleRate));
+            rate != nullptr && rate->unsigned32BitValue() != 0) {
+            currentRateHz = rate->unsigned32BitValue();
+        }
+    }
+    uint32_t currentRateHz{48000};
+    uint32_t refreshes{0};
     void NotifyDeviceClockChanged(uint32_t rate) noexcept {
         ++clockChangeNotifications;
         lastObservedRate = rate;

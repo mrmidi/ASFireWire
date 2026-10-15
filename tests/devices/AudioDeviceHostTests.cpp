@@ -176,8 +176,29 @@ public:
 
 class TestNub final : public ASFWAudioNub {
 public:
+    ~TestNub() override {
+        if (published) published->release();
+    }
+    // Off by default: the nub forgets what was set, so it keeps reporting its
+    // 48 kHz default. On, it hands back what the publisher set, as IOKit does.
+    bool keepPublished{false};
+    OSDictionary* published{nullptr};
+
     kern_return_t CopyProperties(OSDictionary** out) override {
-        *out = OSDictionary::withCapacity(32);
+        if (published) {
+            published->retain();
+            *out = published;
+        } else {
+            *out = OSDictionary::withCapacity(32);
+        }
+        return kIOReturnSuccess;
+    }
+    kern_return_t SetProperties(OSDictionary* properties) override {
+        if (keepPublished && properties) {
+            properties->retain();
+            if (published) published->release();
+            published = properties;
+        }
         return kIOReturnSuccess;
     }
 };
@@ -725,6 +746,37 @@ TEST(AudioDeviceHostTests, IdleDiceRateChangeCoalescesConfigAndClockNotification
     EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 1U);
     EXPECT_EQ(f.nubProvider.nub->lastObservedRate, 44100U);
     EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
+}
+
+// Create() starts the nub before the publisher sets its properties, so the
+// nub must re-read them; otherwise it reports its 48 kHz default (#190: the
+// StudioLive at 44.1 kHz logged "ClockEcho device=44100 host=48000").
+TEST(AudioDeviceHostTests, PublishedNubReportsThePublishedRateNotItsDefault) {
+    HostFixture f(true);
+    f.nubProvider.nub->keepPublished = true;
+    auto desc = MakeDescription("DICE", 2, 2);
+    desc.currentSampleRate = 44100;
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, desc, "test"));
+    EXPECT_EQ(f.nubProvider.nub->refreshes, 1U);
+    EXPECT_EQ(f.nubProvider.nub->GetCurrentSampleRateHz(), 44100U);
+}
+
+// With the published rate known, a device that stayed at that rate is healthy:
+// no rate change reaches the audio driver.
+TEST(AudioDeviceHostTests, DiceAtThePublishedRateIsNotARateChange) {
+    HostFixture f(true);
+    f.nubProvider.nub->keepPublished = true;
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();  // device reports 44100
+    f.runtime.Insert(kGuid, protocol);
+    auto desc = MakeDescription("DICE", 2, 2);
+    desc.currentSampleRate = 44100;
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, desc, "test"));
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 0);
+    EXPECT_EQ(protocol->reads, 1U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 0U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ClockHealthy), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::DeviceRateChange), 0U);
 }
 
 TEST(AudioDeviceHostTests, DiceRateProbeRejectsResetDuringRead) {

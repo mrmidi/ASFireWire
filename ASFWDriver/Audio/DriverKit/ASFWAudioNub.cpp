@@ -556,6 +556,18 @@ uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
     return ivars ? ivars->currentSampleRateHz : 0;
 }
 
+void ASFWAudioNub::RefreshFromProperties()
+{
+    if (!ivars) {
+        return;
+    }
+    RefreshChannelCountsFromProperties(this, ivars);
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: refreshed from published properties rate=%u in=%u out=%u guid=0x%016llx",
+             ivars->currentSampleRateHz, ivars->inputChannelCount,
+             ivars->outputChannelCount, ivars->guid);
+}
+
 ASFWDriver* ASFWAudioNub::GetParentDriver() const
 {
     return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
