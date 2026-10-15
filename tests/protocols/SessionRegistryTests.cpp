@@ -114,9 +114,10 @@ uint64_t ReadTaskManagementStatusAddress(AddressSpaceManager& manager, uint64_t 
 void CompleteTaskManagementStatus(AddressSpaceManager& manager,
                                   uint64_t statusAddress,
                                   uint64_t orbAddress,
-                                  uint8_t sbpStatus = SBPStatus::kNoAdditionalInfo) {
+                                  uint8_t sbpStatus = SBPStatus::kNoAdditionalInfo,
+                                  uint8_t details = 0) {
     StatusBlock status{};
-    status.details = 0;
+    status.details = details;
     status.sbpStatus = sbpStatus;
     status.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((orbAddress >> 32) & 0xFFFFu));
     status.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(orbAddress & 0xFFFF'FFFFu));
@@ -1046,6 +1047,76 @@ TEST(SessionRegistryTests, OrbTimeoutThenLunResetTimeoutEscalatesAndDeliversResu
     EXPECT_NE(0, lastResult.transportStatus);
     EXPECT_EQ(1, busResets);  // failed LUN reset escalates to a bus reset
 }
+
+// Hasselblad H-camera HW trace (2026-10-15): the target answers the timeout's
+// LUN reset with the dead bit set, and a dead fetch agent ignores ORB_POINTER.
+// Without an AGENT_RESET after the LUN reset every later command times out.
+// Apple resets the fetch agent from the LUN-reset completion and only then
+// completes the task (IOFireWireSerialBusProtocolTransport.cpp LunResetComplete).
+class LunResetAgentResetTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(LunResetAgentResetTest, OrbTimeoutResetsFetchAgentAfterLunResetBeforeDelivering) {
+    SessionRegistryRig rig;
+    int busResets = 0;
+    rig.registry.SetBusResetRequester([&busResets]() { ++busResets; });
+
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    auto request = SCSI::BuildTestUnitReadyRequest();
+    request.timeoutMs = 1000;
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(
+        SessionRegistryRig::Owner(), handle, request,
+        [&callbacks](const SCSI::CommandResult&) { ++callbacks; }));
+
+    const auto orbPointerWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    ASSERT_TRUE(rig.bus.CompleteWrite(orbPointerWrite.handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1001);  // ORB timeout → AGENT_RESET (no-wait) + LUN-reset mgmt write
+    ASSERT_EQ(2u, rig.bus.PendingWriteCount());
+    auto mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    if (mgmtWrite.data.size() != 8u) {
+        mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 2);
+    }
+    ASSERT_EQ(8u, mgmtWrite.data.size());
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    const uint64_t mgmtOrbAddress = DecodeAddressFromWritePayload(mgmtWrite.data);
+    const size_t writesBeforeStatus = rig.bus.WriteCount();
+    constexpr uint8_t kSrc1RespCompleteDeadLen1 = 0x49;  // as posted by the camera
+    CompleteTaskManagementStatus(rig.addressManager,
+                                 ReadTaskManagementStatusAddress(rig.addressManager, mgmtOrbAddress),
+                                 mgmtOrbAddress, SBPStatus::kNoAdditionalInfo,
+                                 kSrc1RespCompleteDeadLen1);
+    rig.AdvanceMs(0);
+
+    ASSERT_EQ(writesBeforeStatus + 1u, rig.bus.WriteCount())
+        << "LUN reset must be followed by an AGENT_RESET";
+    const auto agentResetWrite = rig.bus.WriteAt(writesBeforeStatus);
+    EXPECT_EQ(4u, agentResetWrite.data.size());
+    EXPECT_EQ(0x0020'0004u, agentResetWrite.address.addressLo);
+    EXPECT_EQ(0, callbacks) << "task completes only once the fetch agent is reset";
+
+    if (GetParam()) {
+        // A bus reset while the AGENT_RESET is in flight flushes the result;
+        // the late write completion must not deliver it a second time.
+        rig.registry.OnBusReset(2);
+        EXPECT_EQ(1, callbacks);
+    }
+    ASSERT_TRUE(rig.bus.CompleteWrite(agentResetWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+    rig.AdvanceMs(0);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_EQ(0, busResets);
+}
+
+INSTANTIATE_TEST_SUITE_P(BusResetDuringAgentReset, LunResetAgentResetTest, ::testing::Bool());
 
 // FW-review H1: a command result deferred behind the timeout→LUN-reset ORB
 // clears commandInFlight_/commandORB_ before deferring delivery to that ORB's

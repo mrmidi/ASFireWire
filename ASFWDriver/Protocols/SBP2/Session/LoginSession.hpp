@@ -179,6 +179,12 @@ public:
     /// Reset the fetch agent. Completion via callback.
     void ResetFetchAgent(std::function<void(int)> callback) noexcept;
 
+    /// AGENT_RESET without tearing down ORB tracking; onComplete runs when the
+    /// write completes, whatever its status.
+    void ResetFetchAgentNoWait(std::function<void()> onComplete) noexcept {
+        fetchAgent_.ResetNoWait(std::move(onComplete));
+    }
+
     /// Drop all outstanding command-ORB tracking and cancel any in-flight
     /// fetch-agent write. Used by the command plane (CommandExecutor)
     /// when a command completes, fails, or is aborted — mirrors #19's
