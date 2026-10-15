@@ -269,7 +269,9 @@ TEST(DiceReceiverDumpTests, SecondRequestWhileRunningIsBusy) {
     dump.Cancel();
 }
 
-TEST(DiceReceiverDumpTests, LockVerdictDumpsOnlyWhenAReceiverNeverLockedOrLostLock) {
+TEST(DiceReceiverDumpTests, EveryLockVerdictDumpsLockedOrNot) {
+    // A silent device can report every receiver locked, so a good verdict
+    // dumps too: the registers are wanted regardless of the outcome.
     DiceLockSnapshot locked{};
     locked.expectedMask = 1;
     locked.observedMask = 1;
@@ -277,14 +279,7 @@ TEST(DiceReceiverDumpTests, LockVerdictDumpsOnlyWhenAReceiverNeverLockedOrLostLo
     never.observedMask = 0;
     DiceLockSnapshot lost = locked;
     lost.lostMask = 1;
-    {
-        LoaderRig rig;
-        DiceReceiverDump dump(true);
-        dump.VerdictTrigger(rig.io, &rig.timer)(locked);
-        EXPECT_TRUE(rig.bus.Operations().empty());
-        EXPECT_EQ(dump.Copy().phase, DiceDumpPhase::Idle);
-    }
-    for (const auto& verdict : {never, lost}) {
+    for (const auto& verdict : {locked, never, lost}) {
         LoaderRig rig;
         DiceReceiverDump dump(true);
         dump.VerdictTrigger(rig.io, &rig.timer)(verdict);
@@ -292,13 +287,20 @@ TEST(DiceReceiverDumpTests, LockVerdictDumpsOnlyWhenAReceiverNeverLockedOrLostLo
         EXPECT_EQ(dump.Copy().phase, DiceDumpPhase::Complete);
         EXPECT_EQ(dump.Copy().trigger, DiceDumpTrigger::LockVerdict);
     }
-    {
-        LoaderRig rig;
-        DiceReceiverDump dump(false);
-        dump.VerdictTrigger(rig.io, &rig.timer)(never);
-        EXPECT_TRUE(rig.bus.Operations().empty());
-        EXPECT_EQ(dump.Copy().phase, DiceDumpPhase::Idle); // no refusal noise per start
-    }
+}
+
+TEST(DiceReceiverDumpTests, UnverifiedDeviceRecordsTheRefusalAtEveryVerdictWithoutBusTraffic) {
+    DiceLockSnapshot locked{};
+    locked.expectedMask = 1;
+    locked.observedMask = 1;
+    LoaderRig rig;
+    DiceReceiverDump dump(false);
+    dump.VerdictTrigger(rig.io, &rig.timer)(locked);
+    rig.Run();
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(dump.Copy().phase, DiceDumpPhase::Refused);
+    EXPECT_EQ(dump.Copy().refusal, DiceDumpRefusal::NotVerifiedFirmware);
+    EXPECT_EQ(dump.Copy().trigger, DiceDumpTrigger::LockVerdict);
 }
 
 TEST(DiceReceiverDumpTests, ATriggerOutlivingItsOwnerDoesNothing) {

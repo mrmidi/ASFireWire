@@ -499,19 +499,16 @@ public:
         return StartOn(shared_, io, scheduler, DiceDumpTrigger::Request, fifoEvents);
     }
 
-    // For DiceLockWatch: one dump when an expected receiver never locked or
-    // lost lock. Silent on devices without verified firmware: no refusal per start.
+    // For DiceLockWatch: one dump after every lock verdict, locked or not. A
+    // silent device can report every receiver locked, so the registers are
+    // wanted on a good verdict too. A device without verified firmware logs
+    // its refusal once per start, so the absence of a dump is never silent.
     [[nodiscard]] std::function<void(const DiceLockSnapshot&)> VerdictTrigger(
         const Protocols::Ports::ProtocolRegisterIO& io, Scheduling::ITimerScheduler* scheduler) const {
         std::weak_ptr<Shared> weak = shared_;
-        return [weak, io, scheduler](const DiceLockSnapshot& verdict) {
-            if ((verdict.expectedMask & ~verdict.observedMask) == 0 && verdict.lostMask == 0) return;
+        return [weak, io, scheduler](const DiceLockSnapshot&) {
             auto shared = weak.lock();
             if (!shared || !shared->lock) return;
-            {
-                Guard guard(shared->lock);
-                if (!shared->verified) return;
-            }
             (void)StartOn(shared, io, scheduler, DiceDumpTrigger::LockVerdict, false);
         };
     }
