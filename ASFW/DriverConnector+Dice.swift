@@ -164,7 +164,29 @@ extension ASFWDriverConnector {
         let node = UInt16(0xFFC0) | UInt16(device.nodeId)
         captureGeneralSpace(node: node, into: &snap)
         captureExtensionSpace(node: node, into: &snap)
+        captureDcpHeader(node: node, into: &snap)
         return snap
+    }
+
+    /// Reads only the 48-byte DCP header (DiceDcpHeader explains why nothing
+    /// past +0x2F is touched). One quadlet probe first, so a device without the
+    /// window costs a single read that ends in an address error.
+    private func captureDcpHeader(node: UInt16, into snap: inout DiceSnapshot) {
+        let base = DiceDcpHeader.base
+        guard diceSyncRead(node: node, addressHigh: UInt16((base >> 32) & 0xFFFF),
+                           addressLow: UInt32(base & 0xFFFF_FFFF), length: 4) != nil else {
+            snap.mark("dcp.header", .absent)
+            return
+        }
+        guard let data = readDiceBlock(node: node, base: base, offset: 0,
+                                       length: DiceDcpHeader.headerBytes),
+              let header = DiceDcpHeader.decode(data) else {
+            snap.mark("dcp.header", .unreadable)
+            snap.notes.append("DCP window answered a quadlet read but its header was unreadable.")
+            return
+        }
+        snap.dcp = header
+        snap.mark("dcp.header", .decoded)
     }
 
     // EXT_STATUS clears slip history on quadlet reads (Linux dice-interface.h:155-159).

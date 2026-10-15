@@ -91,6 +91,43 @@ enum DiceReportTextFormatter {
         } else {
             line("  <absent>")
         }
+        line()
+        line("DCP window @ 0xFFFFE0400000  (DICE III control RPC; header only, read-only)")
+        if let h = s.dcp {
+            for row in stride(from: 0, to: h.quadlets.count, by: 4) {
+                let words = h.quadlets[row..<min(row + 4, h.quadlets.count)]
+                    .map { String(format: "%08X", $0) }.joined(separator: " ")
+                line(String(format: "  +0x%02X  ", row * 4) + words)
+            }
+            if let order = h.order {
+                line(String(format: "  magic          = 0x%016llX  matches (%@)",
+                            DiceDcpHeader.magic, order.rawValue as NSString))
+                let owner = h.owner
+                // DICE marks "no owner" as 0xFFFF000000000000 (dice-interface.h:56).
+                let unowned = owner == 0 || owner == 0xFFFF_0000_0000_0000
+                let ownerNode: UInt64 = owner >> 48
+                let ownerAddress: UInt64 = owner & 0xFFFF_FFFF_FFFF
+                let ownerText = unowned ? "none"
+                    : String(format: "node=0x%04llX addr=0x%012llX", ownerNode, ownerAddress)
+                line(String(format: "  owner          = 0x%016llX  %@", owner, ownerText as NSString))
+                line(String(format: "  version        = %u%@", h.version,
+                            (h.version < 3 ? "" : "  (the TCAT kext refuses version 3 or above)") as NSString))
+                line(String(format: "  max request    = %u bytes", h.maxRequestBytes))
+                line(String(format: "  response area  = %u bytes (%d payload)", h.responseAreaBytes,
+                            max(0, Int(h.responseAreaBytes) - 16)))
+                line(String(format: "  word +0x10     = 0x%08X", h.word10))
+                for (label, value) in [("+0x20", h.field20), ("+0x28", h.field28)] {
+                    let where_ = DiceDcpHeader.windowOffset(of: value)
+                        .map { String(format: "  (window +0x%03llX)", $0) } ?? ""
+                    line(String(format: "  field %@   = 0x%016llX%@", label as NSString, value,
+                                where_ as NSString))
+                }
+            } else {
+                line("  magic          = no match in any word or byte order: not a DCP header")
+            }
+        } else {
+            line("  " + (s.readState(for: "dcp.header")?.reportLabel ?? "<not read>"))
+        }
 
         head("RECEIVER LOCK WATCH (cached driver telemetry)")
         line(s.receiverLock?.report ?? "No retained lock watch available (stream not started or driver does not support it).")
