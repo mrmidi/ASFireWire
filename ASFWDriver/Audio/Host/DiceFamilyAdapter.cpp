@@ -223,9 +223,10 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
     caps.hostToDeviceStreamCount = resolvedGeometry.playback.StreamCount();
 
     if (ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+        // Geometry only: the published rate is decided below and logged there.
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
-                 dev.currentSampleRate, dev.inputChannelCount, dev.outputChannelCount, guid);
+                 "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry in=%u out=%u (GUID=0x%016llx)",
+                 dev.inputChannelCount, dev.outputChannelCount, guid);
     }
 
     PublishStreams(resolvedGeometry.playback, dev.playbackStreams);
@@ -291,6 +292,22 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
                          "%u Hz, above the %u Hz streaming ceiling; published geometry is that "
                          "mode's and may not match %u Hz",
                          guid, caps.sampleRateHz, DICE::kDiceMaxStreamingRateHz, initialRate);
+    }
+    {
+        char rates[64] = {};
+        size_t used = 0;
+        for (const uint32_t rate : dev.sampleRates) {
+            if (used >= sizeof(rates)) break;
+            const int n = snprintf(rates + used, sizeof(rates) - used, "%s%u",
+                                   used == 0 ? "" : ",", rate);
+            if (n < 0) break;
+            used += static_cast<size_t>(n);
+        }
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: rate device=%u published=%u rates=%{public}s "
+                 "(CLOCK_CAPABILITIES rates=0x%02x) (GUID=0x%016llx)",
+                 caps.sampleRateHz, dev.currentSampleRate, used == 0 ? "-" : rates,
+                 caps.deviceRateMask, guid);
     }
 
     // Refuse a device this build cannot arm, at publication rather than at the
