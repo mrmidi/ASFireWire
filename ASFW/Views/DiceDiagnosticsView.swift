@@ -32,7 +32,7 @@ struct DiceDiagnosticsView: View {
             HStack {
                 Button("Capture receiver hardware", systemImage: "cpu") { store.capture(hardware: true, fifoEvents: readFIFOEvents) }
                     .disabled(store.isCapturing || !store.canCaptureHardware)
-                Text("Pro 24 DSP only. Uses firmware mailbox commands to read fixed chip registers.")
+                Text("The driver reads fixed TCD22xx receiver registers through the firmware loader, only where it has verified the read path (today: Pro 24 DSP).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Toggle("Read FIFO underflow/overflow flags (clears them on the device)", isOn: $readFIFOEvents)

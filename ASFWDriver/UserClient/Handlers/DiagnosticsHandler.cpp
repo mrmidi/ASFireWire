@@ -4,6 +4,7 @@
 #include "../../Audio/Runtime/AudioTelemetrySnapshot.hpp"
 #include "../../Audio/Protocols/IDeviceProtocol.hpp"
 #include "../../Audio/Diagnostics/DICE/DiceLockSnapshot.hpp"
+#include "../../Audio/Diagnostics/DICE/DiceReceiverDumpSnapshot.hpp"
 #include "../../Diagnostics/DiagnosticsService.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
 #include "../../Async/Interfaces/IAsyncSubsystemPort.hpp"
@@ -246,6 +247,51 @@ kern_return_t DiagnosticsHandler::GetDiceReceiverLock(IOUserClientMethodArgument
     auto protocol = runtime->FindShared(guid);
     ASFW::Audio::DICE::Diagnostics::DiceLockSnapshot snapshot{};
     if (protocol) (void)protocol->CopyDiceReceiverLock(snapshot);
+    auto* output = OSData::withBytes(&snapshot, sizeof(snapshot));
+    if (!output) return kIOReturnNoMemory;
+    args->structureOutput = output;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+namespace {
+OSData* StructInput(IOUserClientMethodArguments* args) {
+#ifdef ASFW_HOST_TEST
+    return static_cast<OSData*>(args->structureInput);
+#else
+    return OSDynamicCast(OSData, args->structureInput);
+#endif
+}
+} // namespace
+
+kern_return_t DiagnosticsHandler::RequestDiceReceiverDump(IOUserClientMethodArguments* args) {
+    if (!args || !driver_ || !args->structureInput) return kIOReturnBadArgument;
+    auto* input = StructInput(args);
+    if (!input || input->getLength() != sizeof(uint64_t) + sizeof(uint32_t)) return kIOReturnBadArgument;
+    uint64_t guid = 0;
+    uint32_t flags = 0;
+    std::memcpy(&guid, input->getBytesNoCopy(), sizeof(guid));
+    std::memcpy(&flags, static_cast<const uint8_t*>(input->getBytesNoCopy()) + sizeof(guid), sizeof(flags));
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) return kIOReturnNotReady;
+    auto protocol = runtime->FindShared(guid);
+    if (!protocol) return kIOReturnNoDevice;
+    return protocol->RequestDiceReceiverDump((flags & 1U) != 0);
+}
+
+kern_return_t DiagnosticsHandler::GetDiceReceiverDump(IOUserClientMethodArguments* args) {
+    if (!args || !driver_ || !args->structureInput) return kIOReturnBadArgument;
+    auto* input = StructInput(args);
+    if (!input || input->getLength() != sizeof(uint64_t)) return kIOReturnBadArgument;
+    uint64_t guid = 0;
+    std::memcpy(&guid, input->getBytesNoCopy(), sizeof(guid));
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) return kIOReturnNotReady;
+    auto protocol = runtime->FindShared(guid);
+    ASFW::Audio::DICE::Diagnostics::DiceReceiverDumpSnapshot snapshot{};
+    if (protocol) (void)protocol->CopyDiceReceiverDump(snapshot);
     auto* output = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!output) return kIOReturnNoMemory;
     args->structureOutput = output;

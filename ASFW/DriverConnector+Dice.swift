@@ -17,6 +17,26 @@ enum DiceSnapshotCaptureResult {
 
 extension ASFWDriverConnector {
 
+    /// Asks the driver to dump the receiver registers. It refuses unless it can
+    /// positively identify the chip and its firmware read path; the outcome is
+    /// in `getDiceReceiverDump`. False: no protocol, busy, or not connected.
+    func requestDiceReceiverDump(guid: UInt64, fifoEvents: Bool) -> Bool {
+        guard isConnected, connection != 0 else { return false }
+        var request = Data()
+        withUnsafeBytes(of: guid.littleEndian) { request.append(contentsOf: $0) }
+        withUnsafeBytes(of: UInt32(fifoEvents ? 1 : 0).littleEndian) { request.append(contentsOf: $0) }
+        return callStruct(.requestDiceReceiverDump, input: request, initialCap: 0) != nil
+    }
+
+    func getDiceReceiverDump(guid: UInt64) -> DiceReceiverDump? {
+        guard isConnected, connection != 0 else { return nil }
+        var input = guid.littleEndian
+        let request = withUnsafeBytes(of: &input) { Data($0) }
+        guard let data = callStruct(.getDiceReceiverDump, input: request, initialCap: DiceReceiverDump.wireBytes),
+              let dump = DiceReceiverDump.decode(data), dump.guid == guid else { return nil }
+        return dump
+    }
+
     func getDiceReceiverLock(guid: UInt64) -> DiceReceiverLock? {
         guard isConnected, connection != 0 else { return nil }
         var input = guid.littleEndian

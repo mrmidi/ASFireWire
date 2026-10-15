@@ -37,6 +37,9 @@ class DiceLockWatch final {
         IOReturn sampleError{kIOReturnSuccess};
         bool finalSample{false};
         uint32_t validReads{0};
+        // Called once, outside every lock, when the watch completes. Never on
+        // Stop or Reset: a cancelled watch has no verdict worth acting on.
+        std::function<void(const DiceLockSnapshot&)> onVerdict;
 
         Session(Protocols::Ports::ProtocolRegisterIO source,
                 Scheduling::ITimerScheduler* timer, uint32_t base)
@@ -141,7 +144,10 @@ class DiceLockWatch final {
                     finished = true;
                 }
             }
-            if (finished) CancelTimers();
+            if (finished) {
+                CancelTimers();
+                if (onVerdict) onVerdict(Copy());
+            }
         }
         void Sample(bool final) {
             // No blocking register I/O on the scheduler's Default queue. This
@@ -187,6 +193,7 @@ class DiceLockWatch final {
         void Cancel(DiceLockPhase phase, IOReturn reason = kIOReturnSuccess) {
             if (!dataLock || !submitLock) return;
             std::array<Async::AsyncHandle, 2> cancelHandles;
+            bool completed = false;
             {
                 Guard submission(submitLock);
                 Guard guard(dataLock);
@@ -197,10 +204,12 @@ class DiceLockWatch final {
                     if (reason != kIOReturnSuccess) RecordLocked(0, 0, reason, 0);
                     snapshot.phase = phase;
                     VerdictLocked();
+                    completed = phase == DiceLockPhase::Complete;
                 }
             }
             CancelTimers();
             for (auto handle : cancelHandles) if (handle) (void)io.CancelTransaction(handle);
+            if (completed && onVerdict) onVerdict(Copy());
         }
         void Begin() {
             if (!dataLock || !submitLock || !scheduler) {
@@ -249,7 +258,8 @@ public:
     ~DiceLockWatch() { Close(); if (lock_) IOLockFree(lock_); }
     void Start(Protocols::Ports::ProtocolRegisterIO io,
                Scheduling::ITimerScheduler* scheduler, const GeneralSections& sections,
-               const AudioStreamRuntimeCaps& caps) {
+               const AudioStreamRuntimeCaps& caps,
+               std::function<void(const DiceLockSnapshot&)> onVerdict = {}) {
         if (!lock_) {
             ASFW_LOG_ERROR(DICE, "[DiceLock] unavailable: failed to allocate watch lock");
             return;
@@ -258,6 +268,7 @@ public:
         if (closed_) return;
         if (session_) session_->Cancel(DiceLockPhase::Stopped);
         auto next = std::make_shared<Session>(io, scheduler, sections.global.offset);
+        next->onVerdict = std::move(onVerdict);
         next->snapshot.guid = io.Route().guid;
         next->snapshot.generation = io.Generation().value;
         for (uint32_t i = 0; i < std::min(caps.hostToDeviceStreamCount, 4U); ++i) {

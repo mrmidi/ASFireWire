@@ -376,6 +376,7 @@ IOReturn DICETcatProtocol::Initialize() {
                                         runtimePolicy_.clockChangeObserver != nullptr
                                     ? static_cast<DiceClockChangeObserver*>(this)
                                     : nullptr,
+                            .verifiedLoaderPeek = runtimePolicy_.verifiedLoaderPeek,
                         }, preparationScheduler_);
         driver_->SetTeardownCancelToken(teardownCancel_);
     }

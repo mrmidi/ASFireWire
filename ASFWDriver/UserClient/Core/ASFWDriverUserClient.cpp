@@ -407,6 +407,8 @@ constexpr uint64_t kMethodDiagGetLogStats         = 1012;
 constexpr uint64_t kMethodDiagGetAudioTelemetry   = 1013;
 constexpr uint64_t kMethodDiagGetLogCatalog       = 1014;
 constexpr uint64_t kMethodDiagGetDiceReceiverLock = 1015;
+constexpr uint64_t kMethodDiagRequestDiceReceiverDump = 1016;
+constexpr uint64_t kMethodDiagGetDiceReceiverDump = 1017;
 
 MethodDispatchResult DispatchDiagnosticsMethods(
     ASFW::UserClient::UserClientRuntimeState& runtimeState,
@@ -442,6 +444,10 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetAudioTelemetry(arguments);
     case kMethodDiagGetDiceReceiverLock:
         return runtimeState.Diagnostics().GetDiceReceiverLock(arguments);
+    case kMethodDiagRequestDiceReceiverDump:
+        return runtimeState.Diagnostics().RequestDiceReceiverDump(arguments);
+    case kMethodDiagGetDiceReceiverDump:
+        return runtimeState.Diagnostics().GetDiceReceiverDump(arguments);
     case kMethodDiagGetLogCatalog:
         return runtimeState.Diagnostics().GetLogCatalog(arguments);
     default:

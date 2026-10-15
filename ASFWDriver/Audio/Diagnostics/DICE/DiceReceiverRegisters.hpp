@@ -27,6 +27,12 @@ inline constexpr uint32_t kChannelShift = 0;
 inline constexpr uint32_t kReceiverLocked = 1U << 28; // ADO_CFG
 inline constexpr uint32_t kReceiverEvents = 0xCF00013C;
 inline constexpr uint32_t kTransmitterEvents = 0xCF000144;
+// Media FIFO partitions (§6.7): inclusive RAM address ranges, BASE then LIMIT,
+// 12-byte stride. The third word of each triple is FLUSH: never read or write it.
+inline constexpr uint32_t kPartitionBase0 = 0xCF000184;
+inline constexpr uint32_t kPartitionStride = 12;
+inline constexpr uint32_t kPartitionLimitOffset = 4;
+inline constexpr uint32_t kPartitionCount = 4;
 // Read-to-clear (User's Guide §6.7.5): explicit opt-in only.
 inline constexpr uint32_t kFifoEventsReadToClear = 0xCF0001FC;
 }

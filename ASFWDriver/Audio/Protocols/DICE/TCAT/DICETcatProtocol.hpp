@@ -42,6 +42,9 @@ struct DiceStartupMixerCell final {
 
 struct DICETcatRuntimePolicy final {
     bool exposeDeviceToHostToCoreAudio{true};
+    // Receiver-register dumps through the firmware loader's PEEK. Set only by
+    // a protocol whose firmware TEST_ACTION table was verified (DICEBringupPolicy).
+    bool verifiedLoaderPeek{false};
     // Keep the target-rate transition strict, but do not require a GLOBAL
     // source-lock indication before/just after host IT starts. This is for
     // devices whose selected receive-clock path only locks once host packets
@@ -123,6 +126,14 @@ public:
     bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
         if (!driver_) return false;
         out = driver_->ReceiverLockSnapshot();
+        return out.guid != 0;
+    }
+    IOReturn RequestDiceReceiverDump(bool fifoEvents) override {
+        return driver_ ? driver_->RequestReceiverDump(fifoEvents) : kIOReturnNotReady;
+    }
+    bool CopyDiceReceiverDump(Diagnostics::DiceReceiverDumpSnapshot& out) const override {
+        if (!driver_) return false;
+        out = driver_->ReceiverDumpSnapshot();
         return out.guid != 0;
     }
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;

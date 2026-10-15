@@ -396,6 +396,7 @@
 		BCC377A8BC71F82C85384962 /* ASFWMCPTransactionSchemas.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEA485C0412D0BA1D14FE998 /* ASFWMCPTransactionSchemas.swift */; };
 		BCD01A10EFEC034BF903B0EC /* MCPControlViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD117766281DF405E522EFAB /* MCPControlViewModelTests.swift */; };
 		BCDFB0EB885A4BCBA8D72666 /* ASFWMCPSDKBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D710940703C1A030B7B978DB /* ASFWMCPSDKBridge.swift */; };
+		BD6135BFC605CFCAE94581C1 /* DiceReceiverDump.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E7911FF150E3B798B0C9E2C /* DiceReceiverDump.swift */; };
 		BD6E4BFC81EB785F9B19BBE5 /* DescriptorRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A04788B23B3E43F7A1311A33 /* DescriptorRing.cpp */; };
 		BE0B40BCFCBB4416AF264948 /* SessionRegistry.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */; };
 		BECBE8153753536EE865771D /* ASFWSBP2Nub.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 664BCCE4CA38E930A13BFB54 /* ASFWSBP2Nub.cpp */; };
@@ -556,6 +557,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		000306805A99C7CA776E297C /* DiceReceiverDumpSnapshot.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceReceiverDumpSnapshot.hpp; sourceTree = "<group>"; };
 		003D261C038E0434E7A8B214 /* LogRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LogRing.cpp; sourceTree = "<group>"; };
 		00744EB824D48D9F716E153A /* PostResetTimingCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PostResetTimingCoordinator.hpp; sourceTree = "<group>"; };
 		00979778212761BF904386E6 /* AudioEndpointRuntime.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioEndpointRuntime.hpp; sourceTree = "<group>"; };
@@ -681,6 +683,7 @@
 		1DC9C3863E2E23A2E1EACC27 /* FireWireBusImpl.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FireWireBusImpl.cpp; sourceTree = "<group>"; };
 		1DF4367160A96ED607F98D15 /* BeBoBProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BeBoBProtocol.hpp; sourceTree = "<group>"; };
 		1E5A1B83512229A46CB6F95A /* AvcProbeAdmission.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcProbeAdmission.hpp; sourceTree = "<group>"; };
+		1E7911FF150E3B798B0C9E2C /* DiceReceiverDump.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceReceiverDump.swift; sourceTree = "<group>"; };
 		1EC9CA965BBAB9A20B4F53AA /* SpectrogramTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrogramTests.swift; sourceTree = "<group>"; };
 		1F01A2AE881C63197695A0F1 /* DriverConnectorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverConnectorModels.swift; sourceTree = "<group>"; };
 		1FBCE23C33F1D62789320910 /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
@@ -1128,6 +1131,7 @@
 		85C43EE00357A42E68EBF954 /* ForwardDecls.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ForwardDecls.hpp; sourceTree = "<group>"; };
 		862D65458BD2D45123D9C6E4 /* ApogeeDuetProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeDuetProtocol.cpp; sourceTree = "<group>"; };
 		865D79169E036F3999E2F43B /* ConfigROMUnits.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMUnits.hpp; sourceTree = "<group>"; };
+		867100AD220D020B851A83A9 /* DiceReceiverDump.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceReceiverDump.hpp; sourceTree = "<group>"; };
 		87620236119C244709E5D9F2 /* PreSonus.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PreSonus.hpp; sourceTree = "<group>"; };
 		87A636BF87B26D494F771DA2 /* PacketRouter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PacketRouter.cpp; sourceTree = "<group>"; };
 		87AA52B0EA1A214DD05246C4 /* IFireWireBus.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IFireWireBus.hpp; sourceTree = "<group>"; };
@@ -1736,6 +1740,8 @@
 			children = (
 				A9460FE5637857DA8A9CAA80 /* DiceLockSnapshot.hpp */,
 				B67D7B85C0AE7742A87A96D8 /* DiceLockWatch.hpp */,
+				867100AD220D020B851A83A9 /* DiceReceiverDump.hpp */,
+				000306805A99C7CA776E297C /* DiceReceiverDumpSnapshot.hpp */,
 				94E1D44248A49F2C54202B63 /* DiceReceiverRegisters.hpp */,
 			);
 			path = DICE;
@@ -3547,6 +3553,7 @@
 				C37AD0408799A1AD89C3B689 /* DiceDiagnosticsReader.swift */,
 				307339BCA3BFCA7B45A6CE20 /* DiceDiagnosticsSnapshot.swift */,
 				D512278463E6CEE55A04612F /* DiceDiagnosticsStore.swift */,
+				1E7911FF150E3B798B0C9E2C /* DiceReceiverDump.swift */,
 				80650AB9784711AFE11EB447 /* DiceReceiverLock.swift */,
 				EDF310185E37830E9F0B1187 /* DiceRegisterModel.swift */,
 				946BBCA8486877BE473DE22E /* DiceReportStore.swift */,
@@ -4414,6 +4421,7 @@
 				B61FBFC25FB8B133FE7B9F09 /* DiceDiagnosticsSnapshot.swift in Sources */,
 				B8C2726C222661DB8B65755D /* DiceDiagnosticsStore.swift in Sources */,
 				0E16051928E5AB24864B5893 /* DiceDiagnosticsView.swift in Sources */,
+				BD6135BFC605CFCAE94581C1 /* DiceReceiverDump.swift in Sources */,
 				616040BE584327BF27141F21 /* DiceReceiverLock.swift in Sources */,
 				07B3DAB38052C09AC5A39175 /* DiceRegisterModel.swift in Sources */,
 				C2536C495DD92B36DA1C565D /* DiceReportStore.swift in Sources */,

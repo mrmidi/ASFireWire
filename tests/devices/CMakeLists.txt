@@ -27,6 +27,12 @@ add_device_test(DiceFamilyDriverTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# TCD22xx receiver dump through the TCAT firmware-loader PEEK, against a simulated mailbox.
+add_device_test(DiceReceiverDumpTests
+    DiceReceiverDumpTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Scripted FF400/FF800 register sequencing, clock admission, and resource ownership.
 add_device_test(FirefaceFamilyDriverTests
     FirefaceFamilyDriverTests.cpp

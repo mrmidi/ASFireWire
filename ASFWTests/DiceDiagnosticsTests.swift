@@ -21,15 +21,15 @@ struct DiceDiagnosticsTests {
         #expect(values.first { $0.id == "Clock selection" }?.value == "48000 Hz · internal")
         #expect(values.first { $0.id == "rx0.ISO_CHANNEL" }?.value == "Unassigned")
         #expect(values.first { $0.id == "tx0.SPEED" }?.value == "S800")
-        #expect(bus.writes.isEmpty)
+        #expect(bus.dumpRequests.isEmpty)
         #expect(!bus.reads.contains { $0.0 <= bus.global + 0x58 && $0.0 + UInt64($0.1) > bus.global + 0x58 })
     }
 
-    @Test func rejectsResetDuringReadBeforePublishingOrWriting() async {
+    @Test func rejectsResetDuringReadBeforeAskingTheDriver() async {
         let bus = DiceDiagnosticBus()
         bus.resetAfterRead = true
         await #expect(throws: NSError.self) { try await bus.reader().capture(hardware: true) }
-        #expect(bus.writes.isEmpty)
+        #expect(bus.dumpRequests.isEmpty)
     }
 
     @Test func rejectsInvalidGeometryWithoutWalkingIt() async {
@@ -39,34 +39,26 @@ struct DiceDiagnosticsTests {
         #expect(bus.reads.count == 4)
     }
 
-    #if DEBUG
-    @Test func busyMailboxRefusesWithoutAnyWrite() async {
+    @Test func driverRefusalIsReportedNotDecoded() async {
         let bus = DiceDiagnosticBus()
-        bus.put(DiceDiagnosticBus.mailbox + 4, [0x80000008])
+        bus.dumpError = NSError(domain: "Driver", code: 3)
         await #expect(throws: NSError.self) { try await bus.reader().capture(hardware: true) }
-        #expect(bus.writes.isEmpty)
+        #expect(bus.dumpRequests == [false])
     }
 
-    @Test func hardwareCaptureUsesOnlyPeekAndChecksFirmwareStatus() async throws {
+    @Test func hardwareCaptureDecodesTheDriverDump() async throws {
         let bus = DiceDiagnosticBus()
         let values = try await bus.reader().capture(hardware: true)
         #expect(values.first { $0.id == "ARX1_ADO_CFG" }?.raw == 0xF800FFFF)
-        #expect(bus.writes.count == 40)
-        for (address, payload) in bus.writes {
-            if address == DiceDiagnosticBus.mailbox + 4 {
-                #expect(payload == [0x80, 0, 0, 6])
-            } else {
-                #expect(address == DiceDiagnosticBus.mailbox + 0x2C)
-                #expect(Array(payload.prefix(4)) == [0, 0, 0, 2])
-                #expect(payload.count == 8)
-            }
-        }
-        let rejected = DiceDiagnosticBus()
-        rejected.firmwareStatus = 7
-        await #expect(throws: NSError.self) { try await rejected.reader().capture(hardware: true) }
-        #expect(rejected.writes.count == 2)
+        #expect(bus.dumpRequests == [false])
+        #expect(bus.writes.isEmpty) // the app never writes to the device
     }
-    #endif
+
+    @Test func missingDumpRegisterFailsInsteadOfDecodingZero() async {
+        let bus = DiceDiagnosticBus()
+        bus.dumpOmits = 0xCF000144
+        await #expect(throws: NSError.self) { try await bus.reader().capture(hardware: true) }
+    }
 
     @Test func decodesCipAndInclusiveFifoCapacity() {
         let values = DiceReceiverDiagnostics.decodeStream(prefix: "ARX1", cfg0: 0x80000082,
@@ -81,24 +73,15 @@ struct DiceDiagnosticsTests {
         #expect(DiceReceiverDiagnostics.decodeFIFOEvents(9).first?.value == "partition 0 underflow, partition 1 overflow")
     }
 
-    #if DEBUG
-    @Test func fifoFaultReadIsExplicitAndNeverTouchesFlushRegisters() async throws {
+    @Test func readToClearFifoEventsAreRequestedOnlyWhenOptedIn() async throws {
         let normal = DiceDiagnosticBus()
-        _ = try await normal.reader().capture(hardware: true)
+        let plain = try await normal.reader().capture(hardware: true)
         let optedIn = DiceDiagnosticBus()
-        _ = try await optedIn.reader().capture(hardware: true, fifoEvents: true)
-        func targets(_ bus: DiceDiagnosticBus) -> [UInt32] {
-            bus.writes.compactMap { address, payload in
-                address == DiceDiagnosticBus.mailbox + 0x2C ? DiceWire.u32(Data(payload), 4) : nil
-            }
-        }
-        #expect(!targets(normal).contains(0xCF0001FC))
-        #expect(targets(optedIn).contains(0xCF0001FC))
-        for address: UInt32 in [0xCF00018C, 0xCF000198, 0xCF0001A4, 0xCF0001B0] {
-            #expect(!targets(optedIn).contains(address))
-        }
+        let fifo = try await optedIn.reader().capture(hardware: true, fifoEvents: true)
+        #expect(normal.dumpRequests == [false])
+        #expect(optedIn.dumpRequests == [true])
+        #expect(plain.count + 1 == fifo.count)
     }
-    #endif
 
     @Test func baselineDoesNotCompareDifferentDevices() {
         let field = DiceDiagnosticValue(id: "GLOBAL_ENABLE", group: "Clock", value: "Enabled", raw: 1)
@@ -114,13 +97,14 @@ struct DiceDiagnosticsTests {
 @MainActor
 private final class DiceDiagnosticBus {
     static let base: UInt64 = 0xFFFFE0000000
-    static let mailbox: UInt64 = 0xFFFFE0100000
     let global = base + 0x80
     var memory: [UInt64: UInt8] = [:]
     var reads: [(UInt64, UInt32)] = []
     var writes: [(UInt64, [UInt8])] = []
     var resetAfterRead = false
-    var firmwareStatus: UInt32 = 0
+    var dumpRequests: [Bool] = []
+    var dumpError: Error?
+    var dumpOmits: UInt32?
     private var reset = false
 
     init() {
@@ -129,7 +113,22 @@ private final class DiceDiagnosticBus {
         put(global + 0x5C, [48000])
         put(Self.base + 0x100, [1, 4, 3, 16, 1, 3])
         put(Self.base + 0x120, [1, 4, UInt32.max, 0, 8, 1])
-        put(Self.mailbox + 4, [0])
+    }
+
+    /// The TCD22xx registers DiceReceiverDump.hpp reads, as the driver returns them.
+    func driverDump(fifoEvents: Bool) -> [UInt32: UInt32] {
+        var registers: [UInt32: UInt32] = [0xCF00013C: 0, 0xCF000144: 0]
+        for base: UInt32 in [0xCF000000, 0xCF000030] {
+            for offset: UInt32 in [0, 4, 0x20, 0x24] { registers[base + offset] = 0 }
+            registers[base + 0x28] = base == 0xCF000000 ? 0xF800FFFF : 0
+        }
+        for index: UInt32 in 0..<4 {
+            registers[0xCF000184 + index * 12] = 0
+            registers[0xCF000188 + index * 12] = 0
+        }
+        if fifoEvents { registers[0xCF0001FC] = 0 }
+        if let omitted = dumpOmits { registers[omitted] = nil }
+        return registers
     }
 
     func put(_ address: UInt64, _ words: [UInt32]) {
@@ -145,15 +144,10 @@ private final class DiceDiagnosticBus {
             let data = Data((0..<length).map { self.memory[address + UInt64($0)] ?? 0 })
             if self.resetAfterRead { self.reset = true }
             return data
-        }, write: { address, payload in
-            self.writes.append((address, payload))
-            for (offset, value) in payload.enumerated() { self.memory[address + UInt64(offset)] = value }
-            if address == Self.mailbox + 4 {
-                let target = Data((0..<4).map { self.memory[Self.mailbox + 0x30 + UInt64($0)] ?? 0 })
-                self.put(Self.mailbox + 4, [6])
-                self.put(Self.mailbox + 8, [self.firmwareStatus])
-                self.put(Self.mailbox + 0x2C, [DiceWire.u32(target, 0) == 0xCF000028 ? 0xF800FFFF : 0])
-            }
+        }, hardwareDump: { fifoEvents in
+            self.dumpRequests.append(fifoEvents)
+            if let error = self.dumpError { throw error }
+            return self.driverDump(fifoEvents: fifoEvents)
         }, validate: {
             if self.reset { throw NSError(domain: "TestBusReset", code: 1) }
         })

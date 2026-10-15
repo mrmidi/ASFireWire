@@ -112,7 +112,8 @@ DiceFamilyDriver::DiceFamilyDriver(DiceDeviceIo& io,
                                    DiceNotificationMailbox& notifications,
                                    DICEBringupPolicy bringupPolicy,
                                    Scheduling::ITimerScheduler* scheduler) noexcept
-    : scheduler_(scheduler ? scheduler : io.Clock().Scheduler()), io_(io), busInfo_(busInfo), notifications_(notifications), bringupPolicy_(bringupPolicy) {}
+    : receiverDump_(bringupPolicy.verifiedLoaderPeek),
+      scheduler_(scheduler ? scheduler : io.Clock().Scheduler()), io_(io), busInfo_(busInfo), notifications_(notifications), bringupPolicy_(bringupPolicy) {}
 
 // ---------------------------------------------------------------------------
 // Public stages
@@ -333,6 +334,7 @@ void DiceFamilyDriver::AdoptPreparedClock(const DiceClockConfiguration& /*clock*
 
 IOReturn DiceFamilyDriver::Stop() {
     lockWatch_.Cancel();
+    receiverDump_.Cancel();
     if (!HasDeviceRestartState(session_)) {
         return kIOReturnSuccess;
     }
@@ -1031,7 +1033,10 @@ IOReturn DiceFamilyDriver::CompleteConfirm(uint32_t notification, uint32_t statu
     session_.appliedClock = session_.desiredClock;
     ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x (%{public}s) ext=0x%08x",
              IsSourceLocked(status) ? 1U : 0U, notification, status, ASFW::Logging::IOReturnName(status), extStatus);
-    lockWatch_.Start(io_.RegisterIo(), scheduler_, sections_, runtimeCaps_);
+    // A receiver that never locks, or loses lock, gets one hardware dump where
+    // the firmware read path is verified (no-op elsewhere).
+    lockWatch_.Start(io_.RegisterIo(), scheduler_, sections_, runtimeCaps_,
+                     receiverDump_.VerdictTrigger(io_.RegisterIo(), scheduler_));
     return kIOReturnSuccess;
 }
 

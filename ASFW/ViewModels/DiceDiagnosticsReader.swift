@@ -5,15 +5,18 @@ import Foundation
 @MainActor
 final class DiceDiagnosticsReader {
     typealias Read = (UInt64, UInt32) async throws -> Data
-    typealias Write = (UInt64, [UInt8]) async throws -> Void
+    /// Receiver registers read by the driver (address → value). The driver owns
+    /// the firmware-loader mailbox and decides whether this device may be read
+    /// (ASFWDriver/Audio/Diagnostics/DICE/DiceReceiverDump.hpp). Argument: FIFO events.
+    typealias HardwareDump = (Bool) async throws -> [UInt32: UInt32]
     private let read: Read
-    private let write: Write
+    private let hardwareDump: HardwareDump
     private let validate: () throws -> Void
     private var capturing = false
 
-    init(read: @escaping Read, write: @escaping Write, validate: @escaping () throws -> Void) {
+    init(read: @escaping Read, hardwareDump: @escaping HardwareDump, validate: @escaping () throws -> Void) {
         self.read = read
-        self.write = write
+        self.hardwareDump = hardwareDump
         self.validate = validate
     }
 
@@ -69,39 +72,36 @@ final class DiceDiagnosticsReader {
                                     isTx ? ["S100", "S200", "S400", "S800"].enumerated().first { $0.offset == Int(extra) }?.element ?? "Unknown" : "\(extra)"))
             }
         }
-        #if DEBUG
         if hardware {
-            // Fixed allowlist only. Verified against Pro24DSP firmware:
-            // frmwload_cmd_test_action 0x6A384, subcommand 2 (PEEK).
-            let faults = try await peek(0xCF00013C)
+            // TCD22xx receiver map (DICE.pdf §6.1, §6.7), read by the driver.
+            let registers = try await hardwareDump(fifoEvents)
+            try validate()
+            func register(_ address: UInt32) throws -> UInt32 {
+                guard let value = registers[address] else {
+                    throw failure(String(format: "Driver dump is missing register 0x%08X.", address))
+                }
+                return value
+            }
+            let faults = try register(0xCF00013C)
             for index in 0..<2 {
                 let base: UInt32 = 0xCF000000 + UInt32(index) * 0x30
-                let ado = try await peek(base + 0x28)
+                let ado = try register(base + 0x28)
                 if index == 0 { values += DiceReceiverDiagnostics.decode(ado: ado, faults: faults) }
                 else { values += DiceReceiverDiagnostics.decodeADO(ado, prefix: "ARX2") }
-                let cfg0 = try await peek(base)
-                let cfg1 = try await peek(base + 4)
-                let cip0 = try await peek(base + 0x20)
-                let cip1 = try await peek(base + 0x24)
                 values += DiceReceiverDiagnostics.decodeStream(prefix: "ARX\(index + 1)",
-                    cfg0: cfg0, cfg1: cfg1, cip0: cip0, cip1: cip1)
+                    cfg0: try register(base), cfg1: try register(base + 4),
+                    cip0: try register(base + 0x20), cip1: try register(base + 0x24))
             }
-            // DICE.pdf §6.7: inclusive RAM address ranges; no fill-level
-            // register is documented. Never read/write the FLUSH registers.
+            // Inclusive RAM address ranges; no fill-level register is documented.
             for index in 0..<4 {
-                let base = try await peek(0xCF000184 + UInt32(index) * 12)
-                let limit = try await peek(0xCF000188 + UInt32(index) * 12)
-                values += DiceReceiverDiagnostics.decodePartition(index: index, base: base, limit: limit)
+                values += DiceReceiverDiagnostics.decodePartition(index: index,
+                    base: try register(0xCF000184 + UInt32(index) * 12),
+                    limit: try register(0xCF000188 + UInt32(index) * 12))
             }
-            let txFaults = try await peek(0xCF000144)
-            values += DiceReceiverDiagnostics.decodeTransmitEvents(txFaults)
-            // §6.7.5 explicitly says this register clears on read. Opt-in only.
-            if fifoEvents { values += DiceReceiverDiagnostics.decodeFIFOEvents(try await peek(0xCF0001FC)) }
-
+            values += DiceReceiverDiagnostics.decodeTransmitEvents(try register(0xCF000144))
+            // §6.7.5: this register clears on read. Opt-in only.
+            if fifoEvents { values += DiceReceiverDiagnostics.decodeFIFOEvents(try register(0xCF0001FC)) }
         }
-        #else
-        guard !hardware else { throw failure("Hardware capture requires a Debug build.") }
-        #endif
         try validate()
         return values
     }
@@ -125,39 +125,6 @@ final class DiceDiagnosticsReader {
         return value
     }
 
-    #if DEBUG
-    private func peek(_ address: UInt32) async throws -> UInt32 {
-        let mailbox: UInt64 = 0xFFFFE0100000
-        guard try await quadlet(mailbox + 4) & 0x80000000 == 0 else {
-            throw failure("Firmware mailbox is busy; no command was submitted.")
-        }
-        let parameters: [UInt8] = [0, 0, 0, 2] + (0..<4).map { UInt8(truncatingIfNeeded: address >> (24 - $0 * 8)) }
-        try await submit(mailbox + 0x2C, parameters)
-        guard try await bytes(mailbox + 0x2C, 8) == Data(parameters) else {
-            throw failure("Mailbox parameter verification failed.")
-        }
-        try await submit(mailbox + 4, [0x80, 0, 0, 6])
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while true {
-            let opcode = try await quadlet(mailbox + 4)
-            if opcode & 0x80000000 == 0 {
-                guard opcode & 0xFFF == 6 else { throw failure("Mailbox command changed during capture.") }
-                break
-            }
-            guard ContinuousClock.now < deadline else { throw failure("Firmware PEEK timed out; mailbox was left untouched.") }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        guard try await quadlet(mailbox + 8) == 0 else { throw failure("Firmware rejected PEEK.") }
-        return try await quadlet(mailbox + 0x2C)
-    }
-
-    private func submit(_ address: UInt64, _ payload: [UInt8]) async throws {
-        try Task.checkCancellation()
-        try validate()
-        try await write(address, payload)
-        try validate()
-    }
-    #endif
 
     private func field(_ id: String, _ group: String, _ raw: UInt32, _ value: String) -> DiceDiagnosticValue {
         DiceDiagnosticValue(id: id, group: group, value: value, raw: raw)

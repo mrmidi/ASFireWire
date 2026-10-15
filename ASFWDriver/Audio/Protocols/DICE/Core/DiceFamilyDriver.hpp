@@ -19,6 +19,7 @@
 #include "DICETypes.hpp"
 #include "DiceDeviceIo.hpp"
 #include "../../../Diagnostics/DICE/DiceLockWatch.hpp"
+#include "../../../Diagnostics/DICE/DiceReceiverDump.hpp"
 #include "DiceNotificationMailbox.hpp"
 #include "../../Duplex/DuplexControlTypes.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -67,8 +68,20 @@ public:
     // Total stop: disable and disarm every stream. The owner stays ours.
     [[nodiscard]] IOReturn Stop();
 
-    void CloseReceiverLockWatch() { lockWatch_.Close(); }
-    void CancelReceiverLockWatch(Diagnostics::DiceLockPhase phase = Diagnostics::DiceLockPhase::Stopped) { lockWatch_.Cancel(phase); }
+    // Diagnostics close with the protocol (teardown) and cancel with a stop or
+    // a route change; the receiver dump follows the lock watch.
+    void CloseReceiverLockWatch() {
+        lockWatch_.Close();
+        receiverDump_.Close();
+    }
+    void CancelReceiverLockWatch(Diagnostics::DiceLockPhase phase = Diagnostics::DiceLockPhase::Stopped) {
+        lockWatch_.Cancel(phase);
+        receiverDump_.Cancel();
+    }
+    [[nodiscard]] IOReturn RequestReceiverDump(bool fifoEvents) {
+        return receiverDump_.Request(io_.RegisterIo(), scheduler_, fifoEvents);
+    }
+    [[nodiscard]] Diagnostics::DiceReceiverDumpSnapshot ReceiverDumpSnapshot() const { return receiverDump_.Copy(); }
     [[nodiscard]] Diagnostics::DiceLockSnapshot ReceiverLockSnapshot() const { return lockWatch_.Copy(); }
     // Capture the session before an async health read, so a late completion
     // from the prior start cannot enter a replacement watch.
@@ -131,6 +144,7 @@ private:
     void RecordStopTeardownAbort(const char* stage) const noexcept;
 
     Diagnostics::DiceLockWatch lockWatch_;
+    Diagnostics::DiceReceiverDump receiverDump_;
     Scheduling::ITimerScheduler* scheduler_;
     DiceDeviceIo& io_;
     Protocols::Ports::FireWireBusInfo& busInfo_;

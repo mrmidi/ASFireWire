@@ -89,6 +89,12 @@ public:
     bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
         return tcat_.CopyDiceReceiverLock(out);
     }
+    IOReturn RequestDiceReceiverDump(bool fifoEvents) override {
+        return tcat_.RequestDiceReceiverDump(fifoEvents);
+    }
+    bool CopyDiceReceiverDump(Diagnostics::DiceReceiverDumpSnapshot& out) const override {
+        return tcat_.CopyDiceReceiverDump(out);
+    }
     void CancelPendingPreparation() override { tcat_.CancelPendingPreparation(); }
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
         tcat_.EnsureRuntimeStreamGeometry(std::move(callback));

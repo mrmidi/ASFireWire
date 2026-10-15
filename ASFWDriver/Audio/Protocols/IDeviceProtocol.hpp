@@ -24,7 +24,10 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
-namespace ASFW::Audio::DICE::Diagnostics { struct DiceLockSnapshot; }
+namespace ASFW::Audio::DICE::Diagnostics {
+struct DiceLockSnapshot;
+struct DiceReceiverDumpSnapshot;
+}
 
 namespace ASFW::Audio {
 class FamilyDriver;
@@ -67,6 +70,17 @@ public:
 
     // Copied family-specific diagnostics; never issues remote I/O.
     virtual bool CopyDiceReceiverLock(DICE::Diagnostics::DiceLockSnapshot& out) const {
+        (void)out;
+        return false;
+    }
+
+    // Starts a receiver-register dump; the driver decides whether it may.
+    virtual IOReturn RequestDiceReceiverDump(bool fifoEvents) {
+        (void)fifoEvents;
+        return kIOReturnUnsupported;
+    }
+    // Copied result of the last dump; never issues remote I/O.
+    virtual bool CopyDiceReceiverDump(DICE::Diagnostics::DiceReceiverDumpSnapshot& out) const {
         (void)out;
         return false;
     }

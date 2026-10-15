@@ -69,6 +69,8 @@ final class ASFWDriverConnector: ObservableObject {
         // Driver-owned LogRing category names and named filter presets.
         case getLogCatalog = 1014
         case getDiceReceiverLock = 1015
+        case requestDiceReceiverDump = 1016
+        case getDiceReceiverDump = 1017
     }
 
     // MARK: - Re-exported Models

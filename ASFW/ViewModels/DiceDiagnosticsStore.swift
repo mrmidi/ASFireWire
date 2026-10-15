@@ -29,9 +29,9 @@ final class DiceDiagnosticsStore: ObservableObject {
 
     var canCaptureHardware: Bool {
         #if DEBUG
-        // Canonical identities: AudioDeviceIds.hpp. Mailbox implementation has
-        // been verified only in Pro24DSPFirmware.elf, not other DICE firmware.
-        return devices.contains { $0.guid == selectedGUID && $0.vendorId == 0x00130E && $0.modelId == 0x000008 }
+        // The driver decides whether this device may be read (verified PEEK
+        // firmware, TCD22xx ASIC, loader present) and reports why not.
+        return devices.contains { $0.guid == selectedGUID }
         #else
         return false
         #endif
@@ -49,7 +49,7 @@ final class DiceDiagnosticsStore: ObservableObject {
             return
         }
         guard !hardware || canCaptureHardware else {
-            error = "Receiver hardware capture is available only for Saffire Pro 24 DSP in Debug builds."
+            error = "Receiver hardware capture is available only in Debug builds."
             return
         }
         isCapturing = true
@@ -69,19 +69,22 @@ final class DiceDiagnosticsStore: ObservableObject {
                         }
                         return Data(payload)
                     },
-                    write: { [control] offset, payload in
-                        #if DEBUG
-                        let address = Self.address(offset, device: device)
-                        let result: ASFWMCPTransactionResult
-                        if payload.count == 4, let value = DiceWire.u32(Data(payload), 0) {
-                            result = await control.executeWriteQuadlet(.init(address: address, value: value))
-                        } else {
-                            result = await control.executeWriteBlock(.init(address: address, payload: payload))
+                    hardwareDump: { [connector] fifoEvents in
+                        guard connector.requestDiceReceiverDump(guid: device.guid, fifoEvents: fifoEvents) else {
+                            throw Self.failure("The driver did not start a receiver dump (busy, no protocol, or disconnected).")
                         }
-                        guard result.ok else { throw Self.failure("Mailbox write failed: \(result.status.rawValue).") }
-                        #else
-                        throw Self.failure("Hardware capture requires a Debug build.")
-                        #endif
+                        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+                        while true {
+                            try Task.checkCancellation()
+                            if let dump = connector.getDiceReceiverDump(guid: device.guid), !dump.isRunning {
+                                guard dump.isComplete else { throw Self.failure(dump.outcome) }
+                                return dump.values
+                            }
+                            guard ContinuousClock.now < deadline else {
+                                throw Self.failure("The driver's receiver dump did not finish within 15 s.")
+                            }
+                            try await Task.sleep(for: .milliseconds(50))
+                        }
                     },
                     validate: { [connector] in
                         guard connector.isConnected,

@@ -633,6 +633,10 @@ struct DICEBringupPolicy final {
     // Device-specific steps around a CLOCK_SELECT write. Not owned; must
     // outlive the driver. nullptr = none.
     DiceClockChangeObserver* clockChangeObserver{nullptr};
+
+    // The firmware-loader TEST_ACTION PEEK has been verified on this device's
+    // firmware, so receiver registers may be read (Diagnostics::DiceReceiverDump).
+    bool verifiedLoaderPeek{false};
 };
 
 struct DiceClockConfiguration {

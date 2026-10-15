@@ -79,6 +79,9 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      Scheduling::ITimerScheduler* preparationScheduler)
     : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications,
             TCAT::DICETcatRuntimePolicy{
+                // PEEK verified in Pro24DSPFirmware: frmwload_cmd_test_action
+                // 0x6A384, sub-command 2 (TCD2210, TCAT loader mailbox).
+                .verifiedLoaderPeek = true,
                 .clockChangeObserver = this,
                 .waitForInitialDsp = true,
             }, preparationScheduler)
