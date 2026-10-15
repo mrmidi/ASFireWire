@@ -96,8 +96,10 @@ struct DiceReportTextFormatterTests {
                 "a short stream block must not yield a fabricated zero")
     }
 
-    @Test func warnsThatSlipBitsAreVolatile() {
-        #expect(report.contains("read-to-clear"))
+    @Test func reportDoesNotReadTheSlipRegister() {
+        #expect(report.contains("EXT_STATUS is not read by this report"))
+        #expect(report.contains("slip bits clear on quadlet reads"))
+        #expect(report.contains("No cached sample available"))
     }
 
     @Test func reportsEapCapabilities() {

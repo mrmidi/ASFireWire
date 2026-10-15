@@ -975,3 +975,264 @@ TEST(DiceFamilyDriverTests, FailedPrepareDisableNeverWritesClock) {
         return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
     }));
 }
+
+namespace {
+using ASFW::Audio::DICE::Diagnostics::DiceLockWatch;
+using ASFW::Audio::DICE::Diagnostics::DiceLockPhase;
+using ASFW::Audio::DICE::ExtStatusBits::kArx1Locked;
+using ASFW::Audio::DICE::ExtStatusBits::kArx1Slip;
+
+struct LockWatchRig {
+    ASFW::Testing::RecordingFireWireBus bus;
+    RouteState route;
+    ProtocolRegisterIO io{bus, bus, route.registry, route.route};
+    ASFW::Testing::FakeTimerScheduler timer;
+    DiceLockWatch watch;
+    uint32_t status{0x201};
+    uint32_t ext{0};
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    LockWatchRig() {
+        caps.hostToDeviceStreamCount = 2;
+        caps.hostToDeviceStreams[0].isoChannel = 3;
+        caps.hostToDeviceStreams[1].isoChannel = 7;
+        bus.SetReadResponder([this](FWAddress address, uint32_t length)
+            -> std::optional<std::vector<uint8_t>> {
+            EXPECT_EQ(length, 4U);
+            std::vector<uint8_t> bytes(4);
+            const bool extended = address.addressLo == 0xE0000080U;
+            ASFW::FW::WriteBE32(bytes.data(), extended ? ext : status);
+            if (extended) ext &= 0xFFFFU; // a quadlet read clears slip history
+            return bytes;
+        });
+    }
+    void Start() { watch.Start(io, &timer, MakeGeneralSections(), caps); }
+    void Advance(uint32_t ms) { timer.Advance(uint64_t{ms} * 1'000'000); }
+};
+
+TEST(DiceLockWatchTests, SparseSamplesKeepFirstLockPerAssignedReceiverAndSlipHistory) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().samples, 1U);
+    rig.ext = kArx1Locked | kArx1Slip;
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 1000U);
+    rig.ext = kArx1Locked | (kArx1Locked << 1);
+    rig.Advance(4000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.samples, 4U);
+    EXPECT_EQ(result.expectedMask, 3U);
+    EXPECT_EQ(result.observedMask, 3U);
+    EXPECT_EQ(result.receivers[1].firstLockMs, 2000U);
+    EXPECT_EQ(result.slipHistory, kArx1Slip);
+    EXPECT_EQ(result.extStatus & kArx1Slip, 0U);
+    EXPECT_EQ(rig.bus.Operations().size(), 8U);
+    rig.Advance(10000);
+    EXPECT_EQ(rig.bus.Operations().size(), 8U);
+}
+
+TEST(DiceLockWatchTests, NeverLockedIsRetainedWithTheActualFiveSecondWindow) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(5000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.observedMask, 0U);
+    EXPECT_EQ(result.receivers[0].firstLockMs, 0xFFFFFFFFU);
+    EXPECT_EQ(result.elapsedMs, 5000U);
+    EXPECT_EQ(result.samples, 4U);
+}
+
+TEST(DiceLockWatchTests, NotificationProbeUsesSameAccumulatorAndCannotEnterANewStart) {
+    LockWatchRig rig;
+    rig.Start();
+    auto oldProbe = rig.watch.Observer();
+    rig.Advance(120);
+    oldProbe(kIOReturnSuccess, rig.status, kArx1Locked | kArx1Slip);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 120U);
+    rig.Advance(30);
+    oldProbe(kIOReturnSuccess, rig.status, 0);
+    EXPECT_EQ(rig.watch.Copy().lostMask, 1U);
+    rig.Start();
+    oldProbe(kIOReturnSuccess, rig.status, kArx1Locked);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 0U);
+}
+
+TEST(DiceLockWatchTests, StopCancelsAllTimersAndIgnoresLateHealth) {
+    LockWatchRig rig;
+    rig.Start();
+    auto probe = rig.watch.Observer();
+    rig.Advance(500);
+    rig.watch.Cancel();
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+    probe(kIOReturnSuccess, rig.status, kArx1Locked);
+    rig.Advance(10000);
+    EXPECT_EQ(rig.bus.Operations().size(), 2U);
+    EXPECT_EQ(rig.watch.Copy().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 0U);
+}
+
+TEST(DiceLockWatchTests, ResetRouteNeverReadsTheOldNode) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.route.registry.InvalidateLiveMappingsForBusReset();
+    rig.Advance(500);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.watch.Copy().phase, DiceLockPhase::Reset);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, TeardownClosurePreventsAnyLaterStart) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.watch.Close();
+    rig.Start();
+    rig.Advance(10000);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, DroppedCompletionStillProducesABoundedVerdict) {
+    LockWatchRig rig;
+    rig.bus.DropNext(OpKind::Read, 0xE0000080U);
+    rig.Start();
+    rig.Advance(7000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.samples, 0U);
+    EXPECT_EQ(result.readErrors, 1U);
+    EXPECT_EQ(result.lastError, static_cast<uint32_t>(kIOReturnTimeout));
+    EXPECT_EQ(rig.bus.Operations().size(), 2U); // pending sample coalesces timers
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, FailedReadIsVisibleAndLaterSamplesCanRecover) {
+    LockWatchRig rig;
+    rig.bus.FailNext(OpKind::Read, 0xE0000080U, AsyncStatus::kTimeout);
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+    rig.ext = kArx1Locked;
+    rig.Advance(4500);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 1U);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 1000U);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+}
+
+TEST(DiceLockWatchTests, UnassignedReceiversAreNotExpected) {
+    LockWatchRig rig;
+    rig.caps.hostToDeviceStreams[0].isoChannel = 0xFF;
+    rig.Start();
+    rig.Advance(5000);
+    EXPECT_EQ(rig.watch.Copy().expectedMask, 2U);
+}
+} // namespace
+
+namespace {
+TEST(DiceLockWatchTests, StatusFailureCannotDiscardSlipBitsClearedBySuccessfulExtRead) {
+    LockWatchRig rig;
+    rig.ext = kArx1Locked | kArx1Slip;
+    rig.bus.FailNext(OpKind::Read, 0xE000007CU, AsyncStatus::kTimeout);
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+    EXPECT_EQ(rig.watch.Copy().slipHistory, kArx1Slip);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 1U);
+    EXPECT_EQ(rig.ext & kArx1Slip, 0U);
+}
+
+TEST(DiceLockWatchTests, FinishedWatchHasNoPendingTimers) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(5000);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+} // namespace
+
+namespace {
+TEST(DiceFamilyDriverTests, ConfirmStartsReceiverWatchAndStopCancelsItBeforeDisarming) {
+    DuplexRig rig;
+    const AudioDuplexChannels channels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0};
+    ASSERT_TRUE(rig.driver.Prepare(channels,
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, true));
+    ASSERT_TRUE(rig.driver.ProgramRx());
+    ASSERT_TRUE(rig.driver.ProgramTxAndEnable());
+    ASSERT_TRUE(rig.driver.Confirm());
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().phase, DiceLockPhase::Watching);
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().expectedMask, 1U);
+    rig.timer.Advance(500'000'000);
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().samples, 1U);
+    ASSERT_EQ(rig.driver.Stop(), kIOReturnSuccess);
+    rig.bus.ClearOperations();
+    rig.timer.Advance(10'000'000'000);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+} // namespace
+
+namespace {
+class DeferredLockBus final : public ASFW::Testing::RecordingFireWireBus {
+public:
+    struct Reply {
+        ASFW::Async::InterfaceCompletionCallback completion;
+        AsyncStatus status;
+        std::vector<uint8_t> bytes;
+    };
+    std::vector<Reply> replies;
+    unsigned cancellations{0};
+    AsyncHandle ReadBlock(Generation generation, NodeId node, FWAddress address,
+                          uint32_t length, FwSpeed speed,
+                          ASFW::Async::InterfaceCompletionCallback completion) override {
+        return ASFW::Testing::RecordingFireWireBus::ReadBlock(generation, node, address, length, speed,
+            [this, completion = std::move(completion)](AsyncStatus status, std::span<const uint8_t> data) {
+                replies.push_back({completion, status, {data.begin(), data.end()}});
+            });
+    }
+    bool Cancel(AsyncHandle) override { ++cancellations; return true; }
+    void DeliverLate() {
+        auto pending = std::move(replies);
+        for (auto& reply : pending) reply.completion(reply.status, reply.bytes);
+    }
+};
+
+TEST(DiceLockWatchTests, LateBusCompletionsAfterStopCannotMutateTheVerdict) {
+    DeferredLockBus bus;
+    RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Testing::FakeTimerScheduler timer;
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    caps.hostToDeviceStreamCount = 1;
+    caps.hostToDeviceStreams[0].isoChannel = 3;
+    DiceLockWatch watch;
+    watch.Start(io, &timer, MakeGeneralSections(), caps);
+    timer.Advance(500'000'000);
+    ASSERT_EQ(bus.replies.size(), 2U);
+    watch.Cancel();
+    const auto stopped = watch.Copy();
+    EXPECT_EQ(bus.cancellations, 2U);
+    bus.DeliverLate();
+    EXPECT_EQ(watch.Copy().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(watch.Copy().samples, stopped.samples);
+    EXPECT_EQ(watch.Copy().readErrors, stopped.readErrors);
+    EXPECT_EQ(timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, DestructionBeforeBusCompletionHasNoCallbackIntoTheOwner) {
+    DeferredLockBus bus;
+    RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Testing::FakeTimerScheduler timer;
+    {
+        DiceLockWatch watch;
+        watch.Start(io, &timer, MakeGeneralSections(), {});
+        timer.Advance(500'000'000);
+    }
+    EXPECT_EQ(bus.cancellations, 2U);
+    bus.DeliverLate();
+    timer.Advance(10'000'000'000);
+    EXPECT_EQ(bus.Operations().size(), 2U);
+    EXPECT_EQ(timer.PendingCount(), 0U);
+}
+} // namespace

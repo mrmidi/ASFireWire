@@ -116,7 +116,15 @@ public:
     // The GLOBAL clock and lock state, read asynchronously (safe on any queue).
     void ReadDuplexHealth(HealthCallback callback);
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
-    void CancelPendingPreparation() override { CancelInitialClock(); }
+    void CancelPendingPreparation() override {
+        if (driver_) driver_->CloseReceiverLockWatch();
+        CancelInitialClock();
+    }
+    bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
+        if (!driver_) return false;
+        out = driver_->ReceiverLockSnapshot();
+        return out.guid != 0;
+    }
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
 
     IOReturn StopDuplex() override;

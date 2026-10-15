@@ -68,6 +68,7 @@ final class ASFWDriverConnector: ObservableObject {
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.
         case getLogCatalog = 1014
+        case getDiceReceiverLock = 1015
     }
 
     // MARK: - Re-exported Models

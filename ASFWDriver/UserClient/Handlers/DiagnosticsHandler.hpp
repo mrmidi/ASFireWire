@@ -65,6 +65,9 @@ public:
     // Selector 1014: LogRing category names and driver-defined presets.
     kern_return_t GetLogCatalog(IOUserClientMethodArguments* args);
 
+    // Selector 1015: cached DICE receiver lock verdict; input is a GUID.
+    kern_return_t GetDiceReceiverLock(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

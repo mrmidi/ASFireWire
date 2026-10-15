@@ -92,6 +92,9 @@ enum DiceReportTextFormatter {
             line("  <absent>")
         }
 
+        head("RECEIVER LOCK WATCH (cached driver telemetry)")
+        line(s.receiverLock?.report ?? "No retained lock watch available (stream not started or driver does not support it).")
+
         // MARK: Global
         head("GLOBAL")
         if let g = s.global {
@@ -111,13 +114,16 @@ enum DiceReportTextFormatter {
             line(String(format: "STATUS             = 0x%08X   locked=%@  nominal=%@",
                         g.status, (g.sourceLocked ? "yes" : "no") as NSString,
                         DiceClockRate.name(g.nominalRateIndex) as NSString))
-            let lk = DiceExtStatusBits.locked(g.extendedStatus)
-            let sl = DiceExtStatusBits.slipped(g.extendedStatus)
-            line(String(format: "EXTENDED_STATUS    = 0x%08X", g.extendedStatus))
-            line("    locked  : \(lk.isEmpty ? "-" : lk.joined(separator: " "))")
-            line("    slipped : \(sl.isEmpty ? "-" : sl.joined(separator: " "))")
-            line("    NOTE: slip bits are read-to-clear and fluctuate without notification;")
-            line("          this is an instantaneous sample, not a stable value.")
+            if let watch = s.receiverLock, watch.samples > 0 {
+                let lk = DiceExtStatusBits.locked(watch.extStatus)
+                let sl = DiceExtStatusBits.slipped(watch.extStatus)
+                line(String(format: "EXTENDED_STATUS    = 0x%08X (cached driver sample)", watch.extStatus))
+                line("    locked  : \(lk.isEmpty ? "-" : lk.joined(separator: " "))")
+                line("    slipped : \(sl.isEmpty ? "-" : sl.joined(separator: " "))")
+            } else {
+                line("EXTENDED_STATUS    = <not read; No cached sample available>")
+            }
+            line("    NOTE: EXT_STATUS is not read by this report; slip bits clear on quadlet reads.")
             line(String(format: "SAMPLE_RATE        = %d Hz  (measured)", g.measuredRate))
             line(String(format: "VERSION            = 0x%08X   (%d.%d.%d.%d)", g.version,
                         (g.version >> 24) & 0xFF, (g.version >> 16) & 0xFF,

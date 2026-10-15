@@ -2,6 +2,8 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../Audio/Runtime/AudioTelemetrySnapshot.hpp"
+#include "../../Audio/Protocols/IDeviceProtocol.hpp"
+#include "../../Audio/Diagnostics/DICE/DiceLockSnapshot.hpp"
 #include "../../Diagnostics/DiagnosticsService.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
 #include "../../Async/Interfaces/IAsyncSubsystemPort.hpp"
@@ -14,6 +16,7 @@
 #include <DriverKit/OSData.h>
 #include <array>
 #include <cstddef>
+#include <cstring>
 
 namespace ASFW::UserClient {
 
@@ -223,6 +226,29 @@ kern_return_t DiagnosticsHandler::GetLogCatalog(IOUserClientMethodArguments* arg
         return kIOReturnNoMemory;
     }
     args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
+kern_return_t DiagnosticsHandler::GetDiceReceiverLock(IOUserClientMethodArguments* args) {
+    if (!args || !driver_ || !args->structureInput) return kIOReturnBadArgument;
+#ifdef ASFW_HOST_TEST
+    auto* input = static_cast<OSData*>(args->structureInput);
+#else
+    auto* input = OSDynamicCast(OSData, args->structureInput);
+#endif
+    if (!input || input->getLength() != sizeof(uint64_t)) return kIOReturnBadArgument;
+    uint64_t guid = 0;
+    std::memcpy(&guid, input->getBytesNoCopy(), sizeof(guid));
+    auto* controller = GetControllerCorePtr(driver_);
+    auto* runtime = controller ? controller->GetAudioRuntimeRegistry() : nullptr;
+    if (!runtime) return kIOReturnNotReady;
+    auto protocol = runtime->FindShared(guid);
+    ASFW::Audio::DICE::Diagnostics::DiceLockSnapshot snapshot{};
+    if (protocol) (void)protocol->CopyDiceReceiverLock(snapshot);
+    auto* output = OSData::withBytes(&snapshot, sizeof(snapshot));
+    if (!output) return kIOReturnNoMemory;
+    args->structureOutput = output;
     args->structureOutputDescriptor = nullptr;
     return kIOReturnSuccess;
 }

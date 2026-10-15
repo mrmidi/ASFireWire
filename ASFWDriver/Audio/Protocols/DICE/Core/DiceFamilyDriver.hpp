@@ -18,6 +18,7 @@
 
 #include "DICETypes.hpp"
 #include "DiceDeviceIo.hpp"
+#include "../../../Diagnostics/DICE/DiceLockWatch.hpp"
 #include "DiceNotificationMailbox.hpp"
 #include "../../Duplex/DuplexControlTypes.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -38,7 +39,8 @@ public:
     DiceFamilyDriver(DiceDeviceIo& io,
                      Protocols::Ports::FireWireBusInfo& busInfo,
                      DiceNotificationMailbox& notifications,
-                     DICEBringupPolicy bringupPolicy) noexcept;
+                     DICEBringupPolicy bringupPolicy,
+                     Scheduling::ITimerScheduler* scheduler = nullptr) noexcept;
 
     DiceFamilyDriver(const DiceFamilyDriver&) = delete;
     DiceFamilyDriver& operator=(const DiceFamilyDriver&) = delete;
@@ -64,6 +66,13 @@ public:
         const DiceClockConfiguration& clock);
     // Total stop: disable and disarm every stream. The owner stays ours.
     [[nodiscard]] IOReturn Stop();
+
+    void CloseReceiverLockWatch() { lockWatch_.Close(); }
+    void CancelReceiverLockWatch(Diagnostics::DiceLockPhase phase = Diagnostics::DiceLockPhase::Stopped) { lockWatch_.Cancel(phase); }
+    [[nodiscard]] Diagnostics::DiceLockSnapshot ReceiverLockSnapshot() const { return lockWatch_.Copy(); }
+    // Capture the session before an async health read, so a late completion
+    // from the prior start cannot enter a replacement watch.
+    [[nodiscard]] auto ReceiverLockObserver() const { return lockWatch_.Observer(); }
 
     // Callback-based discovery claimed the owner and applied the clock. The
     // owner is reused; every stream start still writes CLOCK_SELECT.
@@ -121,6 +130,8 @@ private:
     [[nodiscard]] uint32_t ResolvedTxSpeed() const noexcept;
     void RecordStopTeardownAbort(const char* stage) const noexcept;
 
+    Diagnostics::DiceLockWatch lockWatch_;
+    Scheduling::ITimerScheduler* scheduler_;
     DiceDeviceIo& io_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     DiceNotificationMailbox& notifications_;

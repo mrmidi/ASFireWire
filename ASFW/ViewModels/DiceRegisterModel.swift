@@ -678,6 +678,7 @@ struct DiceSnapshot {
     // General space
     var generalSections: DiceSectionTable?
     var global: DiceGlobal?
+    var receiverLock: DiceReceiverLock?
     var txCount: UInt32 = 0
     var txSizeQuadlets: UInt32 = 0
     var txStreams: [DiceStreamEntry] = []

@@ -354,6 +354,7 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
 }
 
 DICETcatProtocol::~DICETcatProtocol() {
+    if (driver_) driver_->CancelReceiverLockWatch();
     CancelInitialClock();
     if (rateFormatsLock_) IOLockFree(rateFormatsLock_);
     if (notificationRouter_) {
@@ -375,7 +376,7 @@ IOReturn DICETcatProtocol::Initialize() {
                                         runtimePolicy_.clockChangeObserver != nullptr
                                     ? static_cast<DiceClockChangeObserver*>(this)
                                     : nullptr,
-                        });
+                        }, preparationScheduler_);
         driver_->SetTeardownCancelToken(teardownCancel_);
     }
 
@@ -385,6 +386,7 @@ IOReturn DICETcatProtocol::Initialize() {
 }
 
 IOReturn DICETcatProtocol::Shutdown() {
+    if (driver_) driver_->CancelReceiverLockWatch();
     CancelInitialClock();
     initializedRoute_.reset();
     if (driver_) {
@@ -875,9 +877,15 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
             return;
         }
 
+        // Linux dice-interface.h:155-159: block health reads do not clear
+        // slip latches. Feed this existing notification probe into the watch;
+        // the watch alone issues the sparse destructive EXT_STATUS quad reads.
+        auto observe = driver_ ? driver_->ReceiverLockObserver()
+                               : std::function<void(IOReturn, uint32_t, uint32_t)>{};
         diceReader_.ReadGlobalState(
             sections_,
-            [this, callback = std::move(callback)](IOReturn status, GlobalState global) mutable {
+            [this, observe = std::move(observe), callback = std::move(callback)](IOReturn status, GlobalState global) mutable {
+                if (observe) observe(status, global.status, global.extStatus);
                 if (status != kIOReturnSuccess) {
                     callback(status, {});
                     return;
@@ -921,6 +929,7 @@ IOReturn DICETcatProtocol::StopDuplex() {
 void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                             std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
     (void)avcUnit; // DICE is register-based; no AV/C.
+    if (driver_ && route != io_.Route()) driver_->CancelReceiverLockWatch(Diagnostics::DiceLockPhase::Reset);
     io_.UpdateRoute(route);
 }
 

@@ -16,6 +16,7 @@ final class AudioTelemetryViewModel: ObservableObject {
     @Published var selectedEndpointID: UInt64?
     @Published private(set) var marginHistory: [MarginHistoryPoint] = []
     @Published private(set) var lastUpdated: Date?
+    @Published private(set) var receiverLocks: [UInt64: DiceReceiverLock] = [:]
 
     private let connector: ASFWDriverConnector
     private var observedIntervals: [UInt64: UInt64] = [:]
@@ -42,6 +43,9 @@ final class AudioTelemetryViewModel: ObservableObject {
     private func refresh() {
         guard let snapshot = connector.getAudioTelemetry() else { return }
         endpoints = snapshot.endpoints
+        receiverLocks = Dictionary(endpoints.compactMap { endpoint in
+            connector.getDiceReceiverLock(guid: endpoint.guid).map { (endpoint.guid, $0) }
+        }, uniquingKeysWith: { first, _ in first })
         if selectedEndpointID == nil || !endpoints.contains(where: { $0.guid == selectedEndpointID }) {
             selectedEndpointID = endpoints.first?.guid
         }
@@ -84,6 +88,14 @@ struct AudioTelemetryView: View {
                             }
                             .pickerStyle(.menu)
                             .frame(maxWidth: 300)
+                        }
+                        if let lock = viewModel.receiverLocks[endpoint.guid] {
+                            GroupBox("DICE receiver lock") {
+                                Text(lock.report)
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         marginCards(endpoint)
                         charts(endpoint)

@@ -86,6 +86,9 @@ public:
     void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override {
         tcat_.ReadRateObservation(std::move(callback));
     }
+    bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
+        return tcat_.CopyDiceReceiverLock(out);
+    }
     void CancelPendingPreparation() override { tcat_.CancelPendingPreparation(); }
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
         tcat_.EnsureRuntimeStreamGeometry(std::move(callback));

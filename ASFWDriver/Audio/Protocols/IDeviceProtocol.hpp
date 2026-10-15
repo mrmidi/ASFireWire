@@ -24,6 +24,8 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
+namespace ASFW::Audio::DICE::Diagnostics { struct DiceLockSnapshot; }
+
 namespace ASFW::Audio {
 class FamilyDriver;
 }
@@ -60,6 +62,12 @@ public:
     /// Returns true when the protocol has authoritative stream caps (e.g. DICE TX/RX stream formats).
     virtual bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
         (void)outCaps;
+        return false;
+    }
+
+    // Copied family-specific diagnostics; never issues remote I/O.
+    virtual bool CopyDiceReceiverLock(DICE::Diagnostics::DiceLockSnapshot& out) const {
+        (void)out;
         return false;
     }
 

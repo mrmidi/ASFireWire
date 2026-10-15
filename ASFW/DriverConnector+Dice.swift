@@ -17,6 +17,15 @@ enum DiceSnapshotCaptureResult {
 
 extension ASFWDriverConnector {
 
+    func getDiceReceiverLock(guid: UInt64) -> DiceReceiverLock? {
+        guard isConnected, connection != 0 else { return nil }
+        var input = guid.littleEndian
+        let request = withUnsafeBytes(of: &input) { Data($0) }
+        guard let data = callStruct(.getDiceReceiverLock, input: request, initialCap: 96),
+              let snapshot = DiceReceiverLock.decode(data), snapshot.guid == guid else { return nil }
+        return snapshot
+    }
+
     /// Async block reads are bounded by the device's max_rec, so long sections
     /// are fetched in chunks. 512 bytes is safely below every DICE device's
     /// advertised maximum.
@@ -130,11 +139,28 @@ extension ASFWDriverConnector {
         snap.guid = device.guid
         snap.vendorName = device.vendorName
         snap.modelName = device.modelName
+        snap.receiverLock = getDiceReceiverLock(guid: device.guid)
 
         let node = UInt16(0xFFC0) | UInt16(device.nodeId)
         captureGeneralSpace(node: node, into: &snap)
         captureExtensionSpace(node: node, into: &snap)
         return snap
+    }
+
+    // EXT_STATUS clears slip history on quadlet reads (Linux dice-interface.h:155-159).
+    // Split around it even when a device rejects block reads and we fall back
+    // to quadlets. The retained driver sample supplies this field instead.
+    private func readDiceGlobalWithoutSlip(node: UInt16, base: UInt64, section: DiceSection,
+                                          cachedExt: UInt32?) -> Data? {
+        guard section.byteSize >= 0x60,
+              let prefix = readDiceBlock(node: node, base: base, offset: section.byteOffset, length: 0x58),
+              let suffix = readDiceBlock(node: node, base: base, offset: section.byteOffset + 0x5C,
+                                         length: section.byteSize - 0x5C) else { return nil }
+        var data = prefix
+        var ext = (cachedExt ?? 0).bigEndian
+        withUnsafeBytes(of: &ext) { data.append(contentsOf: $0) }
+        data.append(suffix)
+        return data
     }
 
     // MARK: General space
@@ -160,8 +186,8 @@ extension ASFWDriverConnector {
             if global.byteSize < 0x60 {
                 snap.mark("general.global", .malformed)
                 snap.notes.append("Global section is shorter than its required 96-byte core.")
-            } else if let d = readDiceBlock(node: node, base: base,
-                                             offset: global.byteOffset, length: global.byteSize) {
+            } else if let d = readDiceGlobalWithoutSlip(node: node, base: base, section: global,
+                                                       cachedExt: snap.receiverLock?.extStatus) {
                 snap.global = DiceGlobal.decode(d, size: global.byteSize)
                 snap.mark("general.global", .decoded)
             } else {
