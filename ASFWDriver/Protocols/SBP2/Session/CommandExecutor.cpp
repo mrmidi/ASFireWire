@@ -242,13 +242,29 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                                      // LS-9000, but not a model-specific behavior) is only
                                      // recoverable via a bus reset, so escalate — reconnect/
                                      // re-login runs via the normal reset flow.
-                                     if (lastError_ != 0 && busResetRequester_) {
-                                         ASFW_LOG(Async,
-                                                  "CommandExecutor: LUN reset failed (%d) — "
-                                                  "escalating to bus reset", lastError_);
-                                         busResetRequester_();
+                                     if (lastError_ != 0) {
+                                         if (busResetRequester_) {
+                                             ASFW_LOG(Async,
+                                                      "CommandExecutor: LUN reset failed (%d) — "
+                                                      "escalating to bus reset", lastError_);
+                                             busResetRequester_();
+                                         }
+                                         NotifyResultCallback();
+                                         return;
                                      }
-                                     NotifyResultCallback();
+                                     // A target may leave its fetch agent dead after a LUN
+                                     // reset (status dead bit, seen on a Hasselblad H camera),
+                                     // and a dead agent ignores ORB_POINTER. Apple resets the
+                                     // fetch agent from the LUN-reset completion and completes
+                                     // the task only after that
+                                     // (IOFireWireSerialBusProtocolTransport.cpp LunResetComplete).
+                                     const std::weak_ptr<int> weakSelf = lifetimeToken_;
+                                     session_.ResetFetchAgentNoWait([this, weakSelf]() {
+                                         if (weakSelf.expired()) {
+                                             return;
+                                         }
+                                         NotifyResultCallback();
+                                     });
                                  })) {
             ASFW_LOG(Async, "CommandExecutor: transport failure — LUN reset before completing task");
             return;
