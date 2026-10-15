@@ -250,11 +250,6 @@ struct StreamWirePolicy final {
     /// and whose firmware 4.6.0 stamps a wrong dbs above 88.2 kHz.
     bool captureTrustConfiguredStride{false};
 
-    /// Host<->device PCM is raw 24-in-32 rather than AM824 *when the runtime
-    /// geometry matches* (8 PCM channels in 9 slots). Conditional on purpose:
-    /// the Saffire Pro 24 DSP switches wire format with its configuration, so
-    /// this cannot be a static property of the identity.
-    bool rawPcm24In32WhenEightInNineSlots{false};
     /// RME Fireface headerless LE PCM with signed data in the upper 24 bits.
     bool headerlessUpper24LE{false};
 };

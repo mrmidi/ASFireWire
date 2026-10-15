@@ -186,20 +186,26 @@ TEST(DuplexStreamProfileTests, DiceLetsTheIrmPickFromChannelsZeroToThirtyOne) {
     }
 }
 
-TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeometryMatches) {
-    DeviceRecord record = DiceRecord(kFocusriteVendorId, kSPro24DspModelId);
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 8,
-        .hostOutputPcmChannels = 8,
-        .deviceToHostAm824Slots = 9,
-        .hostToDeviceAm824Slots = 9,
-    };
-
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
-
-    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.captureStreams[0].am824Slots, 9U);
+// The Saffire inserts AM824 labels on its own transmit stream (FireBug,
+// 2026-07-17), so its capture decodes like every DICE device's, at any geometry.
+TEST(DuplexStreamProfileTests, SPro24DspCapturesAm824LikeGenericDiceAtEveryGeometry) {
+    const DeviceRecord dsp = DiceRecord(kFocusriteVendorId, kSPro24DspModelId);
+    const DeviceRecord generic = DiceRecord(kMidasVendorId, kMidasVeniceModelId);
+    for (const auto& [pcm, slots] : {std::pair{8U, 9U}, std::pair{16U, 17U}}) {
+        const AudioStreamRuntimeCaps caps{
+            .hostInputPcmChannels = pcm,
+            .hostOutputPcmChannels = pcm,
+            .deviceToHostAm824Slots = slots,
+            .hostToDeviceAm824Slots = slots,
+        };
+        const DuplexStreamProfile dspProfile = DuplexStreamProfileResolver::Resolve(dsp, caps);
+        const DuplexStreamProfile genericProfile =
+            DuplexStreamProfileResolver::Resolve(generic, caps);
+        EXPECT_EQ(dspProfile.captureWireFormat, AudioWireFormat::kAM824) << pcm;
+        EXPECT_EQ(dspProfile.captureWireFormat, genericProfile.captureWireFormat) << pcm;
+        EXPECT_EQ(dspProfile.playbackWireFormat, genericProfile.playbackWireFormat) << pcm;
+        EXPECT_EQ(dspProfile.captureStreams[0].am824Slots, slots) << pcm;
+    }
 }
 
 TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {

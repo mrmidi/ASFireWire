@@ -341,18 +341,6 @@ class DuplexStreamProfileResolver final {
                 choice != 0 ? choice : record.unitSwVersion.value_or(0U), caps.sampleRateHz, profile.captureMotuPcmChunks);
         }
 
-        // Runtime-conditional on purpose: this device switches wire format with
-        // its configuration, so the identity grants the permission and the
-        // measured geometry decides whether it applies.
-        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
-            caps.deviceToHostAm824Slots == 9) {
-            profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
-        }
-        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
-            caps.hostToDeviceAm824Slots == 9) {
-            profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
-        }
-
         if (traits.wire.headerlessUpper24LE) {
             profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24Upper24In32LE;
             profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24Upper24In32LE;
