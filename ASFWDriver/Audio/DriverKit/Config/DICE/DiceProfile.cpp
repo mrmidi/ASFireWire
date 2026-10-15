@@ -43,11 +43,9 @@ const char* DiceProfile::NameForGeometry(uint32_t hostInputPcmChannels,
 
 DiceDeviceQuirks DiceProfile::Quirks() const noexcept {
     DiceDeviceQuirks quirks{};
-    quirks.tx.hostToDevicePcmEncoding = spec_.txEncoding;
     quirks.tx.dbsPolicy = DbsPolicy::Constant;
     quirks.tx.defaultNonAudioSlotWord = 0x80000000;
     quirks.tx.initializeNonAudioSlots = spec_.initializeNonAudioSlots;
-    quirks.tx.preserveFdfInNoDataPackets = spec_.preserveFdfInNoDataPackets;
     quirks.rx.deviceToHostPcmEncoding = Encoding::AudioWireFormat::kAM824;
     quirks.rx.dbsPolicy = DbsPolicy::Constant;
     return quirks;

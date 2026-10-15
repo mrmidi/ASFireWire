@@ -16,18 +16,15 @@ enum class DbsPolicy : uint8_t {
     VariablePerPacket = 1
 };
 
+// The PCM encoding and the NO-DATA FDF are not quirks: every DICE device gets
+// the same ones (IDiceDeviceProfile::TxStreamPolicy).
 struct DiceTxQuirks final {
-    Encoding::AudioWireFormat hostToDevicePcmEncoding{
-        Encoding::AudioWireFormat::kAM824
-    };
-
     DbsPolicy dbsPolicy{
         DbsPolicy::Constant
     };
 
     uint32_t defaultNonAudioSlotWord{0x80000000};
     bool initializeNonAudioSlots{true};
-    bool preserveFdfInNoDataPackets{false};
 };
 
 struct DiceRxQuirks final {

@@ -84,17 +84,11 @@ DiceProfile gPreSonusFireStudioProjectProfile{{.name = "PreSonus FireStudio Proj
 // report (AllocateStreams), where libffado forces one playback stream.
 DiceProfile gAlesisMultiMixProfile{{.name = "Alesis MultiMix FireWire (DICE)",
                                     .initializeNonAudioSlots = false}};
-// Weiss still sends AM824, unlike WeissFirewire.kext's raw path; it has never
-// run on hardware, so the flip waits for evidence (§3.2).
-DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
-                              .txEncoding = Encoding::AudioWireFormat::kAM824,
-                              .preserveFdfInNoDataPackets = false}};
+DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)"}};
 // GenericDice's profile, and the registry's last resort for a nub whose
 // builder did not travel. DiceFamilyAdapter names the device from its identity,
 // not from this profile.
-DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
-                                 .txEncoding = Encoding::AudioWireFormat::kAM824,
-                                 .preserveFdfInNoDataPackets = false}};
+DiceProfile gGenericDiceProfile{{.name = "Generic DICE"}};
 
 // Every AV/C unit published from generic discovery, BeBoB or Oxford: its
 // geometry, rates and name travel on the nub, so one host-side profile serves

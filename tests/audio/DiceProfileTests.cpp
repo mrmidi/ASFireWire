@@ -111,7 +111,7 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendorAndModel) {
 
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+    EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
 }
 
 TEST(DiceProfileTests, ResolvesOriginalPro40ByModel) {
@@ -177,18 +177,41 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
 
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Generic DICE");
-    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+    EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
 }
 
-// Weiss sends AM824 and clears FDF in NO-DATA packets. Hiding its capture from
-// CoreAudio is the protocol's decision (it publishes hostInputPcmChannels = 0),
-// not the profile's.
-TEST(DiceProfileTests, WeissIntProfileSendsAm824) {
+// An unlisted DICE device is sent exactly what a listed one is. Issue #190: the
+// StudioLive 32.4.2 streamed on the generic profile while it alone sent AM824
+// with FDF 0xFF in NO-DATA packets, and its receiver never locked.
+TEST(DiceProfileTests, EveryDiceProfileSendsTheSameWireFormat) {
+    const auto* generic = AudioProfileRegistry::DiceProfileForBuilderId(
+        static_cast<uint32_t>(ProfileBuilderId::GenericDice));
+    ASSERT_NE(generic, nullptr);
+    const auto expected = generic->TxStreamPolicy();
+    EXPECT_EQ(expected.hostToDevicePcmEncoding, ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_TRUE(expected.preserveFdfInNoDataPackets);
+
+    for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
+        const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
+        if (profile == nullptr) {
+            continue;
+        }
+        const auto policy = profile->TxStreamPolicy();
+        EXPECT_EQ(policy.hostToDevicePcmEncoding, expected.hostToDevicePcmEncoding)
+            << profile->Name();
+        EXPECT_EQ(policy.preserveFdfInNoDataPackets, expected.preserveFdfInNoDataPackets)
+            << profile->Name();
+    }
+}
+
+// Hiding Weiss capture from CoreAudio is the protocol's decision (it publishes
+// hostInputPcmChannels = 0), not the profile's.
+TEST(DiceProfileTests, WeissIntProfileSendsTheDiceWireFormat) {
     constexpr uint32_t kWeissVendorId = 0x001c6a;
     constexpr uint32_t kInt202ModelId = 0x000006;
     constexpr uint32_t kInt203ModelId = 0x00000a;
@@ -197,9 +220,9 @@ TEST(DiceProfileTests, WeissIntProfileSendsAm824) {
         const auto* profile = FindDiceProfile(kWeissVendorId, modelId);
         ASSERT_NE(profile, nullptr);
         EXPECT_STREQ(profile->Name(), "Weiss INT (DICE)");
-        EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+        EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
         const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-        EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
+        EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
     }
 }
 
@@ -270,9 +293,7 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
-    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
-              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
 }
 
 // The Stage 4 exit criterion: one catalog row, three devices, told apart by
@@ -339,9 +360,7 @@ TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
-    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
-              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
 }
 
 TEST(DiceProfileTests, PreSonusStudioLiveSafetyOffsetsAndLatencies) {
@@ -382,9 +401,7 @@ TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
     EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
-    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
-    EXPECT_EQ(diceProfile->Quirks().tx.hostToDevicePcmEncoding,
-              ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
+    EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
 
     // The MultiMix has no MIDI I/O: the host-to-device block is pure PCM, so
     // there is no non-audio slot and the 0x80000000 MIDI-slot fill the other

@@ -32,9 +32,6 @@ struct DiceProfileSpec {
     const char* name{nullptr};
     // Names for members of a range that share one identity.
     std::span<const DiceRangeMember> rangeMembers{};
-    // Host-to-device PCM: raw 24-in-32, as every TCAT kext sends it, or AM824.
-    Encoding::AudioWireFormat txEncoding{Encoding::AudioWireFormat::kRawPcm24In32};
-    bool preserveFdfInNoDataPackets{true};
     bool initializeNonAudioSlots{true};
     // Capture safety offset in packets; the vendor ladder's 16 unless measured.
     uint32_t captureSafetyPackets{TimingLadder::kRxDelayPackets};
