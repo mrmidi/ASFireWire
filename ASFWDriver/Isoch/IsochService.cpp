@@ -7,6 +7,8 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
 #endif
+#include <new>
+
 #include "Core/IsochTxQueue.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 
@@ -589,6 +591,20 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
         txMetadataRing_[streamIndex] = nullptr;
         return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
     }
+    // Both services reinterpret this buffer as IsochTxQueueControl, so
+    // construct it once here, before the descriptor is handed out. Otherwise
+    // its member initializers never run and a field neither side resets
+    // (diagnosticCaptureEnabled) holds whatever the allocator left.
+    IOAddressSegment controlRange{};
+    if (controlDescriptor->GetAddressRange(&controlRange) != kIOReturnSuccess ||
+        controlRange.address == 0 || controlRange.length < controlBlockBytes) {
+        ASFW_LOG(Isoch, "IsochService: Control block has no usable address");
+        controlDescriptor->release();
+        txPayloadSlab_[streamIndex] = nullptr;
+        txMetadataRing_[streamIndex] = nullptr;
+        return kIOReturnNoMemory;
+    }
+    ::new (reinterpret_cast<void*>(controlRange.address)) ASFW::Isoch::IsochTxQueueControl{};
     txControlBlock_[streamIndex] = Common::AdoptRetained(controlDescriptor);
 
     // Return the descriptors to the caller with retained references
