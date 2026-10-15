@@ -645,25 +645,33 @@ TEST(FirefaceSequenceTests, FF800RateSettleDoesNotWaitForTheDefaultRegisterTimeo
 }
 
 TEST(FirefaceSequenceTests, FF800RateSettleSharesOneBudgetAcrossBothStatusReads) {
-    FirefaceScriptBus bus;
-    RouteState route;
-    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
-    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false, &bus.timer);
-    ASFW::Audio::AudioDuplexChannels channels{};
-    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
-    bus.readHook = [&bus](uint64_t key) {
-        if (key == 0x801c0000ULL) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (key == 0x801c0004ULL) bus.deferRead = true;
+    // Exercise the deadline with virtual time: scheduler delays under ASan can
+    // exceed a wall-clock upper bound even when both reads share one budget.
+    AsyncFF800Rig rig;
+    rig.bus.deferRead = true;
+    rig.bus.readHook = [&rig](uint64_t key) {
+        if (key == ASFW::Audio::RME::Register::kStatus + 4) rig.bus.deferRead = true;
     };
+    rig.Begin();
+    rig.timer.Advance(150'000'000); // Includes the 100 ms settle, then a delayed q0.
+    ASSERT_EQ(rig.bus.reads, (std::vector<uint64_t>{ASFW::Audio::RME::Register::kStatus}));
+    ASSERT_FALSE(rig.status);
+    rig.bus.DeliverDelayed();
+    rig.timer.Advance(0); // q0 completes at 150 ms; q1 gets only the remaining 50 ms.
+    ASSERT_EQ(rig.bus.reads, (std::vector<uint64_t>{
+        ASFW::Audio::RME::Register::kStatus, ASFW::Audio::RME::Register::kStatus + 4}));
 
-    const auto before = ASFW::Audio::Session::UptimeMilliseconds();
-    const auto result = family.AssignChannels(channels);
-    const auto elapsed = ASFW::Audio::Session::UptimeMilliseconds() - before;
-    ASSERT_FALSE(result);
-    EXPECT_EQ(result.error(), kIOReturnTimeout);
-    EXPECT_GE(elapsed, 180U);
-    EXPECT_LT(elapsed, 320U); // Both status reads share the 200 ms post-write deadline.
-    ASSERT_EQ(bus.writes.size(), 1U);
+    rig.timer.Advance(49'999'999);
+    EXPECT_FALSE(rig.status);
+    rig.timer.Advance(1);
+    ASSERT_TRUE(rig.status);
+    EXPECT_EQ(*rig.status, kIOReturnTimeout);
+    EXPECT_EQ(rig.bus.writes.size(), 1U); // No packet format after a lost response.
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+    rig.bus.DeliverDelayed();
+    rig.timer.Advance(2'000'000'000);
+    EXPECT_EQ(rig.completions, 1U);
+    EXPECT_EQ(rig.bus.writes.size(), 1U);
 }
 
 TEST(FirefaceSequenceTests, FF800ResponsiveOldRateKeepsTheAdvisorySettleFallback) {
