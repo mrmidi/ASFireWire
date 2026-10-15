@@ -221,6 +221,27 @@ TEST(FirefaceAsyncStartTests, MissingRateResponseUsesTheSharedDeadlineAndIgnores
     EXPECT_EQ(rig.bus.writes.size(), 1U);
 }
 
+TEST(FirefaceAsyncStartTests, RateReportedAfterTheSettleStillGatesThePacketFormat) {
+    // From PR #201: a card that keeps answering 44.1 kHz past the 100 ms settle
+    // must not get the packet format until it reports the new rate.
+    AsyncFF800Rig rig;
+    rig.bus.status0 = 0x01c000b0U; rig.bus.status1 = 0x80001201U; // internal, 44.1 kHz
+    rig.Begin();
+    (void)rig.timer.ScheduleAfter(150'000'000, [&] {
+        rig.bus.status0 = 0x01c000c0U; rig.bus.status1 = 0xa0001207U; // now at 48 kHz
+    });
+    rig.timer.Advance(149'000'000);
+    EXPECT_EQ(rig.bus.writes.size(), 1U) << "the format reached a card still at 44.1 kHz";
+    rig.timer.Advance(50'000'000);
+    ASSERT_GE(rig.bus.writes.size(), 2U);
+    EXPECT_EQ(rig.bus.writes[1].lo, 0x20U);
+    rig.timer.Advance(500'000'000);
+    ASSERT_TRUE(rig.status);
+    EXPECT_EQ(*rig.status, kIOReturnSuccess);
+    EXPECT_EQ(rig.completions, 1U);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
 TEST(FirefaceAsyncStartTests, NoChannelResetsAndRetriesExactlyOnce) {
     AsyncFF800Rig rig;
     rig.bus.captureWord = 0xffffffffU;
