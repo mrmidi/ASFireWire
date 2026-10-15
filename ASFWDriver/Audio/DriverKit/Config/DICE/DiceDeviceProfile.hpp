@@ -37,6 +37,18 @@ public:
         Encoding::AudioWireFormat::kRawPcm24In32;
     static constexpr bool kTxPreservesFdfInNoDataPackets = true;
 
+    // Capture PCM slots are read by position, label ignored: the low 24 bits,
+    // sign-extended from bit 23. The StudioLive AI consoles send label 0x00
+    // where IEC 61883-6 says 0x40 (references/studiolive-firewire-mac
+    // slfw.c:428-432), which the AM824 decoder turned into silence (#190);
+    // the Saffire sends 0x40. The TCAT kexts (PaeFireStudio ReadFirewireBuffers
+    // @0x150ee: bswap(q) << 8) and Linux (amdtp-am824.c:200) never check it.
+    // MIDI rides its own slot after the PCM slots and is never read as PCM.
+    // Not a per-profile choice: the duplex stream profile decodes every DICE
+    // capture stream with this.
+    static constexpr Encoding::AudioWireFormat kRxPcmEncoding =
+        Encoding::AudioWireFormat::kRawPcm24In32;
+
     // DICE control profiles retain their wire-format and quirk policy here;
     // neutral stream geometry lives in IAudioStreamProfile.
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override {
@@ -44,7 +56,7 @@ public:
     }
 
     [[nodiscard]] Encoding::AudioWireFormat RxWireFormat() const noexcept override {
-        return Quirks().rx.deviceToHostPcmEncoding;
+        return kRxPcmEncoding;
     }
 
     [[nodiscard]] AudioStreamTxPolicy TxStreamPolicy() const noexcept override {

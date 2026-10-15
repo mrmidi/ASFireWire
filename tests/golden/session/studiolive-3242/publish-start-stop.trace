@@ -43,7 +43,7 @@ R ffff.e00003dc 512 @s400
 R ffff.e00005dc 56 @s400
 H reserve playback allowed=00000000ffffffff bw=1108 -> ch=0
 H reserve capture allowed=00000000ffffffff bw=1556 -> ch=1
-H prepare rx ch=1 fmt=0 slots=48 pcm=0
+H prepare rx ch=1 fmt=1 slots=48 pcm=0
 H prepare tx ch=0 sid=0 @s400
 R ffff.e0000028 104 @s400
 R ffff.e0000028 104 @s400

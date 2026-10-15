@@ -23,7 +23,8 @@ namespace Detail {
 
 [[nodiscard]] inline float DecodeRawSlotAsLabeledMBLAToFloat32(uint32_t wireQuadlet) noexcept {
     const uint32_t hostQuadlet = OSSwapBigToHostInt32(wireQuadlet);
-    // Saffire raw capture carries native signed 24-in-32 slots. Normalize it
+    // Label-blind: whatever the top byte holds (0x40, 0x00 on the StudioLive
+    // AI, or a sign extension), the low 24 bits are the sample. Normalize it
     // to an AM824 MBLA slot by adding the 0x40 label at the wire/content seam;
     // cross-validated with Linux amdtp-am824.c:170 and :200.
     const uint32_t labeledHostQuadlet =

@@ -42,8 +42,8 @@ H reserve playback allowed=00000000ffffffff bw=532 -> ch=0
 H reserve playback allowed=00000000ffffffff bw=532 -> ch=1
 H reserve capture allowed=00000000ffffffff bw=532 -> ch=2
 H reserve capture allowed=00000000ffffffff bw=532 -> ch=3
-H prepare rx ch=2 fmt=0 slots=16 pcm=16
-H prepare rx[1] ch=3 off=16 fmt=0 slots=16 pcm=16
+H prepare rx ch=2 fmt=1 slots=16 pcm=16
+H prepare rx[1] ch=3 off=16 fmt=1 slots=16 pcm=16
 H prepare tx ch=0 sid=0 @s400
 H prepare tx[1] ch=1 sid=0 @s400
 R ffff.e0000028 104 @s400
@@ -123,8 +123,8 @@ H reserve playback allowed=00000000ffffffff bw=532 -> ch=0
 H reserve playback allowed=00000000ffffffff bw=532 -> ch=1
 H reserve capture allowed=00000000ffffffff bw=532 -> ch=2
 H reserve capture allowed=00000000ffffffff bw=532 -> ch=3
-H prepare rx ch=2 fmt=0 slots=16 pcm=16
-H prepare rx[1] ch=3 off=16 fmt=0 slots=16 pcm=16
+H prepare rx ch=2 fmt=1 slots=16 pcm=16
+H prepare rx[1] ch=3 off=16 fmt=1 slots=16 pcm=16
 H prepare tx ch=0 sid=0 @s400
 H prepare tx[1] ch=1 sid=0 @s400
 R ffff.e0000028 104 @s400

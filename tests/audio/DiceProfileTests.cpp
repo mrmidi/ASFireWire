@@ -107,7 +107,7 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendorAndModel) {
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Focusrite Saffire (DICE)");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
@@ -123,7 +123,7 @@ TEST(DiceProfileTests, ResolvesOriginalPro40ByModel) {
     // Same TX encoding as every Saffire: Focusrite's own kext sends the Pro 40
     // raw 24-in-32 PCM with no AM824 label.
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 }
 
 // A DICE profile states no stream geometry: channel counts, stream counts and
@@ -178,7 +178,7 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Generic DICE");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
     const auto* diceProfile =
         static_cast<const IDiceDeviceProfile*>(profile);
@@ -290,7 +290,7 @@ TEST(DiceProfileTests, ResolvesMidasVeniceProfileByVendorAndModel) {
     // F32". Name() therefore names the range; NameForGeometry names the device.
     EXPECT_STREQ(profile->Name(), "Midas Venice F (DICE)");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
@@ -357,7 +357,7 @@ TEST(DiceProfileTests, ResolvesPreSonusStudioLive1602ProfileByVendorAndModel) {
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "PreSonus StudioLive 16.0.2 (DICE)");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);
@@ -398,7 +398,7 @@ TEST(DiceProfileTests, ResolvesAlesisMultiMixProfileByVendorAndModel) {
     ASSERT_NE(profile, nullptr);
     EXPECT_STREQ(profile->Name(), "Alesis MultiMix FireWire (DICE)");
     EXPECT_EQ(profile->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
+    EXPECT_EQ(profile->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kRawPcm24In32);
 
     const auto* diceProfile = static_cast<const IDiceDeviceProfile*>(profile);
     EXPECT_TRUE(diceProfile->TxStreamPolicy().preserveFdfInNoDataPackets);

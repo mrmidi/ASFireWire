@@ -18,6 +18,7 @@
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuModel.hpp"
 #include "../../DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
@@ -339,6 +340,13 @@ class DuplexStreamProfileResolver final {
             const auto choice = policy->plan.unitVersion;
             profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
                 choice != 0 ? choice : record.unitSwVersion.value_or(0U), caps.sampleRateHz, profile.captureMotuPcmChunks);
+        }
+
+        if (policy != nullptr &&
+            policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::DICE) {
+            // Label-blind, as the TCAT kexts and Linux read DICE capture
+            // (IDiceDeviceProfile::kRxPcmEncoding has the evidence).
+            profile.captureWireFormat = Isoch::Audio::DICE::IDiceDeviceProfile::kRxPcmEncoding;
         }
 
         if (traits.wire.headerlessUpper24LE) {

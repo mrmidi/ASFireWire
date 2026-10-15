@@ -8,7 +8,7 @@ nameForGeometry in=2 out=2 -> Generic DICE
 nameForGeometry in=0 out=2 -> Generic DICE
 nameForGeometry in=12 out=8 -> Generic DICE
 nameForGeometry in=20 out=20 -> Generic DICE
-wire tx=1 rx=0
+wire tx=1 rx=1
 channels tx=0 rx=0 midi tx=0 rx=0 dbs tx=0 rx=0
 streams tx=1 rx=1
 txPolicy enc=1 variableDbs=0 nonAudioWord=0x80000000 initNonAudio=1 preserveFdf=1 emptyIdle=0 cadenceData=0 cadenceWord=0xcf000000 dbcEnd=0

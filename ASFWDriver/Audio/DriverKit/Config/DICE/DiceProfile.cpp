@@ -46,7 +46,6 @@ DiceDeviceQuirks DiceProfile::Quirks() const noexcept {
     quirks.tx.dbsPolicy = DbsPolicy::Constant;
     quirks.tx.defaultNonAudioSlotWord = 0x80000000;
     quirks.tx.initializeNonAudioSlots = spec_.initializeNonAudioSlots;
-    quirks.rx.deviceToHostPcmEncoding = Encoding::AudioWireFormat::kAM824;
     quirks.rx.dbsPolicy = DbsPolicy::Constant;
     return quirks;
 }

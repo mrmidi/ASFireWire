@@ -16,8 +16,8 @@ enum class DbsPolicy : uint8_t {
     VariablePerPacket = 1
 };
 
-// The PCM encoding and the NO-DATA FDF are not quirks: every DICE device gets
-// the same ones (IDiceDeviceProfile::TxStreamPolicy).
+// The PCM encodings and the NO-DATA FDF are not quirks: every DICE device gets
+// the same ones (IDiceDeviceProfile::kTxPcmEncoding, kRxPcmEncoding).
 struct DiceTxQuirks final {
     DbsPolicy dbsPolicy{
         DbsPolicy::Constant
@@ -28,10 +28,6 @@ struct DiceTxQuirks final {
 };
 
 struct DiceRxQuirks final {
-    Encoding::AudioWireFormat deviceToHostPcmEncoding{
-        Encoding::AudioWireFormat::kAM824
-    };
-
     DbsPolicy dbsPolicy{
         DbsPolicy::Constant
     };
