@@ -44,8 +44,14 @@ inline constexpr uint64_t kFF800Init = 0x00020000001cULL;
 inline constexpr uint64_t kFF800PacketFormat = 0x000200000020ULL;   // FF800_RX_PACKET_FORMAT + the tx stream size
 // Linux sleeps a flat 100 ms after the frequency write, because "if starting
 // isochronous communication immediately, change of STF has no effect... let's
-// sleep for a bit". The driver reads the frequency back instead of sleeping
-// blind, so the bound only has to be above that sleep.
+// sleep for a bit" (ff800_allocate_resources, ff-protocol-former.c).
+inline constexpr uint32_t kFF800RateSettleMs = 100;
+// The status words report the new frequency before the change is in effect, so
+// reading the rate back is not a substitute for that sleep: in the drained ring
+// a start from 44.1 kHz sends its packet format within 25 ms of the frequency
+// write -- the rate already reading 48 kHz -- and never allocates its transmit
+// stream, and neither do the nine starts after it. The wait therefore requires
+// the settle window as well, and this bound sits above both.
 inline constexpr uint32_t kFF800RateSettleTimeoutMs = 200;
 inline constexpr uint32_t kFF800RateSettlePollMs = 5;
 inline constexpr uint64_t kFF800Start = 0x000200000028ULL;

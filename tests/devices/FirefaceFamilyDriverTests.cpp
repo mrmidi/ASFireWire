@@ -320,6 +320,118 @@ TEST(FirefaceSequenceTests, FF800GetsTheFrequencyBeforeThePacketFormatItNeverEls
     EXPECT_EQ(bus.writes[1].lo, 0x20U);
 }
 
+TEST(FirefaceSequenceTests, FF800FormatWaitsTheSettleEvenWhenTheStatusReports48kFirst) {
+    // Field log 2026-10-12: with the card back at its stored 44.1 kHz, eight
+    // consecutive starts read 48 kHz in the status words about 20 ms after the
+    // frequency write -- and the packet format written at that point never
+    // allocated the transmit stream, so all eight timed out. Linux sleeps a flat
+    // 100 ms for exactly this reason: the status reports the new rate before the
+    // change is in effect. The format must not reach the card inside that window.
+    FirefaceScriptBus bus;
+    bus.status0 = 0x01c000b0U; bus.status1 = 0x80001201U;  // internal, 44.1 kHz
+    bus.captureWord = 0xffffffffU; bus.status3 = 0xffffffffU;
+    uint64_t frequencyWrittenAtMs = 0;
+    uint64_t formatWrittenAtMs = 0;
+    bus.writeHook = [&bus, &frequencyWrittenAtMs, &formatWrittenAtMs](uint64_t key) {
+        if (key == 0x00020000001cULL) {  // the frequency lands
+            frequencyWrittenAtMs = ASFW::Audio::Session::UptimeMilliseconds();
+            // The card answers 48 kHz at once; the change is not in effect yet.
+            bus.status0 = 0x01c000c0U; bus.status1 = 0xa0001207U;
+        } else if (key == 0x000200000020ULL) {  // the format lands
+            formatWrittenAtMs = ASFW::Audio::Session::UptimeMilliseconds();
+            bus.captureWord = 1;
+        }
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
+    const auto assigned = family.AssignChannels(channels);
+    ASSERT_TRUE(assigned) << "the card published its channel once the frequency had settled";
+    EXPECT_EQ(assigned->deviceToHostIsoChannel, 1U);
+    EXPECT_EQ(bus.writes[0].lo, 0x1cU);
+    EXPECT_EQ(bus.writes[1].lo, 0x20U);
+    ASSERT_NE(formatWrittenAtMs, 0U) << "the packet format never reached the card";
+    EXPECT_GE(formatWrittenAtMs - frequencyWrittenAtMs,
+              ASFW::Audio::RME::Register::kFF800RateSettleMs)
+        << "the packet format reached a card still inside the frequency's settle window";
+}
+
+TEST(FirefaceSequenceTests, FF800FormatWaitsForTheFrequencyItselfWhenItArrivesLate) {
+    // The other half of the same gate: a card that keeps answering 44.1 kHz for
+    // longer than the settle window must still not be handed the packet format
+    // until it reports the new rate. The wait needs both conditions, not either.
+    FirefaceScriptBus bus;
+    bus.status0 = 0x01c000b0U; bus.status1 = 0x80001201U;  // internal, 44.1 kHz
+    bus.captureWord = 0xffffffffU; bus.status3 = 0xffffffffU;
+    uint64_t frequencyWrittenAtMs = 0;
+    uint64_t rateVisibleAtMs = 0;
+    uint64_t formatWrittenAtMs = 0;
+    bus.writeHook = [&bus, &frequencyWrittenAtMs, &formatWrittenAtMs](uint64_t key) {
+        if (key == 0x00020000001cULL) {
+            frequencyWrittenAtMs = ASFW::Audio::Session::UptimeMilliseconds();
+        } else if (key == 0x000200000020ULL) {
+            formatWrittenAtMs = ASFW::Audio::Session::UptimeMilliseconds();
+            bus.captureWord = 1;
+        }
+    };
+    bus.readHook = [&bus, &frequencyWrittenAtMs, &rateVisibleAtMs](uint64_t key) {
+        if (key != 0x801c0000ULL || frequencyWrittenAtMs == 0 || rateVisibleAtMs != 0) return;
+        if (ASFW::Audio::Session::UptimeMilliseconds() - frequencyWrittenAtMs < 120U) return;
+        rateVisibleAtMs = ASFW::Audio::Session::UptimeMilliseconds();
+        bus.status0 = 0x01c000c0U; bus.status1 = 0xa0001207U;  // now at 48 kHz
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
+    const auto assigned = family.AssignChannels(channels);
+    ASSERT_TRUE(assigned) << "a card slower than the settle window must still get the format";
+    EXPECT_EQ(assigned->deviceToHostIsoChannel, 1U);
+    ASSERT_NE(rateVisibleAtMs, 0U) << "the card never reported the new rate";
+    ASSERT_NE(formatWrittenAtMs, 0U) << "the packet format never reached the card";
+    EXPECT_GE(formatWrittenAtMs, rateVisibleAtMs)
+        << "the packet format reached a card still at its stored 44.1 kHz";
+    EXPECT_GE(formatWrittenAtMs - frequencyWrittenAtMs,
+              ASFW::Audio::RME::Register::kFF800RateSettleMs);
+}
+
+TEST(FirefaceSequenceTests, FF800ResetsTheDeviceStreamStateAndRetriesWhenNoChannelAppears) {
+    // Field log 2026-10-12: a start that failed on the frequency change left the
+    // card refusing to allocate its transmit stream for every attempt that
+    // followed, with the card back at 48 kHz and writes byte-identical to a
+    // working start. The device's own state is the only difference left, so the
+    // driver clears it the way FFADO does before a start (the end block at
+    // RME_FF800_STREAM_END_REG) and gives the init one more full attempt.
+    FirefaceScriptBus bus;
+    bus.status0 = 0x01c000c0U; bus.status1 = 0xa0001207U;  // internal, 48 kHz
+    bus.captureWord = 0xffffffffU; bus.status3 = 0xffffffffU;
+    int formatWrites = 0;
+    bus.writeHook = [&bus, &formatWrites](uint64_t key) {
+        if (key != 0x000200000020ULL) return;
+        ++formatWrites;
+        if (formatWrites == 2) bus.captureWord = 1;  // only the retry gets a channel
+    };
+    RouteState route; ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Audio::RME::FirefaceFamilyDriver family(io, ASFW::Audio::RME::FirefaceModel::kFF800, false);
+    ASFW::Audio::AudioDuplexChannels channels{};
+    ASSERT_TRUE(family.Configure(channels, {.sampleRateHz = 48000}));
+    const auto assigned = family.AssignChannels(channels);
+    ASSERT_TRUE(assigned) << "the retry must recover a card that stopped publishing its channel";
+    EXPECT_EQ(assigned->deviceToHostIsoChannel, 1U);
+    EXPECT_EQ(formatWrites, 2) << "the init is attempted exactly twice, never more";
+
+    const auto isFormat = [](const FirefaceScriptBus::Write& w) { return w.hi == 2U && w.lo == 0x20U; };
+    const auto firstFormat = std::find_if(bus.writes.begin(), bus.writes.end(), isFormat);
+    ASSERT_NE(firstFormat, bus.writes.end());
+    const auto secondFormat = std::find_if(firstFormat + 1, bus.writes.end(), isFormat);
+    ASSERT_NE(secondFormat, bus.writes.end());
+    const auto reset = std::find_if(firstFormat + 1, secondFormat,
+        [](const FirefaceScriptBus::Write& w) { return w.hi == 2U && w.lo == 0x34U; });
+    ASSERT_NE(reset, secondFormat) << "the retry must clear the device's stream state first";
+    EXPECT_EQ(reset->bytes, std::vector<uint8_t>(12U, 0));  // three zero quadlets
+}
+
 TEST(FirefaceSequenceTests, FF400RejectsOutOfRangeChannelBeforeAnyStreamingWrites) {
     FirefaceScriptBus bus;
     bus.revision = 0x146;
@@ -737,9 +849,13 @@ TEST(FirefaceSequenceTests, FF800CapturePollTimesOutAtBoundAndHonorsCancellation
     const uint64_t elapsed = ASFW::Audio::Session::UptimeMilliseconds() - before;
     EXPECT_FALSE(assignment);
     EXPECT_EQ(assignment.error(), kIOReturnTimeout);
-    EXPECT_GE(elapsed, 490U);
-    // Sanitized CI can add scheduling overhead to the 500 ms polling deadline.
-    EXPECT_LT(elapsed, 750U);
+    // Two bounded attempts, because a card that publishes nothing gets its stream
+    // state reset and one more full init (see
+    // FF800ResetsTheDeviceStreamStateAndRetriesWhenNoChannelAppears): a 100 ms
+    // frequency settle plus a 500 ms channel deadline each. Sanitized CI can add
+    // scheduling overhead on top of both deadlines.
+    EXPECT_GE(elapsed, 990U);
+    EXPECT_LT(elapsed, 1500U);
     EXPECT_EQ(family.Stop(), kIOReturnSuccess);
     ExpectStopThenMute(bus, 0x34U, 28U); // assignment timeout resets the partially configured device
 
