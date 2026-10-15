@@ -17,8 +17,6 @@ Features:
 - Multi-fragment packet support (Scatter-Gather)
 - Automated validation
 
-Reference: docs/Isoch/IT_DMA.md, docs/protocols/61883-1.md
-
 Usage:
     python it_dma_program.py --cycles 8 --channel 0 --rate 48000
     python it_dma_program.py --diagram
@@ -151,7 +149,7 @@ def pack_it_immediate16(it_q0: int, it_q1: int) -> bytes:
     return struct.pack("<II", it_q0 & 0xFFFFFFFF, it_q1 & 0xFFFFFFFF) + b"\x00" * 8
 
 # =============================================================================
-# CIP Header Builders (IEC 61883-1, matches 61883-1.md)
+# CIP Header Builders (IEC 61883-1)
 # =============================================================================
 
 def build_cip_q0(sid: int = DEFAULT_SID, dbs: int = DEFAULT_DBS, dbc: int = 0,
@@ -247,9 +245,9 @@ class StoreValue(ITDescriptor):
             #   Offset 4: dataAddress
             # No, STORE_VALUE is CMD=8, KEY=6
             # Layout: [cmd][key][i][storeDoublet] ?
-            # IT_DMA.md says: [cmd=8][key=6][i][res][storeDoublet]
+            # Expected: [cmd=8][key=6][i][res][storeDoublet]
             # AND "storeDoublet" is just 16 bits.
-            # So let's stick to IT_DMA.md definition which claims it writes a 32-bit value 0x0000|storeDoublet?
+            # So let's stick to the definition that it writes a 32-bit value 0x0000|storeDoublet?
             # Or maybe just writes 16 bits? OHCI spec says "Store Value descriptor writes a 4-byte value...
             # The value written is the concatenation of 16-bits of zeros and the 16-bit storeDoublet field."
             # So pack_desc16 req_count maps to 'storeDoublet' field position.

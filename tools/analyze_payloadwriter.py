@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 HISTORICAL: the driver no longer emits [PayloadWriter] records (retired in
-FW-171). This script is kept to re-analyse the recorded dumps cited in
-documentation/ZTS_AND_SYT.md.
+FW-171). This script is kept to re-analyse recorded dumps.
 
 Analyze [PayloadWriter] telemetry dumps from a kernel log.
 

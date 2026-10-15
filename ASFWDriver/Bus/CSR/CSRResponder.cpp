@@ -55,6 +55,13 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
     }
 
     switch (csrOffsetLo) {
+    // Cross-validated with Linux core-transaction.c:1199-1224.
+    case FW::kCSR_SplitTimeoutHi:
+        deps_.splitTimeout->WriteHi(value);
+        return Result{.mine = true, .rcode = ResponseCode::Complete};
+    case FW::kCSR_SplitTimeoutLo:
+        deps_.splitTimeout->WriteLo(value);
+        return Result{.mine = true, .rcode = ResponseCode::Complete};
     case FW::kCSR_StateSet:
         return HandleStateWrite(/*isSet=*/true, value);
     case FW::kCSR_StateClear:
@@ -94,6 +101,10 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
 
 CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
     switch (csrOffsetLo) {
+    case FW::kCSR_SplitTimeoutHi:
+        return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = deps_.splitTimeout->Hi()};
+    case FW::kCSR_SplitTimeoutLo:
+        return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = deps_.splitTimeout->Lo()};
     case FW::kCSR_StateSet:
     case FW::kCSR_StateClear:
         return HandleStateRead();

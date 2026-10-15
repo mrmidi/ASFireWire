@@ -5,7 +5,7 @@
 // Zero-timestamp publication: the one call into UpdateCurrentZeroTimestamp
 // (PublishSharedZeroTimestampToHAL), the RX anchor action, the M-Audio TX
 // clock observation, and the StartIO clock-domain / timeline-epoch choice.
-// documentation/HARDWARE_TIMELINE_OWNERSHIP.md. The TX producer lives in
+// The TX producer lives in
 // ASFWAudioDriverTxProducer.cpp.
 //
 
@@ -232,7 +232,7 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars,
     }
     // Same path as the RX clock: the timeline's boundary goes into the anchor
     // mailbox, and PublishSharedZeroTimestampToHAL is the one place that calls
-    // UpdateCurrentZeroTimestamp (documentation/HARDWARE_TIMELINE_OWNERSHIP.md).
+    // UpdateCurrentZeroTimestamp.
     const auto published = control->PublishHostClockAnchor(
         boundary.boundary.sampleFrame, boundary.boundary.hostTicks,
         boundary.boundary.hostNanosPerSampleQ8, boundary.boundary.epoch);

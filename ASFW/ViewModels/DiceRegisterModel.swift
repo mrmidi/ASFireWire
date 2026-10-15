@@ -362,6 +362,94 @@ struct DiceExtSync {
     }
 }
 
+// MARK: - DCP window (DICE III control RPC)
+
+/// The 48-byte header of the TCAT DCP window at 0xFFFFE0400000, the control
+/// RPC channel of the DICE III SDK. Only this header is read: the Pro40
+/// DICE III firmware serves offsets up to 0x2F from a static buffer
+/// (dcp_HandleAsyncRequest 0x1BAB4), while reads at +0x30 and beyond drive the
+/// RPC transport and change device state. The TCAT kext reads exactly these
+/// 0x30 bytes when it attaches (V_Audio::DcpAttach, Focusrite 4.3.0 and Weiss
+/// 4.3.1). tools/firmware_analysis/Pro40d3-DCP.md has the window layout.
+struct DiceDcpHeader {
+    static let base: UInt64 = 0xFFFF_E040_0000
+    static let headerBytes = 0x30
+    /// The kext's attach check (DcpAttach): two dates written in hex,
+    /// 18.10.1966 and 04.06.1973.
+    static let magic: UInt64 = 0x1810_1966_0406_1973
+
+    /// How the two 32-bit bus quadlets of a 64-bit field combine into the
+    /// value the kext compares. Found by matching the magic, then applied to
+    /// the owner and the two address fields.
+    enum WordOrder: String {
+        case highFirst = "quadlet 0 high"
+        case lowFirst = "quadlet 0 low"
+        case byteSwappedHighFirst = "byte-swapped, quadlet 0 high"
+        case byteSwappedLowFirst = "byte-swapped, quadlet 0 low"
+
+        func combine(_ q0: UInt32, _ q1: UInt32) -> UInt64 {
+            switch self {
+            case .highFirst: return UInt64(q0) << 32 | UInt64(q1)
+            case .lowFirst: return UInt64(q1) << 32 | UInt64(q0)
+            case .byteSwappedHighFirst: return UInt64(q0.byteSwapped) << 32 | UInt64(q1.byteSwapped)
+            case .byteSwappedLowFirst: return UInt64(q1.byteSwapped) << 32 | UInt64(q0.byteSwapped)
+            }
+        }
+
+        func swapIfNeeded(_ q: UInt32) -> UInt32 {
+            switch self {
+            case .highFirst, .lowFirst: return q
+            case .byteSwappedHighFirst, .byteSwappedLowFirst: return q.byteSwapped
+            }
+        }
+    }
+
+    /// Bus-order quadlets, offsets 0x00-0x2C.
+    var quadlets: [UInt32] = []
+    var order: WordOrder?
+
+    var magicMatches: Bool { order != nil }
+
+    private func q(_ offset: Int) -> UInt32 { quadlets[offset / 4] }
+    private func pair(_ offset: Int) -> UInt64 {
+        (order ?? .highFirst).combine(q(offset), q(offset + 4))
+    }
+    private func word(_ offset: Int) -> UInt32 { (order ?? .highFirst).swapIfNeeded(q(offset)) }
+
+    /// The current owner, as the kext writes it: its notification address
+    /// (node ID in bits 63:48, then the 48-bit offset). Claimed with a 64-bit
+    /// compare-and-swap at +0x08.
+    var owner: UInt64 { pair(0x08) }
+    var word10: UInt32 { word(0x10) }
+    /// The kext requires a version below 3.
+    var version: UInt32 { word(0x14) }
+    /// Largest request payload the device accepts.
+    var maxRequestBytes: UInt32 { word(0x18) }
+    /// Size of the response area; its payload is this minus the 16-byte header.
+    var responseAreaBytes: UInt32 { word(0x1C) }
+    /// Logged by the kext, not interpreted. The Pro40 firmware's literal pool
+    /// holds the request (0xFFFFE04001C0) and response (0xFFFFE0400030)
+    /// addresses, which these two fields are expected to carry.
+    var field20: UInt64 { pair(0x20) }
+    var field28: UInt64 { pair(0x28) }
+
+    static func decode(_ d: Data) -> DiceDcpHeader? {
+        guard d.count >= headerBytes else { return nil }
+        var h = DiceDcpHeader()
+        h.quadlets = (0..<(headerBytes / 4)).map { DiceWire.u32(d, $0 * 4) ?? 0 }
+        let orders: [WordOrder] = [.lowFirst, .highFirst, .byteSwappedLowFirst, .byteSwappedHighFirst]
+        h.order = orders.first { $0.combine(h.quadlets[0], h.quadlets[1]) == magic }
+        return h
+    }
+
+    /// Whether a 64-bit field reads as an address inside the DCP window.
+    static func windowOffset(of address: UInt64) -> UInt64? {
+        let local = address & 0x0000_FFFF_FFFF_FFFF
+        guard local >= base, local < base + 0x350 else { return nil }
+        return local - base
+    }
+}
+
 // MARK: - Extension (EAP) space
 
 enum DiceAsicType: UInt32 {
@@ -678,6 +766,7 @@ struct DiceSnapshot {
     // General space
     var generalSections: DiceSectionTable?
     var global: DiceGlobal?
+    var receiverLock: DiceReceiverLock?
     var txCount: UInt32 = 0
     var txSizeQuadlets: UInt32 = 0
     var txStreams: [DiceStreamEntry] = []
@@ -696,6 +785,10 @@ struct DiceSnapshot {
     var eapStandalone: DiceStandalone?
     var eapCurrentRouters: [DiceRateMode: [DiceRouterEntry]] = [:]
     var eapCurrentFormats: [DiceRateMode: DiceEapStreamFormats] = [:]
+
+    // DCP window header (DICE III control RPC); nil when the window is absent.
+    var dcp: DiceDcpHeader?
+
     var sectionReadStates: [String: DiceSectionReadState] = [:]
 
     var notes: [String] = []

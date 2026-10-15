@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../Duplex/FamilyDriver.hpp"
+#include "../Core/DiceClockChangeObserver.hpp"
 #include "../Core/DiceDeviceIo.hpp"
 #include "../Core/DiceFamilyDriver.hpp"
 #include "../Core/DiceNotificationMailbox.hpp"
@@ -14,7 +15,9 @@
 #include "../Core/DICETransaction.hpp"
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
+#include "../../../Runtime/ResolvedAudioConfiguration.hpp"
 #include "../../../../Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <atomic>
@@ -39,6 +42,9 @@ struct DiceStartupMixerCell final {
 
 struct DICETcatRuntimePolicy final {
     bool exposeDeviceToHostToCoreAudio{true};
+    // Receiver-register dumps through the firmware loader's PEEK. Set only by
+    // a protocol whose firmware TEST_ACTION table was verified (DICEBringupPolicy).
+    bool verifiedLoaderPeek{false};
     // Keep the target-rate transition strict, but do not require a GLOBAL
     // source-lock indication before/just after host IT starts. This is for
     // devices whose selected receive-clock path only locks once host packets
@@ -60,10 +66,22 @@ struct DICETcatRuntimePolicy final {
     // path does not work".
     const DiceStartupMixerCell* startupMixerCells{nullptr};
     uint32_t startupMixerCellCount{0};
+
+    // Passed to DiceFamilyDriver (DICEBringupPolicy): device steps around a
+    // clock change. Off by default.
+    DiceClockChangeObserver* clockChangeObserver{nullptr};
+    bool waitForInitialDsp{false};
+
+    // Explicit opt-in only. Reading unchanged stored tables is not a request
+    // to reload them: MixControl skips identical images, and FFADO updates the
+    // requested/current mode (dice_eap.cpp:528-554). Preserve firmware routing
+    // during ordinary attachment and clock changes.
+    bool reloadRouterAfterClockChange{false};
 };
 
 class DICETcatProtocol final : public Audio::IDeviceProtocol,
-                               public Audio::FamilyDriver {
+                               public Audio::FamilyDriver,
+                               private DiceClockChangeObserver {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
 
@@ -74,7 +92,8 @@ public:
                      ::ASFW::IRM::IRMClient* irmClient,
                      DiceWaitClock& waitClock,
                      DiceNotificationRouter* notifications,
-                     DICETcatRuntimePolicy runtimePolicy = {});
+                     DICETcatRuntimePolicy runtimePolicy = {},
+                     Scheduling::ITimerScheduler* preparationScheduler = nullptr);
     ~DICETcatProtocol() override;
 
     DICETcatProtocol(const DICETcatProtocol&) = delete;
@@ -100,6 +119,23 @@ public:
     // The GLOBAL clock and lock state, read asynchronously (safe on any queue).
     void ReadDuplexHealth(HealthCallback callback);
     void EnsureRuntimeStreamGeometry(VoidCallback callback) override;
+    void CancelPendingPreparation() override {
+        if (driver_) driver_->CloseReceiverLockWatch();
+        CancelInitialClock();
+    }
+    bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
+        if (!driver_) return false;
+        out = driver_->ReceiverLockSnapshot();
+        return out.guid != 0;
+    }
+    IOReturn RequestDiceReceiverDump(bool fifoEvents) override {
+        return driver_ ? driver_->RequestReceiverDump(fifoEvents) : kIOReturnNotReady;
+    }
+    bool CopyDiceReceiverDump(Diagnostics::DiceReceiverDumpSnapshot& out) const override {
+        if (!driver_) return false;
+        out = driver_->ReceiverDumpSnapshot();
+        return out.guid != 0;
+    }
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
 
     IOReturn StopDuplex() override;
@@ -143,12 +179,23 @@ private:
         DiceClockConfiguration& out) noexcept;
     void EnsureSectionsLoaded(VoidCallback callback);
     void EnsureRuntimeCapsLoaded(VoidCallback callback);
+    struct InitialClockPreparation;
+    void PrepareInitialClock(VoidCallback callback);
+    void InitialClockOwner(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockDsp(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockDisable(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockWrite(const std::shared_ptr<InitialClockPreparation>& state);
+    void InitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state);
+    void ScheduleInitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state,
+                                  uint32_t delayMs, bool dsp);
+    bool InitialClockCurrent(const std::shared_ptr<InitialClockPreparation>& state);
+    void FinishInitialClock(const std::shared_ptr<InitialClockPreparation>& state, IOReturn status);
+    void CancelInitialClock();
     void CacheRuntimeCaps(const GlobalState& global,
                           const StreamConfig& tx,
                           const StreamConfig& rx) noexcept;
     void CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept;
     void ResetRuntimeCaps() noexcept;
-    [[nodiscard]] bool DeviceSupportsRate(uint32_t rateHz) const noexcept;
 
     Protocols::Ports::FireWireBusInfo& busInfo_;
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
@@ -163,6 +210,9 @@ private:
     std::optional<DiceFamilyDriver> driver_;
     const std::atomic<bool>* teardownCancel_{nullptr};
     DICETcatRuntimePolicy runtimePolicy_{};
+    Scheduling::ITimerScheduler* preparationScheduler_{nullptr};
+    std::shared_ptr<InitialClockPreparation> initialClock_;
+    std::optional<Discovery::DeviceRouteToken> initializedRoute_;
     bool startupProgramApplied_{false};
 
     // Writes the startup router program and mixer coefficients when the policy
@@ -174,6 +224,15 @@ private:
     [[nodiscard]] std::expected<void, IOReturn> WriteRouterProgram(
         const ExtensionSections& ext);
     void WriteStartupMixerCells(const ExtensionSections& ext);
+
+    // DiceClockChangeObserver: the policy's observer first, then the router
+    // reload when the policy asks for it.
+    void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
+    void AfterClockChange(DiceDeviceIo& io, uint32_t rateHz, bool rateChanged) noexcept override;
+    // Write each rate mode's current router table back to the device and load
+    // it. Device configuration, not a bring-up gate: failures are logged.
+    void ReloadRouterPerRateMode(DiceDeviceIo& io, const char* why) noexcept;
+    bool routerReloadedSinceAttach_{false};
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};
@@ -209,8 +268,8 @@ private:
     // channel order (input == device TX, output == device RX). Published
     // through the runtimeCapsValid_ release/acquire fence like the arrays above;
     // only the (global, tx, rx) cache path fills them (the caps-only overload
-    // leaves them intact). Covers the widest supported interface (32x32).
-    static constexpr uint32_t kMaxChannelLabels = 32;
+    // leaves them intact). One label per host channel.
+    static constexpr uint32_t kMaxChannelLabels = Runtime::kMaxHostPcmChannels;
     std::atomic<uint32_t> inputChannelLabelCount_{0};
     std::atomic<uint32_t> outputChannelLabelCount_{0};
     char inputChannelLabels_[kMaxChannelLabels][64]{};
@@ -220,7 +279,20 @@ private:
     void PublishRateFormations(std::shared_ptr<const std::vector<Runtime::RateFormation>> snapshot) {
         if (!rateFormatsLock_) return;
         IOLockLock(rateFormatsLock_);
-        rateFormations_.swap(snapshot);
+        if (!snapshot) {
+            rateFormations_.reset();
+            IOLockUnlock(rateFormatsLock_);
+            return;
+        }
+        auto retained = rateFormations_ ? *rateFormations_ : std::vector<Runtime::RateFormation>{};
+        for (const auto& formation : *snapshot) {
+            const auto existing = std::ranges::find(retained, formation.sampleRateHz,
+                &Runtime::RateFormation::sampleRateHz);
+            if (existing == retained.end()) retained.push_back(formation);
+            else *existing = formation;
+        }
+        std::ranges::sort(retained, {}, &Runtime::RateFormation::sampleRateHz);
+        rateFormations_ = std::make_shared<const std::vector<Runtime::RateFormation>>(std::move(retained));
         IOLockUnlock(rateFormatsLock_);
     }
     IOLock* rateFormatsLock_{IOLockAlloc()};

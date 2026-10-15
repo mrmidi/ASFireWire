@@ -21,7 +21,7 @@ struct AudioHalBufferProfile final {
 // (tools/amdtp_blocking_cadence_sim.py, 1544-period counterexample).
 inline constexpr uint32_t kMaxBlockingFramesPerDataPacket = 32;
 
-// V3 geometry (decision D2, TIMING_GEOMETRY_OWNERSHIP.md §0; hardware-validated
+// V3 geometry (decision D2; hardware-validated
 // on the midi branch). One ZTS period of 12288 frames per 1x rate tier:
 //
 // 1. 12288 = 2^12 * 3. The blocking cadence (D,D,D,N: 6000 DATA packets/s

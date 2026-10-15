@@ -182,7 +182,7 @@ public:
     }
 
     // Set what the device reports it achieved, independently of CLOCK_SELECT
-    // (DICE_STABILITY_REGRESSION.md §3: requested and achieved rate can differ).
+    // (requested and achieved rate can differ).
     void SetAchievedClock(uint32_t rateIndex, bool locked) {
         SetGlobal(::ASFW::Audio::DICE::GlobalOffset::kStatus, StatusWord(rateIndex, locked));
         SetGlobal(::ASFW::Audio::DICE::GlobalOffset::kSampleRate, RateHz(rateIndex));
@@ -492,9 +492,12 @@ private:
             if (rateIndex != previousIndex) {
                 // A hardware-validated 44.1 -> 48 kHz change raised
                 // RxCfgChg|TxCfgChg|ClockAccepted together
-                // (DICE_STABILITY_REGRESSION.md §3), even within one rate mode.
+                // even within one rate mode.
+                // Instant settlement still completes the lock transition. The
+                // delayed path emits the same bit when its clock settles.
                 bits |= ::ASFW::Audio::DICE::Notify::kRxConfigChange |
-                        ::ASFW::Audio::DICE::Notify::kTxConfigChange;
+                        ::ASFW::Audio::DICE::Notify::kTxConfigChange |
+                        ::ASFW::Audio::DICE::Notify::kLockChange;
                 if (DiceRateModeForIndex(rateIndex) != DiceRateModeForIndex(previousIndex)) {
                     ApplyRateModeGeometry(DiceRateModeForIndex(rateIndex));
                 }

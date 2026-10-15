@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioDeviceHostTests.cpp
-// Behaviour of the audio device host (documentation/AUDIO_DEVICE_HOST.md §4,
-// §6.1). Assertions are on the host's per-outcome counters: every decision the
+// Behaviour of the audio device host. Assertions are on the host's per-outcome counters: every decision the
 // host makes is Record()ed exactly once.
 //
 // These tests were written from the design doc (§4.2, §4.3, §4.4, §6.1) and the
@@ -20,12 +19,15 @@
 #include "Audio/Host/AudioDeviceHost.hpp"
 #include "Audio/Model/ASFWAudioDevice.hpp"
 #include "Audio/Protocols/Backends/IsochDuplexHostTransport.hpp"
+#include "Audio/Protocols/IDeviceProtocol.hpp"
+#include "Audio/Protocols/Duplex/FamilyDriver.hpp"
 #include "Audio/Session/AudioSessions.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
+#include <DriverKit/OSDictionary.h>
 
 #include <array>
 #include <atomic>
@@ -172,6 +174,83 @@ public:
     DeviceEventSink* sink{nullptr};
 };
 
+class TestNub final : public ASFWAudioNub {
+public:
+    ~TestNub() override {
+        if (published) published->release();
+    }
+    // Off by default: the nub forgets what was set, so it keeps reporting its
+    // 48 kHz default. On, it hands back what the publisher set, as IOKit does.
+    bool keepPublished{false};
+    OSDictionary* published{nullptr};
+
+    kern_return_t CopyProperties(OSDictionary** out) override {
+        if (published) {
+            published->retain();
+            *out = published;
+        } else {
+            *out = OSDictionary::withCapacity(32);
+        }
+        return kIOReturnSuccess;
+    }
+    kern_return_t SetProperties(OSDictionary* properties) override {
+        if (keepPublished && properties) {
+            properties->retain();
+            if (published) published->release();
+            published = properties;
+        }
+        return kIOReturnSuccess;
+    }
+};
+
+class TestNubProvider final : public IOService {
+public:
+    TestNubProvider() : nub(new TestNub) {}
+    ~TestNubProvider() override { nub->release(); }
+    kern_return_t Create(IOService*, const char*, IOService** out) override {
+        nub->retain();
+        *out = nub;
+        return kIOReturnSuccess;
+    }
+    TestNub* nub;
+};
+
+class ClockProtocol final : public ASFW::Audio::IDeviceProtocol, public ASFW::Audio::FamilyDriver {
+public:
+    ASFW::Audio::DuplexHealthResult health{.generation = Generation{1},
+        .sourceLocked = true, .clockReferenceHealthy = true, .nominalRateHz = 44100};
+    std::function<void()> duringRead;
+    uint32_t reads{0};
+    IOReturn Initialize() override { return kIOReturnSuccess; }
+    IOReturn Shutdown() override { return kIOReturnSuccess; }
+    const char* GetName() const override { return "Clock test"; }
+    FamilyDriver* AsFamilyDriver() noexcept override { return this; }
+    void SetTeardownCancelToken(const std::atomic<bool>*) noexcept override {}
+    IOReturn LoadGeometry() override { return kIOReturnSuccess; }
+    std::optional<ASFW::Audio::AudioStreamRuntimeCaps> RuntimeCaps() const override { return {}; }
+    std::expected<ASFW::Audio::DuplexHealthResult, IOReturn> ReadHealth(uint32_t) override {
+        ++reads;
+        const auto sampled = health;
+        if (duringRead) duringRead();
+        return sampled;
+    }
+    std::expected<ASFW::Audio::DuplexPrepareResult, IOReturn> Configure(
+        const ASFW::Audio::AudioDuplexChannels&, const ASFW::Audio::AudioClockConfig&) override {
+        return std::unexpected(kIOReturnUnsupported);
+    }
+    std::expected<ASFW::Audio::AudioDuplexChannels, IOReturn> AssignChannels(
+        const ASFW::Audio::AudioDuplexChannels& channels) override { return channels; }
+    std::expected<ASFW::Audio::DuplexStageResult, IOReturn> ArmDeviceRx() override { return std::unexpected(kIOReturnUnsupported); }
+    std::expected<ASFW::Audio::DuplexStageResult, IOReturn> ArmDeviceTxAndEnable() override { return std::unexpected(kIOReturnUnsupported); }
+    std::expected<ASFW::Audio::DuplexConfirmResult, IOReturn> Confirm() override { return std::unexpected(kIOReturnUnsupported); }
+    std::expected<ASFW::Audio::DuplexClockApplyResult, IOReturn> ApplyClockIdle(
+        const ASFW::Audio::AudioClockConfig&) override { return std::unexpected(kIOReturnUnsupported); }
+    IOReturn DisconnectPlayback() override { return kIOReturnSuccess; }
+    IOReturn DisconnectCapture() override { return kIOReturnSuccess; }
+    IOReturn BreakConnections() override { return kIOReturnSuccess; }
+    IOReturn Stop() override { return kIOReturnSuccess; }
+};
+
 struct HostFixture {
     NullFireWireBus bus{};
     IRMClient irmClient{bus};
@@ -183,11 +262,14 @@ struct HostFixture {
     ASFW::Audio::Session::AudioSessions sessions{
         registry, runtime, hostTransport, hardware, &cancel,
         [](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* { return nullptr; }};
-    AudioNubPublisher publisher{nullptr};
+    TestNubProvider nubProvider;
+    AudioNubPublisher publisher;
     FakeAdapter adapter{};
     AudioDeviceHost host{publisher, registry, runtime, sessions, hostTransport};
 
-    HostFixture() { host.Install(AudioBackendKind::Dice, adapter); }
+    explicit HostFixture(bool publish = false) : publisher(publish ? &nubProvider : nullptr) {
+        host.Install(AudioBackendKind::Dice, adapter);
+    }
 
     // A Saffire Pro 24 DSP: its catalog policy resolves to the DICE family.
     void SeedDiceDevice(uint64_t guid) {
@@ -244,13 +326,11 @@ bool NoEndpointConfig(AudioRuntimeRegistry& runtime, uint64_t guid) {
 }
 
 // Shared expectations for a stream-configuration change that reaches the host.
-void ExpectConfigChangeFaultQueued(HostFixture& f) {
+void ExpectConfigChangeProbeQueued(HostFixture& f) {
     EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ConfigChange), 1U);
-    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 1U);
-    ASSERT_EQ(f.adapter.judgeCalls, 1);
-    EXPECT_EQ(f.adapter.lastGuid, kGuid);
-    ASSERT_TRUE(f.adapter.lastReason.has_value());
-    EXPECT_EQ(*f.adapter.lastReason, DuplexRestartReason::kDeviceConfigChange);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ClockProbe), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Queued), 0U);
+    EXPECT_EQ(f.adapter.judgeCalls, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -610,15 +690,15 @@ TEST(AudioDeviceHostTests, FaultContextAnswersMatchTheHostState) {
 // Device events (§4.2 OnDeviceEvent, §4.4)
 // ---------------------------------------------------------------------------
 
-TEST(AudioDeviceHostTests, StreamConfigChangeRaisesConfigChangeAndDeviceConfigFault) {
+TEST(AudioDeviceHostTests, DiceStreamConfigChangeProbesBeforeRestarting) {
     HostFixture f;
     f.SeedDiceDevice(kGuid);
     f.host.OnDeviceEvent(kGuid, DeviceEvent::kStreamConfigChanged, 0);
-    ExpectConfigChangeFaultQueued(f);
-    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 1U);
+    ExpectConfigChangeProbeQueued(f);
+    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
 }
 
-TEST(AudioDeviceHostTests, ClockStatusWhileNotStreamingQueuesNoProbe) {
+TEST(AudioDeviceHostTests, DiceClockStatusWhileIdleQueuesProbe) {
     HostFixture f;
     f.SeedDiceDevice(kGuid);
     auto* queue = f.host.WorkQueueForTesting();
@@ -626,9 +706,9 @@ TEST(AudioDeviceHostTests, ClockStatusWhileNotStreamingQueuesNoProbe) {
     queue->SetManualDispatchForTesting(true);
 
     f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 0);
-    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::NotStreaming), 1U);
-    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ClockProbe), 0U);
-    EXPECT_EQ(queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::NotStreaming), 0U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ClockProbe), 1U);
+    EXPECT_EQ(queue->PendingTaskCountForTesting(), 1U);
     EXPECT_EQ(f.adapter.judgeCalls, 0);
 }
 
@@ -646,8 +726,121 @@ TEST(AudioDeviceHostTests, EventsThroughTheInstalledSinkMatchDirectCalls) {
     f.SeedDiceDevice(kGuid);
     ASSERT_NE(f.adapter.sink, nullptr);
     f.adapter.sink->OnDeviceEvent(kGuid, DeviceEvent::kStreamConfigChanged, 0);
-    ExpectConfigChangeFaultQueued(f);
-    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 1U);
+    ExpectConfigChangeProbeQueued(f);
+    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
+}
+
+TEST(AudioDeviceHostTests, IdleDiceRateChangeCoalescesConfigAndClockNotifications) {
+    HostFixture f(true);
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();
+    f.runtime.Insert(kGuid, protocol);
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, MakeDescription("DICE", 2, 2), "test"));
+    auto* queue = f.host.WorkQueueForTesting();
+    queue->SetManualDispatchForTesting(true);
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kStreamConfigChanged, 1);
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 2);
+    ASSERT_EQ(queue->PendingTaskCountForTesting(), 1U);
+    queue->DrainAllForTesting();
+    EXPECT_EQ(protocol->reads, 1U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 1U);
+    EXPECT_EQ(f.nubProvider.nub->lastObservedRate, 44100U);
+    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
+}
+
+// Create() starts the nub before the publisher sets its properties, so the
+// nub must re-read them; otherwise it reports its 48 kHz default (#190: the
+// StudioLive at 44.1 kHz logged "ClockEcho device=44100 host=48000").
+TEST(AudioDeviceHostTests, PublishedNubReportsThePublishedRateNotItsDefault) {
+    HostFixture f(true);
+    f.nubProvider.nub->keepPublished = true;
+    auto desc = MakeDescription("DICE", 2, 2);
+    desc.currentSampleRate = 44100;
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, desc, "test"));
+    EXPECT_EQ(f.nubProvider.nub->refreshes, 1U);
+    EXPECT_EQ(f.nubProvider.nub->GetCurrentSampleRateHz(), 44100U);
+}
+
+// With the published rate known, a device that stayed at that rate is healthy:
+// no rate change reaches the audio driver.
+TEST(AudioDeviceHostTests, DiceAtThePublishedRateIsNotARateChange) {
+    HostFixture f(true);
+    f.nubProvider.nub->keepPublished = true;
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();  // device reports 44100
+    f.runtime.Insert(kGuid, protocol);
+    auto desc = MakeDescription("DICE", 2, 2);
+    desc.currentSampleRate = 44100;
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, desc, "test"));
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 0);
+    EXPECT_EQ(protocol->reads, 1U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 0U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::ClockHealthy), 1U);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::DeviceRateChange), 0U);
+}
+
+TEST(AudioDeviceHostTests, DiceRateProbeRejectsResetDuringRead) {
+    HostFixture f(true);
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();
+    f.runtime.Insert(kGuid, protocol);
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, MakeDescription("DICE", 2, 2), "test"));
+    protocol->duringRead = [&] { f.registry.InvalidateLiveMappingsForBusReset(); };
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 0);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::DeviceEvent, HostOutcome::Cancelled), 1U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 0U);
+}
+
+TEST(AudioDeviceHostTests, DiceRateChangeWaitsForRelock) {
+    HostFixture f(true);
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();
+    protocol->health.sourceLocked = false;
+    f.runtime.Insert(kGuid, protocol);
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, MakeDescription("DICE", 2, 2), "test"));
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kStreamConfigChanged, 1);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 0U);
+    protocol->health.sourceLocked = true;
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 2);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 1U);
+    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
+}
+
+TEST(AudioDeviceHostTests, RelockArrivingDuringProbeTriggersOneFollowupRead) {
+    HostFixture f(true);
+    f.SeedDiceDevice(kGuid);
+    auto protocol = std::make_shared<ClockProtocol>();
+    protocol->health.sourceLocked = false;
+    f.runtime.Insert(kGuid, protocol);
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, MakeDescription("DICE", 2, 2), "test"));
+    protocol->duringRead = [&] {
+        if (protocol->reads != 1) return;
+        protocol->health.sourceLocked = true;
+        f.host.OnDeviceEvent(kGuid, DeviceEvent::kClockStatusChanged, 2);
+    };
+    f.host.OnDeviceEvent(kGuid, DeviceEvent::kStreamConfigChanged, 1);
+    EXPECT_EQ(protocol->reads, 2U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 1U);
+    EXPECT_EQ(RestartOutcomes(f.host, HostEvent::RuntimeFault), 0U);
+}
+
+TEST(AudioDeviceHostTests, KeptCommittedDicePublicationStillChecksExternalClock) {
+    HostFixture f(true);
+    f.SeedDiceDevice(kGuid);
+    f.runtime.Insert(kGuid, std::make_shared<ClockProtocol>());
+    auto description = MakeDescription("DICE", 2, 2);
+    auto endpoint = f.runtime.EnsureEndpointRuntime(kGuid);
+    endpoint->UpdateConfig(description);
+    ASSERT_TRUE(f.publisher.EnsureNub(kGuid, description, "test"));
+    f.adapter.onDescribe = [](const DescribeInput&, DescribeDone done) {
+        done(ASFW::Audio::Host::KeepCommitted{});
+    };
+    f.host.RefreshPublication(kGuid);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::KeptCommittedFormation), 1U);
+    EXPECT_EQ(f.nubProvider.nub->clockChangeNotifications, 1U);
+    ASFWAudioDevice retained;
+    ASSERT_TRUE(endpoint->CopyConfig(retained));
+    EXPECT_EQ(retained.currentSampleRate, description.currentSampleRate);
 }
 
 // ---------------------------------------------------------------------------

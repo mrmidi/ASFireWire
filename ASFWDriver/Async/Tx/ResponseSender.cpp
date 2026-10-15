@@ -51,33 +51,18 @@ uint32_t BuildQ1(uint16_t destID, ResponseCode rcode) {
            (static_cast<uint32_t>(static_cast<uint8_t>(rcode) & 0x0F) << 12);
 }
 
-// Split-timeout deadline for the response: request arrival timestamp
-// (3-bit seconds, 13-bit cycle) plus the split timeout. The AT response
-// context drops packets whose deadline has passed (evt_timeout) without
-// transmitting them, so this MUST be a real future time — a zero timeStamp
-// is "expired" for most of the 8-second wrap window. Mirrors Linux
-// compute_split_timeout_timestamp (core-transaction.c) with the same
-// 2-second default (core-card.c DEFAULT_SPLIT_TIMEOUT).
-constexpr uint32_t kSplitTimeoutCycles = 2 * 8000;
-
-uint16_t ComputeResponseDeadline(uint16_t requestTimeStamp) {
-    const uint32_t cycles = kSplitTimeoutCycles + (requestTimeStamp & 0x1FFFu);
-    uint32_t deadline = requestTimeStamp & ~0x1FFFu;
-    deadline += (cycles / 8000u) << 13;
-    deadline |= cycles % 8000u;
-    return static_cast<uint16_t>(deadline);
-}
-
 } // namespace
 
 ResponseSender::ResponseSender(DescriptorBuilder& builder,
                                Tx::Submitter& submitter,
                                Engine::ContextManager& ctxMgr,
-                               Bus::GenerationTracker& generationTracker) noexcept
+                               Bus::GenerationTracker& generationTracker,
+                               std::shared_ptr<FW::SplitTimeout> splitTimeout) noexcept
     : builder_(builder)
     , submitter_(submitter)
     , ctxMgr_(ctxMgr)
-    , generationTracker_(generationTracker) {
+    , generationTracker_(generationTracker)
+    , splitTimeout_(std::move(splitTimeout)) {
     if (auto* dma = ctxMgr_.DmaManager()) {
         const auto region =
             dma->AllocateRegion(kLockResponseScratchSlots * kLockResponseScratchStride,
@@ -118,7 +103,7 @@ void ResponseSender::SendResponse(const ARPacketView& request,
         payloadDeviceAddress,
         payloadLength,
         /*needsFlush*/ false,
-        ComputeResponseDeadline(static_cast<uint16_t>(request.timeStamp)));
+        splitTimeout_->ResponseDeadline(static_cast<uint16_t>(request.timeStamp)));
     if (chain.Empty()) {
         ASFW_LOG_ERROR(
             Async,

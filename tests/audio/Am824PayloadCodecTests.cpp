@@ -118,3 +118,30 @@ TEST(RawPcm24In32PayloadCodecTests, DecodeBlockExtractsFloatSamples) {
     EXPECT_NEAR(frameOut[0], 0.5f, 0.0001f);
     EXPECT_NEAR(frameOut[1], -0.5f, 0.0001f);
 }
+
+// DICE capture: the top byte is ignored whatever it holds. The Saffire sends
+// MBLA 0x40, the StudioLive AI 0x00 (studiolive-firewire-mac slfw.c:428), raw
+// 24-in-32 a sign extension; each is the same sample. The MIDI slot after the
+// PCM slots is never read as audio, whatever its label.
+TEST(RawPcm24In32PayloadCodecTests, TopByteIsIgnoredAndMidiSlotIsNeverDecoded) {
+    RawPcm24In32RxPayloadCodec codec(7, false);
+    std::array<uint32_t, 7> wireQuadlets = {
+        OSSwapHostToBigInt32(0x40400000u),  // MBLA +0.5
+        OSSwapHostToBigInt32(0x00400000u),  // label 0x00, +0.5
+        OSSwapHostToBigInt32(0x00400000u),  // sign-extended positive, +0.5
+        OSSwapHostToBigInt32(0x40C00000u),  // MBLA -0.5
+        OSSwapHostToBigInt32(0x00C00000u),  // label 0x00, -0.5
+        OSSwapHostToBigInt32(0xFFC00000u),  // sign-extended negative, -0.5
+        OSSwapHostToBigInt32(0x81123456u),  // MIDI slot
+    };
+    std::span<const uint8_t> blockBytes(
+        reinterpret_cast<const uint8_t*>(wireQuadlets.data()), wireQuadlets.size() * 4);
+    std::array<float, 7> frameOut{};
+    frameOut.fill(99.0f);
+
+    codec.DecodeBlock(blockBytes, 6, 0, RxCaptureChannelMap{}, frameOut.data(), nullptr);
+
+    for (size_t ch = 0; ch < 3; ++ch) EXPECT_NEAR(frameOut[ch], 0.5f, 0.0001f) << ch;
+    for (size_t ch = 3; ch < 6; ++ch) EXPECT_NEAR(frameOut[ch], -0.5f, 0.0001f) << ch;
+    EXPECT_EQ(frameOut[6], 99.0f);  // six PCM channels: slot 6 untouched
+}

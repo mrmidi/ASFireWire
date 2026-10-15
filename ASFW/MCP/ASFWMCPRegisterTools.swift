@@ -5,7 +5,7 @@ import Foundation
 // Reference pattern for the FW-81..85 fan-out: a protocol surface owns its tool
 // catalog slice (here as an `extension ASFWMCPToolCatalog`), its request schemas,
 // and its bridge to the FW-79 write policy — all in one file, so surfaces don't
-// collide. Tool/visibility taxonomy: MCP_TOOL_TAXONOMY.md §5.4.
+// collide.
 //
 // Device registers are node addresses reached over async transactions (FW-78);
 // their writes are policy-gated like any async write. OHCI/controller registers

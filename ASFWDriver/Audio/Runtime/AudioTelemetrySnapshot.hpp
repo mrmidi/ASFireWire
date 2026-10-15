@@ -9,7 +9,7 @@
 // Wire v4 (FW-175). What it is for: a small STABLE per-endpoint health summary
 // for the app, MCP and field reports. Research traces never go here -- they go
 // to the log ring or an optional sidecar, so an experiment never enlarges this
-// ABI (documentation/OBSERVABILITY_INVENTORY.md).
+// ABI.
 //
 // Layout rules, each pinned by a static_assert below:
 //  - a self-describing header: version, header size, total bytes, endpoint

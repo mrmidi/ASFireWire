@@ -9,6 +9,7 @@
 #include "Audio/Wire/MOTU/MotuPayloadReader.hpp"
 #include "Audio/Wire/MOTU/MotuPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "MotuChannelMappingFixtures.hpp"
 
 #include <gtest/gtest.h>
 
@@ -165,3 +166,41 @@ TEST(MotuPayloadReaderTests, NullOutputIsIgnored) {
 }
 
 } // namespace
+
+TEST(MotuPayloadReaderTests, UltraLiteMk3InputsMatchReportedAnalogAndReturnPositions) {
+    using namespace ASFW::Encoding::Motu;
+    std::vector<float> wire(18);
+    for (uint32_t i=0;i<18;++i) wire[i]=float(i+1)/32;
+    const auto block=MakeBlock(wire,DataBlockBytes(18));
+    const auto* layout=PortLayoutFor(0x19,48000,18,true);
+    std::array<float,14> out{};
+    DecodeMotuBlock(block,18,0,out.data(),14,layout->Map());
+    const std::array<uint8_t,14> chunks{2,3,4,5,6,7,8,9,10,11,0,1,14,15};
+    for (uint32_t i=0;i<14;++i) EXPECT_NEAR(out[i],wire[chunks[i]],1e-6f);
+}
+
+TEST(MotuPayloadReaderTests, EverySupportedModelDecodesTheNamedPhysicalChunks) {
+    using namespace MotuChannelFixtures;
+    EachFormation(true,[&](const Model& model,uint32_t rate,uint32_t mode,uint32_t wire,uint32_t extra) {
+        SCOPED_TRACE(std::string(model.name)+" rate="+std::to_string(rate)+" wire="+std::to_string(wire));
+        const auto* layout = PortLayoutFor(model.unitVersion,rate,wire,true);
+        ASSERT_NE(layout,nullptr);
+        std::vector<uint8_t> block(DataBlockQuadlets(wire,MessageChunks(model.unitVersion,true))*4,0);
+        const auto offset = PcmByteOffset(model.unitVersion);
+        for (uint32_t i=0;i<wire;++i) WritePcmSample(
+            std::span<uint8_t>(block.data()+offset+i*3,3), static_cast<int32_t>((i+1)*65536U)<<8);
+        std::vector<float> host(layout->hostChannels);
+        DecodeMotuBlock(block,wire,0,host.data(),layout->hostChannels,layout->Map(),offset);
+        for (const auto& group : groups) {
+            if (!group.capture || group.version != model.unitVersion || group.firstChunk[mode] < 0) continue;
+            for (size_t i=0;i<group.names.size();++i) {
+                const auto ports = MotuPortMap{layout->ports.data(),layout->hostChannels};
+                const auto found = std::ranges::find_if(ports,[&](const auto& p) { return p.name == group.names[i]; });
+                ASSERT_NE(found,ports.end()) << group.names[i];
+                const auto chunk = group.firstChunk[mode]+i+(group.followsOptical ? extra : 0);
+                EXPECT_NEAR(host[found-ports.begin()],Signed24ToFloat32(static_cast<int32_t>((chunk+1)*65536)),1e-6f)
+                    << group.names[i];
+            }
+        }
+    });
+}

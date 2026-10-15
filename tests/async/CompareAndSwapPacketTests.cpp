@@ -15,9 +15,8 @@
  * 4. Packet must pass IRM responder validation or return RCODE_TYPE_ERROR (6)
  *
  * References:
- * - docs/IRM/CAS.md (Comprehensive CAS analysis)
- * - docs/linux/firewire_src/packet-serdes-test.c (Linux test vectors)
- * - docs/IOFireWireFamily/IOFWCompareAndSwapCommand.cpp (Apple implementation)
+ * - Linux packet-serdes-test.c (test vectors)
+ * - Apple IOFWCompareAndSwapCommand.cpp (implementation)
  */
 
 #include <gtest/gtest.h>
@@ -344,7 +343,7 @@ TEST_F(CompareAndSwapPacketTest, PayloadByteOrder_MustBeBigEndian) {
 // =============================================================================
 
 TEST_F(CompareAndSwapPacketTest, FullScenario_IRMChannelAllocation_ChannelBitClear) {
-    // Scenario from documentation/IRM_EXPLAINED.md:
+    // Scenario:
     // Mac reads CHANNELS_AVAILABLE_LO: 0xFFFFFFFF (all channels free)
     // Mac wants channel 0, so it clears bit 0:
     // CAS(0xFFFFFFFF, 0xFFFFFFFE)
@@ -480,7 +479,7 @@ TEST_F(CompareAndSwapPacketTest, RegressionTest_FailingCASLog_HeaderValidation) 
 // =============================================================================
 
 TEST_F(CompareAndSwapPacketTest, AppleCompatibility_IRMBandwidthCAS) {
-    // From successful Apple log (documentation/IRM_EXPLAINED.md:95-121):
+    // From a successful Apple log:
     // LockRq to ffc2.ffff.f000.0220, size 8
     // Operand: 0x0000100F 0x00000FBB (subtract 0x54 units)
     // Response: 0x0000100F (old value), rCode=0 (success)

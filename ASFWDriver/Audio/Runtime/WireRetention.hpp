@@ -27,7 +27,7 @@
 namespace ASFW::Audio::Runtime {
 
 enum class WireState : uint8_t {
-    kDown,      ///< No wire: the next StartIO brings it up.
+    kDown,      ///< No wire: device preparation or StartIO brings it up.
     kLive,      ///< Wire up and CoreAudio IO running on it.
     kRetained,  ///< Wire up, CoreAudio IO stopped (or its start timed out).
 };
@@ -97,7 +97,9 @@ public:
                                           WireReleaseReason* releaseReason) const noexcept {
         if (state_ != WireState::kRetained) return WireStartPlan::kFreshStart;
         WireReleaseReason reason{};
-        if (ioRestartPending_) {
+        if (rateChangePending_) {
+            reason = WireReleaseReason::kRateChange;
+        } else if (ioRestartPending_) {
             reason = WireReleaseReason::kIoRestart;
         } else if (!transportHealthy) {
             reason = WireReleaseReason::kTransportFault;
@@ -128,6 +130,8 @@ public:
         WireReleaseReason reason{};
         if (!retainable) {
             reason = WireReleaseReason::kNotRetainable;
+        } else if (rateChangePending_) {
+            reason = WireReleaseReason::kRateChange;
         } else if (ioRestartPending_) {
             reason = WireReleaseReason::kIoRestart;
         } else if (!transportHealthy) {
@@ -153,6 +157,8 @@ public:
         WireReleaseReason reason{};
         if (!retainable) {
             reason = WireReleaseReason::kNotRetainable;
+        } else if (rateChangePending_) {
+            reason = WireReleaseReason::kRateChange;
         } else if (ioRestartPending_) {
             // The IO restart exists to rebuild the audio-owned TX queue and
             // prefill (ASFWAudioDevice kConfigChangeActionIoRestart); keeping
@@ -167,6 +173,13 @@ public:
         return WireStopPlan::kRelease;
     }
 
+    // Device attachment/recovery prepared transport without starting HAL IO.
+    void OnPrepared(uint32_t rateHz) noexcept {
+        state_ = WireState::kRetained;
+        rateHz_ = rateHz;
+        startTimeouts_ = 0;
+    }
+
     void OnRetained() noexcept { state_ = WireState::kRetained; }
 
     /// The wire was released (or never came up).
@@ -175,11 +188,13 @@ public:
         rateHz_ = 0;
         startTimeouts_ = 0;
         ioRestartPending_ = false;
+        rateChangePending_ = false;
     }
 
     /// The transport asked for an IO restart. Whatever StopIO/StartIO follows
     /// must rebuild the wire, not keep it.
     void OnIoRestartRequested() noexcept { ioRestartPending_ = true; }
+    void OnRateChangeRequested() noexcept { rateChangePending_ = true; }
 
     /// True when an event that invalidates a kept wire must release it now
     /// (nothing else will: CoreAudio IO is not running to stop it).
@@ -192,6 +207,7 @@ private:
     uint32_t rateHz_{0};
     uint32_t startTimeouts_{0};
     bool ioRestartPending_{false};
+    bool rateChangePending_{false};
 };
 
 } // namespace ASFW::Audio::Runtime

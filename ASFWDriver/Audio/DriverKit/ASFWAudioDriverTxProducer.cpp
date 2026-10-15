@@ -8,6 +8,7 @@
 // redesigns this side.
 //
 
+#include "Config/MOTU/MotuProfile.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -26,7 +27,7 @@
 
 // A producer stall up to the preparation slack is survivable by the ring; the
 // RX replay history must outlast it too, or the reader re-anchors and the lead
-// cannot recover (TX_OWNERSHIP.md, T5b).
+// cannot recover.
 static_assert(ASFW::Audio::Runtime::RxSequenceReplayState::kCapacity -
                       ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay >=
                   ASFW::IsochTransport::AudioTimingGeometry::kTxPreparationSlackPackets,
@@ -39,7 +40,7 @@ namespace ASFW::Audio::DriverKit {
 // has no integer ticks per sample, so the tick*rate product is divided.
 // It is NOT rounded to a packet boundary: rounding down made every output
 // frame play 0-7 frames late, chosen by each start's phase (measured on the
-// Pro 24 DSP: RTL_ts = 105.03 + the rounding, TX_OWNERSHIP.md §1g). Nothing
+// Pro 24 DSP: RTL_ts = 105.03 + the rounding). Nothing
 // downstream needs packet-aligned frames.
 uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
                               uint64_t presentationDeltaTicks,
@@ -50,33 +51,10 @@ uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
 
 namespace {
 
-// MOTU SPH regulator telemetry. Every line reaches the unified log, so a
-// Release build can be read with:
-//
-//   /usr/bin/log show --last 10m --info --style compact \
-//       --predicate 'eventMessage CONTAINS "[MotuSph"'
-//
-//   [MotuSphServo]  summary, with the [TxPrep] heartbeat (every 5 s)
-//   [MotuSphState]  the counters behind it, same cadence
-//   [MotuSphLock]   the first lock of a start or of a new stream generation,
-//                   and how long the output was muted for it
-//   [MotuSphSeed]   the first absolute phase `rel` of a generation reached the
-//                   loop, which seeded its error against the model's setpoint
-//   [MotuSphHard]   a hard resync: mute, then a one-shot phase repair
-//   [MotuSphMute]   any other change of the regulator's output mute
-//   [MotuSphStall]  the RX SPH meter fell behind its bridge (logged by
-//                   MotuRxTimingObserver)
-//
-// The edge lines come from the servo hook below, once per event; nothing is
-// logged per packet. The receive side of the absolute phase logs its own
-// lines from MotuRxTimingObserver's drain ([RxSphRate], [RxPhaseAbs],
-// [RxPhaseRel], ...); all of them together:
-//
-//   /usr/bin/log show --last 10m --info --style compact --predicate \
-//       'eventMessage CONTAINS "[MotuSph" OR eventMessage CONTAINS "[RxPhase" OR
-//        eventMessage CONTAINS "[RxSphRate]"'
-
-using ASFW::Audio::Wire::MotuSphRatePpb;
+// MOTU diagnostics: one coarse heartbeat and acquisition/resync edges.
+const auto MotuSphRatePpb = [](int64_t step, int64_t nominal) noexcept -> int64_t {
+    return step > 0 ? static_cast<int64_t>((static_cast<__int128>(nominal - step) * 1'000'000'000) / step) : 0;
+};
 
 void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
                      const ASFW::Audio::Wire::MotuSphServoApplyResult& result) noexcept {
@@ -124,23 +102,14 @@ void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
 // included: it hands the stamper the latest generation-checked RX clock
 // sample and keeps the payload writer on the regulator's mute.
 void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
-                            ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+                            ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                            const ASFW::Protocols::Audio::AMDTP::AmdtpTimingState& timing) noexcept {
     auto& stamper = ivars.runtime.motuTxTimingStamper;
 
     ASFW::Audio::Runtime::MotuRxSphClockSample rxClock{};
     uint64_t rxClockUpdates = 0;
     const bool haveRxClock = control.motuRxSphClock.ReadLatest(rxClock, rxClockUpdates);
     const uint64_t controlGeneration = control.generation.load(std::memory_order_acquire);
-
-    // The conditioned absolute phase, from its own bridge, where the model has
-    // a setpoint at this rate (48 kHz); elsewhere the loop stays relative.
-    // Generation-checked like the clock sample: a `rel` measured in another
-    // stream describes a phase this one never had.
-    ASFW::Audio::Runtime::MotuRelPhaseSampleRecord relPhase{};
-    uint64_t relPhaseUpdates = 0;
-    const bool haveRelPhase = stamper.HoldsAbsolutePhase() &&
-                              control.motuRelPhase.ReadLatest(relPhase, relPhaseUpdates) &&
-                              relPhase.streamGeneration == controlGeneration;
 
     const auto result = stamper.ApplyServoInput({
         .valid = haveRxClock,
@@ -149,54 +118,28 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
         .bridgeUpdates = rxClockUpdates,
         .rxFrames = rxClock.rxFrames,
         .rxTicks = rxClock.rxTicks,
-        .haveRelPhase = haveRelPhase,
-        .relPhaseTicks = relPhase.ticks,
-        .relPhaseCenterTicks = relPhase.centerTicks,
+        .rxFirstFrame = rxClock.firstAudioFrame,
+        .txFirstFrame = ivars.runtime.txStreamEngine.NextAudioFrame(),
+        .rxSphTicks = rxClock.sphTicks,
+        .replayEpoch = rxClock.replayEpoch,
+        .expectedReplayEpoch = control.rxSequenceReplay.Epoch(),
+        .isData = timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data,
+        .transmitCycleValid = timing.transmitCycleValid,
+        .transmitTicks = timing.transmitTicks,
     });
-    // The gate's state, not the result's: a dropped or early observation
-    // leaves the result without a decision while the gate may still be closed.
+    // Use the current mute state even when the observation did not advance.
     ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
     LogMotuSphEdges(ivars, result);
-    if (result.absolutePhaseAcquired) {
-        ASFW_LOG(DirectAudio, "[MotuSphSeed] gen=%llu rel=%lld center=%lld setpoint=%d err=%lld",
-                 controlGeneration, static_cast<long long>(relPhase.ticks),
-                 static_cast<long long>(relPhase.centerTicks),
-                 stamper.AbsolutePhaseSetpointTicks(),
-                 static_cast<long long>(result.decision.phaseErrorTicks));
-    }
+
 }
 
-// The summary, on the [TxPrep] heartbeat. Two short lines: each must fit the
-// driver log ring's 232-byte record together with its category prefix.
-// ratePpb/rxPpb: the transmit step and the device's measured period against
-// nominal (positive = faster). same: observations dropped as repeats (benign);
-// back: bridge/frame/tick counters seen going backwards (never expected).
-// trace: cadence periods the phase-trace bridge took / refused this start
-// (a refusal means another stream generation, never expected).
+// Coarse heartbeat only; control never depends on this log.
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
-    const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
-    ASFW_LOG(DirectAudio,
-             "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
-             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld",
-             servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
-             servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
-             static_cast<long long>(servo.phaseErrorTicks),
-             static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(servo.stepQ32),
-             static_cast<long long>(servo.txCorrectionQ32));
-    ASFW_LOG(DirectAudio,
-             "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
-             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
-             servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
-             servo.muteTransitions, servo.unmuteTransitions,
-             ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
-                 std::memory_order_relaxed),
-             servo.observationDrops, servo.dropBridgeNotAdvanced,
-             servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
-             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls,
-             ivars.runtime.motuTxPhaseTrace.Published(),
-             ivars.runtime.motuTxPhaseTrace.Rejected());
+    const auto state = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    ASFW_LOG(DirectAudio, "[MotuSph] gen=%llu locked=%u muted=%u step=%lld err=%lld resync=%llu clamp=%u drops=%u",
+             state.streamGeneration, state.locked ? 1u : 0u, state.outputMuted ? 1u : 0u,
+             static_cast<long long>(state.stepQ32), static_cast<long long>(state.phaseErrorTicks),
+             state.phaseRepairs, state.stepClamped ? 1u : 0u, state.observationDrops);
 }
 
 } // namespace
@@ -715,7 +658,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         if (motuSphActive) {
-            ApplyMotuSphServoInput(ivars, *directControl);
+            ApplyMotuSphServoInput(ivars, *directControl, timing);
         }
 
         const auto prepareResult =
@@ -919,9 +862,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
     ivars.runtime.txSlotProvider.numSlots = memory.numSlots;
     ivars.runtime.txSlotProvider.slotStrideBytes = memory.slotStrideBytes;
-    // Nothing observes release unless this start binds an observer below.
-    ivars.runtime.txSlotProvider.releaseObserver = nullptr;
-    ivars.runtime.motuTxPhaseTrace.Unbind();
 
     ivars.runtime.txExecutionTimeline.queueControl = memory.queueControl;
 
@@ -939,17 +879,18 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         // configuration for cannot be timed at all.
         if (!ivars.runtime.motuTxTimingStamper.Configure(
                 txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks,
-                ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
-                    txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
+                txPolicy.motuPresentationOffsetFrames)) {
             ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
                      txConfig.sampleRate);
             return {kIOReturnUnsupported, "ConfigureMotuTxTiming"};
         }
         ivars.runtime.motuPayloadWriter.Configure(
             ::ASFW::Encoding::Motu::MotuPayloadStreamConfig{
-                .pcmChunks = txConfig.pcmChannels,
+                .pcmChunks = txConfig.motuPcmChunks ? txConfig.motuPcmChunks : txConfig.pcmChannels,
                 .sourceChannelOffset = txConfig.sourceChannelOffset,
-                .ports = txPolicy.motuPlaybackPorts,
+                .ports = ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+                    txPolicy.motuUnitVersion, txConfig.sampleRate,
+                    txConfig.motuPcmChunks ? txConfig.motuPcmChunks : txConfig.pcmChannels),
                 .pcmByteOffset = txConfig.motuPcmByteOffset});
         ivars.runtime.motuPayloadWriter.BindTimeline(&ivars.runtime.txStreamEngine.Timeline());
         ivars.runtime.txStreamEngine.SetPayloadWriter(&ivars.runtime.motuPayloadWriter);
@@ -968,15 +909,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ivars.runtime.motuPayloadWriter.SetPcmMuted(
             ivars.runtime.motuTxTimingStamper.IsOutputMuted());
         ivars.runtime.txStreamEngine.BindTimingStamper(&ivars.runtime.motuTxTimingStamper);
-        // The transmit half of the absolute-phase measurement, where its
-        // cadence geometry holds: every released DATA packet's SPH, one
-        // cadence period at a time, to the RX timing observer.
-        if (ASFW::Audio::Runtime::MotuRelPhaseGeometryHolds(txConfig.sampleRate)) {
-            ivars.runtime.motuTxPhaseTrace.Bind(
-                control, memory.queueControl,
-                ivars.runtime.motuTxTimingStamper.PresentationLeadTicks());
-            ivars.runtime.txSlotProvider.releaseObserver = &ivars.runtime.motuTxPhaseTrace;
-        }
         ivars.runtime.motuSphAcquireHostTicks = mach_absolute_time();
         ivars.runtime.motuSphLockPending = true;
         ivars.runtime.motuSphActive.store(true, std::memory_order_relaxed);
@@ -985,6 +917,26 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.ResetForStart(0, 0);
     ivars.runtime.txPlacementLogged = false;
     ivars.runtime.txSytLogged = false;
+    ++ivars.runtime.txStartupEpoch;
+    ivars.runtime.txStartupRawPcm = txPolicy.hostToDevicePcmEncoding ==
+        ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
+    ivars.runtime.txStartupFillTrace.count.store(0, std::memory_order_relaxed);
+    ivars.runtime.txStartupTrace = {};
+    // Scope the temporary cold-start capture to Focusrite. Transport's
+    // diagnostic contract is neutral and disabled for other producers.
+    ivars.runtime.txSlotProvider.queueControl->diagnosticCaptureEnabled.store(
+        ivars.device.vendorId == 0x00130eU, std::memory_order_release);
+    if (ivars.device.vendorId == 0x00130eU) {
+        ivars.runtime.txStartupClientTrace.ArmJoin();
+        ASFW_LOG(DirectAudio,
+                 "[TxStartup] stage=reset epoch=%llu rate=%u binding=%u slots=%u write=%llu read=%llu committed=%llu",
+                 ivars.runtime.txStartupEpoch, txConfig.sampleRate,
+                 ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ? 1U : 0U,
+                 ivars.runtime.txSlotProvider.numSlots,
+                 control->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                 control->playbackRingReadFrame.load(std::memory_order_relaxed),
+                 ivars.runtime.txSlotProvider.queueControl->committedEnd.load(std::memory_order_relaxed));
+    }
     ivars.runtime.txFilledFrameEnd = 0;
     // The interval minimum belongs to one stream: drop the previous one's.
     (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
@@ -1028,6 +980,122 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     control->txTransferDelayTicks.store(timing.txTransferDelayTicks,
                                         std::memory_order_relaxed);
     return {};
+}
+
+void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    if (!queue || !queue->diagnosticCaptureEnabled.load(std::memory_order_relaxed)) return;
+    auto& client = ivars.runtime.txStartupClientTrace;
+    const uint32_t clientCount = client.count.load(std::memory_order_acquire);
+    while (client.readCursor < clientCount) {
+        const auto& write = client.samples[client.readCursor++];
+        ASFW_LOG(DirectAudio,
+                 "[TxStartupClient] join=%llu sample=%llu frames=%u host=%llu filledBefore=%llu exposed=%llu write=%llu capacity=%u anchor=%llu anchorEpoch=%llu",
+                 write.join, write.sampleFrame, write.frames, write.hostTicks, write.filledBefore,
+                 write.exposedFrameEnd, write.writtenFrameEnd, write.capacity,
+                 write.anchorFrame, write.anchorEpoch);
+    }
+    auto& trace = ivars.runtime.txStartupTrace;
+    const uint32_t count = std::min(queue->diagnosticPacketCount.load(std::memory_order_acquire),
+                                    ASFW::Isoch::kTxDiagnosticCapacity);
+    while (trace.cursor < count) {
+        const auto& raw = queue->diagnosticPackets[trace.cursor++];
+        const auto packet = ASFW::Audio::Runtime::DecodeTxStartupPacket(
+            raw, ivars.runtime.txStartupRawPcm,
+            ivars.runtime.txStreamEngine.StreamConfig().pcmChannels);
+        const bool firstData = trace.data == 0 && packet.blocks != 0 && packet.valid;
+        const bool firstContent = trace.nonzeroPrefixes == 0 && packet.peakQ24 != 0;
+        const bool firstFault = trace.invalid == 0 && !packet.valid;
+        trace.Observe(raw, packet);
+        if (trace.cursor == 1 || firstData || firstContent || firstFault) {
+            const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(raw.packetIndex);
+            const bool timelineMatches = slot && slot->packetIndex == raw.packetIndex;
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupPacket] epoch=%llu pkt=%llu ct=%08x status=%08x h0=%08x len=%u meta=%u dma=%u dbs=%u dbc=%u fdf=%02x syt=%04x lead=%d",
+                     ivars.runtime.txStartupEpoch, raw.packetIndex, raw.cycleTimestamp,
+                     raw.statusWord, packet.isochHeader, raw.payloadLength, raw.metadataMatches ? 1U : 0U,
+                     raw.descriptorMatches ? 1U : 0U, packet.dbs, packet.dbc, packet.fdf,
+                     packet.syt, packet.sytLeadTicks);
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupPcm] epoch=%llu pkt=%llu event0=%08x event1=%08x prefix=%u peak=%u frame=%llu timeline=%u",
+                     ivars.runtime.txStartupEpoch, raw.packetIndex,
+                     packet.firstEventWords[0], packet.firstEventWords[1], raw.prefixLength, packet.peakQ24,
+                     timelineMatches ? slot->firstAudioFrame : 0, timelineMatches ? 1U : 0U);
+        }
+        // First-block source and encoded words from the same packet, not an
+        // unrelated writer peak. Lack of a match means no captured first-block
+        // fill, not silence. Partial first blocks are deliberately excluded.
+        const auto& fills = ivars.runtime.txStartupFillTrace;
+        const uint32_t fillCount = fills.count.load(std::memory_order_acquire);
+        for (uint32_t n = 0; n < fillCount; ++n) {
+            const auto& fill = fills.samples[n];
+            if (fill.packet != raw.packetIndex || !packet.valid || raw.prefixLength < 16) continue;
+            const bool same = fill.encodedWords[0] == packet.firstEventWords[0] &&
+                              fill.encodedWords[1] == packet.firstEventWords[1];
+            ++trace.matchedFills;
+            trace.changedFills += !same;
+            if (trace.matchReports < 2 || (!same && trace.matchReports < 8)) {
+                ++trace.matchReports;
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupMatch] epoch=%llu pkt=%llu frame=%llu filled=%08x/%08x completed=%08x/%08x same=%u rawPcm=%u",
+                         ivars.runtime.txStartupEpoch, fill.packet, fill.frame,
+                         fill.encodedWords[0], fill.encodedWords[1], packet.firstEventWords[0],
+                         packet.firstEventWords[1], same ? 1U : 0U, ivars.runtime.txStartupRawPcm ? 1U : 0U);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupSource] epoch=%llu pkt=%llu frame=%llu offset=%llu writable=%llu srcBits=%08x/%08x",
+                         ivars.runtime.txStartupEpoch, fill.packet, fill.frame, fill.payloadOffset,
+                         fill.firstWritable, fill.sourceBits[0], fill.sourceBits[1]);
+            }
+            break;
+        }
+        const uint32_t second = static_cast<uint32_t>(raw.packetIndex / ASFW::Timing::kCyclesPerSecond);
+        if (second != trace.lastReportSecond || raw.packetIndex == 61439) {
+            trace.lastReportSecond = second;
+            auto* control = ivars.runtime.directAudioGraph.control;
+            ASFW_LOG(DirectAudio,
+                     "[TxStartupSummary] epoch=%llu sec=%u n=%u data=%u noData=%u pcmPrefixes=%u invalid=%u metaBad=%u dmaBad=%u dbcPairErrors=%u timed=%u lead=%d/%d write=%llu read=%llu",
+                     ivars.runtime.txStartupEpoch, second, trace.cursor, trace.data, trace.noData,
+                     trace.nonzeroPrefixes, trace.invalid, trace.metadataMismatch, trace.mappingMismatch,
+                     trace.dbcDiscontinuities, trace.timedPackets,
+                     trace.timedPackets ? trace.minimumLead : 0,
+                     trace.timedPackets ? trace.maximumLead : 0,
+                     control ? control->playbackRingWriteFrame.load(std::memory_order_relaxed) : 0,
+                     control ? control->playbackRingReadFrame.load(std::memory_order_relaxed) : 0);
+            ASFW_LOG(DirectAudio, "[TxStartupFillSummary] epoch=%llu sec=%u matches=%u changed=%u capturedFills=%u rawPcm=%u",
+                     ivars.runtime.txStartupEpoch, second, trace.matchedFills, trace.changedFills,
+                     fillCount, ivars.runtime.txStartupRawPcm ? 1U : 0U);
+            TxPlacementSample placement{};
+            if (MeasureTxPlacement(ivars, placement)) {
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupPlacement] epoch=%llu pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.firstAudioFrame,
+                         placement.halSampleTime, placement.offsetFrames,
+                         ivars.runtime.txStreamEngine.StreamConfig().sampleRate);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupTiming] epoch=%llu pkt=%llu completion=%08x pair=%08x pairHost=%llu spanNs=%llu lagNs=%llu busDelta=%lld txHost=%llu",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.completionCycle,
+                         placement.pairCycle, placement.pairHost, placement.pairSpanNs, placement.pairLagNs,
+                         placement.pairDeltaTicks, placement.txHost);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupAnchor] epoch=%llu pkt=%llu host=%llu frame=%llu gen=%llu anchorEpoch=%llu hwEpoch=%llu deltaNs=%lld slopeQ8=%u nominalOffset=%lld measuredOffset=%lld",
+                         ivars.runtime.txStartupEpoch, placement.packetIndex, placement.anchorHost, placement.anchorFrame,
+                         placement.anchorGeneration, placement.anchorEpoch, placement.wireEpoch,
+                         placement.anchorDeltaNs, placement.slopeQ8, placement.offsetFrames, placement.measuredOffsetFrames);
+
+            }
+            if (control) {
+                ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+                const bool anchorValid = control->hostClockAnchor.TryReadLatest(0, anchor);
+                ASFW_LOG(DirectAudio,
+                         "[TxStartupClock] epoch=%llu hwEpoch=%llu source=%u rxValid=%u nextTxFrame=%llu anchorValid=%u anchorEpoch=%llu anchorFrame=%llu",
+                         ivars.runtime.txStartupEpoch, control->hardwareTimeline.Epoch(),
+                         static_cast<unsigned>(control->hardwareTimeline.Source()),
+                         control->hardwareTimeline.ObservationValid() ? 1U : 0U,
+                         control->hardwareTimeline.NextTxFrame(), anchorValid ? 1U : 0U,
+                         anchor.timelineEpoch, anchor.sampleFrame);
+            }
+        }
+    }
 }
 
 bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) noexcept {
@@ -1086,6 +1154,26 @@ bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) no
     out.firstAudioFrame = slot->firstAudioFrame;
     out.halSampleTime = static_cast<int64_t>(anchor.sampleFrame) + (after ? frames : -frames);
     out.offsetFrames = static_cast<int64_t>(slot->firstAudioFrame) - out.halSampleTime;
+    const int64_t measuredFrames = anchor.hostNanosPerSampleQ8 == 0 ? frames :
+        static_cast<int64_t>(static_cast<__uint128_t>(hostNanos) * 256 / anchor.hostNanosPerSampleQ8);
+    out.measuredOffsetFrames = static_cast<int64_t>(slot->firstAudioFrame) -
+        (static_cast<int64_t>(anchor.sampleFrame) + (after ? measuredFrames : -measuredFrames));
+    out.anchorDeltaNs = after ? static_cast<int64_t>(hostNanos) : -static_cast<int64_t>(hostNanos);
+    out.pairDeltaTicks = busDelta;
+    out.txHost = txHost;
+    out.pairHost = pair.hostTimeMid;
+    out.pairSpanNs = pair.readAfterHost >= pair.readBeforeHost
+        ? ASFW::Timing::hostTicksToNanos(pair.readAfterHost - pair.readBeforeHost) : 0;
+    out.pairLagNs = pair.hostTimeMid >= pair.readAfterHost && pair.readAfterHost != 0
+        ? ASFW::Timing::hostTicksToNanos(pair.hostTimeMid - pair.readAfterHost) : 0;
+    out.anchorHost = anchor.hostTicks;
+    out.anchorFrame = anchor.sampleFrame;
+    out.anchorGeneration = anchor.generation;
+    out.anchorEpoch = anchor.timelineEpoch;
+    out.wireEpoch = control->hardwareTimeline.Epoch();
+    out.completionCycle = stamp;
+    out.pairCycle = pair.cycleTimer32;
+    out.slopeQ8 = anchor.hostNanosPerSampleQ8;
     return true;
 }
 
@@ -1106,6 +1194,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     if (!txControl || numSlots == 0) {
         return;
     }
+    ASFW::Audio::DriverKit::DrainTxStartupDiagnostics(*ivars);
 
     const uint64_t requested =
         txControl->refillRequestGeneration.load(
@@ -1360,7 +1449,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         // hardware-owned ring depth, so emit on every new committed-margin low,
         // on every wake beyond the 1.5 ms early-warning threshold, and on a
         // coarse heartbeat. The actual geometry budget is encoded in
-        // kTxPreparationSlackPackets. See documentation/ZTS_AND_SYT.md §13.
+        // kTxPreparationSlackPackets.
         const uint32_t minCommittedMargin =
             directControl->txMinimumCommittedMarginPackets.load(
                 std::memory_order_relaxed);
@@ -1494,7 +1583,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             directControl->txHeartbeatLastHostTicks.store(
                 now, std::memory_order_relaxed);
             // Kept under the driver ring's 232-byte message. Fill health and
-            // the CoreAudio budget first (TX_OWNERSHIP.md, experiment E1):
+            // the CoreAudio budget first:
             // sOutMinPk = smallest S_out headroom this interval, in packets
             //   ahead of the finality frontier (-1: nothing was filled);
             // sInMinFr = smallest S_in headroom, capture frames already
@@ -1595,8 +1684,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     txControl->MarkRefillHandled(requested);
 
     // [TxPlace]: where a transmitted frame sits against the HAL clock
-    // (milestone 6, documentation/TX_OWNERSHIP.md). The first measurement of
-    // each stream only (T8); the start-to-start difference is what matters.
+    // (milestone 6). The first measurement of
+    // each stream only; the start-to-start difference is what matters.
     if (!ivars->runtime.txPlacementLogged) {
         ASFW::Audio::DriverKit::TxPlacementSample placement{};
         if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {

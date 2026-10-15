@@ -38,10 +38,6 @@ struct StateTransition {
 // transition a caller requests. Duplicate requests for the current state are
 // idempotent. Illegal requests are rejected without changing state.
 //
-// See documentation:
-//   - ASFWDriver/Service/Lifecycle/RUNTIME_LIFECYCLE_CONTRACT.md
-//   - documentation/TOKEN_BASED_LIFECYCLE.md
-//
 class ControllerStateMachine {
 public:
     ControllerStateMachine();

@@ -113,16 +113,53 @@ TEST(MotuProfileTests, ResolvesKnownMotuSwVersionsToNames) {
 
 } // namespace
 
-TEST(MotuProfileTests, FireWireScopeKeepsV1BehindValidationAndUsbModelsRecognized) {
+TEST(MotuProfileTests, FireWireOnlyModelsAreEnabledAndUsbModelsRemainRecognized) {
     for (uint32_t version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
-        const bool enabled = version > 2 || ASFW::Encoding::Motu::kV1HardwareBatch;
-        EXPECT_EQ(plan->support, enabled ? SupportDisposition::Supported : SupportDisposition::RecognizedUnsupported);
-        EXPECT_EQ(plan->profileBuilder == ProfileBuilderId::None, !enabled);
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_NE(plan->profileBuilder, ProfileBuilderId::None);
     }
     for (uint32_t version : {48U,51U,53U,55U,57U,69U}) {
         const auto plan = AudioDeviceCatalog::Resolve(MakeMotuEvidence(version)); ASSERT_TRUE(plan);
         EXPECT_EQ(plan->support,SupportDisposition::RecognizedUnsupported);
         EXPECT_EQ(plan->profileBuilder,ProfileBuilderId::None);
     }
+}
+
+// Linux motu.c:151-180 matches vendor, unit specifier and software version,
+// without a root Model_Id requirement. Test every catalog identity, not only mk3.
+TEST(MotuProfileTests, AllKnownFireWireIdentitiesMatchWithoutRootModelId) {
+    for (uint32_t version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U,
+                             48U,51U,53U,55U,57U,69U,0x21U,0x22U,0x23U,0x24U}) {
+        SCOPED_TRACE(version);
+        for (const auto rootModel : {std::optional<uint32_t>{},
+                                     std::optional<uint32_t>{0U},
+                                     std::optional<uint32_t>{0xabcdefU}}) {
+            auto evidence = MakeMotuEvidence(version);
+            evidence.rootModelId = rootModel;
+            const auto plan = AudioDeviceCatalog::Resolve(evidence);
+            ASSERT_TRUE(plan);
+            EXPECT_EQ(plan->family, AudioFamilyProviderId::MotuRegister);
+            EXPECT_NE(plan->modelName, "Unknown");
+            evidence.units[0].specifierId = 0x123456U;
+            EXPECT_FALSE(AudioDeviceCatalog::Resolve(evidence));
+            evidence.units[0].specifierId = kMotuVendorId;
+            evidence.rootVendorId = 0x123456U;
+            EXPECT_FALSE(AudioDeviceCatalog::Resolve(evidence));
+        }
+    }
+}
+
+TEST(MotuProfileTests, V4hdSubdevicesAreRecognizedWithoutInventingAudioSupport) {
+    for (uint32_t version : {0x21U,0x22U,0x23U,0x24U}) {
+        SCOPED_TRACE(version);
+        auto evidence = MakeMotuEvidence(version);
+        evidence.rootModelId.reset();
+        const auto plan = AudioDeviceCatalog::Resolve(evidence);
+        ASSERT_TRUE(plan);
+        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
+        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+        EXPECT_EQ(plan->protocolImplementation, ASFW::DeviceProfiles::Audio::ProtocolImplementationId::None);
+    }
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(MakeMotuEvidence(0xffffffU)));
 }

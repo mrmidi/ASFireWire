@@ -1019,6 +1019,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
             // 100 ms sampling avoids MMIO/logging on each watchdog or IRQ tick.
             if (++ctx.irqProbeTicks >= 100 && ctx.deps.hardware && ctx.deps.interrupts) {
                 ctx.irqProbeTicks = 0;
+                bool retriggerFromWatchdog = false;
                 auto access = ctx.deps.hardware->TryBeginAccess();
                 if (access) {
                     using namespace ASFW::Driver;
@@ -1030,6 +1031,12 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
                     const auto pending = events & mask & relevant;
                     const auto entries = ctx.irqEntries.load(std::memory_order_acquire);
                     const auto exits = ctx.irqExits.load(std::memory_order_acquire);
+                    if (ctx.irqRetriggerPending && entries != ctx.irqRetriggerEntries) {
+                        ctx.irqRetriggerPending = false;
+                        ASFW_LOG_ERROR(Controller,
+                            "[IrqStall] retrigger restored delivery: entries %llu -> %llu",
+                            ctx.irqRetriggerEntries, entries);
+                    }
                     if (events != UINT32_MAX && pending && entries == ctx.irqProbeLastEntries) {
                         ++ctx.irqPendingSamples;
                         if (ctx.irqPendingSamples >= 5 && ctx.irqProbeReports < 3) {
@@ -1042,12 +1049,59 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsRspTrContextControlSet)),
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsReqRcvContextControlSet)),
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsRspRcvContextControlSet)));
+                            if (ctx.irqProbeReports == 1) {
+                                // Everything else that decides whether an IRQ can be
+                                // delivered, once per stall. An ISR that is never
+                                // entered looks the same whether the controller, the
+                                // PCI MSI state or the dispatch source stopped it.
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] hc=0x%08x isoTx ev=0x%08x mask=0x%08x isoRx ev=0x%08x mask=0x%08x source=%u",
+                                    access.Read(Register32::kHCControlSet),
+                                    access.Read(Register32::kIsoXmitIntEventSet),
+                                    access.Read(Register32::kIsoXmitIntMaskSet),
+                                    access.Read(Register32::kIsoRecvIntEventSet),
+                                    access.Read(Register32::kIsoRecvIntMaskSet),
+                                    ctx.deps.interrupts->SourceEnabled() ? 1U : 0U);
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] cmdPtr atReq=0x%08x atRsp=0x%08x arReq=0x%08x arRsp=0x%08x",
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsReqTrCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsRspTrCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsReqRcvCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsRspRcvCommandPtr)));
+                                const auto pciState = ctx.deps.hardware->ReadPciInterruptState();
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] pci valid=%u command=0x%04x status=0x%04x msi=%u ctl=0x%04x maskBits=0x%08x msix=%u ctl=0x%04x",
+                                    pciState.valid ? 1U : 0U, pciState.command, pciState.status,
+                                    pciState.msiPresent ? 1U : 0U, pciState.msiControl,
+                                    pciState.msiMaskBits, pciState.msixPresent ? 1U : 0U,
+                                    pciState.msixControl);
+                                // The ISR retriggers itself when an event will not
+                                // deassert, but only from inside the ISR. When it is
+                                // never entered, toggle master enable from here once:
+                                // a pending enabled event then raises a new edge.
+                                // (After this access scope is released: the retrigger
+                                // takes its own, and the gate's lock is not recursive.)
+                                ctx.irqRetriggerPending = true;
+                                ctx.irqRetriggerEntries = entries;
+                                retriggerFromWatchdog = true;
+                            } else if (ctx.irqRetriggerPending) {
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] retrigger did not restore delivery; entries still %llu",
+                                    entries);
+                            }
                         }
                     } else {
                         ctx.irqPendingSamples = 0;
                         ctx.irqProbeReports = 0;
                     }
                     ctx.irqProbeLastEntries = entries;
+                }
+                access = {};
+                if (retriggerFromWatchdog) {
+                    ctx.deps.interrupts->RetriggerPendingInterrupt(ctx.deps.hardware.get());
+                    ASFW_LOG_ERROR(Controller,
+                        "[IrqStall] master-enable retriggered from the watchdog; entries=%llu",
+                        ctx.irqRetriggerEntries);
                 }
             }
             ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),

@@ -176,7 +176,7 @@ inline uint32_t ChannelToRegisterAddress(uint8_t channel) {
 /**
  * IRM allocation operation status.
  *
- * Design Philosophy (from IRM_FINAL_THOUGHTS.md §6):
+ * Design Philosophy:
  * - Small and explicit status codes
  * - No hidden meanings
  * - Generation mismatches expressed via status, not new types

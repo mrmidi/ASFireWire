@@ -127,4 +127,16 @@ DiceFormations(uint32_t mask, const DiceRateFormats& formats, bool exposeCapture
     return result;
 }
 
+// One observed rate is evidence for that rate only, even when the capability
+// register describes just the current mode (#190).
+[[nodiscard]] inline std::optional<Runtime::RateFormation>
+DiceObservedRateFormation(const AudioStreamRuntimeCaps& caps, bool exposeCapture = true) {
+    const auto formats = SelectPublishedFormats(false, {}, caps);
+    const auto rate = std::ranges::find(kDiceRateTable, caps.sampleRateHz, &DiceRateMapEntry::hz);
+    if (rate == std::end(kDiceRateTable)) return std::nullopt;
+    auto formations = DiceFormations(rate->capsBit, formats, exposeCapture);
+    if (formations.size() != 1) return std::nullopt;
+    return std::move(formations.front());
+}
+
 } // namespace ASFW::Audio::DICE

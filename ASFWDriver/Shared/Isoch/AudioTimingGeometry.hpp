@@ -22,12 +22,12 @@ namespace ASFW::IsochTransport {
 // 5.5125 at 44.1k).
 //
 // TX OWNERSHIP: PCM reaches packets through the audio-side fill, from the
-// HAL output ring, once (documentation/TX_OWNERSHIP.md). There is no
-// frame-exposure frontier and no W/E cushion any more (T4, T8).
+// HAL output ring, once. There is no
+// frame-exposure frontier and no W/E cushion any more.
 //
 // Rate-DEPENDENT geometry (frames-per-packet, safety floor, declarations,
-// transfer delay) is resolved per rate by Audio/Runtime/ResolvedTimingGeometry.hpp
-// (documentation/TIMING_GEOMETRY_OWNERSHIP.md), not here.
+// transfer delay) is resolved per rate by Audio/Runtime/ResolvedTimingGeometry.hpp,
+// not here.
 // -----------------------------------------------------------------------------
 struct AudioTimingGeometry final {
     static constexpr uint32_t kSampleRateHz = 48000;
@@ -75,7 +75,7 @@ struct AudioTimingGeometry final {
 
     static constexpr uint32_t kRxDescriptorPackets = 504;
 
-    // Packet-domain TX ownership (T5, documentation/TX_OWNERSHIP.md):
+    // Packet-domain TX ownership:
     //
     // - Hardware ring: the finite IT queue maps this many packets ahead of
     //   the newest completion. A refill later than the ring exhausts it and
@@ -114,7 +114,7 @@ struct AudioTimingGeometry final {
         kTxHardwareRingPackets;
     static constexpr uint32_t kTxCoverageLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
-    // TX fill finality guard (documentation/TX_OWNERSHIP.md, T4 and E2):
+    // TX fill finality guard:
     // packets ahead of the projected hardware position that the fill still
     // treats as taken. 2 is what Saffire.kext writes ahead of the playhead;
     // with T5's descriptor-status completion the projection is exact at each
@@ -246,8 +246,7 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
 // in-tree references. These are NOT requirements and NOT directly adopted --
 // they are the closest analogues (names may differ) from stacks that are
 // wire-correct against real hardware. Use them to sanity-check ours, never to
-// override measured behavior. Full prose: documentation/ZTS_AND_SYT.md
-// §9 (Linux/libffado) and §10 (Apple).
+// override measured behavior.
 //
 // Shared by all three AND us: 8000 cycles/s, 3072 ticks/cycle, 24'576'000
 // ticks/s; blocking SYT interval (frames per DATA packet) = 8 @48k / 16 @96k /

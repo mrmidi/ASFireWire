@@ -54,14 +54,17 @@ void InterruptManager::Enable() {
     ASFW_LOG(Controller, "InterruptManager::Enable called: source=%p", source_.get());
     if (source_) {
         source_->SetEnableWithCompletion(true, nullptr);
+        sourceEnabled_.store(true, std::memory_order_release);
     } else {
         ASFW_LOG(Controller, "⚠️  InterruptManager::Enable: NO SOURCE!");
     }
 }
 
 void InterruptManager::Disable() {
+    ASFW_LOG(Controller, "InterruptManager::Disable called: source=%p", source_.get());
     if (source_) {
         source_->SetEnableWithCompletion(false, nullptr);
+        sourceEnabled_.store(false, std::memory_order_release);
     }
     // The manager (and its shadow mask) now survives suspend, but the silicon's
     // IntMask does not — a stale shadow would make UnmaskInterrupts skip the
@@ -77,6 +80,7 @@ void InterruptManager::Teardown() {
     }
 
     source_->SetEnableWithCompletion(false, nullptr);
+    sourceEnabled_.store(false, std::memory_order_release);
 
     // The kernel-side source performs IOService::unregisterInterrupt in its
     // free(), i.e. whenever the last reference drops. Hand the final references

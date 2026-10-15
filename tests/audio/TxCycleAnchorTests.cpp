@@ -8,6 +8,7 @@
 // stream emitted nothing but cadence NO-DATA and never consulted the PCM cache.
 
 #include "Audio/Shared/TxCycleAnchor.hpp"
+#include "Audio/Runtime/TxStartupTrace.hpp"
 
 #include <gtest/gtest.h>
 
@@ -323,4 +324,122 @@ TEST(TxCycleAnchorTests, ExpansionUnwrapsThe128SecondCorrelationWrap) {
     EXPECT_GT(after.correlation, before.correlation);
     EXPECT_EQ(after.correlation - before.correlation,
               static_cast<uint64_t>(kTicksPerCycle));
+}
+
+TEST(TxStartupTraceTests, CaptureBudgetIsBoundedAndIncludesAdjacentPairsAndFinalPacket) {
+    uint32_t count = 0;
+    for (uint64_t i = 0; i < 70000; ++i) {
+        count += ASFW::Isoch::CaptureTxDiagnosticPacket(i);
+    }
+    EXPECT_LE(count, ASFW::Isoch::kTxDiagnosticCapacity);
+    EXPECT_TRUE(ASFW::Isoch::CaptureTxDiagnosticPacket(514));
+    EXPECT_TRUE(ASFW::Isoch::CaptureTxDiagnosticPacket(515));
+    EXPECT_TRUE(ASFW::Isoch::CaptureTxDiagnosticPacket(61439));
+    EXPECT_FALSE(ASFW::Isoch::CaptureTxDiagnosticPacket(61440));
+}
+
+TEST(TxStartupTraceTests, DecodeSeparatesPcmFromMidiAndUnwrapsSytAtCycleBoundary) {
+    ASFW::Isoch::IsochTxDiagnosticPacket raw{};
+    raw.metadataMatches = raw.descriptorMatches = true;
+    raw.payloadLength = raw.prefixLength = 16;
+    raw.immediateHeader[1] = 16U << 16;
+    raw.cycleTimestamp = 15U << 12;
+    const uint8_t bytes[] = {0, 2, 0, 254, 0x90, 2, 0x00, 0x20,
+                            0x40, 0xff, 0xff, 0xfd, 0x80, 0x7f, 0xff, 0xff};
+    std::copy(std::begin(bytes), std::end(bytes), raw.prefix);
+    const auto packet = ASFW::Audio::Runtime::DecodeTxStartupPacket(raw);
+    EXPECT_TRUE(packet.valid);
+    EXPECT_EQ(packet.blocks, 1U);
+    EXPECT_EQ(packet.peakQ24, 3U);
+    EXPECT_EQ(packet.firstEventWords[0], 0x40fffffdU);
+    EXPECT_EQ(packet.firstEventWords[1], 0x807fffffU);
+    EXPECT_EQ(packet.sytLeadTicks, 3072 + 32);
+    raw.descriptorMatches = false;
+    EXPECT_FALSE(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).valid);
+}
+
+TEST(TxStartupTraceTests, DetectsDbcBreakOnlyAcrossAdjacentCapturedPackets) {
+    ASFW::Audio::Runtime::TxStartupTrace trace{};
+    ASFW::Isoch::IsochTxDiagnosticPacket raw{};
+    raw.metadataMatches = raw.descriptorMatches = true;
+    ASFW::Audio::Runtime::TxStartupPacket packet{};
+    packet.valid = true;
+    packet.blocks = 8;
+    packet.dbc = 248;
+    raw.packetIndex = 0;
+    trace.Observe(raw, packet);
+    raw.packetIndex = 1;
+    packet.dbc = 0;
+    trace.Observe(raw, packet); // valid DBC wrap
+    EXPECT_EQ(trace.dbcDiscontinuities, 0U);
+    raw.packetIndex = 257;
+    packet.dbc = 90;
+    trace.Observe(raw, packet); // not an adjacent pair
+    raw.packetIndex = 258;
+    packet.dbc = 99;
+    trace.Observe(raw, packet);
+    EXPECT_EQ(trace.dbcDiscontinuities, 1U);
+}
+
+TEST(TxStartupTraceTests, ClientEvidenceKeepsFirstWriteOfEachJoinAndNeverOverwrites) {
+    ASFW::Audio::Runtime::TxStartupClientTrace trace{};
+    trace.ArmJoin();
+    trace.Publish({.sampleFrame = 12288, .filledBefore = 0, .frames = 512});
+    trace.Publish({.sampleFrame = 12800, .frames = 512});
+    EXPECT_EQ(trace.count.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(trace.samples[0].sampleFrame, 12288U);
+    trace.ArmJoin();
+    trace.Publish({.sampleFrame = 24576, .frames = 512});
+    EXPECT_EQ(trace.count.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(trace.samples[1].join, 2U);
+    EXPECT_EQ(trace.samples[0].sampleFrame, 12288U);
+    for (uint32_t i = 0; i < trace.kCapacity + 1; ++i) {
+        trace.ArmJoin();
+        trace.Publish({.sampleFrame = i});
+    }
+    EXPECT_EQ(trace.count.load(), trace.kCapacity);
+    EXPECT_EQ(trace.samples[0].sampleFrame, 12288U);
+}
+
+TEST(TxStartupTraceTests, RejectsIsochHeaderLengthThatDisagreesWithCompletedPayload) {
+    ASFW::Isoch::IsochTxDiagnosticPacket raw{};
+    raw.metadataMatches = raw.descriptorMatches = true;
+    raw.prefixLength = raw.payloadLength = 8;
+    raw.prefix[1] = 9;
+    raw.prefix[4] = 0x90;
+    raw.prefix[5] = 0xff;
+    raw.prefix[6] = raw.prefix[7] = 0xff;
+    raw.immediateHeader[1] = 8U << 16;
+    EXPECT_TRUE(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).valid);
+    raw.immediateHeader[1] = 296U << 16;
+    EXPECT_FALSE(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).valid);
+}
+
+TEST(TxStartupTraceTests, RawPcmIsCountedWithoutAm824LabelAndMidiIsExcluded) {
+    ASFW::Isoch::IsochTxDiagnosticPacket raw{};
+    raw.metadataMatches = raw.descriptorMatches = true;
+    raw.payloadLength = raw.prefixLength = 20;
+    raw.immediateHeader[1] = 20U << 16;
+    const uint8_t bytes[] = {0, 3, 0, 0, 0x90, 2, 0xff, 0xff,
+                            0, 0, 0, 5, 0xff, 0xff, 0xff, 0xf9,
+                            0x80, 0x7f, 0xff, 0xff};
+    std::copy(std::begin(bytes), std::end(bytes), raw.prefix);
+    EXPECT_EQ(ASFW::Audio::Runtime::DecodeTxStartupPacket(raw).peakQ24, 0U);
+    const auto decoded = ASFW::Audio::Runtime::DecodeTxStartupPacket(raw, true, 2);
+    ASSERT_TRUE(decoded.valid);
+    EXPECT_EQ(decoded.peakQ24, 7U);
+    EXPECT_EQ(decoded.firstEventWords[0], 5U);
+    EXPECT_EQ(decoded.firstEventWords[1], 0xfffffff9U);
+}
+
+TEST(TxStartupTraceTests, FillEvidenceNeverOverwritesWhenItsBudgetIsExhausted) {
+    ASFW::Audio::Runtime::TxStartupFillTrace trace{};
+    trace.Publish({.packet = 257, .frame = 100, .encodedWords = {5, 7}});
+    trace.Publish({.packet = 257, .frame = 101, .encodedWords = {9, 10}});
+    EXPECT_EQ(trace.count.load(), 1U);
+    EXPECT_EQ(trace.samples[0].encodedWords[0], 5U);
+    for (uint32_t i = 1; i <= ASFW::Isoch::kTxDiagnosticCapacity; ++i)
+        trace.Publish({.packet = 257 + i});
+    EXPECT_EQ(trace.count.load(), ASFW::Isoch::kTxDiagnosticCapacity);
+    EXPECT_EQ(trace.samples[0].frame, 100U);
 }

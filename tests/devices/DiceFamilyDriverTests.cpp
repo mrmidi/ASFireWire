@@ -9,6 +9,7 @@
 // timer up front, because the driver waits synchronously.
 
 #include "DICEDuplexTestSupport.hpp"
+#include "Audio/Protocols/DICE/Core/DiceClockChangeObserver.hpp"
 
 namespace {
 
@@ -254,29 +255,34 @@ TEST(DiceFamilyDriverTests, ProtocolRegisterIOCompareSwap64UsesLockAndDecodesBig
 TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     DuplexRig rig;
 
-    // The reference trace always rewrites CLOCK_SELECT during prepare. ASFW
-    // intentionally deviates in two HW-validated ways (see
-    // DiceFamilyDriver):
-    //  1. The CLOCK_SELECT write is skipped when the pre-claim global read
-    //     already reports the target clock (0x020C here) — rewriting it
-    //     re-triggers a PLL relock mid-bring-up and fights an idle rate change.
-    //  2. DoAwaitStreamingClockLock adds one extra global-state read between
-    //     clock-confirm and stream discovery so streams are never enabled on a
-    //     still-relocking clock.
-    // Net: the Write op is replaced by a second 380-byte global read, and that
-    // read consumes one extra scripted response reporting locked-at-target.
-    //  3. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
+    // The reference trace rewrites CLOCK_SELECT during prepare, and so does
+    // ASFW: TCAT RestartStreaming and Linux select_clock both write it on every
+    // start, and skipping it left a Saffire Pro 24 DSP capturing digital zero
+    // (hardware, 2026-10-11). ASFW also disables GLOBAL_ENABLE before
+    // clock selection to reset firmware startup state (Linux first reserve).
+    // The captured reference window lacks that command. Other differences:
+    //  1. DoAwaitStreamingClockLock adds one extra global-state read after the
+    //     clock is confirmed, so streams are never enabled on a still-relocking
+    //     clock. That read consumes one extra scripted response, locked at target.
+    //  2. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
     //     kext discards. The bring-up starts with the section table instead,
-    //     as TCAT RestartStreaming does (AUDIO_SESSION_REDESIGN.md S3).
+    //     as TCAT RestartStreaming does.
     const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
     const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
     std::vector<ExpectedRequest> requests(refRequests.begin() + 1, refRequests.end());
-    ASSERT_GT(requests.size(), 6U);
-    ASSERT_EQ(requests[5].kind, OpKind::Write); // CLOCK_SELECT in the reference
-    requests[5] = requests[6];                  // becomes the await-lock global read
+    ASSERT_GT(requests.size(), 7U);
+    ASSERT_EQ(requests[5].kind, OpKind::Write); // CLOCK_SELECT, as in the reference
+    requests.insert(requests.begin() + 7, requests[6]); // the await-lock global read
+    // Responses line up with reads only (a write has none): [5] answers the
+    // global read after the write; the await-lock read gets the same answer.
     std::vector<ResponseStep> responses(refResponses.begin() + 1, refResponses.end());
     ASSERT_GT(responses.size(), 5U);
     responses.insert(responses.begin() + 6, responses[5]); // second locked global read
+
+    constexpr std::array<uint8_t, 4> disabledPayload{};
+    requests.insert(requests.begin() + 5, ExpectedRequest{
+        OpKind::Write, 0xFFFFU, 0xE0000078U, 4U, FwSpeed::S400, 0U,
+        {disabledPayload.data(), disabledPayload.size()}});
 
     rig.bus.SetScript(requests, responses);
 
@@ -659,9 +665,8 @@ TEST(DiceFamilyDriverTests,
 }
 
 TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
-    // With the active clock check, even when the mailbox notification is delayed,
-    // the driver reads global state immediately after the clock-select write and
-    // short-circuits because the device is already locked at 48 kHz.
+    // Missing acceptance is tolerated only after the full notification deadline
+    // and a final GLOBAL confirmation, rather than trusting pre-write status.
     DuplexRig rig;
     rig.bus.SetClockSelectWriteHandler([&rig] {
         (void)rig.timer.ScheduleAfter(3'250'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
@@ -677,12 +682,11 @@ TEST(DiceFamilyDriverTests, LateClockAcceptedNotifyDoesNotTriggerRollback) {
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
     EXPECT_TRUE(rig.controller.IsPrepared());
-    EXPECT_LT(rig.timer.NowNs(), 3'250'000'000ULL) << "completed without waiting for the late notification";
+    EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
 }
 
 TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockAccepted) {
-    // When the mailbox notification never arrives but the device is already locked
-    // at 48 kHz, the active clock check after the write short-circuits immediately.
+    // A latched GLOBAL notification recovers a lost mailbox write at the deadline.
     DuplexRig rig;
     rig.bus.SetClockSelectWriteHandler([&rig]() { rig.bus.LatchClockAccepted(); });
 
@@ -696,89 +700,539 @@ TEST(DiceFamilyDriverTests, GlobalStateConfirmationRecoversIfMailboxMissesClockA
     ASSERT_TRUE(startStatus.has_value());
     EXPECT_EQ(*startStatus, kIOReturnSuccess);
     EXPECT_TRUE(rig.controller.IsPrepared());
+    EXPECT_EQ(rig.timer.NowNs(), 150'000'000ULL);
+}
+
+// Reproduce power-up timing independently of status-read count: the initial
+// target status is stale until the firmware reacts to our same-value write.
+TEST(DiceFamilyDriverTests, SameValueClockWriteWaitsForDelayedReconfigurationAndRelock) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted |
+                NotifyBits::kRxConfigChange | NotifyBits::kTxConfigChange | NotifyBits::kLockChange);
+        });
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ConfigChangeBeforeClockAcceptedIsRetainedUntilRelock) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        // Config changes can be separate writes, including inside CLOCK_SELECT.
+        rig.bus.Device().RaiseNotification(NotifyBits::kRxConfigChange);
+        (void)rig.timer.ScheduleAfter(40'000'000ULL, [&rig] {
+            rig.bus.Device().RaiseNotification(NotifyBits::kTxConfigChange);
+        });
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(); // STATUS still holds its pre-write value.
+        });
+        (void)rig.timer.ScheduleAfter(100'000'000ULL, [&rig] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        });
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ChangedClockSelectAlsoWaitsForAcceptanceDespiteTargetStatus) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect,
+        (ClockRateIndex::k44100 << ClockSelectBits::kRateShift) |
+            static_cast<uint32_t>(ClockSource::Internal));
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        (void)rig.timer.ScheduleAfter(90'000'000ULL, [&rig] { rig.bus.PublishClockAccepted(); });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 90'000'000ULL);
+}
+
+TEST(DiceFamilyDriverTests, LockChangeDuringGlobalReadCannotConfirmItsOlderLockedStatus) {
+    DuplexRig rig;
+    rig.bus.Device().SetGlobalQuad(GlobalOffset::kClockSelect, kClockSelect48kInternal);
+    unsigned globalReads = 0;
+    rig.bus.SetGlobalReadCompletedHandler([&rig, &globalReads] {
+        if (++globalReads == 3) {
+            // The device sampled locked STATUS before dropping lock; its
+            // LOCK_CHG write overtakes the pending GLOBAL response.
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kLockChange);
+        }
+        if (globalReads == 4) {
+            // A new read must follow the poll boundary, not premature success
+            // and entry into the separate streaming readiness check.
+            EXPECT_GE(rig.timer.NowNs(), 10'000'000ULL);
+        }
+    });
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.PublishClockAccepted(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+        (void)rig.timer.ScheduleAfter(290'000'000ULL, [&rig] {
+            rig.bus.PublishClockAccepted(NotifyBits::kLockChange);
+        });
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 290'000'000ULL);
+    EXPECT_EQ(rig.notifications.Consume(), 0U);
+}
+
+TEST(DiceFamilyDriverTests, ReconfigurationWaitStopsIoOnTeardownOrRouteInvalidation) {
+    for (const bool teardown : {false, true}) {
+        SCOPED_TRACE(teardown);
+        DuplexRig rig;
+        size_t operationsAtAbort = 0;
+        rig.bus.SetClockSelectWriteHandler([&rig, &operationsAtAbort, teardown] {
+            rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift,
+                                       48000U);
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+            (void)rig.timer.ScheduleAfter(100'000'000ULL, [&rig, &operationsAtAbort, teardown] {
+                if (teardown) {
+                    rig.cancel.store(true, std::memory_order_release);
+                } else {
+                    rig.routeState.registry.InvalidateLiveMappingsForBusReset();
+                }
+                operationsAtAbort = rig.bus.Operations().size();
+            });
+        });
+        const auto result = rig.driver.Prepare(
+            {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+            {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error(), teardown ? kIOReturnAborted : kIOReturnOffline);
+        EXPECT_EQ(rig.timer.NowNs(), 100'000'000ULL);
+        EXPECT_EQ(rig.bus.Operations().size(), operationsAtAbort);
+        EXPECT_FALSE(rig.driver.IsPrepared());
+        EXPECT_EQ(rig.bus.Enable(), 0U);
+    }
+}
+
+TEST(DiceFamilyDriverTests, MissingLockNotificationUsesBoundedReferenceWait) {
+    DuplexRig rig;
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.PublishClockAccepted(NotifyBits::kClockAccepted | NotifyBits::kRxConfigChange);
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(rig.timer.NowNs(), 1'000'000'000ULL);
+}
+
+TEST(DiceFamilyDriverTests, ReconfigurationThatNeverRelocksDoesNotPrepareOrEnableStreams) {
+    DuplexRig rig;
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.SetGlobalClockState(ClockRateIndex::k48000 << StatusBits::kNominalRateShift, 48000U);
+        rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted |
+            NotifyBits::kRxConfigChange | NotifyBits::kLockChange);
+    });
+    const auto result = rig.driver.Prepare({.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), kIOReturnTimeout);
+    EXPECT_FALSE(rig.driver.IsPrepared());
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.timer.NowNs(), 3'000'000'000ULL);
 }
 
 TEST(DiceFamilyDriverTests, ProgramTxWritesResolvedLinkSpeedToDiceTxSpeedRegister) {
-    // 1. Verify S200 operational link speed (e.g. Midas Venice F24 on Mac):
-    // In DICE architecture, TX is from device perspective (device -> Mac capture).
-    // The device transmitter must be programmed to transmit at S200 (value 1),
-    // never hardcoded/forced to S400 (value 2).
-    {
+    // Device TX is host capture. Preserve both slower operational links (Midas
+    // S200) and S800 links (StudioLive), including the speed write during stop.
+    for (const auto speed : {FwSpeed::S100, FwSpeed::S200, FwSpeed::S400, FwSpeed::S800}) {
+        SCOPED_TRACE(static_cast<uint32_t>(speed));
         DuplexRig rig;
-        // NodeId 0x02 is the remote DICE device (as configured in RouteState).
-        rig.bus.SetSpeed(NodeId{0x02}, FwSpeed::S200);
-
+        rig.bus.SetSpeed(NodeId{0x02}, speed);
         const AudioDuplexChannels channels{
             .deviceToHostIsoChannel = 1,
             .hostToDeviceIsoChannel = 0,
         };
+        const auto prepared = rig.driver.Prepare(
+            channels, {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+        ASSERT_TRUE(prepared.has_value());
+        ASSERT_TRUE(rig.driver.ProgramRx().has_value());
 
-        std::optional<IOReturn> startStatus;
-        rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
-        ASSERT_TRUE(startStatus.has_value());
-        ASSERT_EQ(*startStatus, kIOReturnSuccess);
-
-        std::optional<IOReturn> rxStatus;
-        rig.controller.ProgramRxForDuplex48k([&rxStatus](IOReturn status) { rxStatus = status; });
-        ASSERT_TRUE(rxStatus.has_value());
-        ASSERT_EQ(*rxStatus, kIOReturnSuccess);
-
-        rig.bus.ClearOperations();
-        std::optional<IOReturn> txEnableStatus;
-        rig.controller.ProgramTxAndEnableDuplex48k([&txEnableStatus](IOReturn status) { txEnableStatus = status; });
-        ASSERT_TRUE(txEnableStatus.has_value());
-        EXPECT_EQ(*txEnableStatus, kIOReturnSuccess);
-
-        // Find the write to TxOffset::kSpeed (0xE00001B8U)
-        const auto& ops = rig.bus.Operations();
-        auto it = std::find_if(ops.begin(), ops.end(), [](const RecordedOp& op) {
-            return op.kind == OpKind::Write && op.addressLo == 0xE00001B8U;
-        });
-        ASSERT_NE(it, ops.end()) << "Expected write to TX speed register 0xE00001B8U";
-        ASSERT_EQ(it->payload.size(), 4U);
-        const uint32_t writtenSpeed = ::ASFW::FW::ReadBE32(it->payload.data());
-        EXPECT_EQ(writtenSpeed, 1U) << "Expected TX speed 1 (S200), but found " << writtenSpeed;
-        EXPECT_EQ(rig.bus.TxSpeed(), 1U);
-        EXPECT_EQ(it->speed, FwSpeed::S200);
-    }
-
-    // 2. Verify S400 operational link speed:
-    {
-        DuplexRig rig;
-        rig.bus.SetSpeed(NodeId{0x02}, FwSpeed::S400);
-
-        const AudioDuplexChannels channels{
-            .deviceToHostIsoChannel = 1,
-            .hostToDeviceIsoChannel = 0,
+        const auto expectTxSpeedWrite = [&] {
+            const auto& ops = rig.bus.Operations();
+            const auto it = std::ranges::find_if(ops, [](const RecordedOp& op) {
+                return op.kind == OpKind::Write && op.addressLo == 0xE00001B8U;
+            });
+            ASSERT_NE(it, ops.end()) << "Expected write to the device TX speed register";
+            ASSERT_EQ(it->payload.size(), 4U);
+            EXPECT_EQ(::ASFW::FW::ReadBE32(it->payload.data()), static_cast<uint32_t>(speed));
+            EXPECT_EQ(rig.bus.TxSpeed(), static_cast<uint32_t>(speed));
+            EXPECT_EQ(it->speed, speed);
         };
 
-        std::optional<IOReturn> startStatus;
-        rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
-        ASSERT_TRUE(startStatus.has_value());
-        ASSERT_EQ(*startStatus, kIOReturnSuccess);
-
-        std::optional<IOReturn> rxStatus;
-        rig.controller.ProgramRxForDuplex48k([&rxStatus](IOReturn status) { rxStatus = status; });
-        ASSERT_TRUE(rxStatus.has_value());
-        ASSERT_EQ(*rxStatus, kIOReturnSuccess);
+        rig.bus.ClearOperations();
+        ASSERT_TRUE(rig.driver.ProgramTxAndEnable().has_value());
+        expectTxSpeedWrite();
+        ASSERT_TRUE(rig.driver.Confirm().has_value());
 
         rig.bus.ClearOperations();
-        std::optional<IOReturn> txEnableStatus;
-        rig.controller.ProgramTxAndEnableDuplex48k([&txEnableStatus](IOReturn status) { txEnableStatus = status; });
-        ASSERT_TRUE(txEnableStatus.has_value());
-        EXPECT_EQ(*txEnableStatus, kIOReturnSuccess);
-
-        const auto& ops = rig.bus.Operations();
-        auto it = std::find_if(ops.begin(), ops.end(), [](const RecordedOp& op) {
-            return op.kind == OpKind::Write && op.addressLo == 0xE00001B8U;
-        });
-        ASSERT_NE(it, ops.end()) << "Expected write to TX speed register 0xE00001B8U";
-        ASSERT_EQ(it->payload.size(), 4U);
-        const uint32_t writtenSpeed = ::ASFW::FW::ReadBE32(it->payload.data());
-        EXPECT_EQ(writtenSpeed, 2U) << "Expected TX speed 2 (S400), but found " << writtenSpeed;
-        EXPECT_EQ(rig.bus.TxSpeed(), 2U);
-        EXPECT_EQ(it->speed, FwSpeed::S400);
+        ASSERT_EQ(rig.driver.Stop(), kIOReturnSuccess);
+        expectTxSpeedWrite();
+        EXPECT_EQ(rig.bus.Enable(), 0U);
     }
 }
 
+// --- Observer around a CLOCK_SELECT write ------------------------------------
+
+struct RecordingClockObserver final : ::ASFW::Audio::DICE::DiceClockChangeObserver {
+    int before{0};
+    int after{0};
+    uint32_t rateHz{0};
+    bool rateChanged{false};
+    void BeforeClockSelectWrite(DiceDeviceIo&) noexcept override { ++before; }
+    void AfterClockChange(DiceDeviceIo&, uint32_t rate, bool changed) noexcept override {
+        ++after;
+        rateHz = rate;
+        rateChanged = changed;
+    }
+};
+
+DiceClockConfiguration Clock(uint32_t hz) {
+    uint32_t selection = 0;
+    EXPECT_TRUE(::ASFW::Audio::DICE::DiceClockSelectForRate(hz, ClockSource::Internal, selection));
+    return {.sampleRateHz = hz, .clockSelect = selection};
+}
+
+TEST(DiceFamilyDriverTests, IdleClockChangeCallsTheObserverAroundTheWrite) {
+    RecordingClockObserver observer;
+    DuplexRig rig(DICEBringupPolicy{.clockChangeObserver = &observer});
+    const auto applied = rig.driver.ApplyClock(Clock(44100));
+    ASSERT_TRUE(applied);
+    EXPECT_EQ(applied->appliedClock.sampleRateHz, 44100U);
+    EXPECT_EQ(observer.before, 1);
+    EXPECT_EQ(observer.after, 1);
+    EXPECT_EQ(observer.rateHz, 44100U);
+    EXPECT_TRUE(observer.rateChanged);
+}
+
+TEST(DiceFamilyDriverTests, SkippedRedundantIdleClockWriteDoesNotCallTheObserver) {
+    RecordingClockObserver observer;
+    DuplexRig rig(DICEBringupPolicy{.clockChangeObserver = &observer});
+    // Requested and reached after the first apply: the second one skips the write.
+    ASSERT_TRUE(rig.driver.ApplyClock(Clock(48000)));
+    observer = {};
+    ASSERT_TRUE(rig.driver.ApplyClock(Clock(48000)));
+    EXPECT_EQ(observer.before, 0);
+    EXPECT_EQ(observer.after, 0);
+}
+
+} // namespace
+
+TEST(DiceFamilyDriverTests, FreshPrepareDisablesBeforeClockEvenWhenEnableIsZero) {
+    DuplexRig rig;
+    ASSERT_EQ(rig.bus.Enable(), 0U);
+    const auto prepared = rig.driver.Prepare(
+        {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_TRUE(prepared.has_value());
+    const auto& ops = rig.bus.Operations();
+    const auto disable = std::ranges::find_if(ops, [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000078U &&
+               op.payload.size() == 4 && ASFW::FW::ReadBE32(op.payload.data()) == 0;
+    });
+    const auto clock = std::ranges::find_if(ops, [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+    });
+    ASSERT_NE(disable, ops.end());
+    ASSERT_NE(clock, ops.end());
+    EXPECT_LT(disable, clock);
+}
+
+TEST(DiceFamilyDriverTests, FailedPrepareDisableNeverWritesClock) {
+    DuplexRig rig;
+    rig.bus.FailNext(OpKind::Write, 0xE0000078U, AsyncStatus::kTimeout);
+    const auto prepared = rig.driver.Prepare(
+        {.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0},
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, false);
+    ASSERT_FALSE(prepared.has_value());
+    EXPECT_EQ(prepared.error(), kIOReturnTimeout);
+    EXPECT_FALSE(std::ranges::any_of(rig.bus.Operations(), [](const auto& op) {
+        return op.kind == OpKind::Write && op.addressLo == 0xE0000074U;
+    }));
+}
+
+namespace {
+using ASFW::Audio::DICE::Diagnostics::DiceLockWatch;
+using ASFW::Audio::DICE::Diagnostics::DiceLockPhase;
+using ASFW::Audio::DICE::ExtStatusBits::kArx1Locked;
+using ASFW::Audio::DICE::ExtStatusBits::kArx1Slip;
+
+struct LockWatchRig {
+    ASFW::Testing::RecordingFireWireBus bus;
+    RouteState route;
+    ProtocolRegisterIO io{bus, bus, route.registry, route.route};
+    ASFW::Testing::FakeTimerScheduler timer;
+    DiceLockWatch watch;
+    uint32_t status{0x201};
+    uint32_t ext{0};
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    LockWatchRig() {
+        caps.hostToDeviceStreamCount = 2;
+        caps.hostToDeviceStreams[0].isoChannel = 3;
+        caps.hostToDeviceStreams[1].isoChannel = 7;
+        bus.SetReadResponder([this](FWAddress address, uint32_t length)
+            -> std::optional<std::vector<uint8_t>> {
+            EXPECT_EQ(length, 4U);
+            std::vector<uint8_t> bytes(4);
+            const bool extended = address.addressLo == 0xE0000080U;
+            ASFW::FW::WriteBE32(bytes.data(), extended ? ext : status);
+            if (extended) ext &= 0xFFFFU; // a quadlet read clears slip history
+            return bytes;
+        });
+    }
+    void Start() { watch.Start(io, &timer, MakeGeneralSections(), caps); }
+    void Advance(uint32_t ms) { timer.Advance(uint64_t{ms} * 1'000'000); }
+};
+
+TEST(DiceLockWatchTests, SparseSamplesKeepFirstLockPerAssignedReceiverAndSlipHistory) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().samples, 1U);
+    rig.ext = kArx1Locked | kArx1Slip;
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 1000U);
+    rig.ext = kArx1Locked | (kArx1Locked << 1);
+    rig.Advance(4000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.samples, 4U);
+    EXPECT_EQ(result.expectedMask, 3U);
+    EXPECT_EQ(result.observedMask, 3U);
+    EXPECT_EQ(result.receivers[1].firstLockMs, 2000U);
+    EXPECT_EQ(result.slipHistory, kArx1Slip);
+    EXPECT_EQ(result.extStatus & kArx1Slip, 0U);
+    EXPECT_EQ(rig.bus.Operations().size(), 8U);
+    rig.Advance(10000);
+    EXPECT_EQ(rig.bus.Operations().size(), 8U);
+}
+
+TEST(DiceLockWatchTests, NeverLockedIsRetainedWithTheActualFiveSecondWindow) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(5000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.observedMask, 0U);
+    EXPECT_EQ(result.receivers[0].firstLockMs, 0xFFFFFFFFU);
+    EXPECT_EQ(result.elapsedMs, 5000U);
+    EXPECT_EQ(result.samples, 4U);
+}
+
+TEST(DiceLockWatchTests, NotificationProbeUsesSameAccumulatorAndCannotEnterANewStart) {
+    LockWatchRig rig;
+    rig.Start();
+    auto oldProbe = rig.watch.Observer();
+    rig.Advance(120);
+    oldProbe(kIOReturnSuccess, rig.status, kArx1Locked | kArx1Slip);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 120U);
+    rig.Advance(30);
+    oldProbe(kIOReturnSuccess, rig.status, 0);
+    EXPECT_EQ(rig.watch.Copy().lostMask, 1U);
+    rig.Start();
+    oldProbe(kIOReturnSuccess, rig.status, kArx1Locked);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 0U);
+}
+
+TEST(DiceLockWatchTests, StopCancelsAllTimersAndIgnoresLateHealth) {
+    LockWatchRig rig;
+    rig.Start();
+    auto probe = rig.watch.Observer();
+    rig.Advance(500);
+    rig.watch.Cancel();
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+    probe(kIOReturnSuccess, rig.status, kArx1Locked);
+    rig.Advance(10000);
+    EXPECT_EQ(rig.bus.Operations().size(), 2U);
+    EXPECT_EQ(rig.watch.Copy().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 0U);
+}
+
+TEST(DiceLockWatchTests, ResetRouteNeverReadsTheOldNode) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.route.registry.InvalidateLiveMappingsForBusReset();
+    rig.Advance(500);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.watch.Copy().phase, DiceLockPhase::Reset);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, TeardownClosurePreventsAnyLaterStart) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.watch.Close();
+    rig.Start();
+    rig.Advance(10000);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, DroppedCompletionStillProducesABoundedVerdict) {
+    LockWatchRig rig;
+    rig.bus.DropNext(OpKind::Read, 0xE0000080U);
+    rig.Start();
+    rig.Advance(7000);
+    const auto result = rig.watch.Copy();
+    EXPECT_EQ(result.phase, DiceLockPhase::Complete);
+    EXPECT_EQ(result.samples, 0U);
+    EXPECT_EQ(result.readErrors, 1U);
+    EXPECT_EQ(result.lastError, static_cast<uint32_t>(kIOReturnTimeout));
+    EXPECT_EQ(rig.bus.Operations().size(), 2U); // pending sample coalesces timers
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, FailedReadIsVisibleAndLaterSamplesCanRecover) {
+    LockWatchRig rig;
+    rig.bus.FailNext(OpKind::Read, 0xE0000080U, AsyncStatus::kTimeout);
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+    rig.ext = kArx1Locked;
+    rig.Advance(4500);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 1U);
+    EXPECT_EQ(rig.watch.Copy().receivers[0].firstLockMs, 1000U);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+}
+
+TEST(DiceLockWatchTests, UnassignedReceiversAreNotExpected) {
+    LockWatchRig rig;
+    rig.caps.hostToDeviceStreams[0].isoChannel = 0xFF;
+    rig.Start();
+    rig.Advance(5000);
+    EXPECT_EQ(rig.watch.Copy().expectedMask, 2U);
+}
+} // namespace
+
+namespace {
+TEST(DiceLockWatchTests, StatusFailureCannotDiscardSlipBitsClearedBySuccessfulExtRead) {
+    LockWatchRig rig;
+    rig.ext = kArx1Locked | kArx1Slip;
+    rig.bus.FailNext(OpKind::Read, 0xE000007CU, AsyncStatus::kTimeout);
+    rig.Start();
+    rig.Advance(500);
+    EXPECT_EQ(rig.watch.Copy().readErrors, 1U);
+    EXPECT_EQ(rig.watch.Copy().slipHistory, kArx1Slip);
+    EXPECT_EQ(rig.watch.Copy().observedMask, 1U);
+    EXPECT_EQ(rig.ext & kArx1Slip, 0U);
+}
+
+TEST(DiceLockWatchTests, FinishedWatchHasNoPendingTimers) {
+    LockWatchRig rig;
+    rig.Start();
+    rig.Advance(5000);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+} // namespace
+
+namespace {
+TEST(DiceFamilyDriverTests, ConfirmStartsReceiverWatchAndStopCancelsItBeforeDisarming) {
+    DuplexRig rig;
+    const AudioDuplexChannels channels{.deviceToHostIsoChannel = 1, .hostToDeviceIsoChannel = 0};
+    ASSERT_TRUE(rig.driver.Prepare(channels,
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal}, true));
+    ASSERT_TRUE(rig.driver.ProgramRx());
+    ASSERT_TRUE(rig.driver.ProgramTxAndEnable());
+    ASSERT_TRUE(rig.driver.Confirm());
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().phase, DiceLockPhase::Watching);
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().expectedMask, 1U);
+    rig.timer.Advance(500'000'000);
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().samples, 1U);
+    ASSERT_EQ(rig.driver.Stop(), kIOReturnSuccess);
+    rig.bus.ClearOperations();
+    rig.timer.Advance(10'000'000'000);
+    EXPECT_TRUE(rig.bus.Operations().empty());
+    EXPECT_EQ(rig.driver.ReceiverLockSnapshot().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
+} // namespace
+
+namespace {
+class DeferredLockBus final : public ASFW::Testing::RecordingFireWireBus {
+public:
+    struct Reply {
+        ASFW::Async::InterfaceCompletionCallback completion;
+        AsyncStatus status;
+        std::vector<uint8_t> bytes;
+    };
+    std::vector<Reply> replies;
+    unsigned cancellations{0};
+    AsyncHandle ReadBlock(Generation generation, NodeId node, FWAddress address,
+                          uint32_t length, FwSpeed speed,
+                          ASFW::Async::InterfaceCompletionCallback completion) override {
+        return ASFW::Testing::RecordingFireWireBus::ReadBlock(generation, node, address, length, speed,
+            [this, completion = std::move(completion)](AsyncStatus status, std::span<const uint8_t> data) {
+                replies.push_back({completion, status, {data.begin(), data.end()}});
+            });
+    }
+    bool Cancel(AsyncHandle) override { ++cancellations; return true; }
+    void DeliverLate() {
+        auto pending = std::move(replies);
+        for (auto& reply : pending) reply.completion(reply.status, reply.bytes);
+    }
+};
+
+TEST(DiceLockWatchTests, LateBusCompletionsAfterStopCannotMutateTheVerdict) {
+    DeferredLockBus bus;
+    RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Testing::FakeTimerScheduler timer;
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    caps.hostToDeviceStreamCount = 1;
+    caps.hostToDeviceStreams[0].isoChannel = 3;
+    DiceLockWatch watch;
+    watch.Start(io, &timer, MakeGeneralSections(), caps);
+    timer.Advance(500'000'000);
+    ASSERT_EQ(bus.replies.size(), 2U);
+    watch.Cancel();
+    const auto stopped = watch.Copy();
+    EXPECT_EQ(bus.cancellations, 2U);
+    bus.DeliverLate();
+    EXPECT_EQ(watch.Copy().phase, DiceLockPhase::Stopped);
+    EXPECT_EQ(watch.Copy().samples, stopped.samples);
+    EXPECT_EQ(watch.Copy().readErrors, stopped.readErrors);
+    EXPECT_EQ(timer.PendingCount(), 0U);
+}
+
+TEST(DiceLockWatchTests, DestructionBeforeBusCompletionHasNoCallbackIntoTheOwner) {
+    DeferredLockBus bus;
+    RouteState route;
+    ProtocolRegisterIO io(bus, bus, route.registry, route.route);
+    ASFW::Testing::FakeTimerScheduler timer;
+    {
+        DiceLockWatch watch;
+        watch.Start(io, &timer, MakeGeneralSections(), {});
+        timer.Advance(500'000'000);
+    }
+    EXPECT_EQ(bus.cancellations, 2U);
+    bus.DeliverLate();
+    timer.Advance(10'000'000'000);
+    EXPECT_EQ(bus.Operations().size(), 2U);
+    EXPECT_EQ(timer.PendingCount(), 0U);
+}
 } // namespace

@@ -12,7 +12,7 @@
 namespace ASFW::Discovery {
 
 // Central authority for link speed and max payload policy.
-// Provides speed fallback sequencing (S400→S200→S100) and per-node adaptation
+// Provides speed fallback sequencing (S800→S400→S200→S100) and per-node adaptation
 // based on observed transaction outcomes.
 //
 // Implements Async::ILinkSpeedSource so that what discovery learns here reaches
@@ -53,7 +53,8 @@ public:
 
 private:
     struct NodeSpeedState {
-        FwSpeed currentSpeed{FwSpeed::S400};
+        // An unobserved policy seed must not clamp the first successful probe.
+        std::optional<FwSpeed> currentSpeed;
         uint8_t timeoutCount{0};
         uint8_t successCount{0};
     };

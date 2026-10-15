@@ -5,8 +5,7 @@
 //
 // The BeBoB, Apogee and MOTU families still run their stages as chains of
 // asynchronous bus, CMP and AV/C operations. Their FamilyDriver steps start the
-// chain and wait here for its callback (AUDIO_SESSION_REDESIGN.md stage S5,
-// structural). The session calls them off the Default queue, where the
+// chain and wait here for its callback. The session calls them off the Default queue, where the
 // callbacks are delivered.
 
 #pragma once

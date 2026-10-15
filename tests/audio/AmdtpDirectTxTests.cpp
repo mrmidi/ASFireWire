@@ -761,7 +761,7 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[15], 0x01);
 }
 
-// T3 (documentation/TX_OWNERSHIP.md): a planned DATA packet is armed with valid
+// A planned DATA packet is armed with valid
 // AM824 silence -- 0x40000000 in every PCM slot, as Linux amdtp-am824.c:209-220
 // writes when it has no PCM -- so a packet whose PCM never arrives is still
 // valid on the wire. Filling it later changes only the PCM sample words.

@@ -21,6 +21,7 @@ public:
     explicit FakeDiceWaitClock(FakeTimerScheduler& timer) noexcept : timer_(timer) {}
 
     void SleepMs(uint32_t ms) noexcept override {
+        ++sleeps_;
         timer_.Advance(uint64_t{ms} * 1'000'000ULL);
     }
 
@@ -38,10 +39,16 @@ public:
     }
 
     [[nodiscard]] uint64_t Backoffs() const noexcept { return backoffs_; }
+    [[nodiscard]] uint64_t Sleeps() const noexcept { return sleeps_; }
+
+    [[nodiscard]] ::ASFW::Scheduling::ITimerScheduler* Scheduler() noexcept override {
+        return &timer_;
+    }
 
 private:
     FakeTimerScheduler& timer_;
     uint64_t backoffs_{0};
+    uint64_t sleeps_{0};
 };
 
 } // namespace ASFW::Testing

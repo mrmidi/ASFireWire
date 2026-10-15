@@ -11,7 +11,7 @@
 // This is an ASFW-specific workaround not present in Linux bebob_terratec.c
 // (which only reads clock selectors 8/9; never programs the mixer) or FFADO
 // terratec_device.cpp (clock source selection only). Cross-validated against
-// hardware: TERRATEC_TOPOLOGY_RESEARCH.md (2026-07-16).
+// hardware (2026-07-16).
 //
 // FB map (FFADO support/mixer-qt4/ffado/mixer/phase88control.py:42-64, ui labels
 // in phase88.ui; confirmed on hardware 2026-09-27):

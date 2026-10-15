@@ -254,14 +254,40 @@ public:
         device_.SetNotificationRegister(bits);
     }
 
+    // Serve DICE addresses the simulated device does not model (the TCAT
+    // extension space). A reader returning nothing falls back to zeros.
+    using ExtensionReader =
+        std::function<std::optional<std::vector<uint8_t>>(uint32_t addressLo, uint32_t length)>;
+    using ExtensionWriter = std::function<void(uint32_t addressLo, std::span<const uint8_t> data)>;
+    void SetExtensionResponder(ExtensionReader reader, ExtensionWriter writer) {
+        extensionReader_ = std::move(reader);
+        extensionWriter_ = std::move(writer);
+    }
+
     [[nodiscard]] SimulatedDiceDevice& Device() noexcept { return device_; }
     [[nodiscard]] const SimulatedDiceDevice& Device() const noexcept { return device_; }
+
+    // Deliver a notification after GLOBAL has been sampled, before the read
+    // completes, to model an in-flight response racing a clock transition.
+    void SetGlobalReadCompletedHandler(std::function<void()> handler) {
+        globalReadCompletedHandler_ = std::move(handler);
+    }
 
 protected:
     std::vector<uint8_t> ReadPayload(Async::FWAddress address, uint32_t length) override {
         if (address.addressHi == kDiceBaseAddressHi) {
             if (auto bytes = device_.Read(address.addressLo, length)) {
+                if (globalReadCompletedHandler_ &&
+                    address.addressLo == kDiceBaseAddressLo + device_.GlobalBase() &&
+                    length == device_.Image().globalSection.sizeQuadlets * 4) {
+                    globalReadCompletedHandler_();
+                }
                 return *bytes;
+            }
+            if (extensionReader_) {
+                if (auto bytes = extensionReader_(address.addressLo, length)) {
+                    return *bytes;
+                }
             }
         }
         return std::vector<uint8_t>(length, 0);
@@ -269,7 +295,9 @@ protected:
 
     void WritePayload(Async::FWAddress address, std::span<const uint8_t> data) override {
         if (address.addressHi == kDiceBaseAddressHi) {
-            (void)device_.Write(address.addressLo, data);
+            if (!device_.Write(address.addressLo, data) && extensionWriter_) {
+                extensionWriter_(address.addressLo, data);
+            }
         }
         if (clockSelectWriteHandler_ && IsClockSelect(address)) {
             clockSelectWriteHandler_();
@@ -297,6 +325,9 @@ private:
     SimulatedDiceDevice device_;
     DiceClockResponse defaultClockResponse_;
     std::function<void()> clockSelectWriteHandler_;
+    std::function<void()> globalReadCompletedHandler_;
+    ExtensionReader extensionReader_;
+    ExtensionWriter extensionWriter_;
 };
 
 using RecordingFireWireBus = DiceRecordingFireWireBus;

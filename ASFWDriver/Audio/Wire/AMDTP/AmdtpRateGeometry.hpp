@@ -7,7 +7,9 @@ namespace ASFW::Encoding {
 
 /// Maximum AM824 slots per isochronous data block (CIP DBS).
 /// Wire-level container size: PCM audio + MIDI + control slots combined.
-inline constexpr uint32_t kMaxAmdtpDbs = 32;
+/// 64, as Linux AM824_MAX_CHANNELS_FOR_PCM (amdtp-am824.h:18). A StudioLive
+/// 32.4.2 transmits 48 PCM and receives 34 in one stream each (issue #190).
+inline constexpr uint32_t kMaxAmdtpDbs = 64;
 
 /// Maximum host-facing PCM channel count the driver can handle.
 /// Must be <= kMaxAmdtpDbs since PCM channels occupy a subset of DBS slots.

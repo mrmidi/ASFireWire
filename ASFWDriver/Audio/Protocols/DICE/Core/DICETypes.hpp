@@ -486,7 +486,7 @@ namespace TxOffset {
     constexpr uint32_t kIsochronous  = 0x08;  // Isoch channel (-1 = disabled)
     constexpr uint32_t kNumberAudio  = 0x0C;  // Number of audio channels
     constexpr uint32_t kNumberMidi   = 0x10;  // Number of MIDI ports
-    constexpr uint32_t kSpeed        = 0x14;  // Transmission speed (0=S100..2=S400)
+    constexpr uint32_t kSpeed        = 0x14;  // Transmission speed code (0=S100, 1=S200, 2=S400, 3=S800)
     constexpr uint32_t kNames        = 0x18;  // Channel names (256 bytes)
 }
 
@@ -624,9 +624,19 @@ inline constexpr uint32_t kDiceRateCapsMask = 0x7F;
 // packets before their selected receive-clock path can report that lock; those
 // products retain the target-rate check but treat source lock as post-start
 // telemetry instead of an admission gate.
+class DiceClockChangeObserver;
+
 struct DICEBringupPolicy final {
     bool requireSourceLockBeforeStreamEnable{true};
     bool requireSourceLockAtConfirm{true};
+
+    // Device-specific steps around a CLOCK_SELECT write. Not owned; must
+    // outlive the driver. nullptr = none.
+    DiceClockChangeObserver* clockChangeObserver{nullptr};
+
+    // The firmware-loader TEST_ACTION PEEK has been verified on this device's
+    // firmware, so receiver registers may be read (Diagnostics::DiceReceiverDump).
+    bool verifiedLoaderPeek{false};
 };
 
 struct DiceClockConfiguration {

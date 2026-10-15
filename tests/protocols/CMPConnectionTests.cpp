@@ -285,6 +285,21 @@ TEST(CMPConnectionTests, UnappliedTimeoutRetriesWithinBound) {
     EXPECT_EQ(bus.pcrByNode_[2], 0x81050000U);
 }
 
+TEST(CMPConnectionTests, BusyCompareSwapRetriesWithinBound) {
+    // A final ack_busy: the plug never took the lock, so nothing was applied.
+    CMPBus bus;
+    bus.faults.push_back({AsyncStatus::kBusyRetryExhausted, false});
+    CMPClient cmp(bus, bus, bus.routes);
+    int callbacks = 0;
+    cmp.ConnectIPCR(Device(bus.routes, 0xA, 2), 0, 5, [&](CMPStatus status) {
+        ++callbacks;
+        EXPECT_EQ(status, CMPStatus::Success);
+    });
+    EXPECT_EQ(callbacks, 1);
+    EXPECT_EQ(bus.lockCount, 2U);
+    EXPECT_EQ(bus.pcrByNode_[2], 0x81050000U);
+}
+
 TEST(CMPConnectionTests, PersistentTimeoutIsBoundedAndCleanupDoesNotInventConnection) {
     CMPBus bus;
     for (int i = 0; i < 3; ++i) bus.faults.push_back({AsyncStatus::kTimeout, false});

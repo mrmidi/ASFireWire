@@ -9,6 +9,7 @@
 #include "Audio/Wire/MOTU/MotuPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "Audio/Wire/AMDTP/PcmSlotCodec.hpp"
+#include "MotuChannelMappingFixtures.hpp"
 
 #include <gtest/gtest.h>
 
@@ -363,4 +364,74 @@ TEST(MotuPayloadWriterTests, OriginalProtocolWritesImmediatelyAfterSphWithoutMes
     EXPECT_EQ(block[4],0x7f); EXPECT_EQ(block[5],0xff); EXPECT_EQ(block[6],0xff);
     EXPECT_EQ(block[7],0x80); EXPECT_EQ(block[8],0x00); EXPECT_EQ(block[9],0x01); // symmetric full-scale quantization
     EXPECT_EQ(block[10],0xee); EXPECT_EQ(block[11],0xee); // padding untouched
+}
+
+TEST(MotuPayloadWriterTests, EightPreWritesOpticalPcmAndZerosInteriorPadding) {
+    const auto* layout = ASFW::Encoding::Motu::PortLayoutFor(0xf,48000,14,false);
+    ASSERT_NE(layout,nullptr);
+    TimelineHarness harness{1,0,DataBlockQuadlets(14)};
+    MotuPayloadWriter writer{};
+    writer.Configure({.pcmChunks=14,.ports=layout->Map()});
+    writer.BindTimeline(&harness.timeline);
+    std::array<float,12> samples{};
+    for (uint32_t i=0;i<samples.size();++i) samples[i]=float(i+1)/32;
+    HostAudioBufferView view{};
+    view.interleavedFloat32=samples.data(); view.frameCount=1; view.frameCapacity=1; view.channels=12;
+    writer.WriteFloat32Interleaved(view,0);
+    const auto* block=harness.bytes.data()+8;
+    EXPECT_EQ(ReadChunk(block,4),0); EXPECT_EQ(ReadChunk(block,5),0);
+    EXPECT_EQ(ReadChunk(block,6),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(samples[4]))<<8));
+    EXPECT_EQ(ReadChunk(block,13),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(samples[11]))<<8));
+    EXPECT_EQ(block[0],0xee); EXPECT_EQ(block[4],0xee); // SPH/status preserved.
+}
+
+TEST(MotuPayloadWriterTests, UltraLiteMk3VendorOrderReachesSpdifAndPhones) {
+    const auto* layout=ASFW::Encoding::Motu::PortLayoutFor(0x19,48000,14,false);
+    TimelineHarness harness{1,0,DataBlockQuadlets(14)};
+    MotuPayloadWriter writer{};
+    writer.Configure({.pcmChunks=14,.ports=layout->Map()}); writer.BindTimeline(&harness.timeline);
+    std::array<float,14> samples{}; samples[10]=0.25f; samples[12]=0.5f;
+    HostAudioBufferView view{};
+    view.interleavedFloat32=samples.data(); view.frameCount=1;view.frameCapacity=1;view.channels=14;
+    writer.WriteFloat32Interleaved(view,0);
+    const auto* block=harness.bytes.data()+8;
+    EXPECT_EQ(ReadChunk(block,12),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(0.25f))<<8));
+    EXPECT_EQ(ReadChunk(block,10),static_cast<int32_t>(static_cast<uint32_t>(PcmSlotCodec::Float32ToSigned24(0.5f))<<8));
+}
+
+TEST(MotuPayloadWriterTests, EverySupportedModelEncodesTheNamedPhysicalChunksAndZeroesPadding) {
+    using namespace MotuChannelFixtures;
+    EachFormation(false,[&](const Model& model,uint32_t rate,uint32_t mode,uint32_t wire,uint32_t extra) {
+        SCOPED_TRACE(std::string(model.name)+" rate="+std::to_string(rate)+" wire="+std::to_string(wire));
+        const auto* layout = PortLayoutFor(model.unitVersion,rate,wire,false);
+        ASSERT_NE(layout,nullptr);
+        const auto offset = PcmByteOffset(model.unitVersion);
+        TimelineHarness h{1,0,DataBlockQuadlets(wire,MessageChunks(model.unitVersion,false))};
+        MotuPayloadWriter writer;
+        writer.Configure({.pcmChunks=wire,.ports=layout->Map(),.pcmByteOffset=offset});
+        writer.BindTimeline(&h.timeline);
+        std::vector<float> host(layout->hostChannels);
+        for (uint32_t i=0;i<host.size();++i) host[i]=float(i+1)/64;
+        HostAudioBufferView view{};
+        view.interleavedFloat32=host.data(); view.frameCount=1; view.frameCapacity=1;
+        view.channels=layout->hostChannels;
+        writer.WriteFloat32Interleaved(view,0);
+        const auto ports = MotuPortMap{layout->ports.data(),layout->hostChannels};
+        const auto* block = h.bytes.data()+kCipHeaderBytes;
+        for (const auto& group : groups) {
+            if (group.capture || group.version != model.unitVersion || group.firstChunk[mode] < 0) continue;
+            for (size_t i=0;i<group.names.size();++i) {
+                const auto found = std::ranges::find_if(ports,[&](const auto& p) { return p.name == group.names[i]; });
+                ASSERT_NE(found,ports.end()) << group.names[i];
+                const auto chunk = group.firstChunk[mode]+i+(group.followsOptical ? extra : 0);
+                const auto raw = ASFW::Encoding::Motu::ReadPcmSample(std::span<const uint8_t>(block+offset+chunk*3,3));
+                const auto expected = static_cast<int32_t>(static_cast<uint32_t>(
+                    PcmSlotCodec::Float32ToSigned24(host[found-ports.begin()]))<<8);
+                EXPECT_EQ(raw,expected) << group.names[i];
+            }
+        }
+        for (uint32_t i=layout->hostChannels;i<wire;++i)
+            EXPECT_EQ(ASFW::Encoding::Motu::ReadPcmSample(std::span<const uint8_t>(
+                block+offset+layout->ports[i].chunk*3,3)),0);
+    });
 }

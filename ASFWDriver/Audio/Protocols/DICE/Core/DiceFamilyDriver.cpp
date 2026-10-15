@@ -9,6 +9,7 @@
 // job and must show up as a declared golden-trace delta.
 
 #include "DiceFamilyDriver.hpp"
+#include "DiceClockChangeObserver.hpp"
 #include "../../../Runtime/RateValidation.hpp"
 
 #include "../../../../Common/WireFormat.hpp"
@@ -25,6 +26,9 @@ namespace {
 // (dice-stream.c:12, 60-98); TCAT waits about 150 ms (MidasFW RestartStreaming
 // 0xdb62). ASFW keeps 150 ms. Source-lock policy is a separate decision.
 constexpr uint32_t kClockAcceptedTimeoutMs = 150;
+// After a reconfiguration (RX/TX_CFG_CHG with CLOCK_ACCEPTED), TCAT's
+// RestartStreaming waits up to 1 s for LOCK_CHG and STATUS locked (MidasFW 0xdb62).
+constexpr uint32_t kReconfigureRelockTimeoutMs = 1000;
 constexpr uint32_t kStreamingClockLockTimeoutMs = 2000;
 constexpr uint32_t kPollIntervalMs = 10;
 constexpr uint32_t kReadyTimeoutMs = 200;
@@ -106,8 +110,10 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
 DiceFamilyDriver::DiceFamilyDriver(DiceDeviceIo& io,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
                                    DiceNotificationMailbox& notifications,
-                                   DICEBringupPolicy bringupPolicy) noexcept
-    : io_(io), busInfo_(busInfo), notifications_(notifications), bringupPolicy_(bringupPolicy) {}
+                                   DICEBringupPolicy bringupPolicy,
+                                   Scheduling::ITimerScheduler* scheduler) noexcept
+    : receiverDump_(bringupPolicy.verifiedLoaderPeek),
+      scheduler_(scheduler ? scheduler : io.Clock().Scheduler()), io_(io), busInfo_(busInfo), notifications_(notifications), bringupPolicy_(bringupPolicy) {}
 
 // ---------------------------------------------------------------------------
 // Public stages
@@ -322,7 +328,13 @@ std::expected<DuplexClockApplyResult, IOReturn> DiceFamilyDriver::ApplyClock(
     };
 }
 
+void DiceFamilyDriver::AdoptPreparedClock(const DiceClockConfiguration& /*clock*/) noexcept {
+    ownerGeneration_ = busInfo_.GetGeneration();
+}
+
 IOReturn DiceFamilyDriver::Stop() {
+    lockWatch_.Cancel();
+    receiverDump_.Cancel();
     if (!HasDeviceRestartState(session_)) {
         return kIOReturnSuccess;
     }
@@ -340,6 +352,7 @@ IOReturn DiceFamilyDriver::Stop() {
 // ---------------------------------------------------------------------------
 
 IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
+    clockSelectWritten_ = false;
     // Section layout first: every GLOBAL access below depends on it (TCAT
     // RestartStreaming reads the 0x28-byte table before GLOBAL).
     if (!EnsureRouteCurrent()) {
@@ -448,32 +461,65 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
         return Rollback(kIOReturnOffline);
     }
 
-    // Skip a redundant CLOCK_SELECT write when the device is already at the target
-    // clock (e.g. an idle ApplyClock already applied this rate). Rewriting it
-    // re-triggers the PLL relock during the bring-up, right as streams are being
-    // enabled, which wedges the device-side streams. The stable-lock gate below
-    // still waits for the lock to settle before enabling.
+    // A stream start always writes CLOCK_SELECT, even when the device already
+    // runs at the target. TCAT's kexts do (RestartStreaming, MidasFW 0xdb62:
+    // owner claim, then CLOCK_SELECT, then CLOCK_ACCEPTED), and so does Linux on
+    // every start with nothing streaming (dice-stream.c:279-294, select_clock):
+    // "just after owning the unit, the unit can return invalid stream formats.
+    // Selecting clock parameters have an effect for the unit to refine it."
+    // Skipping it here (since dfabe0d6, to avoid a relock during bring-up) left a
+    // Saffire Pro 24 DSP sending exact digital zero on every capture channel
+    // after a power-up at 48 kHz, three starts out of three; one same-value
+    // write restored all of them (hardware, 2026-10-11). The write makes the
+    // device reconfigure (RX/TX_CFG_CHG, ~200 ms unlocked); the stream-lock wait
+    // below covers that.
     //
-    // "At target" needs both halves. CLOCK_SELECT is the rate that was requested;
-    // STATUS and SAMPLE_RATE are the rate the device reached. They disagree after a
-    // rate change the device did not complete, and skipping then suppresses the one
-    // write that forces a relock (DICE_STABILITY_REGRESSION.md §3, hardware-validated
-    // on a Saffire Pro 24 DSP stuck at 44.1 kHz).
+    // An idle rate change to the rate the device already has still skips: the
+    // next start writes anyway. "At target" needs both halves there. CLOCK_SELECT
+    // is the rate that was requested; STATUS and SAMPLE_RATE are the rate the
+    // device reached, and they disagree after a change the device did not
+    // complete.
     const uint32_t targetHz = session_.desiredClock.sampleRateHz;
     const bool requestedAtTarget = preClaimClockSelect_ == diceClock_.clockSelect;
     const bool achievedAtTarget =
         NominalRateHz(preClaimStatus_) == targetHz && preClaimSampleRate_ == targetHz;
-    if (requestedAtTarget && achievedAtTarget) {
+    if (flowMode_ == FlowMode::kClockApply && requestedAtTarget && achievedAtTarget) {
         ASFW_LOG(DICE,
-                 "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
+                 "ApplyClock: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
                  diceClock_.clockSelect, targetHz);
         return ActiveClockCheck(channels, notifications_.Consume());
     }
-    if (requestedAtTarget) {
+    if (requestedAtTarget && achievedAtTarget) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: device already at target clockSelect=0x%08x rate=%u; writing it "
+                 "again so the device re-applies it",
+                 diceClock_.clockSelect, targetHz);
+    } else if (requestedAtTarget) {
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: clockSelect=0x%08x already requests %u Hz but device reports %u Hz "
                  "(status=0x%08x); rewriting",
                  diceClock_.clockSelect, targetHz, preClaimSampleRate_, preClaimStatus_);
+    }
+
+    if (bringupPolicy_.clockChangeObserver != nullptr) {
+        bringupPolicy_.clockChangeObserver->BeforeClockSelectWrite(io_);
+        if (!EnsureRouteCurrent()) {
+            return Rollback(kIOReturnOffline);
+        }
+    }
+
+    if (flowMode_ == FlowMode::kPrepareDuplex) {
+        // NEVER DELETE OR SKIP THIS WRITE, EVEN IF GLOBAL_ENABLE ALREADY READS 0.
+        // DDR_MSG_DISABLE clears the firmware started latch (Pro24DSP 0x31278).
+        // Reading zero does not perform that reset; skipping it can leave DSP
+        // mute set on a same-rate cold start. Linux dice-stream.c:256-294.
+        // Regression: FreshPrepareDisablesBeforeClockEvenWhenEnableIsZero.
+        if (const auto disabled = io_.WriteQuad(sections_.global.offset + GlobalOffset::kEnable, 0U);
+            !disabled) {
+            return Rollback(disabled.error());
+        }
+        ASFW_LOG(DICE, "[DiceStart] GLOBAL_ENABLE=0 before clock rate=%u gen=%u",
+                 targetHz, session_.generation.value);
     }
 
     notifications_.Reset();
@@ -482,6 +528,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
         !written) {
         return Rollback(written.error());
     }
+    clockSelectWritten_ = true;
 
     // The notification may have arrived during the write.
     const uint32_t earlyBits = notifications_.Consume();
@@ -491,8 +538,11 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
                  earlyBits);
         return ReadGlobalAfterClockAccepted(channels, earlyBits, kIOReturnNotReady);
     }
-    // Active check: read GLOBAL to short-circuit if the device is already locked.
-    return ActiveClockCheck(channels, earlyBits);
+    // STATUS can still describe the pre-write clock until firmware reacts.
+    // Wait after every write, even if the old status already matches the target.
+    // Cross-checked with Linux dice-stream.c:82-98 and TCAT's wait before stream
+    // allocation (tmp/dicere/dec_Midas/V___RestartStreaming.c:423-465).
+    return WaitClockAccepted(channels, earlyBits);
 }
 
 IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
@@ -506,7 +556,7 @@ IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
         ASFW_LOG(DICE,
                  "PrepareDuplex48k: active clock check read failed (0x%08x), falling back to mailbox poll",
                  state.error());
-        return WaitClockAccepted(channels);
+        return WaitClockAccepted(channels, accumulatedNotify);
     }
 
     // Include any mailbox bits that arrived during the read.
@@ -530,23 +580,29 @@ IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
              "PrepareDuplex48k: active check not yet locked "
              "(notify=0x%08x status=0x%08x rate=%u), entering mailbox poll",
              combinedNotify, state->status, state->sampleRate);
-    return WaitClockAccepted(channels);
+    return WaitClockAccepted(channels, combinedNotify);
 }
 
-IOReturn DiceFamilyDriver::WaitClockAccepted(const AudioDuplexChannels& channels) {
-    for (uint32_t attempt = 0;; ++attempt) {
+IOReturn DiceFamilyDriver::WaitClockAccepted(const AudioDuplexChannels& channels,
+                                            uint32_t observedNotify) {
+    const uint64_t startMs = io_.Clock().NowMs();
+    for (;;) {
+        if (TeardownRequested()) {
+            return Rollback(kIOReturnAborted);
+        }
         if (!EnsureRouteCurrent()) {
             return Rollback(kIOReturnOffline);
         }
 
-        const uint32_t mailboxBits = notifications_.Consume();
-        if ((mailboxBits & Notify::kClockAccepted) != 0) {
+        // Config and lock changes may precede CLOCK_ACCEPTED in separate writes.
+        observedNotify |= notifications_.Consume();
+        if ((observedNotify & Notify::kClockAccepted) != 0) {
             ASFW_LOG(DICE, "PrepareDuplex48k: observed async CLOCK_ACCEPTED bits=0x%08x",
-                     mailboxBits);
-            return ReadGlobalAfterClockAccepted(channels, mailboxBits, kIOReturnNotReady);
+                     observedNotify);
+            return ReadGlobalAfterClockAccepted(channels, observedNotify, kIOReturnNotReady);
         }
 
-        if (attempt * kPollIntervalMs >= kClockAcceptedTimeoutMs) {
+        if (io_.Clock().NowMs() - startMs >= kClockAcceptedTimeoutMs) {
             ASFW_LOG(DICE,
                      "PrepareDuplex48k: CLOCK_ACCEPTED wait reached %u ms; performing final confirmation",
                      kClockAcceptedTimeoutMs);
@@ -558,7 +614,7 @@ IOReturn DiceFamilyDriver::WaitClockAccepted(const AudioDuplexChannels& channels
                 ASFW_LOG(DICE, "PrepareDuplex48k: observed late async CLOCK_ACCEPTED bits=0x%08x",
                          lateMailboxBits);
             }
-            return ReadGlobalAfterClockAccepted(channels, mailboxBits | lateMailboxBits,
+            return ReadGlobalAfterClockAccepted(channels, observedNotify | lateMailboxBits,
                                                 kIOReturnTimeout);
         }
 
@@ -578,7 +634,7 @@ IOReturn DiceFamilyDriver::ReadGlobalAfterClockAccepted(const AudioDuplexChannel
         return Rollback(state.error());
     }
 
-    const uint32_t combinedNotify = observedNotify | state->notification;
+    const uint32_t combinedNotify = observedNotify | state->notification | notifications_.Consume();
     const bool clockAccepted = (combinedNotify & Notify::kClockAccepted) != 0;
     const bool sourceLockedAtTarget =
         IsSourceLocked(state->status) &&
@@ -602,7 +658,63 @@ IOReturn DiceFamilyDriver::ReadGlobalAfterClockAccepted(const AudioDuplexChannel
                  "PrepareDuplex48k: confirmed clock via global state after timeout, status=0x%08x sampleRate=%u",
                  state->status, state->sampleRate);
     }
+    if ((combinedNotify & (Notify::kRxConfigChange | Notify::kTxConfigChange)) != 0) {
+        const IOReturn relocked = AwaitReconfigurationRelock(combinedNotify);
+        if (relocked != kIOReturnSuccess) {
+            return relocked;
+        }
+    }
     return ClockConfirmed(channels);
+}
+
+IOReturn DiceFamilyDriver::AwaitReconfigurationRelock(uint32_t observedNotify) {
+    // The device announced RX/TX_CFG_CHG with the clock: it drops lock (LOCK_CHG)
+    // and comes back (LOCK_CHG again) some 200 ms later. Nothing may touch its
+    // streams before then. Cross-checked with TCAT's bounded LOCK_CHG/status
+    // wait (tmp/dicere/dec_Midas/V___RestartStreaming.c:474-525). Its timeout
+    // is advisory; AwaitStreamingClockLock still enforces rate/source readiness.
+    const uint32_t targetHz = session_.desiredClock.sampleRateHz;
+    bool lockChanged = (observedNotify & Notify::kLockChange) != 0;
+    const uint64_t startMs = io_.Clock().NowMs();
+    for (;;) {
+        if (TeardownRequested()) {
+            return Rollback(kIOReturnAborted);
+        }
+        if (!EnsureRouteCurrent()) {
+            return Rollback(kIOReturnOffline);
+        }
+        const uint32_t notify = notifications_.Consume();
+        lockChanged = lockChanged || (notify & Notify::kLockChange) != 0;
+        const auto state = io_.ReadGlobalStateFull(sections_);
+        if (!state) {
+            return Rollback(state.error());
+        }
+        const uint32_t lateNotify = notifications_.Consume();
+        lockChanged = lockChanged || ((state->notification | lateNotify) & Notify::kLockChange) != 0;
+        // A LOCK_CHG arriving during this transaction can overtake a response
+        // sampled before the transition. Confirm it with the next GLOBAL read;
+        // never pair that new event with this potentially stale locked STATUS.
+        // Observed on Pro 24 DSP cold start, 2026-10-11 (ring 526-532).
+        const bool lockChangedDuringRead = (lateNotify & Notify::kLockChange) != 0;
+        const bool lockedAtTarget = IsSourceLocked(state->status) &&
+                                    NominalRateHz(state->status) == targetHz &&
+                                    state->sampleRate == targetHz;
+        const uint64_t waitedMs = io_.Clock().NowMs() - startMs;
+        if (lockChanged && lockedAtTarget && !lockChangedDuringRead) {
+            ASFW_LOG(DICE, "PrepareDuplex48k: device reconfigured and relocked at %u Hz after %llu ms",
+                     targetHz, waitedMs);
+            return kIOReturnSuccess;
+        }
+        if (waitedMs >= kReconfigureRelockTimeoutMs) {
+            ASFW_LOG_ERROR(DICE,
+                           "PrepareDuplex48k: no relock within %u ms after the device reconfigured "
+                           "(lockChg=%u status=0x%08x rate=%u); continuing",
+                           kReconfigureRelockTimeoutMs, lockChanged ? 1U : 0U, state->status,
+                           state->sampleRate);
+            return kIOReturnSuccess;
+        }
+        io_.Clock().SleepMs(kPollIntervalMs);
+    }
 }
 
 IOReturn DiceFamilyDriver::ClockConfirmed(const AudioDuplexChannels& channels) {
@@ -611,41 +723,35 @@ IOReturn DiceFamilyDriver::ClockConfirmed(const AudioDuplexChannels& channels) {
         if (status != kIOReturnSuccess) {
             return status;
         }
+        if (!AfterClockWrite()) {
+            return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
+        }
         return CompleteClockApply();
     }
     return AwaitStreamingClockLock(channels);
 }
 
 IOReturn DiceFamilyDriver::AwaitIdleClockRate() {
-    // CLOCK_ACCEPTED means the device took CLOCK_SELECT, not that it runs at the
-    // new rate yet; the PLL relocks tens of ms later. Returning before then left
-    // the device at the old rate, so the next start saw requested != achieved
-    // and wrote CLOCK_SELECT a second time (hardware, 2026-09-25). Nothing
-    // streams, so only the rate matters, not source lock. The wait is advisory:
-    // a device that does not get there in time is logged, and the next start's
-    // requested-versus-achieved check still rewrites the clock.
+    // A completed stopped-IO change prepares the next StartIO. Acceptance is
+    // insufficient: confirm achieved rate and the profile's source-lock gate.
     for (uint32_t attempt = 0;; ++attempt) {
-        if (!EnsureRouteCurrent()) {
-            return Rollback(kIOReturnOffline);
-        }
+        if (TeardownRequested()) return Rollback(kIOReturnAborted);
+        if (!EnsureRouteCurrent()) return Rollback(kIOReturnOffline);
         const auto state = io_.ReadGlobalStateFull(sections_);
-        if (!state) {
-            return Rollback(state.error());
-        }
+        if (!state) return Rollback(state.error());
         const uint32_t targetHz = session_.desiredClock.sampleRateHz;
-        if (NominalRateHz(state->status) == targetHz && state->sampleRate == targetHz) {
+        if (NominalRateHz(state->status) == targetHz && state->sampleRate == targetHz &&
+            (!bringupPolicy_.requireSourceLockBeforeStreamEnable || IsSourceLocked(state->status))) {
             if (attempt > 0) {
-                ASFW_LOG(DICE, "ApplyClock: device reached %u Hz after %u ms", targetHz,
+                ASFW_LOG(DICE, "ApplyClock: prepared %u Hz after %u ms", targetHz,
                          attempt * kPollIntervalMs);
             }
             return kIOReturnSuccess;
         }
         if (attempt * kPollIntervalMs >= kIdleClockRateTimeoutMs) {
-            ASFW_LOG(DICE,
-                     "ApplyClock: device not at %u Hz within %u ms (status=0x%08x rate=%u); "
-                     "the next start rewrites the clock",
-                     targetHz, kIdleClockRateTimeoutMs, state->status, state->sampleRate);
-            return kIOReturnSuccess;
+            ASFW_LOG_ERROR(DICE, "ApplyClock: %u Hz not ready within %u ms (status=0x%08x rate=%u)",
+                           targetHz, kIdleClockRateTimeoutMs, state->status, state->sampleRate);
+            return Rollback(kIOReturnTimeout);
         }
         io_.Clock().SleepMs(kPollIntervalMs);
     }
@@ -681,6 +787,9 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
                          "PrepareDuplex48k: target rate ready at %u Hz after %u ms; sourceLock=%u; enabling streams",
                          state->sampleRate, attempt * kPollIntervalMs, sourceLocked ? 1U : 0U);
             }
+            if (!AfterClockWrite()) {
+                return Rollback(TeardownRequested() ? kIOReturnAborted : kIOReturnOffline);
+            }
             return DiscoverStreams();
         }
 
@@ -695,6 +804,21 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
 
         io_.Clock().SleepMs(kPollIntervalMs);
     }
+}
+
+bool DiceFamilyDriver::AfterClockWrite() {
+    if (!clockSelectWritten_) {
+        return true;
+    }
+    clockSelectWritten_ = false;
+    if (bringupPolicy_.clockChangeObserver == nullptr) {
+        return true;
+    }
+    const uint32_t rateHz = session_.desiredClock.sampleRateHz;
+    const bool rateChanged =
+        NominalRateHz(preClaimStatus_) != rateHz || preClaimSampleRate_ != rateHz;
+    bringupPolicy_.clockChangeObserver->AfterClockChange(io_, rateHz, rateChanged);
+    return !TeardownRequested() && EnsureRouteCurrent();
 }
 
 IOReturn DiceFamilyDriver::DiscoverStreams() {
@@ -741,6 +865,7 @@ IOReturn DiceFamilyDriver::FinishPrepare() {
             return Rollback(status);
         }
     }
+    AdoptPreparedClock(diceClock_);
     session_.devicePrepared = true;
     session_.deviceTxArmed = false;
     session_.deviceRunning = false;
@@ -759,6 +884,7 @@ IOReturn DiceFamilyDriver::CompleteClockApply() {
     // RefreshRuntimeCaps records the achieved rate. CLOCK_ACCEPTED alone
     // cannot replace that observation with the requested clock.
     // The owner stays ours: we hold it while the device is present.
+    AdoptPreparedClock(diceClock_);
     ClearRestartProgress(session_);
     flowMode_ = FlowMode::kNone;
     return kIOReturnSuccess;
@@ -870,6 +996,8 @@ IOReturn DiceFamilyDriver::ProgramTxStreamsAndEnable() {
         !enabled) {
         return Rollback(enabled.error());
     }
+    ASFW_LOG(DICE, "[DiceStart] GLOBAL_ENABLE=1 write completed rate=%u gen=%u",
+             session_.desiredClock.sampleRateHz, session_.generation.value);
     session_.deviceTxArmed = true;
     session_.phase = DuplexRestartPhase::kDeviceTxArmed;
     return kIOReturnSuccess;
@@ -905,6 +1033,10 @@ IOReturn DiceFamilyDriver::CompleteConfirm(uint32_t notification, uint32_t statu
     session_.appliedClock = session_.desiredClock;
     ASFW_LOG(DICE, "ConfirmDuplex48kStart: sourceLock=%u notify=0x%08x status=0x%08x (%{public}s) ext=0x%08x",
              IsSourceLocked(status) ? 1U : 0U, notification, status, ASFW::Logging::IOReturnName(status), extStatus);
+    // A receiver that never locks, or loses lock, gets one hardware dump where
+    // the firmware read path is verified (no-op elsewhere).
+    lockWatch_.Start(io_.RegisterIo(), scheduler_, sections_, runtimeCaps_,
+                     receiverDump_.VerdictTrigger(io_.RegisterIo(), scheduler_));
     return kIOReturnSuccess;
 }
 
@@ -1060,11 +1192,11 @@ uint64_t DiceFamilyDriver::OwnerValue() const noexcept {
 }
 
 uint32_t DiceFamilyDriver::ResolvedTxSpeed() const noexcept {
-    // Program TX transmission speed according to the resolved operational speed of the link
-    // between local controller and DICE device (e.g. S200 for Midas Venice F24), clamped to
-    // DICE hardware maximum (S400 == 2). Cross-validated with Linux ALSA dice-stream.c:329-363.
-    const FW::FwSpeed speed = busInfo_.GetSpeed(io_.RegisterIo().NodeId());
-    return std::min(static_cast<uint32_t>(speed), 2U);
+    // Device TX is host capture. Use the resolved operational link speed,
+    // including slower verified links and S800, without a family-wide cap.
+    // Cross-validated with Linux dice-stream.c:329, :359-369; its resource
+    // reservation uses the same device max_speed at :192-194.
+    return static_cast<uint32_t>(busInfo_.GetSpeed(io_.RegisterIo().NodeId()));
 }
 
 void DiceFamilyDriver::RecordStopTeardownAbort(const char* stage) const noexcept {

@@ -741,7 +741,7 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     EXPECT_EQ(completedROMs.size(), 0u);
 }
 
-TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFinalExhaustion) {
+TEST(ROMScannerCompletion, ManualRead_DefaultBibRetriesExhaustAtS100) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -778,14 +778,14 @@ TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFin
     const bool initiated = scanner.Start(request, onComplete);
     ASSERT_TRUE(initiated);
 
-    constexpr size_t kTimeoutsToExhaustS400S200S100 = 9;
-    for (size_t i = 0; i < kTimeoutsToExhaustS400S200S100; ++i) {
+    constexpr size_t kTimeoutsToExhaustBib = 3;
+    for (size_t i = 0; i < kTimeoutsToExhaustBib; ++i) {
         mockAsync.WaitForPendingReads(i + 1);
         mockAsync.SimulateReadTimeout(i);
-        if (i + 1 < kTimeoutsToExhaustS400S200S100) {
+        if (i + 1 < kTimeoutsToExhaustBib) {
             mockAsync.WaitForPendingReads(i + 2);
             std::lock_guard lock(mtx);
-            EXPECT_FALSE(callbackInvoked) << "Callback fired before final speed fallback exhaustion";
+            EXPECT_FALSE(callbackInvoked) << "Callback fired before BIB retry exhaustion";
         }
     }
 

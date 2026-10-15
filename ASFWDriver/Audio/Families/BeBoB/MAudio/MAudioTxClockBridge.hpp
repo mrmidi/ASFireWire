@@ -33,7 +33,7 @@ struct TxClockBoundaryResult final {
 
 /// Qualifies M-Audio TX completion timing and turns data-packet observations
 /// into HAL-grid boundaries on the device's shared HardwareSampleTimeline
-/// (documentation/HARDWARE_TIMELINE_OWNERSHIP.md). Arm() begins that
+/// Arm() begins that
 /// timeline's Transmit epoch at StartIO. All mutation is serialized on the TX
 /// preparation queue after Arm() completes before transport start.
 class TxClockBridge final {

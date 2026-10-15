@@ -124,8 +124,11 @@ AllocationStatus IRMClient::MapAsyncStatus(const Async::AsyncStatus status) noex
     case Async::AsyncStatus::kStaleGeneration:
         return AllocationStatus::GenerationMismatch;
     case Async::AsyncStatus::kTimeout:
-        return AllocationStatus::Timeout;
+    // A final ack_busy means the IRM never took the request, so it is retried
+    // like a timeout (Linux core-iso.c manage_channel/manage_bandwidth retry
+    // every rcode but RCODE_GENERATION).
     case Async::AsyncStatus::kBusyRetryExhausted:
+        return AllocationStatus::Timeout;
     case Async::AsyncStatus::kAborted:
     case Async::AsyncStatus::kHardwareError:
     case Async::AsyncStatus::kLockCompareFail:

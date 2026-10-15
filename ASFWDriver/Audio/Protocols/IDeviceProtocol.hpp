@@ -24,6 +24,11 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
+namespace ASFW::Audio::DICE::Diagnostics {
+struct DiceLockSnapshot;
+struct DiceReceiverDumpSnapshot;
+}
+
 namespace ASFW::Audio {
 class FamilyDriver;
 }
@@ -63,6 +68,23 @@ public:
         return false;
     }
 
+    // Copied family-specific diagnostics; never issues remote I/O.
+    virtual bool CopyDiceReceiverLock(DICE::Diagnostics::DiceLockSnapshot& out) const {
+        (void)out;
+        return false;
+    }
+
+    // Starts a receiver-register dump; the driver decides whether it may.
+    virtual IOReturn RequestDiceReceiverDump(bool fifoEvents) {
+        (void)fifoEvents;
+        return kIOReturnUnsupported;
+    }
+    // Copied result of the last dump; never issues remote I/O.
+    virtual bool CopyDiceReceiverDump(DICE::Diagnostics::DiceReceiverDumpSnapshot& out) const {
+        (void)out;
+        return false;
+    }
+
     // Immutable protocol-discovered formation snapshot, distinct from the
     // current stream observation and from hardware qualification evidence.
     virtual std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const {
@@ -78,6 +100,10 @@ public:
     virtual void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) {
         callback(kIOReturnSuccess);
     }
+
+    // Cancel deferred publication preparation before the host drains admission.
+    // Does not stop active streams or issue hardware transactions.
+    virtual void CancelPendingPreparation() {}
 
     /// Query per-channel device labels discovered from the protocol's stream
     /// format (e.g. DICE TX/RX name sections). `inNames` is host input/capture,

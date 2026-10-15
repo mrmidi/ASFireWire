@@ -78,9 +78,8 @@ private:
 // (cross-validated with libffado-2.4.9 src/libstreaming/util/cip.c:130-160:
 // data iff ready_samples + samples_per_cycle >= syt_interval). That is the
 // hardware-verified startup phase (48/44.1k duplex), so the adapter preserves
-// it. Apple's captured AppleFWAudio seed differs (opens N,N,N,D --
-// documentation/44100.md section 7); adopting a different wire-visible seed
-// is capture-gated (SAMPLE_RATE_EXPANSION.md section 8). In live duplex the
+// it. Apple's captured AppleFWAudio seed differs (opens N,N,N,D); adopting a
+// different wire-visible seed is capture-gated. In live duplex the
 // free-running cadence is superseded by RX sequence replay after RX locks,
 // so the seed governs only the pre-replay window.
 class BlockingCadence final : public IAmdtpCadence {

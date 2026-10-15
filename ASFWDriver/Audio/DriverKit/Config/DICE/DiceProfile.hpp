@@ -4,8 +4,7 @@
 // DiceProfile.hpp - The one DICE audio profile.
 //
 // Every DICE device is described the same way: its stream geometry, rates,
-// clock and channel names come from its own registers (DICE_TCAT_ARCHITECTURE.md
-// §4.1), so a profile keeps only what the device cannot report. That is a small
+// clock and channel names come from its own registers, so a profile keeps only what the device cannot report. That is a small
 // spec per catalog builder -- a name, the host framing policy, and the one
 // geometry fact backed by a reference stack -- instead of the seven per-model
 // classes it replaces (stage C of §4.2). The vendor kexts carry no per-model
@@ -33,9 +32,6 @@ struct DiceProfileSpec {
     const char* name{nullptr};
     // Names for members of a range that share one identity.
     std::span<const DiceRangeMember> rangeMembers{};
-    // Host-to-device PCM: raw 24-in-32, as every TCAT kext sends it, or AM824.
-    Encoding::AudioWireFormat txEncoding{Encoding::AudioWireFormat::kRawPcm24In32};
-    bool preserveFdfInNoDataPackets{true};
     bool initializeNonAudioSlots{true};
     // Capture safety offset in packets; the vendor ladder's 16 unless measured.
     uint32_t captureSafetyPackets{TimingLadder::kRxDelayPackets};
@@ -71,6 +67,7 @@ public:
     // (Saffire.kext 4.3.0 performAudioEngineStart @0x4c12, performAudioEngineStop
     // @0x4e6a). Every TCAT kext does this; none branches per model.
     [[nodiscard]] bool RetainsWireAcrossStopIO() const noexcept override { return true; }
+    [[nodiscard]] bool StartsWireBeforePublication() const noexcept override { return true; }
 
     // Playback streams to insist on, or zero to take the device's count.
 

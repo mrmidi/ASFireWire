@@ -22,6 +22,8 @@
 
 #include "../../Async/ResponseCode.hpp"
 #include "../../Common/CSRSpace.hpp"
+#include "../Timing/SplitTimeout.hpp"
+#include <memory>
 
 #include <cstdint>
 
@@ -73,6 +75,7 @@ public:
         ITopologyMapProvider* topologyMap{nullptr};
         ISpeedMapProvider* speedMap{nullptr};
         BroadcastChannelCSR* broadcastChannel{nullptr};
+        std::shared_ptr<FW::SplitTimeout> splitTimeout{std::make_shared<FW::SplitTimeout>()};
     };
 
     // Outcome of a dispatch. When mine == false the caller must fall through to

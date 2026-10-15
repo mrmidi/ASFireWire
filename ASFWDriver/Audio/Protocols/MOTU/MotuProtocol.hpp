@@ -20,6 +20,7 @@
 #include "../../../Scheduling/ITimerScheduler.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
+#include "../Duplex/FamilyStageWait.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <atomic>
@@ -167,6 +168,25 @@ public:
     [[nodiscard]] uint32_t UnitSwVersion() const noexcept { return unitSwVersion_; }
 
 private:
+    void CancelAbandonedStage(IOReturn status);
+    template <typename T, typename Start>
+    [[nodiscard]] std::expected<T, IOReturn> WaitRegisterStage(Start&& start,
+        uint32_t timeoutMs = kFamilyStageTimeoutMs) {
+        auto result = AwaitStage<T>(std::forward<Start>(start), teardownCancel_, timeoutMs);
+        CancelAbandonedStage(result ? kIOReturnSuccess : result.error());
+        return result;
+    }
+    template <typename Start>
+    [[nodiscard]] IOReturn WaitRegisterStageStatus(Start&& start) {
+        const auto status = AwaitStageStatus(std::forward<Start>(start), teardownCancel_);
+        CancelAbandonedStage(status);
+        return status;
+    }
+    enum class RegisterRecovery { Control, Asynchronous };
+    void ReadRegister(Async::FWAddress address, Protocols::Ports::ProtocolRegisterIO::QuadReadCallback callback);
+    void WriteRegister(Async::FWAddress address, uint32_t value,
+                       Protocols::Ports::ProtocolRegisterIO::WriteCallback callback,
+                       RegisterRecovery recovery = RegisterRecovery::Control);
     // Service teardown: the stage waits give up once it reads true.
     const std::atomic<bool>* teardownCancel_{nullptr};
 
@@ -207,6 +227,8 @@ private:
     ::ASFW::IRM::IRMClient* irmClient_{nullptr};
     const uint32_t unitSwVersion_;
     Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    Async::TransactionRetryOwner<uint32_t> registerCommands_;
+    std::shared_ptr<Async::TransactionRetry<uint32_t>> confirmRead_;
     std::shared_ptr<NotificationMailbox> notifications_;
     uint64_t notificationAddress_{0};
     Discovery::DeviceRouteToken route_;

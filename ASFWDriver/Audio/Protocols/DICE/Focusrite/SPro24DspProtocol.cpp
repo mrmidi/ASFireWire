@@ -5,11 +5,13 @@
 
 #include "SPro24DspProtocol.hpp"
 #include "SPro24DspRouting.hpp"
+#include "../Core/DiceDeviceIo.hpp"
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include <DriverKit/IOLib.h>
 #include <array>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace ASFW::Audio::DICE::Focusrite {
@@ -19,6 +21,48 @@ namespace ASFW::Audio::DICE::Focusrite {
 // ============================================================================
 
 namespace {
+
+// Before a clock change: how long to wait for a DSP still coming up.
+constexpr uint32_t kDspReadyTimeoutMs = 5000;
+constexpr uint32_t kDspPollMs = 50;
+
+// DICE-relative offset of the application section, or nothing when the device
+// exposes no TCAT extension sections.
+[[nodiscard]] std::optional<uint32_t> ApplicationBase(DiceDeviceIo& io) {
+    const auto sections = io.ReadExtensionSections();
+    if (!sections) {
+        return std::nullopt;
+    }
+    const uint32_t base = ExtensionAbsoluteOffset(sections->application);
+    if (base == kDICEExtensionOffset || sections->application.size <= Offsets::kDspStatus) {
+        return std::nullopt;
+    }
+    return base;
+}
+
+// Polls the DSP status until running and not busy. A read that fails counts as
+// "not yet": the device answered nothing for a while during a DSP restart.
+// Elapsed time comes from the clock: a read that times out costs far more than
+// one poll step.
+[[nodiscard]] bool AwaitDspReady(DiceDeviceIo& io, uint32_t appBase, uint32_t timeoutMs,
+                                 uint32_t& waitedMs, uint32_t& lastStatus) {
+    const uint64_t startMs = io.Clock().NowMs();
+    for (;;) {
+        const auto status = io.ReadQuad(appBase + Offsets::kDspStatus);
+        waitedMs = static_cast<uint32_t>(io.Clock().NowMs() - startMs);
+        if (status) {
+            lastStatus = *status;
+            if ((*status & DspStatus::kRunning) != 0 && (*status & DspStatus::kBusy) == 0) {
+                return true;
+            }
+        }
+        if (waitedMs >= timeoutMs) {
+            return false;
+        }
+        io.Clock().SleepMs(kDspPollMs);
+    }
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -31,11 +75,41 @@ SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                      const Discovery::DeviceRouteToken& route,
                                      IRM::IRMClient* irmClient,
                                      DiceWaitClock& waitClock,
-                                     DiceNotificationRouter* notifications)
-    : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications)
+                                     DiceNotificationRouter* notifications,
+                                     Scheduling::ITimerScheduler* preparationScheduler)
+    : tcat_(busOps, busInfo, routeRegistry, route, irmClient, waitClock, notifications,
+            TCAT::DICETcatRuntimePolicy{
+                // PEEK verified in Pro24DSPFirmware: frmwload_cmd_test_action
+                // 0x6A384, sub-command 2 (TCD2210, TCAT loader mailbox).
+                .verifiedLoaderPeek = true,
+                .clockChangeObserver = this,
+                .waitForInitialDsp = true,
+            }, preparationScheduler)
 {
     ASFW_LOG(DICE, "SPro24DspProtocol created for GUID=0x%016llx node=0x%04x", route.guid,
              route.nodeId);
+}
+
+// A clock change while the DSP was still applying the previous one left it
+// running with digital zero on capture 1/2 until a DoDspReset (hardware,
+// 2026-10-11). MixControl itself sends DSP messages only while the DSP reports
+// running and not busy (MaybeSendDspMsg, IsDspRunning/IsDeviceBusy). Wait for
+// that before the clock write. Nothing to do on a device without the
+// extension sections (the wire simulator has none).
+void SPro24DspProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
+    const auto appBase = ApplicationBase(io);
+    if (!appBase) {
+        ASFW_LOG(DICE, "[SPro24Dsp] DSP state unreadable before the clock change; not waiting");
+        return;
+    }
+    uint32_t waitedMs = 0;
+    uint32_t status = 0;
+    if (!AwaitDspReady(io, *appBase, kDspReadyTimeoutMs, waitedMs, status)) {
+        ASFW_LOG_ERROR(DICE, "[SPro24Dsp] DSP not ready after %u ms (status=0x%08x); changing the "
+                       "clock anyway", waitedMs, status);
+    } else if (waitedMs > 0) {
+        ASFW_LOG(DICE, "[SPro24Dsp] DSP ready after %u ms; changing the clock", waitedMs);
+    }
 }
 
 bool SPro24DspProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {

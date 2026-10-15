@@ -22,9 +22,6 @@ namespace ASFW::IRM {
  *   Async::IAsyncControllerPort& async = ...;
  *   auto busOps = std::make_unique<AsyncSubsystemBusOps>(async);
  *   IRMClient irmClient(*busOps);
- *
- * Reference: IRM_FINAL_THOUGHTS.md §3.1 (Interface dependency pattern)
- *            Fix Plan 02-FIX-INTERFACE-DUPLICATION.md
  */
 class AsyncSubsystemBusOps : public Async::IFireWireBusOps {
   public:

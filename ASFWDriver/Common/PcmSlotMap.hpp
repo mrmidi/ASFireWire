@@ -12,7 +12,7 @@
 #include <span>
 
 namespace ASFW::Common {
-inline constexpr uint32_t kMaxPcmSlots = 32;
+inline constexpr uint32_t kMaxPcmSlots = 64;  // == Encoding::kMaxAmdtpDbs
 
 /// Empty (`slotCount == 0`) means logical PCM channel N uses AM824 slot N.
 /// A populated map must cover the active PCM width exactly and only address

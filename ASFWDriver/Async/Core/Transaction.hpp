@@ -104,6 +104,7 @@ constexpr bool IsValidTransition(TransactionState from, TransactionState to) noe
 
         case TransactionState::AwaitingAR:
             return to == TransactionState::ARReceived ||
+                   to == TransactionState::Failed ||          // final ack_busy on a CompleteOnAR request
                    to == TransactionState::TimedOut ||
                    to == TransactionState::Cancelled;
 
@@ -182,7 +183,7 @@ public:
     void SetTCode(uint8_t tcode) noexcept { tCode_ = tcode; }
 
     // Check if this is a read operation (per IEEE 1394-1995 §6.2)
-    // Read operations must ALWAYS wait for AR response regardless of AT ack code
+    // Successful reads require AR data; terminal negative AT results still fail them.
     [[nodiscard]] bool IsReadOperation() const noexcept {
         return tCode_ == 0x4 ||  // Read quadlet request
                tCode_ == 0x5;     // Read block request
@@ -191,14 +192,6 @@ public:
     // Completion strategy (explicit two-path model)
     [[nodiscard]] CompletionStrategy GetCompletionStrategy() const noexcept { return completionStrategy_; }
     void SetCompletionStrategy(CompletionStrategy strategy) noexcept { completionStrategy_ = strategy; }
-
-    // Check if AT completion should skip processing (for CompleteOnAR transactions)
-    [[nodiscard]] bool ShouldSkipATCompletion() const noexcept {
-        return skipATCompletion_;
-    }
-    void SetSkipATCompletion(bool skip) noexcept {
-        skipATCompletion_ = skip;
-    }
 
     // Payload management (Phase 1.3: UniquePayload ownership)
     /// Get raw pointer to payload (for backwards compatibility)
@@ -232,6 +225,8 @@ public:
     [[nodiscard]] uint64_t submittedAtUs() const noexcept { return submittedAtUs_; }
     [[nodiscard]] uint64_t completedAtUs() const noexcept { return completedAtUs_; }
     [[nodiscard]] uint32_t timeoutMs() const noexcept { return timeoutMs_; }
+    [[nodiscard]] uint64_t splitReuseAfterUs() const noexcept { return splitReuseAfterUs_; }
+    void SetSplitReuseAfter(uint64_t us) noexcept { splitReuseAfterUs_ = us; }
     [[nodiscard]] uint64_t deadlineUs() const noexcept { return deadlineUs_; }  // Phase 2.0
 
     void SetSubmittedAt(uint64_t us) noexcept { submittedAtUs_ = us; }
@@ -316,7 +311,6 @@ private:
     uint8_t tCode_{0};          // Transaction code (0x4=read quad, 0x5=read block, etc.)
     uint8_t retryCount_{0};
     CompletionStrategy completionStrategy_{CompletionStrategy::CompleteOnAT};  // Explicit two-path model
-    bool skipATCompletion_{false};  // For CompleteOnAR transactions
     std::atomic<bool> completedByPath_{false};  // Completion latch (prevents double-completion)
 
     // Resources (Phase 1.3: UniquePayload for automatic cleanup)
@@ -327,6 +321,7 @@ private:
     uint64_t submittedAtUs_{0};
     uint64_t completedAtUs_{0};
     uint32_t timeoutMs_{0};
+    uint64_t splitReuseAfterUs_{0};
     uint64_t deadlineUs_{0};  // Phase 2.0: Absolute timeout deadline
 
     // Debugging: circular buffer for last 16 state transitions

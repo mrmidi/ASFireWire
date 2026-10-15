@@ -19,6 +19,7 @@
 #include <DriverKit/IOMemoryMap.iig>
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
+#include <DriverKit/OSDictionary.iig>
 #include <DriverKit/OSAction.iig>
 #include <atomic>
 #include <cstdint>
@@ -136,6 +137,11 @@ public:
     // detect device-initiated clock moves.
     uint32_t GetCurrentSampleRateHz() const LOCALONLY;
 
+    // Re-read rate and channel counts from the nub's properties. Create()
+    // starts the nub before the publisher can set them, so Start alone only
+    // ever sees the defaults; the publisher calls this after SetProperties.
+    void RefreshFromProperties() LOCALONLY;
+
     // Set channel count directly (called by AVCDiscovery after Create())
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
@@ -160,6 +166,10 @@ public:
     // chain valid. Returns kIOReturnUnsupported for a rate the device does not
     // advertise.
     virtual kern_return_t RequestSampleRateChange(uint32_t sampleRateHz);
+    // Read a settled DICE formation before requesting the host window. Only
+    // candidate metadata changes; the committed rate and buffers stay intact.
+    virtual kern_return_t CopyObservedRateCatalog(uint32_t sampleRateHz,
+        OSDictionary** outProperties);
     // Configuration-window calls only. The observation is read-only and
     // generation/incarnation bound; no cached rate is returned as evidence.
     virtual kern_return_t ReadRateClockState(uint64_t* outIncarnation,

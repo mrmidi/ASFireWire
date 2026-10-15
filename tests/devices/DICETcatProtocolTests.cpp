@@ -189,8 +189,10 @@ public:
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kGlobalBaseLo &&
                    length >= kGlobalReadBytes) {
             ++globalReadCount;
-            const auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
+            auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
+            ASFW::FW::WriteBE64(bytes.data(), owner_);
             payload.assign(bytes.begin(), bytes.end());
+            payload.resize(length, 0);
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kExtensionBaseLo &&
             length >= ExtensionSections::kWireSize) {
             ++extensionReadCount;
@@ -266,6 +268,11 @@ public:
         (void)speed;
         ++lockCount;
         std::vector<uint8_t> payload(responseLength, 0);
+        if (responseLength == 8 && operand.size() == 16 && address.addressLo == kGlobalBaseLo) {
+            ASFW::FW::WriteBE64(payload.data(), owner_);
+            if (ASFW::FW::ReadBE64(operand.data()) == owner_)
+                owner_ = ASFW::FW::ReadBE64(operand.data() + 8);
+        }
         callback(AsyncStatus::kSuccess, std::span<const uint8_t>(payload.data(), payload.size()));
         return NextHandle();
     }
@@ -315,6 +322,7 @@ public:
     uint32_t extStatus_{0};
     uint32_t sampleRate_{48000};
     uint32_t notification_{0x20};
+    uint64_t owner_{ASFW::Audio::DICE::kOwnerNoOwner};
     bool rateEap{false};
     bool oversizedEapCount{false};
     bool failEapEntry{false};
@@ -337,7 +345,7 @@ TEST(DICETcatProtocolTests, FirstSectionReadProbesDownAndRetainsVerifiedSpeed) {
     RouteState routeState;
     ASFW::Discovery::ConfigROM rom{};
     rom.bib.guid = routeState.route.guid;
-    rom.bib.maxRec = 7;  // Allows 1024-byte async payloads at S200.
+    rom.bib.maxRec = 9;  // Allows 1024-byte async payloads at S200.
     rom.gen = routeState.route.generation;
     rom.nodeId = routeState.route.nodeId;
     ASFW::Discovery::LinkPolicy link{};
@@ -576,9 +584,7 @@ TEST(DICETcatProtocolTests, ChannelLabelsFlattenAcrossStreamsInChannelOrder) {
     EXPECT_EQ(outNames[1], "Main R");
 }
 
-// TCAT refuses a rate the device does not advertise before touching it
-// (MidasFW SetNewSamplingRate). This device supports 44.1 and 48 kHz only.
-TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraffic) {
+TEST(DICETcatProtocolTests, RefusesAnUnknownClockRateWithoutBusTraffic) {
     CountingFireWireBus bus;
     RouteState routeState;
     DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(),
@@ -587,7 +593,7 @@ TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraff
 
     ASFW::Audio::DICE::GlobalState global{};
     global.sampleRate = 48000;
-    global.clockCaps = 0x13000006;  // 44.1 + 48 kHz, as the Venice and StudioLive report
+    global.clockCaps = 0x13000006;
     global.hasClockCaps = true;
     ASFW::Audio::DICE::StreamConfig tx{};
     tx.numStreams = 1;
@@ -606,10 +612,10 @@ TEST(DICETcatProtocolTests, RefusesARateTheDeviceDoesNotAdvertiseWithoutBusTraff
     const int locksBefore = bus.lockCount;
     ASFW::Audio::FamilyDriver& family = *protocol.AsFamilyDriver();
     const auto started = family.Configure(ASFW::Audio::AudioDuplexChannels{},
-                                          AudioClockConfig{.sampleRateHz = 32000});
+                                          AudioClockConfig{.sampleRateHz = 12345});
     ASSERT_FALSE(started.has_value());
     EXPECT_EQ(started.error(), kIOReturnUnsupported);
-    const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = 32000});
+    const auto applied = family.ApplyClockIdle(AudioClockConfig{.sampleRateHz = 12345});
     ASSERT_FALSE(applied.has_value());
     EXPECT_EQ(applied.error(), kIOReturnUnsupported);
     EXPECT_EQ(bus.readCount, readsBefore);
@@ -903,7 +909,14 @@ TEST(DICETcatProtocolTests, RateObservationUsesFreshClockAndRejectsUnconfirmedSe
     RouteState routeState;
     DICETcatProtocol protocol(bus, bus, routeState.registry, routeState.route, nullptr, WaitClock(), nullptr);
     ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    std::optional<IOReturn> prepared;
+    protocol.EnsureRuntimeStreamGeometry([&](IOReturn status) { prepared = status; });
+    static_cast<ASFW::Testing::FakeTimerScheduler*>(WaitClock().Scheduler())->Advance(550'000'000ULL);
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(*prepared, kIOReturnSuccess);
     ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+    bus.writeCount = 0;
+    bus.lockCount = 0;
     auto observe = [&] {
         std::optional<ASFW::Audio::RateHardwareObservation> result;
         protocol.ReadRateObservation([&](IOReturn status, auto observed) {
@@ -921,8 +934,15 @@ TEST(DICETcatProtocolTests, RateObservationUsesFreshClockAndRejectsUnconfirmedSe
     const auto mismatched = observe();
     EXPECT_EQ(mismatched.caps.sampleRateHz, 96000);
     EXPECT_FALSE(mismatched.clockConfirmed);
+    const auto before = protocol.RateFormations();
+    ASSERT_TRUE(before);
+    EXPECT_EQ(std::ranges::find(*before, 96000U,
+        &ASFW::Audio::Runtime::RateFormation::sampleRateHz), before->end());
     ASSERT_TRUE(ASFW::Audio::DICE::DiceClockSelectForRate(96000, ClockSource::Internal, bus.clockSelect_));
     EXPECT_TRUE(observe().clockConfirmed);
+    const auto retained = protocol.RateFormations();
+    ASSERT_TRUE(retained);
+    EXPECT_TRUE(retained->empty()) << "this clock-only bus reports no usable stream geometry";
     bus.status_ &= ~ASFW::Audio::DICE::StatusBits::kSourceLocked;
     EXPECT_FALSE(observe().clockConfirmed);
     EXPECT_EQ(bus.writeCount, 0);

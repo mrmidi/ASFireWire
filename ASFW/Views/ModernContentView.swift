@@ -15,6 +15,7 @@ struct ModernContentView: View {
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @StateObject private var diagnosticsStore: DiagnosticsStore
     @StateObject private var diceReportStore: DiceReportStore
+    @StateObject private var diceDiagnosticsStore: DiceDiagnosticsStore
     @StateObject private var avcReportStore: AvcReportStore
     @StateObject private var avcUnitsStore: AvcUnitsStore
     @StateObject private var mcpVM: ASFWMCPControlViewModel
@@ -38,6 +39,7 @@ struct ModernContentView: View {
         ))
         _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
         _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
+        _diceDiagnosticsStore = StateObject(wrappedValue: DiceDiagnosticsStore(connector: debugViewModel.connector))
         _avcReportStore = StateObject(wrappedValue: AvcReportStore(connector: debugViewModel.connector))
         _avcUnitsStore = StateObject(wrappedValue: AvcUnitsStore(connector: debugViewModel.connector))
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
@@ -45,6 +47,7 @@ struct ModernContentView: View {
 
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case about = "About ASFireWire"
         case busInspector = "Bus Inspector"
         case avcUnits = "AV/C Units"
         case avcCommands = "AV/C Commands"
@@ -62,6 +65,7 @@ struct ModernContentView: View {
         case duet = "Duet"
         case diagnostics = "Driver Report"
         case diceReport = "DICE Report"
+        case diceDiagnostics = "DICE Diagnostics"
         case avcReport = "AV/C Report"
 
         var id: String { rawValue }
@@ -69,6 +73,7 @@ struct ModernContentView: View {
         var systemImage: String {
             switch self {
             case .overview: return "info.circle"
+            case .about: return "heart.text.square"
             case .busInspector: return "network"
             case .avcUnits: return "music.note"
             case .avcCommands: return "command"
@@ -86,13 +91,14 @@ struct ModernContentView: View {
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
             case .diceReport: return "doc.text.magnifyingglass"
+            case .diceDiagnostics: return "waveform.path.ecg"
             case .avcReport: return "doc.text.magnifyingglass"
             }
         }
 
         var group: SidebarGroup {
             switch self {
-            case .overview: .general
+            case .overview, .about: .general
             case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
             case .dvCapture: .video
             case .diagnostics, .diceReport, .avcReport: .reports
@@ -109,7 +115,7 @@ struct ModernContentView: View {
             guard showAdvancedTools || !section.requiresAdvancedTools else { return false }
             switch section {
             case .avcUnits, .avcCommands, .avcReport: return debugVM.hasAVCDevice
-            case .diceReport: return debugVM.hasDICEDevice
+            case .diceReport, .diceDiagnostics: return debugVM.hasDICEDevice
             case .duet: return debugVM.hasDuetDevice
             case .audioAnalyzer, .audioTelemetry, .audioGeometry:
                 return !publishedAudioDevices.isEmpty
@@ -157,6 +163,8 @@ struct ModernContentView: View {
                 case .overview:
                     OverviewView(viewModel: driverVM,
                                  requireNewerBuild: $requireNewerBuild)
+                case .about:
+                    AboutView()
                 case .busInspector:
                     BusInspectorView(debugViewModel: debugVM, topologyViewModel: topologyVM, romViewModel: romExplorerVM)
                 case .avcUnits:
@@ -191,6 +199,8 @@ struct ModernContentView: View {
                     DiagnosticsView(store: diagnosticsStore, showAdvancedTools: showAdvancedTools)
                 case .diceReport:
                     DiceReportView(store: diceReportStore)
+                case .diceDiagnostics:
+                    DiceDiagnosticsView(store: diceDiagnosticsStore)
                 case .avcReport:
                     AvcReportView(store: avcReportStore)
                 case .none:

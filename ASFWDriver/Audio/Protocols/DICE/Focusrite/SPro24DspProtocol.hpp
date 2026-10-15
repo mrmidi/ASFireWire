@@ -9,6 +9,7 @@
 #include "SaffireproCommon.hpp"
 #include "SPro24DspTypes.hpp"
 #include "../Core/DICETypes.hpp"
+#include "../Core/DiceClockChangeObserver.hpp"
 #include "../TCAT/DICETcatProtocol.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include <array>
@@ -39,7 +40,8 @@ constexpr uint32_t kSPro24DspModelId = 0x000008;
 /// 
 /// This class provides async-callback-based access to device parameters.
 /// All operations are asynchronous since they involve FireWire transactions.
-class SPro24DspProtocol : public Audio::IDeviceProtocol {
+class SPro24DspProtocol : public Audio::IDeviceProtocol,
+                          private DiceClockChangeObserver {
 public:
     /// Callback types for async operations
     using InitCallback = std::function<void(IOReturn)>;
@@ -61,7 +63,8 @@ public:
                       const Discovery::DeviceRouteToken& route,
                       ::ASFW::IRM::IRMClient* irmClient,
                       DiceWaitClock& waitClock,
-                      DiceNotificationRouter* notifications);
+                      DiceNotificationRouter* notifications,
+                      Scheduling::ITimerScheduler* preparationScheduler = nullptr);
     
     /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;
@@ -83,6 +86,16 @@ public:
     void ReadRateObservation(std::function<void(IOReturn, RateHardwareObservation)> callback) override {
         tcat_.ReadRateObservation(std::move(callback));
     }
+    bool CopyDiceReceiverLock(Diagnostics::DiceLockSnapshot& out) const override {
+        return tcat_.CopyDiceReceiverLock(out);
+    }
+    IOReturn RequestDiceReceiverDump(bool fifoEvents) override {
+        return tcat_.RequestDiceReceiverDump(fifoEvents);
+    }
+    bool CopyDiceReceiverDump(Diagnostics::DiceReceiverDumpSnapshot& out) const override {
+        return tcat_.CopyDiceReceiverDump(out);
+    }
+    void CancelPendingPreparation() override { tcat_.CancelPendingPreparation(); }
     void EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> callback) override {
         tcat_.EnsureRuntimeStreamGeometry(std::move(callback));
     }
@@ -140,6 +153,9 @@ public:
     void SetOutputGroupState(const OutputGroupState& state, VoidCallback callback);
 
 private:
+    // DiceClockChangeObserver: keep clock changes away from a DSP that is not up.
+    void BeforeClockSelectWrite(DiceDeviceIo& io) noexcept override;
+
     TCAT::DICETcatProtocol tcat_;
     ExtensionSections extensionSections_{};
     uint32_t appSectionBase_{0};

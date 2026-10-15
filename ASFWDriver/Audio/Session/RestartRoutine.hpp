@@ -3,7 +3,7 @@
 //
 // RestartRoutine.hpp - Bring the streams up, in wire order, top to bottom.
 //
-// documentation/AUDIO_SESSION_REDESIGN.md §4.2. One linear sequence for every
+// One linear sequence for every
 // family; the family answers each step, and the catalog's start recipe
 // (DuplexStreamProfile) decides where host starts interleave with device steps.
 // Every failure rolls back through StopRoutine, except a service teardown,

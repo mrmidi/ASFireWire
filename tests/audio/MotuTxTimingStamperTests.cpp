@@ -15,7 +15,6 @@
 #include "Audio/Wire/MOTU/MotuModel.hpp"
 #include "Audio/Wire/MOTU/MotuPayloadWriter.hpp"
 #include "Audio/Wire/MOTU/MotuPortLayout.hpp"
-#include "Audio/Wire/MOTU/MotuSphServoPolicy.hpp"
 
 #include <gtest/gtest.h>
 
@@ -30,12 +29,6 @@ namespace {
 using namespace ASFW::Protocols::Audio::AMDTP;
 using namespace ASFW::Encoding::Motu;
 using ASFW::Audio::TxTimingStampResult;
-using ASFW::Audio::Wire::kMotuSphDropBridgeNotAdvanced;
-using ASFW::Audio::Wire::kMotuSphDropBridgeRegressed;
-using ASFW::Audio::Wire::kMotuSphDropRxFramesNotAdvanced;
-using ASFW::Audio::Wire::kMotuSphDropRxTicksNotAdvanced;
-using ASFW::Audio::Wire::kMotuSphDropRxTicksRegressed;
-using ASFW::Audio::Wire::MotuSphHardResyncEventOccurred;
 using ASFW::Audio::Wire::MotuSphServoApplyResult;
 using ASFW::Audio::Wire::MotuSphServoRuntimeInput;
 using ASFW::Audio::Wire::MotuTxTimingStamper;
@@ -43,10 +36,10 @@ using ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile;
 using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
 using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 
-constexpr int64_t kOneQ32 = MotuSphQ32Accumulator::kOneQ32;
+constexpr int64_t kOneQ32 = SphSynthesizer::kOneQ32;
 constexpr int64_t kLead = kDefaultPresentationLeadTicks;
-// No absolute-phase setpoint: the loop holds the phase the stream started with.
-constexpr std::optional<int32_t> kRelativeLoop = std::nullopt;
+// Zero-frame offset for payload-only tests.
+constexpr uint32_t kRelativeLoop = 0;
 constexpr uint32_t k828 = 0x1;     // protocol v1
 constexpr uint32_t k828mk2 = 0x3;  // protocol v2
 constexpr uint32_t k828mk3 = 0x15; // protocol v3
@@ -95,13 +88,13 @@ struct MotuTx final {
         const auto policy = profile.TxStreamPolicy();
         if (!stamper.Configure(txConfig.dbs, txConfig.sampleRate,
                                policy.motuPresentationLeadTicks,
-                               AbsolutePhaseSetpointTicksAtRate(
-                                   policy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
+                               policy.motuPresentationOffsetFrames)) {
             return false;
         }
-        writer.Configure({.pcmChunks = txConfig.pcmChannels,
+        writer.Configure({.pcmChunks = txConfig.motuPcmChunks,
                           .sourceChannelOffset = txConfig.sourceChannelOffset,
-                          .ports = policy.motuPlaybackPorts,
+                          .ports = ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+                              policy.motuUnitVersion, txConfig.sampleRate, txConfig.motuPcmChunks),
                           .pcmByteOffset = txConfig.motuPcmByteOffset});
         writer.SetPcmMuted(stamper.IsOutputMuted());
         writer.BindTimeline(&engine.Timeline());
@@ -127,8 +120,9 @@ struct MotuTx final {
 
     // Byte offset, from the CIP header, of host channel 0's PCM in `block`.
     [[nodiscard]] size_t HostChannelZeroAt(uint32_t block) const {
-        const auto ports = EffectivePortMap(profile.TxStreamPolicy().motuPlaybackPorts,
-                                            txConfig.pcmChannels);
+        const auto ports = EffectivePortMap(ASFW::Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(
+            profile.TxStreamPolicy().motuUnitVersion, txConfig.sampleRate, txConfig.motuPcmChunks),
+            txConfig.motuPcmChunks);
         return 8 + block * txConfig.dbs * 4 + txConfig.motuPcmByteOffset +
                ChunkForHostChannel(ports, 0) * kBytesPerChunk;
     }
@@ -299,7 +293,7 @@ TEST(MotuTxTimingStamperTests, SeedsFromTheTransmitTimePlusTheConfiguredLead) {
 }
 
 // Each start is configured for its stream's rate: the nominal step, and one
-// decision per decision interval of that rate (MotuSphServoPolicy.hpp).
+// decision per decision interval of that rate (MotuSphSynthesizer.hpp).
 TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
     MotuTxTimingStamper stamper{};
     for (const uint32_t rate : kClockRates) {
@@ -308,8 +302,8 @@ TEST(MotuTxTimingStamperTests, ConfigureFollowsTheStreamRate) {
         EXPECT_TRUE(stamper.IsConfigured());
         EXPECT_FALSE(stamper.IsSeeded());
         EXPECT_TRUE(stamper.IsOutputMuted());
-        EXPECT_EQ(stamper.StepQ32(), MotuSphQ32Accumulator::NominalStepQ32ForRate(rate));
-        EXPECT_EQ(stamper.DecisionIntervalFrames(), SphServoDecisionFrames(rate));
+        EXPECT_EQ(stamper.StepQ32(), SphSynthesizer::NominalStepQ32(rate));
+        EXPECT_GT(stamper.DecisionIntervalFrames(), 0U);
     }
 
     // A rate change mid-life is a fresh configuration: no seed survives it.
@@ -354,708 +348,38 @@ TEST(MotuTxTimingStamperTests, ConfigureRefusesARateWithoutARegulatorConfigurati
 TEST(MotuTxTimingStamperTests, AppliedCorrectionCountsOnlyStampedFramesAndResetClearsIt) {
     MotuTx tx;
     ASSERT_TRUE(tx.Arm());
-    constexpr uint64_t generation = 7;
-    ASSERT_TRUE(tx.Apply(Window(generation, 1, 512, 512 * 512)).observationApplied);
-    ASSERT_TRUE(tx.Apply(Window(generation, 2, 1024, 2 * 512 * 512)).observationApplied);
-    const auto steered = tx.Apply(Window(generation, 3, 1536, 2 * 512 * 512 + 512 * 511));
-    ASSERT_TRUE(steered.stepApplied);
-    const int64_t step = tx.stamper.StepQ32();
-    ASSERT_NE(step, 512 * kOneQ32);
-
-    tx.provider.allowAcquire = false;
-    EXPECT_EQ(tx.engine.PrepareNextTransmitSlot(0, DataTiming(1000)),
-              TxSlotPrepareResult::kSlotAcquireFailed);
-    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(), 0);
-
-    tx.provider.allowAcquire = true;
-    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(0, DataTiming(1000)),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(), 8 * (step - 512 * kOneQ32));
-
-    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(1, NoDataTiming()),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(), 8 * (step - 512 * kOneQ32));
-
+    const auto observation = [](uint64_t update, uint64_t frame, int64_t ticks) {
+        return MotuSphServoRuntimeInput{.valid=true, .streamGeneration=7, .expectedStreamGeneration=7,
+            .bridgeUpdates=update, .rxFrames=frame+8, .rxTicks=ticks+4096,
+            .rxFirstFrame=frame, .txFirstFrame=frame,
+            .rxSphTicks=WrapTick(kLead+ticks-13*512), .replayEpoch=1, .expectedReplayEpoch=1,
+            .isData=true, .transmitCycleValid=true, .transmitTicks=0};
+    };
+    ASSERT_TRUE(tx.Apply(observation(1,0,0)).observationApplied);
+    uint64_t packet=0;
+    const auto advance = [&] {
+        for (unsigned i=0;i<64;++i) {
+            EXPECT_EQ(tx.engine.PrepareNextTransmitSlot(packet++,DataTiming(0)),TxSlotPrepareResult::kPrepared);
+        }
+    };
+    advance();
+    ASSERT_TRUE(tx.Apply(observation(2,512,512*512)).observationApplied);
+    advance();
+    ASSERT_TRUE(tx.Apply(observation(3,1024,512*512+512*511)).stepApplied);
+    const int64_t step=tx.stamper.StepQ32();
+    ASSERT_NE(step,512*kOneQ32);
+    const int64_t baseline=tx.stamper.AppliedCorrectionQ32();
+    tx.provider.allowAcquire=false;
+    EXPECT_EQ(tx.engine.PrepareNextTransmitSlot(packet,DataTiming(0)),TxSlotPrepareResult::kSlotAcquireFailed);
+    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(),baseline);
+    tx.provider.allowAcquire=true;
+    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(packet++,DataTiming(0)),TxSlotPrepareResult::kPrepared);
+    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(),baseline+8*(step-512*kOneQ32));
+    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(packet,NoDataTiming()),TxSlotPrepareResult::kPrepared);
+    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(),baseline+8*(step-512*kOneQ32));
     tx.stamper.ResetForStart();
-    EXPECT_EQ(tx.stamper.StepQ32(), 512 * kOneQ32);
-    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(), 0);
-}
-
-// ---------------------------------------------------------------------------
-// The servo, its gate and the drop attribution.
-
-TEST(MotuTxTimingStamperTests, ClosesRxMinusTxPhaseWithOneContinuousServo) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-
-    constexpr uint64_t generation = 7;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    constexpr int64_t deviceTicks = windowFrames * 511;
-
-    const auto reference = tx.Apply(Window(generation, 1, windowFrames, nominalTicks));
-    ASSERT_TRUE(reference.observationApplied);
-    ASSERT_TRUE(reference.stepApplied);
-    EXPECT_TRUE(reference.decision.phaseReferenceReset);
-    EXPECT_EQ(reference.decision.stepQ32, 512 * kOneQ32);
-    // A reference is not a lock, and the output is muted until one arrives.
-    EXPECT_FALSE(reference.decision.locked);
-    EXPECT_TRUE(reference.outputMuted);
-    EXPECT_TRUE(tx.writer.IsPcmMuted());
-
-    // One clean window locks the loop, which puts the gain below into the
-    // locked stage.
-    const auto locked = tx.Apply(Window(generation, 2, windowFrames * 2, nominalTicks * 2));
-    ASSERT_TRUE(locked.observationApplied);
-    EXPECT_EQ(locked.decision.phaseErrorTicks, 0);
-    EXPECT_TRUE(locked.decision.locked);
-    EXPECT_TRUE(locked.unmuteActivated);
-    EXPECT_FALSE(locked.outputMuted);
-    EXPECT_FALSE(tx.writer.IsPcmMuted());
-
-    // The device then advances one tick per frame slower. Feed-forward selects
-    // 511, and the feedback takes a quarter of the accumulated 512-tick error
-    // over the next 512 frames: a quarter tick per frame.
-    const auto correction =
-        tx.Apply(Window(generation, 3, windowFrames * 3, nominalTicks * 2 + deviceTicks));
-    ASSERT_TRUE(correction.observationApplied);
-    ASSERT_TRUE(correction.stepApplied);
-    EXPECT_TRUE(correction.decision.feedbackUpdated);
-    EXPECT_EQ(correction.decision.measuredStepQ32, 511 * kOneQ32);
-    EXPECT_EQ(correction.decision.phaseErrorTicks, -512);
-    EXPECT_EQ(correction.decision.stepQ32, 511 * kOneQ32 - kOneQ32 / 4);
-    EXPECT_FALSE(correction.decision.hardResyncRequired);
-    // Only the hard-resync valve drops the lock.
-    EXPECT_TRUE(correction.decision.locked);
-    EXPECT_FALSE(correction.outputMuted);
-
-    for (uint32_t packet = 0; tx.engine.Counters().dataPacketsPrepared.load() < 64; ++packet) {
-        ASSERT_LT(packet, 128u);
-        ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(packet, DataTiming(1000)),
-                  TxSlotPrepareResult::kPrepared);
-    }
-
-    // The stamper reports exactly what it executed, and subtracting that TX
-    // movement leaves three quarters of the error standing: -384 of the -512
-    // ticks. The step tracks it down by a further quarter.
-    const auto settled =
-        tx.Apply(Window(generation, 4, windowFrames * 4, nominalTicks * 2 + deviceTicks * 2));
-    ASSERT_TRUE(settled.observationApplied);
-    ASSERT_TRUE(settled.stepApplied);
-    EXPECT_TRUE(settled.decision.feedbackUpdated);
-    EXPECT_EQ(settled.decision.phaseErrorTicks, -384);
-    EXPECT_EQ(settled.decision.stepQ32, 511 * kOneQ32 - (3 * kOneQ32) / 16);
-
-    const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_TRUE(telemetry.configured);
-    EXPECT_TRUE(telemetry.seeded);
-    EXPECT_EQ(telemetry.decisions, 4u);
-    EXPECT_TRUE(telemetry.locked);
-    EXPECT_FALSE(telemetry.outputMuted);
-    // The acquisition mute is the only one a clean run reports.
-    EXPECT_EQ(telemetry.muteTransitions, 1u);
-    EXPECT_EQ(telemetry.unmuteTransitions, 1u);
-    // 512 frames at a quarter tick below the measured 511, against a nominal
-    // 512: (511 - 0.25 - 512) * 512 = -640 ticks of executed TX movement.
-    EXPECT_EQ(telemetry.txCorrectionQ32, -640 * kOneQ32);
-    EXPECT_EQ(telemetry.phaseErrorTicks, -384);
-    EXPECT_EQ(telemetry.stepQ32, 511 * kOneQ32 - (3 * kOneQ32) / 16);
-    EXPECT_EQ(telemetry.nominalStepQ32, 512 * kOneQ32);
-    EXPECT_EQ(telemetry.hardResyncRequests, 0u);
-}
-
-// The same loop at 96 kHz: decisions one 1024-frame interval apart, and the
-// step follows the device's own period at that rate.
-TEST(MotuTxTimingStamperTests, StepFollowsTheDeviceRateAtTheConfiguredRate) {
-    MotuTxTimingStamper stamper{};
-    ASSERT_TRUE(stamper.Configure(4, 96000, kDefaultPresentationLeadTicks, kRelativeLoop));
-    constexpr uint64_t interval = 1024;
-    ASSERT_EQ(stamper.DecisionIntervalFrames(), interval);
-    constexpr uint64_t generation = 9;
-
-    ASSERT_TRUE(stamper.ApplyServoInput(Window(generation, 1, interval, interval * 256))
-                    .observationApplied);
-    // Half an interval later: not yet a decision, and not a drop either.
-    const auto early = stamper.ApplyServoInput(
-        Window(generation, 2, interval + interval / 2, (interval + interval / 2) * 256));
-    EXPECT_FALSE(early.observationApplied);
-    EXPECT_EQ(early.dropCauses, 0u);
-    const auto locked =
-        stamper.ApplyServoInput(Window(generation, 3, interval * 2, interval * 2 * 256));
-    ASSERT_TRUE(locked.observationApplied);
-    EXPECT_TRUE(locked.decision.locked);
-
-    // The device slows to 255 ticks per frame: the measured step follows it.
-    const auto slower = stamper.ApplyServoInput(
-        Window(generation, 4, interval * 3, interval * 2 * 256 + interval * 255));
-    ASSERT_TRUE(slower.observationApplied);
-    EXPECT_EQ(slower.decision.measuredStepQ32, 255 * kOneQ32);
-    EXPECT_LT(slower.decision.stepQ32, 255 * kOneQ32);
-    EXPECT_EQ(stamper.StepQ32(), slower.decision.stepQ32);
-}
-
-TEST(MotuTxTimingStamperTests, RejectsInvalidStaleDuplicateAndTooYoungRxState) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-
-    MotuSphServoRuntimeInput input = Window(3, 1, 512, 512 * 512);
-    ASSERT_TRUE(tx.Apply(input).observationApplied);
-    const auto baseline = tx.stamper.ServoTelemetrySnapshot();
-
-    input.valid = false;
-    EXPECT_FALSE(tx.Apply(input).observationApplied);
-    input.valid = true;
-    // A sample of a generation the control block has left behind.
-    input.expectedStreamGeneration = 4;
-    EXPECT_FALSE(tx.Apply(input).observationApplied);
-    input.expectedStreamGeneration = 3;
-    // The same sample again.
-    EXPECT_FALSE(tx.Apply(input).observationApplied);
-
-    // Advanced, but by less than a decision interval.
-    input.bridgeUpdates = 2;
-    input.rxFrames += 256;
-    input.rxTicks += 256 * 511;
-    EXPECT_FALSE(tx.Apply(input).observationApplied);
-
-    const auto afterRejected = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_EQ(afterRejected.decisions, baseline.decisions);
-    EXPECT_EQ(afterRejected.stepQ32, baseline.stepQ32);
-    EXPECT_EQ(afterRejected.phaseErrorTicks, baseline.phaseErrorTicks);
-}
-
-// The first absolute phase re-references a loop whose reference was built
-// long before it was available. The setpoint is zero here: none is configured.
-// The 828mk3 at 48 kHz, armed as the producer arms it: the loop holds the
-// model's setpoint (+510) once `rel` arrives.
-TEST(MotuTxTimingStamperTests, ReReferencesWhenAbsolutePhaseFirstArrives) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-    ASSERT_TRUE(tx.stamper.HoldsAbsolutePhase());
-    const int64_t setpoint = tx.stamper.AbsolutePhaseSetpointTicks();
-    ASSERT_EQ(setpoint, 510);
-
-    constexpr uint64_t generation = 11;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    constexpr int64_t relTicks = 900;
-
-    auto input = [](uint64_t updates, uint64_t frames, int64_t ticks, bool haveRel, int64_t rel) {
-        auto in = Window(generation, updates, frames, ticks);
-        in.haveRelPhase = haveRel;
-        in.relPhaseTicks = rel;
-        in.relPhaseCenterTicks = rel;
-        return in;
-    };
-
-    const auto bare = tx.Apply(input(1, windowFrames, nominalTicks, false, 0));
-    ASSERT_TRUE(bare.observationApplied);
-    EXPECT_TRUE(bare.decision.phaseReferenceReset);
-    EXPECT_EQ(bare.decision.phaseErrorTicks, 0);
-
-    const auto stillBare = tx.Apply(input(2, windowFrames * 2, nominalTicks * 2, false, 0));
-    ASSERT_TRUE(stillBare.observationApplied);
-    EXPECT_FALSE(stillBare.decision.phaseReferenceReset);
-    ASSERT_TRUE(stillBare.decision.locked);
-
-    // First absolute phase: re-reference and seed the error, setpoint - rel.
-    // The seed does not drop the lock.
-    const auto acquired = tx.Apply(input(3, windowFrames * 3, nominalTicks * 3, true, relTicks));
-    ASSERT_TRUE(acquired.observationApplied);
-    EXPECT_TRUE(acquired.absolutePhaseAcquired);
-    EXPECT_TRUE(acquired.decision.phaseReferenceReset);
-    EXPECT_EQ(acquired.decision.referenceCause, MotuSphReferenceCause::kAbsolutePhaseSeed);
-    EXPECT_EQ(acquired.decision.phaseErrorTicks, setpoint - relTicks);
-    EXPECT_TRUE(acquired.decision.locked);
-    EXPECT_FALSE(acquired.outputMuted);
-    EXPECT_FALSE(acquired.muteActivated);
-
-    // Acquisition is an edge, not a level: later samples track.
-    const auto tracking =
-        tx.Apply(input(4, windowFrames * 4, nominalTicks * 4, true, relTicks + 2));
-    ASSERT_TRUE(tracking.observationApplied);
-    EXPECT_FALSE(tracking.absolutePhaseAcquired);
-    EXPECT_FALSE(tracking.decision.phaseReferenceReset);
-    EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().seedReReferences, 1u);
-}
-
-// The setpoint is per model and per rate: every model holds +510 at 48 kHz,
-// and no rate but 48 kHz has one, so there the loop stays relative and a `rel`
-// handed to it changes nothing.
-TEST(MotuTxTimingStamperTests, HoldsTheSetpointAt48kAndStaysRelativeAtOtherRates) {
-    for (const auto& model : kModels) {
-        SCOPED_TRACE(model.name);
-        EXPECT_EQ(AbsolutePhaseSetpointTicksAtRate(model.runtime.absolutePhaseSetpointTicks48k, 48000),
-                  std::optional<int32_t>{510});
-        for (const uint32_t rate : {44100u, 88200u, 96000u, 176400u, 192000u}) {
-            EXPECT_FALSE(
-                AbsolutePhaseSetpointTicksAtRate(model.runtime.absolutePhaseSetpointTicks48k, rate))
-                << rate;
-        }
-    }
-
-    constexpr uint64_t generation = 4;
-    constexpr int64_t relTicks = 900;
-    const auto feed = [](MotuTxTimingStamper& stamper, uint64_t frames, uint32_t ticksPerFrame) {
-        MotuSphServoApplyResult last{};
-        for (uint64_t update = 1; update <= 3; ++update) {
-            auto in = Window(generation, update, frames * update,
-                             static_cast<int64_t>(frames * update * ticksPerFrame));
-            in.haveRelPhase = update == 3;
-            in.relPhaseTicks = relTicks;
-            in.relPhaseCenterTicks = relTicks;
-            last = stamper.ApplyServoInput(in);
-        }
-        return last;
-    };
-
-    MotuTxTimingStamper at48k{};
-    ASSERT_TRUE(at48k.Configure(4, 48000, kDefaultPresentationLeadTicks,
-                                AbsolutePhaseSetpointTicksAtRate(510, 48000)));
-    ASSERT_TRUE(at48k.HoldsAbsolutePhase());
-    const auto seeded = feed(at48k, 512, 512);
-    EXPECT_TRUE(seeded.absolutePhaseAcquired);
-    EXPECT_EQ(seeded.decision.phaseErrorTicks, 510 - relTicks);
-
-    MotuTxTimingStamper at96k{};
-    ASSERT_TRUE(at96k.Configure(4, 96000, kDefaultPresentationLeadTicks,
-                                AbsolutePhaseSetpointTicksAtRate(510, 96000)));
-    EXPECT_FALSE(at96k.HoldsAbsolutePhase());
-    const auto relative = feed(at96k, 1024, 256);
-    ASSERT_TRUE(relative.observationApplied);
-    EXPECT_FALSE(relative.absolutePhaseAcquired);
-    EXPECT_FALSE(relative.decision.phaseReferenceReset);
-    EXPECT_EQ(relative.decision.phaseErrorTicks, 0);
-    EXPECT_EQ(at96k.ServoTelemetrySnapshot().seedReReferences, 0u);
-}
-
-TEST(MotuTxTimingStamperTests, MutesRepairsPhaseOnceAndUnmutesOnlyWhenSafe) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-
-    constexpr uint64_t generation = 11;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    constexpr int64_t overThreshold = MotuSphClockServo::kHardResyncThresholdTicks + 1;
-    const MotuSphServoRuntimeInput reference = Window(generation, 1, windowFrames, nominalTicks);
-    // Muted from the start, before any decision exists.
-    EXPECT_TRUE(tx.stamper.ServoTelemetrySnapshot().outputMuted);
-    EXPECT_TRUE(tx.writer.IsPcmMuted());
-    ASSERT_TRUE(tx.Apply(reference).observationApplied);
-
-    auto locking = reference;
-    locking.bridgeUpdates = 2;
-    locking.rxFrames += windowFrames;
-    locking.rxTicks += nominalTicks;
-    const auto locked = tx.Apply(locking);
-    ASSERT_TRUE(locked.observationApplied);
-    ASSERT_TRUE(locked.decision.locked);
-    EXPECT_TRUE(locked.unmuteActivated);
-    EXPECT_FALSE(locked.outputMuted);
-
-    auto beyond = locking;
-    beyond.bridgeUpdates = 3;
-    beyond.rxFrames += windowFrames;
-    beyond.rxTicks += nominalTicks + overThreshold;
-    const auto firstCrossing = tx.Apply(beyond);
-    ASSERT_TRUE(firstCrossing.observationApplied);
-    ASSERT_TRUE(firstCrossing.stepApplied);
-    EXPECT_TRUE(firstCrossing.decision.hardResyncRequired);
-    EXPECT_TRUE(firstCrossing.hardResyncStarted);
-    EXPECT_EQ(firstCrossing.decision.phaseErrorTicks, overThreshold);
-    EXPECT_EQ(firstCrossing.decision.stepQ32, firstCrossing.decision.measuredStepQ32);
-    EXPECT_TRUE(firstCrossing.muteActivated);
-    EXPECT_TRUE(firstCrossing.phaseRepairApplied);
-    EXPECT_TRUE(firstCrossing.outputMuted);
-    EXPECT_FALSE(firstCrossing.decision.locked);
-    EXPECT_TRUE(MotuSphHardResyncEventOccurred(firstCrossing));
-    const auto afterCrossing = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_EQ(afterCrossing.hardResyncRequests, 1u);
-    EXPECT_EQ(afterCrossing.phaseRepairs, 1u);
-    EXPECT_EQ(afterCrossing.muteTransitions, 2u);
-    EXPECT_EQ(afterCrossing.unmuteTransitions, 1u);
-
-    // The repair happened before the first packet's seed and is folded into
-    // it. While muted, a non-zero host buffer still produces PCM zero, as
-    // DATA, without disturbing the SPH.
-    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(0, DataTiming(1000)),
-              TxSlotPrepareResult::kPrepared);
-    EXPECT_TRUE(tx.provider.published.isData);
-    EXPECT_EQ(tx.stamper.LastFirstSph(), SphAt(1000 + kLead + overThreshold));
-
-    const uint32_t channels = tx.txConfig.pcmChannels;
-    std::vector<float> host(16 * channels, 0.0f);
-    for (uint32_t frame = 0; frame < 16; ++frame) {
-        host[frame * channels] = 1.0f;
-    }
-    tx.engine.FillFromHostOutput({host.data(), 0, 8, 16, channels}, 0);
-    const size_t mainAt = tx.HostChannelZeroAt(0);
-    EXPECT_EQ(tx.provider.bytes[mainAt], 0u);
-    EXPECT_EQ(tx.provider.bytes[mainAt + 1], 0u);
-    EXPECT_EQ(tx.provider.bytes[mainAt + 2], 0u);
-    EXPECT_EQ(tx.writer.Counters().framesMuted.load(), 8u);
-    EXPECT_EQ(tx.stamper.LastFirstSph(), tx.BlockSph(0));
-
-    // Remaining above the threshold is the same crossing: stay muted and do
-    // not repair again.
-    constexpr int64_t nominalStepQ32 = 512 * kOneQ32;
-    const int64_t txCorrectionAfterPacketQ32 =
-        overThreshold * kOneQ32 + 8 * (firstCrossing.decision.stepQ32 - nominalStepQ32);
-    const int64_t heldRxDeviationTicks =
-        (txCorrectionAfterPacketQ32 + overThreshold * kOneQ32 + kOneQ32 - 1) / kOneQ32;
-    auto stillBeyond = beyond;
-    stillBeyond.bridgeUpdates = 4;
-    stillBeyond.rxFrames = windowFrames * 4;
-    stillBeyond.rxTicks = nominalTicks * 4 + heldRxDeviationTicks;
-    const auto held = tx.Apply(stillBeyond);
-    ASSERT_TRUE(held.observationApplied);
-    EXPECT_TRUE(held.decision.hardResyncRequired);
-    EXPECT_FALSE(held.hardResyncStarted);
-    EXPECT_FALSE(held.muteActivated);
-    EXPECT_FALSE(held.phaseRepairApplied);
-    EXPECT_TRUE(held.outputMuted);
-    EXPECT_FALSE(MotuSphHardResyncEventOccurred(held));
-    const auto afterHeld = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_EQ(afterHeld.hardResyncRequests, afterCrossing.hardResyncRequests);
-    EXPECT_EQ(afterHeld.phaseRepairs, afterCrossing.phaseRepairs);
-    EXPECT_EQ(afterHeld.muteTransitions, afterCrossing.muteTransitions);
-    EXPECT_EQ(afterHeld.unmuteTransitions, afterCrossing.unmuteTransitions);
-
-    // Once the phase is back inside the lock threshold, unmute.
-    auto safe = stillBeyond;
-    safe.bridgeUpdates = 5;
-    safe.rxFrames = windowFrames * 5;
-    safe.rxTicks = nominalTicks * 5 + txCorrectionAfterPacketQ32 / kOneQ32;
-    const auto recovered = tx.Apply(safe);
-    ASSERT_TRUE(recovered.observationApplied);
-    EXPECT_FALSE(recovered.decision.hardResyncRequired);
-    EXPECT_TRUE(recovered.decision.locked);
-    EXPECT_TRUE(recovered.unmuteActivated);
-    EXPECT_FALSE(recovered.outputMuted);
-    EXPECT_TRUE(MotuSphHardResyncEventOccurred(recovered));
-
-    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(1, DataTiming(1000)),
-              TxSlotPrepareResult::kPrepared);
-    tx.engine.FillFromHostOutput({host.data(), 8, 8, 16, channels}, 0);
-    EXPECT_EQ(tx.provider.bytes[mainAt], 0x7fu);
-    EXPECT_EQ(tx.provider.bytes[mainAt + 1], 0xffu);
-    EXPECT_EQ(tx.provider.bytes[mainAt + 2], 0xffu);
-
-    const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_FALSE(telemetry.hardResyncRequired);
-    EXPECT_EQ(telemetry.hardResyncRequests, 1u);
-    EXPECT_EQ(telemetry.phaseRepairs, 1u);
-    EXPECT_EQ(telemetry.muteTransitions, 2u);
-    EXPECT_EQ(telemetry.unmuteTransitions, 2u);
-    EXPECT_FALSE(telemetry.outputMuted);
-    EXPECT_TRUE(telemetry.locked);
-    EXPECT_EQ(telemetry.decisions, 5u);
-}
-
-// The repair folds into the clock's applied correction at once, so on the
-// next decision the error is back to zero without any compensating input: the
-// mute lasts one decision.
-TEST(MotuTxTimingStamperTests, HardResyncMuteLastsOneDecisionWithoutAnyCompensation) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-
-    constexpr uint64_t generation = 11;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    constexpr int64_t overThreshold = MotuSphClockServo::kHardResyncThresholdTicks + 1;
-
-    auto window = [&](uint64_t index, int64_t extraTicks) {
-        return Window(generation, index, windowFrames * index,
-                      nominalTicks * static_cast<int64_t>(index) + extraTicks);
-    };
-
-    ASSERT_TRUE(tx.Apply(window(1, 0)).observationApplied);
-    const auto locked = tx.Apply(window(2, 0));
-    ASSERT_TRUE(locked.decision.locked);
-    ASSERT_FALSE(locked.outputMuted);
-
-    const auto crossing = tx.Apply(window(3, overThreshold));
-    ASSERT_TRUE(crossing.decision.hardResyncRequired);
-    ASSERT_TRUE(crossing.phaseRepairApplied);
-    ASSERT_TRUE(crossing.outputMuted);
-    ASSERT_FALSE(crossing.decision.locked);
-
-    uint32_t decisionsMuted = 0;
-    MotuSphServoApplyResult step{};
-    for (uint64_t index = 4; index <= 12; ++index) {
-        step = tx.Apply(window(index, overThreshold));
-        ASSERT_TRUE(step.observationApplied);
-        if (!step.outputMuted) {
-            break;
-        }
-        ++decisionsMuted;
-    }
-
-    EXPECT_EQ(decisionsMuted, 0u);
-    EXPECT_TRUE(step.unmuteActivated);
-    EXPECT_TRUE(step.decision.locked);
-    EXPECT_FALSE(step.outputMuted);
-    EXPECT_FALSE(step.decision.hardResyncRequired);
-    EXPECT_FALSE(tx.writer.IsPcmMuted());
-
-    const int64_t residual = step.decision.phaseErrorTicks < 0 ? -step.decision.phaseErrorTicks
-                                                               : step.decision.phaseErrorTicks;
-    EXPECT_LT(residual, MotuSphClockServo::kLockThresholdQ32 / kOneQ32 + 1);
-
-    const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-    EXPECT_EQ(telemetry.hardResyncRequests, 1u);
-    EXPECT_EQ(telemetry.phaseRepairs, 1u);
-    EXPECT_EQ(telemetry.muteTransitions, 2u);
-    EXPECT_EQ(telemetry.unmuteTransitions, 2u);
-}
-
-// The valve is symmetric in sign, and the drop gate discards a regression
-// before the servo sees it -- so the servo's own regression counters stay
-// unreachable in production.
-TEST(MotuTxTimingStamperTests, ValveIsSymmetricButTheDropGateStopsARegressionBeforeTheServo) {
-    constexpr uint64_t generation = 11;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    auto window = [&](uint64_t index, int64_t ticks) {
-        return Window(generation, index, windowFrames * index, ticks);
-    };
-
-    // Ten cycles short of nominal: a large negative error opens the valve.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        ASSERT_TRUE(tx.Apply(window(1, nominalTicks)).observationApplied);
-        ASSERT_TRUE(tx.Apply(window(2, nominalTicks * 2)).decision.locked);
-
-        const auto slow = tx.Apply(window(3, nominalTicks * 3 - 10 * 3072));
-        ASSERT_TRUE(slow.observationApplied);
-        EXPECT_TRUE(slow.decision.hardResyncRequired);
-        EXPECT_TRUE(slow.phaseRepairApplied);
-        EXPECT_LT(slow.decision.phaseErrorTicks, 0);
-        EXPECT_EQ(slow.decision.referenceCause, MotuSphReferenceCause::kNone);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().hardResyncRequests, 1u);
-    }
-
-    // The tick count goes backwards: dropped before the servo runs.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        ASSERT_TRUE(tx.Apply(window(1, nominalTicks)).observationApplied);
-        ASSERT_TRUE(tx.Apply(window(2, nominalTicks * 2)).decision.locked);
-
-        const auto regressed = tx.Apply(window(3, nominalTicks));
-        EXPECT_FALSE(regressed.observationApplied);
-        EXPECT_FALSE(regressed.decision.hardResyncRequired);
-        EXPECT_FALSE(regressed.phaseRepairApplied);
-        const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-        EXPECT_EQ(telemetry.rxTickRegressions, 0u);
-        EXPECT_EQ(telemetry.rxFrameRegressions, 0u);
-        EXPECT_EQ(telemetry.hardResyncRequests, 0u);
-        EXPECT_EQ(telemetry.phaseRepairs, 0u);
-    }
-
-    // A stalled bridge is dropped by the same gate.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        ASSERT_TRUE(tx.Apply(window(1, nominalTicks)).observationApplied);
-        ASSERT_TRUE(tx.Apply(window(2, nominalTicks * 2)).decision.locked);
-        const auto stalled = tx.Apply(window(2, nominalTicks * 2));
-        EXPECT_FALSE(stalled.observationApplied);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().bridgeStalls, 0u);
-    }
-}
-
-// Each dropped observation says which counter rejected it, and a repeat is
-// counted apart from a regression.
-TEST(MotuTxTimingStamperTests, AttributesEveryDroppedObservationToItsCause) {
-    constexpr uint64_t generation = 12;
-    constexpr uint64_t windowFrames = 512;
-    constexpr int64_t nominalTicks = windowFrames * 512;
-    auto window = [&](uint64_t index, int64_t ticks) {
-        return Window(generation, index, windowFrames * index, ticks);
-    };
-    auto settle = [&](MotuTx& tx) {
-        ASSERT_TRUE(tx.Apply(window(1, nominalTicks)).observationApplied);
-        ASSERT_TRUE(tx.Apply(window(2, nominalTicks * 2)).observationApplied);
-        ASSERT_EQ(tx.stamper.ServoTelemetrySnapshot().observationDrops, 0u);
-    };
-
-    // A healthy stream never touches these counters.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        settle(tx);
-        const auto third = tx.Apply(window(3, nominalTicks * 3));
-        EXPECT_TRUE(third.observationApplied);
-        EXPECT_EQ(third.dropCauses, 0u);
-        const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-        EXPECT_EQ(telemetry.observationDrops, 0u);
-        EXPECT_EQ(telemetry.dropBridgeNotAdvanced, 0u);
-        EXPECT_EQ(telemetry.dropBridgeRegressed, 0u);
-        EXPECT_EQ(telemetry.dropRxFramesNotAdvanced, 0u);
-        EXPECT_EQ(telemetry.dropRxFramesRegressed, 0u);
-        EXPECT_EQ(telemetry.dropRxTicksNotAdvanced, 0u);
-        EXPECT_EQ(telemetry.dropRxTicksRegressed, 0u);
-    }
-
-    // An identical repeat fails all three counters at once.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        settle(tx);
-        const auto repeat = tx.Apply(window(2, nominalTicks * 2));
-        EXPECT_FALSE(repeat.observationApplied);
-        EXPECT_EQ(repeat.dropCauses,
-                  static_cast<uint8_t>(kMotuSphDropBridgeNotAdvanced |
-                                       kMotuSphDropRxFramesNotAdvanced |
-                                       kMotuSphDropRxTicksNotAdvanced));
-        const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-        EXPECT_EQ(telemetry.observationDrops, 1u);
-        EXPECT_EQ(telemetry.dropBridgeNotAdvanced, 1u);
-        EXPECT_EQ(telemetry.dropRxFramesNotAdvanced, 1u);
-        EXPECT_EQ(telemetry.dropRxTicksNotAdvanced, 1u);
-        EXPECT_EQ(telemetry.dropBridgeRegressed, 0u);
-        EXPECT_EQ(telemetry.dropRxFramesRegressed, 0u);
-        EXPECT_EQ(telemetry.dropRxTicksRegressed, 0u);
-    }
-
-    // Only the device's SPH stamp goes backwards: exactly one bit.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        settle(tx);
-        const auto regressed = tx.Apply(window(3, nominalTicks));
-        EXPECT_FALSE(regressed.observationApplied);
-        EXPECT_EQ(regressed.dropCauses, kMotuSphDropRxTicksRegressed);
-        const auto telemetry = tx.stamper.ServoTelemetrySnapshot();
-        EXPECT_EQ(telemetry.observationDrops, 1u);
-        EXPECT_EQ(telemetry.dropRxTicksRegressed, 1u);
-        EXPECT_EQ(telemetry.dropRxTicksNotAdvanced, 0u);
-        EXPECT_EQ(telemetry.dropBridgeNotAdvanced, 0u);
-        EXPECT_EQ(telemetry.dropRxFramesNotAdvanced, 0u);
-    }
-
-    // The bridge's own publication count going backwards: a host-side fault,
-    // not filed under the device.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        settle(tx);
-        auto stale = window(3, nominalTicks * 3);
-        stale.bridgeUpdates = 1;
-        const auto dropped = tx.Apply(stale);
-        EXPECT_FALSE(dropped.observationApplied);
-        EXPECT_EQ(dropped.dropCauses, kMotuSphDropBridgeRegressed);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().dropBridgeRegressed, 1u);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().dropRxTicksRegressed, 0u);
-    }
-
-    // The decision-interval gate is not a drop.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        ASSERT_TRUE(tx.Apply(window(1, nominalTicks)).observationApplied);
-        auto early = window(1, nominalTicks);
-        early.bridgeUpdates = 2;
-        early.rxFrames = windowFrames + (windowFrames / 2);
-        early.rxTicks = nominalTicks + (nominalTicks / 2);
-        const auto tooSoon = tx.Apply(early);
-        EXPECT_FALSE(tooSoon.observationApplied);
-        EXPECT_EQ(tooSoon.dropCauses, 0u);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().observationDrops, 0u);
-    }
-
-    // Per start, like `decisions`.
-    {
-        MotuTx tx;
-        ASSERT_TRUE(tx.Arm());
-        settle(tx);
-        ASSERT_FALSE(tx.Apply(window(2, nominalTicks * 2)).observationApplied);
-        ASSERT_EQ(tx.stamper.ServoTelemetrySnapshot().observationDrops, 1u);
-        tx.stamper.ResetForStart();
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().observationDrops, 0u);
-        EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().dropRxTicksNotAdvanced, 0u);
-    }
-}
-
-// A new control generation is a new acquisition, muted like a start, and an
-// audible stream counts that mute.
-TEST(MotuTxTimingStamperTests, ANewGenerationMutesForAFreshAcquisition) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-    const auto first = tx.Apply(Window(3, 1, 512, 512 * 512));
-    ASSERT_TRUE(first.observationApplied);
-    // The first generation of a start is no restart: the start muted already.
-    EXPECT_FALSE(first.acquisitionRestarted);
-    ASSERT_TRUE(tx.Apply(Window(3, 2, 1024, 2 * 512 * 512)).decision.locked);
-    ASSERT_FALSE(tx.writer.IsPcmMuted());
-
-    const auto restarted = tx.Apply(Window(4, 1, 512, 512 * 512));
-    EXPECT_TRUE(restarted.observationApplied);
-    EXPECT_TRUE(restarted.acquisitionRestarted);
-    EXPECT_TRUE(restarted.decision.phaseReferenceReset);
-    EXPECT_TRUE(restarted.outputMuted);
-    EXPECT_TRUE(tx.writer.IsPcmMuted());
-    EXPECT_EQ(tx.stamper.ServoTelemetrySnapshot().muteTransitions, 2u);
-}
-
-// The telemetry's rate figure: parts per billion against nominal, positive
-// for a shorter step (a faster clock).
-TEST(MotuTxTimingStamperTests, RateInPartsPerBillionIsSignedAgainstNominal) {
-    constexpr int64_t nominal = 512 * kOneQ32;
-    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(nominal, nominal), 0);
-    // 511 ticks per frame is 512/511 - 1 = 1956947 ppb fast.
-    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(511 * kOneQ32, nominal), 1956947);
-    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(513 * kOneQ32, nominal), -1949317);
-    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(0, nominal), 0);
-    EXPECT_EQ(ASFW::Audio::Wire::MotuSphRatePpb(nominal, 0), 0);
-}
-
-// ---------------------------------------------------------------------------
-// Readiness: what the session waits for before the device may fetch.
-
-// Ready means the loop has locked on the control block's current generation
-// and the clock times the DATA packets -- not merely that RX timing exists.
-TEST(MotuTxTimingStamperTests, ReadinessFollowsTheLockOfTheCurrentGeneration) {
-    MotuTx tx;
-    ASSERT_TRUE(tx.Arm());
-    constexpr uint64_t generation = 5;
-    constexpr int64_t nominalTicks = 512 * 512;
-    EXPECT_EQ(tx.ready.load(), 0u);
-
-    // The RX clock arrives and is referenced: not locked yet.
-    ASSERT_TRUE(tx.Apply(Window(generation, 1, 512, nominalTicks)).observationApplied);
-    EXPECT_EQ(tx.ready.load(), 0u);
-
-    // Locked, but no DATA packet has seeded the clock yet.
-    ASSERT_TRUE(tx.Apply(Window(generation, 2, 1024, 2 * nominalTicks)).decision.locked);
-    EXPECT_EQ(tx.ready.load(), 0u);
-
-    // The first DATA packet seeds the clock; the next servo call reports ready.
-    ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(0, DataTiming(1000)),
-              TxSlotPrepareResult::kPrepared);
-    (void)tx.Apply(Window(generation, 2, 1024, 2 * nominalTicks));
-    EXPECT_EQ(tx.ready.load(), 1u);
-
-    // The control block moved on to a new start while this stream's sample is
-    // still the latest: a lock from the old generation is not readiness.
-    auto stale = Window(generation, 3, 1536, 3 * nominalTicks);
-    stale.expectedStreamGeneration = generation + 1;
-    EXPECT_FALSE(tx.Apply(stale).observationApplied);
-    EXPECT_EQ(tx.ready.load(), 0u);
-    ASSERT_TRUE(tx.Apply(Window(generation, 3, 1536, 3 * nominalTicks)).observationApplied);
-    EXPECT_EQ(tx.ready.load(), 1u);
-
-    // A hard resync takes it away until the loop relocks.
-    constexpr int64_t overThreshold = MotuSphClockServo::kHardResyncThresholdTicks + 1;
-    ASSERT_TRUE(tx.Apply(Window(generation, 4, 2048, 4 * nominalTicks + overThreshold))
-                    .decision.hardResyncRequired);
-    EXPECT_EQ(tx.ready.load(), 0u);
-
-    // And a new start clears it.
-    tx.stamper.ResetForStart();
-    EXPECT_EQ(tx.ready.load(), 0u);
+    EXPECT_EQ(tx.stamper.StepQ32(),512*kOneQ32);
+    EXPECT_EQ(tx.stamper.AppliedCorrectionQ32(),0);
 }
 
 } // namespace

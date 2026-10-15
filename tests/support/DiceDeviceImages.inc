@@ -208,13 +208,48 @@ inline constexpr DiceDeviceImage kMultimix{
     .rateModes = {},
 };
 
-inline constexpr std::array<const DiceDeviceImage*, 6> kAll{{
+// PreSonus StudioLive 32.4.2 — presonus3242.txt
+inline constexpr DiceDeviceImage kStudiolive3242{
+    .key = "studiolive-3242",
+    .reportedModel = "PreSonus StudioLive 32.4.2",
+    .source = "presonus3242.txt",
+    .guid = 0x000A9204050839AEULL,
+    .globalSection = {.offsetQuadlets = 10U, .sizeQuadlets = 95U},
+    .txSection = {.offsetQuadlets = 105U, .sizeQuadlets = 142U},
+    .rxSection = {.offsetQuadlets = 247U, .sizeQuadlets = 142U},
+    .extSyncSection = {.offsetQuadlets = 389U, .sizeQuadlets = 4U},
+    .hasExtension = false,
+    .owner = 0xFFFF000000000000ULL,
+    .notification = 0x00000000U,
+    .nickname = "StudioLive",
+    .clockSelect = 0x0000020CU,
+    .enable = 0U,
+    .status = 0x00000201U,
+    .extStatus = 0x00000000U,
+    .sampleRate = 48000U,
+    .version = 0x01000C00U,
+    .clockCaps = 0x10000004U,
+    .clockSourceNames = "Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Unused\\Internal\\\\",
+    .txEntryQuadlets = 70U,
+    .rxEntryQuadlets = 70U,
+    .txCount = 1U,
+    .tx = {{{.iso = -1, .pcm = 48U, .midi = 0U, .speedOrSeqStart = 2U, .names = "CH1\\CH2\\CH3\\CH4\\CH5\\CH6\\CH7\\CH8\\CH9\\CH10\\CH11\\CH12\\CH13\\CH14\\CH15\\CH16\\CH17\\CH18\\CH19\\CH20\\CH21\\CH22\\CH23\\CH24\\CH25\\CH26\\CH27\\CH28\\CH29\\CH30\\CH31\\CH32\\AUX1\\AUX2\\AUX3\\AUX4\\AUX5\\AUX6\\AUX7\\AUX8\\AUX9\\AUX10\\AUX11\\AUX12\\AUX13\\AUX14\\AUX15\\AUX16\\\\"}}},
+    .rxCount = 1U,
+    .rx = {{{.iso = -1, .pcm = 34U, .midi = 0U, .speedOrSeqStart = 0U, .names = "CH1\\CH2\\CH3\\CH4\\CH5\\CH6\\CH7\\CH8\\CH9\\CH10\\CH11\\CH12\\CH13\\CH14\\CH15\\CH16\\CH17\\CH18\\CH19\\CH20\\CH21\\CH22\\CH23\\CH24\\CH25\\CH26\\CH27\\CH28\\CH29\\CH30\\CH31\\CH32\\2TrackL\\2TrackR\\\\"}}},
+    .hasExtSync = true,
+    .extSync = {.clockSource = 1764055928U, .locked = 1U, .rateIndex = 10U, .adatUserData = 0x0AU},
+    .hasRateModeFormats = false,
+    .rateModes = {},
+};
+
+inline constexpr std::array<const DiceDeviceImage*, 7> kAll{{
     &kSaffirePro24Dsp,
     &kVeniceF24,
     &kVeniceF32,
     &kStudiolive2442,
     &kFirestudioProject,
     &kMultimix,
+    &kStudiolive3242,
 }};
 
 } // namespace DiceDeviceImages

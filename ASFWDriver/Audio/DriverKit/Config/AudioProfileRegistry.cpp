@@ -22,7 +22,7 @@ namespace ASFW::Isoch::Audio {
 namespace {
 
 // The DICE profiles: one class, one spec per catalog builder, holding only
-// what the device cannot report (DICE_TCAT_ARCHITECTURE.md §4.1). The catalog
+// what the device cannot report. The catalog
 // picks the builder; nothing here matches on identity (issue #115 was a
 // profile matcher that disagreed with the protocol factory).
 using DICE::DiceProfile;
@@ -49,7 +49,7 @@ constexpr DiceRangeMember kVeniceMembers[] = {
 //   headroom, 1 ms less round trip than the vendor's 16. The timing resolver
 //   floors it at one completion batch.
 // - Experiment E1a declared output 56 from a measured RTL_ts of 109.03; the
-//   controlled restart runs (TX_OWNERSHIP.md §1g) showed that was 105.03 plus
+//   controlled restart runs showed that was 105.03 plus
 //   the [TxAlign] rounding (0-7 frames per start). T7 removed the rounding, so
 //   output is back to the measured 52 (RTL_ts 105.03, midi 105.01).
 // - What the 53/52 contain: the Pro 24 / Pro 24 DSP use the TI PCM3168A
@@ -84,17 +84,11 @@ DiceProfile gPreSonusFireStudioProjectProfile{{.name = "PreSonus FireStudio Proj
 // report (AllocateStreams), where libffado forces one playback stream.
 DiceProfile gAlesisMultiMixProfile{{.name = "Alesis MultiMix FireWire (DICE)",
                                     .initializeNonAudioSlots = false}};
-// Weiss still sends AM824, unlike WeissFirewire.kext's raw path; it has never
-// run on hardware, so the flip waits for evidence (§3.2).
-DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)",
-                              .txEncoding = Encoding::AudioWireFormat::kAM824,
-                              .preserveFdfInNoDataPackets = false}};
+DiceProfile gWeissIntProfile{{.name = "Weiss INT (DICE)"}};
 // GenericDice's profile, and the registry's last resort for a nub whose
 // builder did not travel. DiceFamilyAdapter names the device from its identity,
 // not from this profile.
-DiceProfile gGenericDiceProfile{{.name = "Generic DICE",
-                                 .txEncoding = Encoding::AudioWireFormat::kAM824,
-                                 .preserveFdfInNoDataPackets = false}};
+DiceProfile gGenericDiceProfile{{.name = "Generic DICE"}};
 
 // Every AV/C unit published from generic discovery, BeBoB or Oxford: its
 // geometry, rates and name travel on the nub, so one host-side profile serves

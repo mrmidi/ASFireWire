@@ -1,3 +1,4 @@
+
 # XcodeGen spec for ASFW.xcodeproj — the pbxproj is GENERATED from this file.
 # Edit this spec (never the pbxproj), then run `xcodegen generate` (build.sh
 # does it automatically) and commit the regenerated project alongside it.
@@ -105,6 +106,8 @@ targets:
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.
       # Includes the common MOTU register/profile, model table and SPH regulator.
+      # Includes the owned FF800 timer-driven transmit start and shared Fireface clock decoder.
+      # Includes Bus/Timing/SplitTimeout.hpp and Async/Core/TransactionRetry.hpp for callback-based recovery.
       - path: ASFWDriver
         excludes:
           - "Info.plist"
@@ -136,12 +139,10 @@ targets:
         # Expose complete AV/C rate formations in ordinary Xcode builds. DICE is unaffected.
         ASFW_AVC_MULTIRATE_VALIDATION: "1"
         ASFW_DICE_MULTIRATE_VALIDATION: "1"
-        ASFW_MOTU_V1_VALIDATION: "0"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"
           - "ASFW_AVC_MULTIRATE_VALIDATION=$(ASFW_AVC_MULTIRATE_VALIDATION)"
           - "ASFW_DICE_MULTIRATE_VALIDATION=$(ASFW_DICE_MULTIRATE_VALIDATION)"
-          - "ASFW_MOTU_V1_VALIDATION=$(ASFW_MOTU_V1_VALIDATION)"
         SDKROOT: driverkit
         DRIVERKIT_DEPLOYMENT_TARGET: "25.0"
         PRODUCT_NAME: net.asfw.driver
@@ -170,7 +171,7 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "0.5.0"
-        CURRENT_PROJECT_VERSION: 19
+        CURRENT_PROJECT_VERSION: 24
       configs:
         Debug:
           CODE_SIGN_ENTITLEMENTS: ASFWDriver/ASFWDriver.Debug.entitlements
@@ -185,7 +186,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      # Includes the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, SpectrumVisualization.swift, SpectrumFFTLayout.swift, WaterfallProjection.swift, AnalyzerTimingStatistics.swift, AnalyzerReadoutBatch.swift, AnalyzerKernelTiming.swift, KWeightBlockPipeline.swift, KWeightBlocks.metal, and analyzer shaders.
+      # Includes DICE diagnostics model, reader, store and view, and the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, SpectrumVisualization.swift, SpectrumFFTLayout.swift, WaterfallProjection.swift, AnalyzerTimingStatistics.swift, AnalyzerReadoutBatch.swift, AnalyzerKernelTiming.swift, KWeightBlockPipeline.swift, KWeightBlocks.metal, and analyzer shaders.
       - path: ASFW
     dependencies:
       - target: ASFWDriver
@@ -203,7 +204,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ASFW/App.entitlements
         CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
-        CURRENT_PROJECT_VERSION: 19
+        CURRENT_PROJECT_VERSION: 24
         DEVELOPMENT_TEAM: F6YA6B56LR
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
@@ -255,7 +256,7 @@ targets:
         DEVELOPMENT_TEAM: F6YA6B56LR
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "26.0"
-        CURRENT_PROJECT_VERSION: 19
+        CURRENT_PROJECT_VERSION: 24
         MARKETING_VERSION: "1.0"
         STRING_CATALOG_GENERATE_SYMBOLS: NO
         SWIFT_APPROACHABLE_CONCURRENCY: YES

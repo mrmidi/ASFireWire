@@ -12,7 +12,7 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    writer never creates, publishes, or retires packets — slot lifecycle
 //    stays with the timeline/packetizer/provider. It is the TX fill: the
 //    driver calls it from the CoreAudio WriteEnd step with frames already in
-//    the HAL ring, once each (documentation/TX_OWNERSHIP.md §1d).
+//    the HAL ring, once each.
 // 2. Per-frame count-and-skip: a partially coverable window is never
 //    rejected wholesale; each frame is individually written or counted into
 //    exactly one miss bucket, so framesVisited == framesWritten +

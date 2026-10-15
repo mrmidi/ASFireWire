@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AvcFamilyAdapterTests.cpp
-// The AV/C adapter on the audio device host (documentation/AUDIO_DEVICE_HOST.md
-// §4.2, §6 E4). Plain values in, plain values out: no host, no bus, no driver.
+// The AV/C adapter on the audio device host. Plain values in, plain values out: no host, no bus, no driver.
 // Describe returns what discovery pushed or refuses; JudgeRuntimeFault is the
 // 256 ms settle that AVCAudioBackend::HandleTimingLoss ran, driven here through
 // a scripted FaultContext whose Sleep advances a fake clock.

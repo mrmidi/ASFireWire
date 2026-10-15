@@ -18,6 +18,7 @@
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuModel.hpp"
 #include "../../DriverKit/Config/MOTU/MotuProfile.hpp"
+#include "../../DriverKit/Config/DICE/DiceDeviceProfile.hpp"
 #include "../../Engine/Direct/Rx/RxCaptureChannelMap.hpp"
 #include "../../Families/BeBoB/MAudio/MAudioCaptureChannelMap.hpp"
 #include "../AudioTypes.hpp"
@@ -338,19 +339,14 @@ class DuplexStreamProfileResolver final {
             // directory and so can name a version no single unit published.
             const auto choice = policy->plan.unitVersion;
             profile.captureMotuPorts = Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(
-                choice != 0 ? choice : record.unitSwVersion.value_or(0U));
+                choice != 0 ? choice : record.unitSwVersion.value_or(0U), caps.sampleRateHz, profile.captureMotuPcmChunks);
         }
 
-        // Runtime-conditional on purpose: this device switches wire format with
-        // its configuration, so the identity grants the permission and the
-        // measured geometry decides whether it applies.
-        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostInputPcmChannels == 8 &&
-            caps.deviceToHostAm824Slots == 9) {
-            profile.captureWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
-        }
-        if (traits.wire.rawPcm24In32WhenEightInNineSlots && caps.hostOutputPcmChannels == 8 &&
-            caps.hostToDeviceAm824Slots == 9) {
-            profile.playbackWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
+        if (policy != nullptr &&
+            policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::DICE) {
+            // Label-blind, as the TCAT kexts and Linux read DICE capture
+            // (IDiceDeviceProfile::kRxPcmEncoding has the evidence).
+            profile.captureWireFormat = Isoch::Audio::DICE::IDiceDeviceProfile::kRxPcmEncoding;
         }
 
         if (traits.wire.headerlessUpper24LE) {

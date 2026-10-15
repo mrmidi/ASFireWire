@@ -15,10 +15,10 @@ namespace ASFW::Audio {
         config.currentSampleRate, &Runtime::RateFormation::sampleRateHz);
     if (formation != config.rateFormationCandidates.end() && formation->packedPcm) {
         return config.playbackStreams.size() == 1 && config.captureStreams.size() == 1 &&
-            config.playbackStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.hostToDevicePcmChunks) &&
-            config.captureStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.deviceToHostPcmChunks) &&
-            caps.hostToDevicePcmChunks == caps.hostOutputPcmChannels &&
-            caps.deviceToHostPcmChunks == caps.hostInputPcmChannels;
+            config.playbackStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.hostToDevicePcmChunks, formation->packedPlaybackMessageChunks) &&
+            config.captureStreams[0].am824Slots == Encoding::Motu::DataBlockQuadlets(caps.deviceToHostPcmChunks, formation->packedCaptureMessageChunks) &&
+            caps.hostToDevicePcmChunks == (config.playbackStreams[0].packedPcmChunks ? config.playbackStreams[0].packedPcmChunks : caps.hostOutputPcmChannels) &&
+            caps.deviceToHostPcmChunks == (config.captureStreams[0].packedPcmChunks ? config.captureStreams[0].packedPcmChunks : caps.hostInputPcmChannels);
     }
     const auto matches = [](const auto& streams, uint32_t count, const auto& observed) {
         if (count != streams.size() || count > kMaxAudioStreamsPerDirection) return false;
@@ -44,6 +44,8 @@ namespace ASFW::Audio {
     caps.sampleRateHz = config.currentSampleRate;
     caps.hostInputPcmChannels = capture.pcmChannels;
     caps.hostOutputPcmChannels = playback.pcmChannels;
+    caps.deviceToHostPcmChunks = capture.packedPcmChunks;
+    caps.hostToDevicePcmChunks = playback.packedPcmChunks;
     caps.deviceToHostAm824Slots = capture.am824Slots;
     caps.hostToDeviceAm824Slots = playback.am824Slots;
     caps.deviceToHostStreamCount = caps.hostToDeviceStreamCount = 1;

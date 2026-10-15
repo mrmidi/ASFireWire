@@ -298,3 +298,20 @@ TEST(ResolvedStreamConfigTests, DeviceSlotMapReachesPlaybackConfigAndRejectsOver
     wire.am824Slots = 256;
     EXPECT_FALSE(BuildResolvedTxStreamConfig(profile, &wire, 1, 0, config));
 }
+
+TEST(ResolvedStreamConfigTests, MotuPaddingIsWireWidthNotHostWidth) {
+    class PackedProfile final : public F32ShapedProfile {
+        ASFW::Encoding::AudioWireFormat TxWireFormat() const noexcept override {
+            return ASFW::Encoding::AudioWireFormat::kMotuPacked;
+        }
+    } profile;
+    ParsedWireStream wire{};
+    wire.pcmChannels=12; wire.packedPcmChunks=14;
+    wire.am824Slots=ASFW::Encoding::Motu::DataBlockQuadlets(14);
+    AudioStreamConfig config{};
+    ASSERT_TRUE(BuildResolvedTxStreamConfig(profile,&wire,1,0,config));
+    EXPECT_EQ(config.pcmChannels,12U); EXPECT_EQ(config.motuPcmChunks,14U);
+    EXPECT_EQ(config.dbs,13U);
+    wire.packedPcmChunks=10;
+    EXPECT_FALSE(BuildResolvedTxStreamConfig(profile,&wire,1,0,config));
+}

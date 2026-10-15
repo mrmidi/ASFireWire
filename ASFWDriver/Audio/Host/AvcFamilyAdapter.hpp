@@ -3,7 +3,7 @@
 //
 // AvcFamilyAdapter.hpp - The AV/C audio family on the audio device host (E4).
 //
-// documentation/AUDIO_DEVICE_HOST.md §4.2. Replaces AVCAudioBackend for BeBoB
+// Replaces AVCAudioBackend for BeBoB
 // (Phase 88, M-Audio special, Onyx), Fireworks, Apogee Duet and generic AV/C
 // units.
 //

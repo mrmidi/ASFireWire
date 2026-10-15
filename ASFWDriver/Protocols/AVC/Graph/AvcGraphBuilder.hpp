@@ -6,8 +6,7 @@
 // clock sources, and control graphs from AV/C descriptors.
 //
 // References:
-// - Apple AppleFWAudio graph rules (documentation/avc-rebuild/applefwaudio-graph-rules.md)
-// - Prototype graph_build.py (documentation/avc-rebuild/fixtures/graph_build.py)
+// - Apple AppleFWAudio graph rules
 //
 
 #pragma once

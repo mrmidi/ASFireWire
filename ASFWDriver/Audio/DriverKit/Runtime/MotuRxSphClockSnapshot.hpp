@@ -17,11 +17,15 @@ namespace ASFW::Audio::Runtime {
 // Cumulative RX clock observation in the MOTU 24.576 MHz SPH domain: rxTicks
 // device ticks elapsed over rxFrames received frames since the stream start.
 // `streamGeneration` is the AudioTransportControlBlock start generation, not a
-// publication counter; a consumer must rebase when it changes.
+// publication counter; a consumer must rebase when it changes. firstAudioFrame
+// identifies the frame carrying sphTicks. replayEpoch protects cursor rebinding;
+// TX projects by frame index, never by a guessed number of cadence packets.
 struct MotuRxSphClockSample final {
     uint64_t streamGeneration{0};
     uint64_t rxFrames{0};
     int64_t rxTicks{0};
+    uint64_t firstAudioFrame{0};
+    uint32_t sphTicks{0}, replayEpoch{0};
 };
 
 // Single writer (the master RX stream's timing observer), single reader (the
@@ -39,6 +43,9 @@ public:
         streamGeneration_.store(streamGeneration, std::memory_order_relaxed);
         rxFrames_.store(0, std::memory_order_relaxed);
         rxTicks_.store(0, std::memory_order_relaxed);
+        firstAudioFrame_.store(0, std::memory_order_relaxed);
+        sphTicks_.store(0, std::memory_order_relaxed);
+        replayEpoch_.store(0, std::memory_order_relaxed);
         updates_.store(0, std::memory_order_relaxed);
         SeqlockWriteEnd(sequence_);
     }
@@ -59,6 +66,9 @@ public:
         SeqlockWriteBegin(sequence_);
         rxFrames_.store(sample.rxFrames, std::memory_order_relaxed);
         rxTicks_.store(sample.rxTicks, std::memory_order_relaxed);
+        firstAudioFrame_.store(sample.firstAudioFrame, std::memory_order_relaxed);
+        sphTicks_.store(sample.sphTicks, std::memory_order_relaxed);
+        replayEpoch_.store(sample.replayEpoch, std::memory_order_relaxed);
         updates_.store(updates + 1, std::memory_order_relaxed);
         SeqlockWriteEnd(sequence_);
         return true;
@@ -74,6 +84,9 @@ public:
             sample.streamGeneration = streamGeneration_.load(std::memory_order_relaxed);
             sample.rxFrames = rxFrames_.load(std::memory_order_relaxed);
             sample.rxTicks = rxTicks_.load(std::memory_order_relaxed);
+            sample.firstAudioFrame = firstAudioFrame_.load(std::memory_order_relaxed);
+            sample.sphTicks = sphTicks_.load(std::memory_order_relaxed);
+            sample.replayEpoch = replayEpoch_.load(std::memory_order_relaxed);
             updates = updates_.load(std::memory_order_relaxed);
         });
         if (!accepted || updates == 0) {
@@ -89,6 +102,8 @@ private:
     std::atomic<uint64_t> streamGeneration_{0};
     std::atomic<uint64_t> rxFrames_{0};
     std::atomic<int64_t> rxTicks_{0};
+    std::atomic<uint64_t> firstAudioFrame_{0};
+    std::atomic<uint32_t> sphTicks_{0}, replayEpoch_{0};
     std::atomic<uint64_t> updates_{0};
 };
 

@@ -4,7 +4,7 @@
 // DiceFamilyDriver.hpp - Linear DICE duplex bring-up and teardown.
 //
 // Replaces the callback-chained DICEDuplexBringupController
-// (documentation/AUDIO_SESSION_REDESIGN.md, stage S1). Every method runs to
+// Every method runs to
 // completion on the caller's thread and reads top to bottom: each register
 // access goes through DiceDeviceIo, each wait through DiceWaitClock. The wire
 // behaviour is the controller's, transaction for transaction; the golden
@@ -18,6 +18,8 @@
 
 #include "DICETypes.hpp"
 #include "DiceDeviceIo.hpp"
+#include "../../../Diagnostics/DICE/DiceLockWatch.hpp"
+#include "../../../Diagnostics/DICE/DiceReceiverDump.hpp"
 #include "DiceNotificationMailbox.hpp"
 #include "../../Duplex/DuplexControlTypes.hpp"
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
@@ -38,7 +40,8 @@ public:
     DiceFamilyDriver(DiceDeviceIo& io,
                      Protocols::Ports::FireWireBusInfo& busInfo,
                      DiceNotificationMailbox& notifications,
-                     DICEBringupPolicy bringupPolicy) noexcept;
+                     DICEBringupPolicy bringupPolicy,
+                     Scheduling::ITimerScheduler* scheduler = nullptr) noexcept;
 
     DiceFamilyDriver(const DiceFamilyDriver&) = delete;
     DiceFamilyDriver& operator=(const DiceFamilyDriver&) = delete;
@@ -65,6 +68,29 @@ public:
     // Total stop: disable and disarm every stream. The owner stays ours.
     [[nodiscard]] IOReturn Stop();
 
+    // Diagnostics close with the protocol (teardown) and cancel with a stop or
+    // a route change; the receiver dump follows the lock watch.
+    void CloseReceiverLockWatch() {
+        lockWatch_.Close();
+        receiverDump_.Close();
+    }
+    void CancelReceiverLockWatch(Diagnostics::DiceLockPhase phase = Diagnostics::DiceLockPhase::Stopped) {
+        lockWatch_.Cancel(phase);
+        receiverDump_.Cancel();
+    }
+    [[nodiscard]] IOReturn RequestReceiverDump(bool fifoEvents) {
+        return receiverDump_.Request(io_.RegisterIo(), scheduler_, fifoEvents);
+    }
+    [[nodiscard]] Diagnostics::DiceReceiverDumpSnapshot ReceiverDumpSnapshot() const { return receiverDump_.Copy(); }
+    [[nodiscard]] Diagnostics::DiceLockSnapshot ReceiverLockSnapshot() const { return lockWatch_.Copy(); }
+    // Capture the session before an async health read, so a late completion
+    // from the prior start cannot enter a replacement watch.
+    [[nodiscard]] auto ReceiverLockObserver() const { return lockWatch_.Observer(); }
+
+    // Callback-based discovery claimed the owner and applied the clock. The
+    // owner is reused; every stream start still writes CLOCK_SELECT.
+    void AdoptPreparedClock(const DiceClockConfiguration& clock) noexcept;
+
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept { teardownCancel_ = cancel; }
 
     [[nodiscard]] bool IsPrepared() const noexcept { return session_.devicePrepared; }
@@ -84,13 +110,20 @@ private:
     [[nodiscard]] IOReturn EnsureOwner(uint64_t currentOwner);
     [[nodiscard]] IOReturn WriteClockSelect(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn ActiveClockCheck(const AudioDuplexChannels& channels, uint32_t accumulatedNotify);
-    [[nodiscard]] IOReturn WaitClockAccepted(const AudioDuplexChannels& channels);
+    [[nodiscard]] IOReturn WaitClockAccepted(const AudioDuplexChannels& channels,
+                                               uint32_t observedNotify);
     [[nodiscard]] IOReturn ReadGlobalAfterClockAccepted(const AudioDuplexChannels& channels,
                                                         uint32_t observedNotify,
                                                         IOReturn failureStatus);
     [[nodiscard]] IOReturn ClockConfirmed(const AudioDuplexChannels& channels);
+    // After CLOCK_ACCEPTED with RX/TX_CFG_CHG: wait for LOCK_CHG and a locked
+    // STATUS at the target before the bring-up continues.
+    [[nodiscard]] IOReturn AwaitReconfigurationRelock(uint32_t observedNotify);
     [[nodiscard]] IOReturn AwaitStreamingClockLock(const AudioDuplexChannels& channels);
     [[nodiscard]] IOReturn AwaitIdleClockRate();
+    // After a CLOCK_SELECT write this flow issued, once the device runs at the
+    // target: the observer. False only when the route went stale or teardown began.
+    [[nodiscard]] bool AfterClockWrite();
     [[nodiscard]] IOReturn DiscoverStreams();
     [[nodiscard]] IOReturn FinishPrepare();
     [[nodiscard]] IOReturn CompleteClockApply();
@@ -110,6 +143,9 @@ private:
     [[nodiscard]] uint32_t ResolvedTxSpeed() const noexcept;
     void RecordStopTeardownAbort(const char* stage) const noexcept;
 
+    Diagnostics::DiceLockWatch lockWatch_;
+    Diagnostics::DiceReceiverDump receiverDump_;
+    Scheduling::ITimerScheduler* scheduler_;
     DiceDeviceIo& io_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     DiceNotificationMailbox& notifications_;
@@ -126,11 +162,13 @@ private:
     IOReturn stopSequenceError_{kIOReturnSuccess};
     bool refreshRuntimeCapsOnPrepare_{true};
     // GLOBAL state read before the owner claim: CLOCK_SELECT is the rate that was
-    // requested, STATUS/SAMPLE_RATE the rate the device reached. The redundant
-    // CLOCK_SELECT write is skipped only when both are at the target.
+    // requested, STATUS/SAMPLE_RATE the rate the device reached. An idle apply
+    // skips the CLOCK_SELECT write only when both are at the target.
     uint32_t preClaimClockSelect_{0};
     uint32_t preClaimStatus_{0};
     uint32_t preClaimSampleRate_{0};
+    // This flow wrote CLOCK_SELECT (a redundant write is skipped and does not count).
+    bool clockSelectWritten_{false};
     const std::atomic<bool>* teardownCancel_{nullptr};
     // The bus generation we last claimed the owner in. Held across stops;
     // a new generation claims again.

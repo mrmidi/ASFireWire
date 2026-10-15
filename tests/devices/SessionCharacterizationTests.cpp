@@ -6,8 +6,8 @@
 // For every start/stop recipe the device catalog resolves, these record what
 // the session does: host transport calls (IRM reservation, DMA
 // prepare/start/stop), device stages, and for DICE the bus traffic underneath.
-// They were first recorded against AudioDuplexCoordinator; stage S2 of
-// documentation/AUDIO_SESSION_REDESIGN.md replaced it with SessionScheduler,
+// They were first recorded against AudioDuplexCoordinator; the session
+// redesign replaced it with SessionScheduler,
 // which reproduced every trace except three declared deltas (double-start,
 // fault-after-stop, stop-after-refused-start). Like the S0 DICE goldens, they
 // characterize; they do not judge.
@@ -216,18 +216,101 @@ constexpr SessionShape kMultimixTwoPlaybackShape{
     "multimix-two-playback", Ids::kAlesisVendorId, Ids::kAlesisMultiMixModelId,
     Ids::kAlesisVendorId, kDiceUnitVersion, &SyntheticDiceImages::kMultimixTwoPlayback, false};
 
+TEST(SessionStudioLive3242, RecordedReportPublishesAndStartsFullWidthDuplex) {
+    const SessionShape shape{"studiolive-3242", Ids::kPreSonusVendorId,
+        Ids::kStudioLive3242ModelId, Ids::kPreSonusVendorId, kDiceUnitVersion,
+        &DiceDeviceImages::kStudiolive3242, false};
+    SessionRig rig(shape);
+    rig.Mark("## Publish recorded presonus3242.txt");
+    ASSERT_TRUE(rig.deviceHost);
+    rig.deviceHost->RefreshPublication(rig.guid);
+    rig.timer.Advance(400'000'000ULL);
+    const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
+    ASSERT_NE(endpoint, nullptr) << "recorded formation must pass publication";
+    ASFW::Audio::Model::ASFWAudioDevice config;
+    ASSERT_TRUE(endpoint->CopyConfig(config));
+    EXPECT_EQ(config.inputChannelCount, 48U);
+    EXPECT_EQ(config.outputChannelCount, 34U);
+    ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+    EXPECT_TRUE(rig.IsStreaming());
+    EXPECT_EQ(rig.bus.Device().Enable(), 1U);
+    ASSERT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_FALSE(rig.IsStreaming());
+    EXPECT_EQ(rig.bus.Device().Enable(), 0U);
+    ExpectMatchesGolden(rig.bus.Trace(), "session/studiolive-3242/publish-start-stop.trace");
+}
+
+TEST(SessionStudioLive3242, CaptureSpeedMatchesBandwidthReservationAndHostPlaybackSpeed) {
+    // Recorded 48-in/34-out geometry. At 48 kHz the maximum CIP payloads are
+    // 1544/1096 bytes. Apple IOFWIsochChannel.cpp:664 charges 1556/1108 units
+    // at S400, and half that at S800. Linux dice-stream.c:192-194, :359-369
+    // reserves and programs device TX using the same resolved speed.
+    struct SpeedCase {
+        FwSpeed speed;
+        uint32_t playbackUnits;
+        uint32_t captureUnits;
+    };
+    for (const auto& test : {SpeedCase{FwSpeed::S400, 1108U, 1556U},
+                             SpeedCase{FwSpeed::S800, 554U, 778U}}) {
+        SCOPED_TRACE(static_cast<uint32_t>(test.speed));
+        const SessionShape shape{"studiolive-3242", Ids::kPreSonusVendorId,
+            Ids::kStudioLive3242ModelId, Ids::kPreSonusVendorId, kDiceUnitVersion,
+            &DiceDeviceImages::kStudiolive3242, false};
+        SessionRig rig(shape);
+        rig.link.localToNode = test.speed;
+        rig.link.isochToNode = test.speed;
+        rig.bus.SetSpeed(NodeId{0x02}, test.speed);
+        rig.Install(Generation{1});
+
+        ASSERT_EQ(rig.Start(), kIOReturnSuccess);
+        ASSERT_TRUE(rig.IsStreaming());
+        const auto& lines = rig.bus.Trace().Lines();
+        EXPECT_NE(std::ranges::find(lines,
+            "H reserve playback allowed=00000000ffffffff bw=" +
+                std::to_string(test.playbackUnits) + " -> ch=0"), lines.end());
+        EXPECT_NE(std::ranges::find(lines,
+            "H reserve capture allowed=00000000ffffffff bw=" +
+                std::to_string(test.captureUnits) + " -> ch=1"), lines.end());
+        EXPECT_NE(std::ranges::find(lines,
+            std::string("H prepare tx ch=0 sid=0 @") + SessionSpeedName(test.speed)), lines.end());
+        EXPECT_EQ(rig.bus.Device().TxSpeed(0), static_cast<uint32_t>(test.speed))
+            << "Device capture must use the speed its bandwidth was reserved for";
+        EXPECT_EQ(rig.bus.Device().Enable(), 1U);
+
+        ASSERT_EQ(rig.Stop(), kIOReturnSuccess);
+        EXPECT_FALSE(rig.IsStreaming());
+        EXPECT_EQ(rig.bus.Device().TxSpeed(0), static_cast<uint32_t>(test.speed));
+        EXPECT_EQ(rig.bus.Device().Enable(), 0U);
+        EXPECT_EQ(rig.host.AssignedChannelsForTest(), 0U);
+    }
+}
+
 // Publication resolves the geometry; a refusal returns before the endpoint
 // exists, so CoreAudio would never see the device.
 TEST(SessionMultimixTwoPlayback, PublicationKeepsBothPlaybackStreams) {
     SessionRig rig(kMultimixTwoPlaybackShape);
     ASSERT_TRUE(rig.deviceHost.has_value());
     rig.deviceHost->RefreshPublication(rig.guid);
+    rig.timer.Advance(400'000'000ULL);
     const auto endpoint = rig.runtime.FindEndpointRuntime(rig.guid);
     ASSERT_NE(endpoint, nullptr) << "the device was refused at publication";
     ASFW::Audio::Model::ASFWAudioDevice config{};
     ASSERT_TRUE(endpoint->CopyConfig(config));
     EXPECT_EQ(config.playbackStreams.size(), 2U);
     EXPECT_EQ(config.outputChannelCount, 4U);
+}
+
+TEST(SessionMultimixTwoPlayback, TeardownCancelsPublicationBeforeWaitingForItsTimer) {
+    SessionRig rig(kMultimixTwoPlaybackShape);
+    ASSERT_TRUE(rig.deviceHost.has_value());
+    rig.deviceHost->RefreshPublication(rig.guid);
+    ASSERT_GT(rig.timer.PendingCount(), 0U);
+    const auto operations = rig.bus.Operations().size();
+    rig.deviceHost->BeginTeardown(); // must return without advancing the timer
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+    rig.timer.Advance(1'000'000'000ULL);
+    EXPECT_EQ(rig.bus.Operations().size(), operations);
+    EXPECT_EQ(rig.runtime.FindEndpointRuntime(rig.guid), nullptr);
 }
 
 TEST(SessionMultimixTwoPlayback, ColdStartArmsBothPlaybackStreams) {

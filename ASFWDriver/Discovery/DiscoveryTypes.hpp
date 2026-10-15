@@ -370,7 +370,8 @@ struct DiscoverySnapshot {
 // ============================================================================
 
 struct ROMScannerParams {
-    FwSpeed startSpeed{FwSpeed::S400};
+    // Upper bound for the operational-speed probe. BIB access always uses S100.
+    FwSpeed startSpeed{FwSpeed::S800};
     uint8_t maxInflight{2};
     uint8_t perStepRetries{2};
     uint8_t configROMReadyRetries{4};

@@ -310,7 +310,7 @@ private:
         bool isImmediate{false};              ///< The header is an *-Immediate descriptor
         uint16_t xferStatus{0};
         uint8_t eventCodeRaw{0};
-        uint8_t ackCount{0};
+        uint8_t speed{0};  ///< xferStatus[7:5] spd — OHCI reports no retry count
         uint8_t ackCode{0};
         OHCIEventCode eventCode{OHCIEventCode::kEvtNoStatus};
         uint8_t command{0};
@@ -882,13 +882,13 @@ bool ATContextBase<Derived, Tag>::ReleaseUnsentPacketIfStopped(const ScanState& 
 template<typename Derived, ContextRole Tag>
 bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const noexcept {
     state.eventCodeRaw = static_cast<uint8_t>(state.xferStatus & 0x1F);
-    state.ackCount = static_cast<uint8_t>((state.xferStatus >> 5) & 0x07);
+    state.speed = static_cast<uint8_t>((state.xferStatus >> 5) & 0x07);
     state.eventCode = static_cast<OHCIEventCode>(state.eventCodeRaw);
 
     if (state.eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
         ASFW_LOG(Async,
-                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=15)",
-                 state.ackCount);
+                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (spd=%u)",
+                 state.speed);
         state.eventCode = OHCIEventCode::kAckComplete;
         state.eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
     }
@@ -1029,30 +1029,8 @@ void ATContextBase<Derived, Tag>::LogCompletionTelemetry(const ScanState& state)
                 "🔍 ScanCompletion: head=%zu tail=%zu desc=%p",
                 state.headIndex, state.tailIndex, state.desc);
     ASFW_LOG_V3(Async,
-                "  xferStatus=0x%04x → ackCount=%u eventCode=0x%02x (%{public}s)",
-                state.xferStatus, state.ackCount, state.eventCodeRaw, ToString(state.eventCode));
-
-    if (state.ackCount > 3 && hw_->HasAgereQuirk()) {
-        ASFW_LOG(Async,
-                 "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=15 (Agere/LSI ignores ATRetries register)",
-                 state.ackCount);
-    }
-
-    if (state.ackCount == 0 &&
-        (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
-         state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {
-        ASFW_LOG(Async,
-                 "  ⚠️  SUSPICIOUS: ackCount=0 for %{public}s (hardware should retry!)",
-                 ToString(state.eventCode));
-    } else if (state.ackCount == 3 &&
-               (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
-                state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {
-        ASFW_LOG_V3(Async,
-                    "  ✓ ackCount=3: Hardware exhausted retries for %{public}s (expected)",
-                    ToString(state.eventCode));
-    } else if (state.ackCount > 0) {
-        ASFW_LOG_V3(Async, "  ℹ️  Transmission attempts: %u", state.ackCount + 1);
-    }
+                "  xferStatus=0x%04x → spd=%u eventCode=0x%02x (%{public}s)",
+                state.xferStatus, state.speed, state.eventCodeRaw, ToString(state.eventCode));
 }
 
 template<typename Derived, ContextRole Tag>
@@ -1061,7 +1039,7 @@ TxCompletion ATContextBase<Derived, Tag>::MakeCompletion(const ScanState& state,
     TxCompletion completion;
     completion.eventCode = state.eventCode;
     completion.timeStamp = state.timeStamp;
-    completion.ackCount = state.ackCount;
+    completion.speed = state.speed;
     completion.ackCode = state.ackCode;
     completion.tLabel = tLabel;
     completion.descriptor = state.desc;

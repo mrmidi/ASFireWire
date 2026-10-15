@@ -26,8 +26,6 @@ using AllocationLostCallback = std::function<void(uint8_t channel, uint32_t band
 /**
  * IRMAllocationManager - Manages IRM allocations with automatic bus reset recovery.
  *
- * This implements Phase 2 (Bus Reset Recovery) from IRM-Implementation-Plan.md.
- *
  * Design Philosophy:
  * - Tracks active allocation (channel + bandwidth + generation)
  * - Automatically attempts to reallocate after bus reset

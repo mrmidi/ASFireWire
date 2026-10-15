@@ -209,12 +209,16 @@ enum class LockOp : uint8_t {
 
 /**
  * Maximum async payload bytes from MaxRec field.
- * Formula: bytes = 4 * (2^(maxRec + 1))
- * Reference: IEEE 1394-1995 §6.2.3.1
+ * Formula: bytes = 2^(maxRec + 1), for the four-bit BIB field.
+ * Cross-checked with Apple IOFireWireDevice.cpp:483-501 and Linux net.c:468-474.
  */
 inline constexpr uint32_t MaxAsyncPayloadBytesFromMaxRec(uint8_t maxRec) {
-    return 4u << (maxRec + 1);
+    return 1u << (maxRec + 1);
 }
+
+static_assert(MaxAsyncPayloadBytesFromMaxRec(7) == 256);
+static_assert(MaxAsyncPayloadBytesFromMaxRec(8) == 512);
+static_assert(MaxAsyncPayloadBytesFromMaxRec(9) == 1024);
 
 // ============================================================================
 // Compile-Time Validation

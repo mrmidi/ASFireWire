@@ -89,7 +89,7 @@ public:
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
     // Copies host output into the packets that carry those frames (the TX
-    // fill, run by the producer; documentation/TX_OWNERSHIP.md). Frames whose
+    // fill, run by the producer). Frames whose
     // packet is below firstWritablePacket keep their armed silence.
     void FillFromHostOutput(const AMDTP::HostAudioBufferView& hostBuffer,
                             uint64_t firstWritablePacket) noexcept;

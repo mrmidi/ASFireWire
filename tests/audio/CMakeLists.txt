@@ -114,20 +114,13 @@ add_audio_test(MotuRxTimingTests
     MotuRxTimingTests.cpp
 )
 
-# MOTU SPH regulator: fractional transmit clock
-add_audio_test(MotuSphQ32AccumulatorTests
-    MotuSphQ32AccumulatorTests.cpp
-)
+add_audio_test(MotuSphSynthesizerTests MotuSphSynthesizerTests.cpp)
+
+# MOTU timing integration
 
 # MOTU SPH regulator: the clock servo and its hard-resync gate
-add_audio_test(MotuSphClockServoTests
-    MotuSphClockServoTests.cpp
-)
 
 # MOTU SPH regulator: per-rate production configuration
-add_audio_test(MotuSphServoPolicyTests
-    MotuSphServoPolicyTests.cpp
-)
 
 # MOTU SPH regulator: the transmit timing stamper, for every protocol version
 add_audio_test(MotuTxTimingStamperTests
@@ -142,30 +135,6 @@ add_audio_test(MotuTxTimingStamperTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/MOTU/MotuPayloadWriter.cpp"
-)
-
-# MOTU SPH regulator: absolute-phase conditioner
-add_audio_test(MotuRelPhaseConditionerTests
-    MotuRelPhaseConditionerTests.cpp
-)
-
-# MOTU SPH regulator: the release observer that publishes the transmit phase trace
-add_audio_test(MotuTxPhaseTracePublisherTests
-    MotuTxPhaseTracePublisherTests.cpp
-)
-
-# MOTU SPH regulator: the transmit presentation residual and its cadence lattice
-add_audio_test(MotuTxPhaseResidualQuantizationTests
-    MotuTxPhaseResidualQuantizationTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
 # MOTU SPH regulator: device sample period measured from received SPH
@@ -405,7 +374,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 
-# Every DICE profile's answers, recorded (DICE_TCAT_ARCHITECTURE.md §4.2 stage C).
+# Every DICE profile's answers, recorded.
 # Zero timestamps the RX path publishes, recorded (Epic 4, T1).
 add_audio_test(ZtsCharacterizationTests
     ZtsCharacterizationTests.cpp

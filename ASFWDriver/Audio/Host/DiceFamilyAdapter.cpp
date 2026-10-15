@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -34,8 +35,8 @@ namespace {
 // The device's own DICE registers describe its streams, and every consumer
 // reads that one description: bandwidth (DuplexStreamProfile), capture framing
 // (IsochDuplexHostTransport) and playback framing (the nub's per-stream arrays,
-// BuildResolvedTxStreamConfig). The profile states no geometry
-// (DICE_TCAT_ARCHITECTURE.md §4.2 stage C). What is left to check here: the one
+// BuildResolvedTxStreamConfig). The profile states no geometry.
+// What is left to check here: the one
 // stream count a reference stack says a device overstates, and that the device
 // described something usable. See StreamGeometryResolver.hpp.
 
@@ -222,9 +223,10 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
     caps.hostToDeviceStreamCount = resolvedGeometry.playback.StreamCount();
 
     if (ApplyDiceRuntimeCapsToDeviceConfig(caps, dev)) {
+        // Geometry only: the published rate is decided below and logged there.
         ASFW_LOG(Audio,
-                 "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry rate=%u in=%u out=%u (GUID=0x%016llx)",
-                 dev.currentSampleRate, dev.inputChannelCount, dev.outputChannelCount, guid);
+                 "DiceAudioBackend::EnsureNubForGuid: applied runtime geometry in=%u out=%u (GUID=0x%016llx)",
+                 dev.inputChannelCount, dev.outputChannelCount, guid);
     }
 
     PublishStreams(resolvedGeometry.playback, dev.playbackStreams);
@@ -250,7 +252,9 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
     }
     dev.sampleRates = DICE::DicePublishedRates(caps.deviceRateMask);
     dev.deviceSampleRates = true;
-    dev.currentSampleRate = initialRate;
+    dev.currentSampleRate = DICE::DiceRateIsStreamable(caps.sampleRateHz) &&
+        std::ranges::find(dev.sampleRates, caps.sampleRateHz) != dev.sampleRates.end()
+            ? caps.sampleRateHz : initialRate;
     if (const auto formations = protocol.RateFormations();
         formations && !formations->empty() && dev.inputChannelCount != 0) {
         dev.rateFormationCandidates = *formations;
@@ -260,12 +264,12 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
         dev.rateBusGeneration = route.generation.value;
         dev.sampleRates.clear();
         for (const auto& formation : *formations)
-            if (Runtime::RateEnabled(formation, initialRate, true))
+            if (Runtime::RateEnabled(formation, dev.currentSampleRate, true))
                 dev.sampleRates.push_back(formation.sampleRateHz);
         // Generic non-EAP hardware can have only its observed mode known.
         // Publish a coherent known formation, never another mode's geometry
         // under a convenient scalar clock.
-        if (std::ranges::find(dev.sampleRates, initialRate) == dev.sampleRates.end()) {
+        if (std::ranges::find(dev.sampleRates, dev.currentSampleRate) == dev.sampleRates.end()) {
             if (dev.sampleRates.empty()) {
                 return DescribeRefusal{kIOReturnUnsupported, DiceFamilyAdapter::kNoEnabledFormation};
             }
@@ -288,6 +292,22 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
                          "%u Hz, above the %u Hz streaming ceiling; published geometry is that "
                          "mode's and may not match %u Hz",
                          guid, caps.sampleRateHz, DICE::kDiceMaxStreamingRateHz, initialRate);
+    }
+    {
+        char rates[64] = {};
+        size_t used = 0;
+        for (const uint32_t rate : dev.sampleRates) {
+            if (used >= sizeof(rates)) break;
+            const int n = snprintf(rates + used, sizeof(rates) - used, "%s%u",
+                                   used == 0 ? "" : ",", rate);
+            if (n < 0) break;
+            used += static_cast<size_t>(n);
+        }
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend::EnsureNubForGuid: rate device=%u published=%u rates=%{public}s "
+                 "(CLOCK_CAPABILITIES rates=0x%02x) (GUID=0x%016llx)",
+                 caps.sampleRateHz, dev.currentSampleRate, used == 0 ? "-" : rates,
+                 caps.deviceRateMask, guid);
     }
 
     // Refuse a device this build cannot arm, at publication rather than at the
@@ -313,9 +333,11 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
 
     // Name the device now that its geometry is known. For a range sharing one
     // identity (Midas Venice F16/F24/F32) the measured capture width is the
-    // only thing that tells the variants apart.
+    // only thing that tells the variants apart. The profile's default label
+    // does not replace a discovered model name.
     if (const char* resolvedName =
-            profile.NameForGeometry(dev.inputChannelCount, dev.outputChannelCount)) {
+            profile.NameForGeometry(dev.inputChannelCount, dev.outputChannelCount);
+        resolvedName && std::string_view(resolvedName) != profile.Name()) {
         if (dev.deviceName != resolvedName) {
             ASFW_LOG(Audio,
                      "DiceAudioBackend::EnsureNubForGuid: named from geometry "
@@ -487,7 +509,7 @@ void DiceFamilyAdapter::OnNotification(uint64_t guid, uint32_t bits) noexcept {
     DeviceEventSink* sink = sink_.load(std::memory_order_acquire);
     if (sink == nullptr) return;
     // The device changed its stream configuration: restart the running streams
-    // on the new one (TCAT NotificationWriteCallback, AUDIO_SESSION_REDESIGN.md §2.4).
+    // on the new one (TCAT NotificationWriteCallback).
     if ((bits & (DICE::Notify::kRxConfigChange | DICE::Notify::kTxConfigChange)) != 0) {
         sink->OnDeviceEvent(guid, DeviceEvent::kStreamConfigChanged, bits);
     }

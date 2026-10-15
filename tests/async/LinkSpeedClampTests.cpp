@@ -160,6 +160,20 @@ TEST(SpeedPolicyObservation, SuccessRecordsTheSpeedThatWorked) {
     EXPECT_EQ(FwSpeed::S200, *observed);
 }
 
+TEST_F(LinkSpeedClamp, FirstS800SuccessIsNotClampedByTheS400Seed) {
+    SeedTopology(3);
+    ASFW::Discovery::SpeedPolicy policy;
+    ASFW::Async::FireWireBusImpl bus(async, topo, &policy);
+    EXPECT_FALSE(policy.ObservedSpeed(NodeId{0}));
+    policy.RecordSuccess(0, FwSpeed::S800);
+    EXPECT_EQ(policy.ForNode(0).localToNode, FwSpeed::S800);
+    EXPECT_EQ(bus.GetSpeed(NodeId{0}), FwSpeed::S800);
+    policy.RecordVerifiedCeiling(NodeId{0}, FwSpeed::S400);
+    EXPECT_EQ(bus.GetSpeed(NodeId{0}), FwSpeed::S400);
+    policy.RecordSuccess(0, FwSpeed::S800);
+    EXPECT_EQ(bus.GetSpeed(NodeId{0}), FwSpeed::S400);
+}
+
 TEST(SpeedPolicyObservation, LaterFasterResultCannotEraseLowerGenerationCeiling) {
     ASFW::Discovery::SpeedPolicy policy;
     policy.RecordTimeout(0, FwSpeed::S400);

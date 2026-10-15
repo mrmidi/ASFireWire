@@ -242,19 +242,17 @@ TEST(DeviceStreamTraitsAgreement, OnlyTheTwoLoudRunsDistrustTheCaptureStride) {
                      .wire.captureTrustConfiguredStride);
 }
 
-// IsSPro24Dsp gated a runtime-conditional wire format: raw 24-in-32 only when
-// the geometry is 8 PCM in 9 slots, AM824 otherwise. The condition stays in the
-// profile builder; only the permission to apply it is catalog data.
-TEST(DeviceStreamTraitsAgreement, OnlyTheSaffirePro24DspSwitchesWireFormat) {
-    EXPECT_TRUE(ResolveTraits(
-                    DiceIdentity(kFocusriteVendorId, kSPro24DspModelId))
-                    .wire.rawPcm24In32WhenEightInNineSlots);
-    for (const uint32_t modelId : {kSPro14ModelId, kSPro24ModelId, kSPro40ModelId}) {
-        EXPECT_FALSE(ResolveTraits(
-                         DiceIdentity(kFocusriteVendorId, modelId))
-                         .wire.rawPcm24In32WhenEightInNineSlots)
-            << "model 0x" << std::hex << modelId;
-    }
+// The Pro 24 DSP once carried a private "raw 24-in-32 at 8 PCM in 9 slots"
+// trait with no evidence behind it; the Saffire labels its capture 0x40. Its
+// row now states exactly the DICE traits every other DICE row states.
+TEST(DeviceStreamTraitsAgreement, SaffirePro24DspStatesThePlainDiceTraits) {
+    const auto dsp = ResolveTraits(DiceIdentity(kFocusriteVendorId, kSPro24DspModelId));
+    const auto pro24 = ResolveTraits(DiceIdentity(kFocusriteVendorId, kSPro24ModelId));
+    EXPECT_EQ(dsp.wire.forcedStreamMode, pro24.wire.forcedStreamMode);
+    EXPECT_EQ(dsp.wire.captureTrustConfiguredStride, pro24.wire.captureTrustConfiguredStride);
+    EXPECT_EQ(dsp.wire.headerlessUpper24LE, pro24.wire.headerlessUpper24LE);
+    EXPECT_EQ(dsp.resource.irmChannelMask, pro24.resource.irmChannelMask);
+    EXPECT_EQ(dsp.start.startShape, pro24.start.startShape);
 }
 
 // MOTU states no traits at all: its framing comes from the family, its chunk
@@ -275,7 +273,6 @@ TEST(DeviceStreamTraitsAgreement, MotuStatesNoStreamTraits) {
     EXPECT_EQ(traits.wire.forcedStreamMode, ForcedStreamMode::Unspecified);
     EXPECT_EQ(traits.start.startShape, StreamStartShape::Default);
     EXPECT_FALSE(traits.wire.captureTrustConfiguredStride);
-    EXPECT_FALSE(traits.wire.rawPcm24In32WhenEightInNineSlots);
 }
 
 } // namespace

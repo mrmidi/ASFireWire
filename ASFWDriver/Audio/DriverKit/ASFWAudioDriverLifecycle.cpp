@@ -38,6 +38,9 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                  "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x (%{public}s) - unwinding partial ADK graph",
                  stage ? stage : "unknown",
                  result, ASFW::Logging::IOReturnName(result));
+        if (ivars->audioDevice) {
+            (void)ivars->audioDevice->ReleaseKeptWireForDriverStop();
+        }
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
@@ -161,6 +164,16 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterIoRestartRequiredAction");
     }
 
+    // Saffire/PreSonus TCAT: wire ready before CoreAudio can join it. All
+    // producer/timestamp actions must be registered before preparing the wire.
+    error = ivars->audioDevice->PrepareWire();
+    if (error != kIOReturnSuccess) return failStart(error, "PrepareWire");
+    error = AddObject(ivars->audioDevice.get());
+    if (error != kIOReturnSuccess) return failStart(error, "AddObject(device)");
+    ivars->graphState.audioDeviceAdded = true;
+    error = RegisterService();
+    if (error != kIOReturnSuccess) return failStart(error, "RegisterService");
+    ASFW_LOG(Audio, "ASFWAudioDriver: published device %{public}s", ivars->device.deviceName);
     return kIOReturnSuccess;
 }
 

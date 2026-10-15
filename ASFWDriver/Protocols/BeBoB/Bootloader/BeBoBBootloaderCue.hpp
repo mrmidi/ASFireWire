@@ -22,7 +22,7 @@ inline constexpr size_t kSoftwareDateOffset = 0x20;
 
 // The bootloader register window is little-endian in memory. Linux writes
 // cpu_to_le32 cue quadlets (bebob_maudio.c:119-127); the vendor kext passes
-// native quadlets to IOFWWriteCommand (docs/MAUDIO_1814_KEXT_RE.md).
+// native quadlets to IOFWWriteCommand.
 [[nodiscard]] constexpr uint32_t LoadLE32(std::span<const uint8_t> bytes,
                                           size_t offset) noexcept {
     return static_cast<uint32_t>(bytes[offset]) |

@@ -3,7 +3,7 @@
 //
 // SessionTestSupport.hpp - One device, one host transport, one trace.
 //
-// Stage S2 of documentation/AUDIO_SESSION_REDESIGN.md replaces the duplex
+// The session redesign replaced the duplex
 // coordinator. These helpers record everything the session layer does, in
 // order, into one WireTrace:
 //
@@ -557,7 +557,7 @@ struct SessionRig {
         if (IsDice()) {
             // The real host and DICE adapter listen, as in the driver: every
             // DICE golden also shows which notifications they turn into
-            // restarts (AUDIO_DEVICE_HOST.md §6 E5).
+            // restarts.
             diceAdapter.emplace(notifications);
             deviceHost.emplace(publisher, registry, runtime, sessions, host);
             deviceHost->Install(ASFW::Audio::AudioBackendKind::Dice, *diceAdapter);

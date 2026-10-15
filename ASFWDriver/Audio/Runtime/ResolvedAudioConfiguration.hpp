@@ -11,10 +11,12 @@
 namespace ASFW::Audio::Runtime {
 
 // Packed MOTU capture can carry 34 PCM channels in only 28 quadlets (both
-// ADAT banks at 1x). Host buffer/name capacity is distinct from the 32-slot
-// AM824 map and its bit masks. Linux motu-protocol-v3.c:209-239,274-281.
+// ADAT banks at 1x). Host buffer/name capacity is distinct from the AM824
+// slot map. Linux motu-protocol-v3.c:209-239,274-281.
 inline constexpr uint32_t kMaxPackedPcmChannels = 34;
-inline constexpr uint32_t kMaxHostPcmChannels = kMaxPackedPcmChannels;
+inline constexpr uint32_t kMaxHostPcmChannels =
+    kMaxPackedPcmChannels > Encoding::kMaxPcmChannels ? kMaxPackedPcmChannels
+                                                      : Encoding::kMaxPcmChannels;
 
 // A formation describes one rate, not the shape observed at discovery time.
 // Protocol adapters supply these facts; generic code never scales ADAT widths.
@@ -25,6 +27,7 @@ struct RateWireStream final {
     Wire::PcmSlotMap pcmSlots{};
     // DICE multiplexes up to eight physical ports into one AM824 slot.
     uint32_t midiPortCount{0};
+    uint32_t packedPcmChunks{0}; // MOTU wire width, including padding; zero means pcmChannels.
     friend bool operator==(const RateWireStream&, const RateWireStream&) = default;
 };
 
@@ -118,13 +121,15 @@ ResolveAudioConfiguration(uint32_t rate, std::span<const RateFormation> formatio
                 (selected->packedPcm
                     ? (stream.midiSlots != 0 || !stream.pcmSlots.IsIdentity() ||
                        messageChunks > 2 ||
-                       stream.dataBlockSize != 1 + ((messageChunks + stream.pcmChannels) * 3 + 3) / 4)
-                    : (stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
+                       (stream.packedPcmChunks && (stream.packedPcmChunks < stream.pcmChannels || stream.packedPcmChunks > kMaxPackedPcmChannels)) ||
+                       stream.dataBlockSize != 1 + ((messageChunks + (stream.packedPcmChunks ? stream.packedPcmChunks : stream.pcmChannels)) * 3 + 3) / 4)
+                    : (stream.packedPcmChunks != 0 || stream.pcmChannels > stream.dataBlockSize - stream.midiSlots ||
                        !stream.pcmSlots.FitsWithin(stream.pcmChannels, stream.dataBlockSize))))
                 return std::unexpected(ConfigurationError::InvalidFormation);
-            uint32_t used = 0;
+            static_assert(Encoding::kMaxAmdtpDbs <= 64);
+            uint64_t used = 0;
             for (uint32_t channel = 0; !selected->packedPcm && channel < stream.pcmChannels; ++channel) {
-                const uint32_t bit = uint32_t{1} << stream.pcmSlots.SlotFor(channel);
+                const uint64_t bit = uint64_t{1} << stream.pcmSlots.SlotFor(channel);
                 if (used & bit) return std::unexpected(ConfigurationError::InvalidFormation);
                 used |= bit;
             }

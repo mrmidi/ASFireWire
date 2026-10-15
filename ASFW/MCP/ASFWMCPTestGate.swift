@@ -79,7 +79,7 @@ enum ASFWMCPTestGate {
             reason: "Default hardware smoke plan must not mutate hardware."
         ))
 
-        // FW-79 tightening (MCP_TEST_GATE.md §6): a write may reach the driver
+        // FW-79 tightening: a write may reach the driver
         // write path only when developer-write policy and the test gate are open.
         // Probe with a representative, generation-current write so the decision is
         // governed by mode/gate state rather than incidental staleness.

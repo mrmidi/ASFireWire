@@ -13,6 +13,8 @@ using ASFW::Audio::Backends::DuplexHostDirection;
 using ASFW::Audio::Backends::DuplexStreamProfile;
 using ASFW::Audio::Backends::DuplexStreamProfileResolver;
 using ASFW::DeviceProfiles::Audio::kAlesisVendorId;
+using ASFW::DeviceProfiles::Audio::kPreSonusVendorId;
+using ASFW::DeviceProfiles::Audio::kStudioLive3242ModelId;
 using ASFW::DeviceProfiles::Audio::kApogeeDuetModelId;
 using ASFW::DeviceProfiles::Audio::kApogeeVendorId;
 using ASFW::DeviceProfiles::Audio::kFocusriteVendorId;
@@ -186,20 +188,41 @@ TEST(DuplexStreamProfileTests, DiceLetsTheIrmPickFromChannelsZeroToThirtyOne) {
     }
 }
 
-TEST(DuplexStreamProfileTests, SPro24DspResolvesRawPcmOnBothDirectionsWhenGeometryMatches) {
-    DeviceRecord record = DiceRecord(kFocusriteVendorId, kSPro24DspModelId);
-    AudioStreamRuntimeCaps caps{
-        .hostInputPcmChannels = 8,
-        .hostOutputPcmChannels = 8,
-        .deviceToHostAm824Slots = 9,
-        .hostToDeviceAm824Slots = 9,
+// Every DICE capture is read by slot position with the label ignored: the
+// StudioLive AI sends label 0x00 (studiolive-firewire-mac slfw.c:428), the
+// Saffire 0x40. One rule for every DICE row, at every geometry; AV/C keeps AM824.
+TEST(DuplexStreamProfileTests, EveryDiceCaptureIsLabelBlindAtEveryGeometry) {
+    for (const auto& [vendor, model] : {std::pair{kFocusriteVendorId, kSPro24DspModelId},
+                                        std::pair{kMidasVendorId, kMidasVeniceModelId},
+                                        std::pair{kWeissVendorId, kWeissInt202ModelId},
+                                        std::pair{kPreSonusVendorId, kStudioLive3242ModelId}}) {
+        const DeviceRecord record = DiceRecord(vendor, model);
+        for (const auto& [pcm, slots] : {std::pair{8U, 9U}, std::pair{48U, 48U}}) {
+            const AudioStreamRuntimeCaps caps{
+                .hostInputPcmChannels = pcm,
+                .hostOutputPcmChannels = pcm,
+                .deviceToHostAm824Slots = slots,
+                .hostToDeviceAm824Slots = slots,
+            };
+            const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+            ASSERT_TRUE(profile.policyResolved) << model;
+            EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24In32)
+                << "model 0x" << std::hex << model << " pcm " << std::dec << pcm;
+            EXPECT_EQ(profile.captureStreams[0].am824Slots, slots) << model;
+        }
+    }
+
+    const AudioStreamRuntimeCaps avcCaps{
+        .hostInputPcmChannels = 10,
+        .hostOutputPcmChannels = 6,
+        .deviceToHostAm824Slots = 11,
+        .hostToDeviceAm824Slots = 7,
+        .sampleRateHz = 48000,
     };
-
-    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
-
-    EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.playbackWireFormat, AudioWireFormat::kRawPcm24In32);
-    EXPECT_EQ(profile.captureStreams[0].am824Slots, 9U);
+    const DuplexStreamProfile avc = DuplexStreamProfileResolver::Resolve(
+        AvcRecord(kMAudioVendorId, kMAudioFireWire1814ModelId), avcCaps);
+    ASSERT_TRUE(avc.policyResolved);
+    EXPECT_EQ(avc.captureWireFormat, AudioWireFormat::kAM824);
 }
 
 TEST(DuplexStreamProfileTests, ApogeeDuetAllowsDynamicChannelsAndPreservesCmpInterleave) {
@@ -376,7 +399,8 @@ TEST(DuplexStreamProfileTests, MotuCaptureCarriesTheModelPortMap) {
     EXPECT_EQ(profile.captureWireFormat, AudioWireFormat::kMotuPacked);
     EXPECT_EQ(profile.captureMotuPcmChunks, 14U);
     ASSERT_EQ(profile.captureMotuPorts.size(), 14U);
-    EXPECT_EQ(profile.captureMotuPorts.data(), ASFW::Encoding::Motu::kUltraLiteCapture);
+    EXPECT_EQ(profile.captureMotuPorts[0].chunk, 2U);
+    EXPECT_EQ(profile.captureMotuPorts[10].chunk, 0U);
 }
 
 TEST(DuplexStreamProfileTests, NonMotuDevicesCarryNoPortMap) {

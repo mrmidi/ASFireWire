@@ -16,7 +16,7 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    logical-to-bus conversion point for the packet image.
 // 4. Frame continuity is NOT owned here. The caller's TxPresentationPlan
 //    states each packet's first frame; DiceTxStreamEngine owns the one
-//    audio-frame cursor (documentation/TX_OWNERSHIP.md).
+//    audio-frame cursor.
 // 5. The default no-data packet is CIP-header-only (8 bytes) and leaves DBC
 //    unchanged. The M-Audio special profile sends full-size cadence packets
 //    with no-audio labels; those wire blocks advance DBC.

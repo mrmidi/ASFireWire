@@ -5,8 +5,6 @@ ir_dma_program.py - IR DMA Descriptor Program Builder
 Generates and visualizes Isochronous Receive (IR) DMA descriptor programs
 for OHCI 1.1 compliant FireWire controllers.
 
-Reference: docs/Isoch/IR_DMA.md
-
 Usage:
     python ir_dma_program.py --buffers 8 --size 512 --mode input-more
     python ir_dma_program.py --diagram

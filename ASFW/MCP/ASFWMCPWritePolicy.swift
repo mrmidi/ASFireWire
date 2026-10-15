@@ -9,9 +9,7 @@ import Foundation
 // reach the driver/user-client write path. Every refusal and every dry run is
 // false, so denied and dry-run writes cannot touch hardware.
 //
-// Decision and error vocabulary mirror documentation/MCP_TOOL_TAXONOMY.md §11.
-// The gate extension at the bottom of this file is the FW-89 test-gate tightening
-// called for in documentation/MCP_TEST_GATE.md §6.
+// The gate extension at the bottom of this file is the FW-89 test-gate tightening.
 
 /// Coarse policy classification of a FireWire address.
 enum ASFWMCPAddressSpace: String, Equatable {

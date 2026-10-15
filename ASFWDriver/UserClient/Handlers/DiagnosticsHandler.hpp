@@ -65,6 +65,17 @@ public:
     // Selector 1014: LogRing category names and driver-defined presets.
     kern_return_t GetLogCatalog(IOUserClientMethodArguments* args);
 
+    // Selector 1015: cached DICE receiver lock verdict; input is a GUID.
+    kern_return_t GetDiceReceiverLock(IOUserClientMethodArguments* args);
+
+    // Selector 1016: start a DICE receiver-register dump. Input: GUID (u64) +
+    // flags (u32, bit 0 = read-to-clear FIFO events). The driver decides
+    // whether the device may be read; refusals land in the 1017 snapshot.
+    kern_return_t RequestDiceReceiverDump(IOUserClientMethodArguments* args);
+
+    // Selector 1017: the last DICE receiver dump; input is a GUID.
+    kern_return_t GetDiceReceiverDump(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

@@ -96,8 +96,10 @@ struct DiceReportTextFormatterTests {
                 "a short stream block must not yield a fabricated zero")
     }
 
-    @Test func warnsThatSlipBitsAreVolatile() {
-        #expect(report.contains("read-to-clear"))
+    @Test func reportDoesNotReadTheSlipRegister() {
+        #expect(report.contains("EXT_STATUS is not read by this report"))
+        #expect(report.contains("slip bits clear on quadlet reads"))
+        #expect(report.contains("No cached sample available"))
     }
 
     @Test func reportsEapCapabilities() {
@@ -313,5 +315,68 @@ struct DiceReportScaleTests {
         let m = DiceMixer.decode(d, caps: caps)
         #expect(m.coefficients[0][0] == 16384)
         #expect(m.coefficients[0][1] == 8208)
+    }
+}
+
+/// The DCP window header (DICE III control RPC) as the report reads and shows it.
+struct DiceReportDcpTests {
+
+    /// A header in the order the TCAT kext reads it (each quadlet to host
+    /// order, then the two quadlets of a 64-bit field low word first):
+    /// quadlet 0 carries the low half of the magic.
+    private static let dcpHeader = DiceFixtures.quads([
+        0x0406_1973, 0x1810_1966,      // magic 0x1810196604061973
+        0x0000_0000, 0xFFC0_0001,      // owner: node 0xFFC0, offset 0x0001_0000_0000
+        0x0000_0000, 0x0000_0002,      // +0x10, version 2
+        0x0000_0400, 0x0000_0190,      // max request 1024, response area 400
+        0xE040_01C0, 0x0000_FFFF,      // +0x20: request address
+        0xE040_0030, 0x0000_FFFF,      // +0x28: response address
+    ])
+
+    @Test func dcpHeaderDecodesInTheKextWordOrder() throws {
+        let h = try #require(DiceDcpHeader.decode(Self.dcpHeader))
+        #expect(h.order == .lowFirst)
+        #expect(h.owner == 0xFFC0_0001_0000_0000)
+        #expect(h.version == 2)
+        #expect(h.maxRequestBytes == 1024)
+        #expect(h.responseAreaBytes == 400)
+        #expect(DiceDcpHeader.windowOffset(of: h.field20) == 0x1C0)
+        #expect(DiceDcpHeader.windowOffset(of: h.field28) == 0x30)
+    }
+
+    @Test func dcpHeaderMatchesTheMagicInAnyOrder() throws {
+        let highFirst = DiceFixtures.quads([0x1810_1966, 0x0406_1973] + Array(repeating: 0, count: 10))
+        #expect(try #require(DiceDcpHeader.decode(highFirst)).order == .highFirst)
+        let swapped = DiceFixtures.quads([UInt32(0x0406_1973).byteSwapped, UInt32(0x1810_1966).byteSwapped]
+                                         + Array(repeating: 0, count: 10))
+        #expect(try #require(DiceDcpHeader.decode(swapped)).order == .byteSwappedLowFirst)
+        #expect(DiceDcpHeader.decode(DiceFixtures.zeros(0x2C)) == nil, "short reads do not decode")
+    }
+
+    @Test func reportShowsTheDecodedDcpHeader() throws {
+        var s = DiceSnapshot()
+        s.dcp = try #require(DiceDcpHeader.decode(Self.dcpHeader))
+        let text = DiceReportTextFormatter.format(snapshot: s, appVersion: nil)
+        #expect(text.contains("DCP window @ 0xFFFFE0400000"))
+        #expect(text.contains("+0x00  04061973 18101966 00000000 FFC00001"))
+        #expect(text.contains("matches (quadlet 0 low)"))
+        #expect(text.contains("node=0xFFC0 addr=0x000100000000"))
+        #expect(text.contains("version        = 2"))
+        #expect(text.contains("(window +0x1C0)"))
+        #expect(text.contains("(window +0x030)"))
+    }
+
+    @Test func reportSaysWhenThereIsNoDcpWindowOrNoMagic() {
+        var absent = DiceSnapshot()
+        absent.mark("dcp.header", .absent)
+        let absentText = DiceReportTextFormatter.format(snapshot: absent, appVersion: nil)
+        let section = absentText.components(separatedBy: "DCP window @ 0xFFFFE0400000")
+        #expect(section.count == 2)
+        #expect(section.last?.contains("<absent>") == true)
+
+        var foreign = DiceSnapshot()
+        foreign.dcp = DiceDcpHeader.decode(DiceFixtures.quads(Array(repeating: 0x1234_5678, count: 12)))
+        let foreignText = DiceReportTextFormatter.format(snapshot: foreign, appVersion: nil)
+        #expect(foreignText.contains("not a DCP header"))
     }
 }

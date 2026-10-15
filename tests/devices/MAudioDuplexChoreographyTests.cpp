@@ -66,7 +66,7 @@ TEST(MAudioDuplexChoreographyTests,
     const auto* start = std::get_if<StartAsymmetricHostTransport>(&step.action);
     ASSERT_NE(start, nullptr);
     // Vendor StartAudio: TX starts at now, RX at now + 160 cycles, after four
-    // output segments have been populated (START_CHOREOGRAPHY.md section 2).
+    // output segments have been populated.
     EXPECT_EQ(start->transmitStartLeadCycles, 0U);
     EXPECT_EQ(start->receiveStartLeadCycles, kReceiveStartLeadCycles);
     EXPECT_EQ(start->transmitPrefillSegments, kTransmitPrefillSegments);

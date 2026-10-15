@@ -3,7 +3,7 @@
 //
 // ZtsCharacterizationTests.cpp - the zero timestamps the RX path publishes, recorded.
 //
-// Epic 4 (documentation/HARDWARE_TIMELINE_OWNERSHIP.md) moves the RX anchor
+// Epic 4 moves the RX anchor
 // onto HardwareSampleTimeline. Before that, this drives the real
 // DirectAudioReceiveConsumer with a synthetic AMDTP stream and records every
 // anchor it hands to HostClockAnchor, into tests/golden/zts/<case>.txt. A clean

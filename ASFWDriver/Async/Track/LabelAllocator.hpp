@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <array>
+#include "../Engine/ATTrace.hpp"
 #include <cstdint>
 
 namespace ASFW::Async {
@@ -16,7 +18,10 @@ public:
     ~LabelAllocator() = default;
 
     void Reset();
-    uint8_t Allocate();
+    uint8_t Allocate(uint16_t node = 0xffff, uint64_t nowUs = Engine::NowUs());
+    // IEEE 1394-2008 8.3.2.2.6 recommends protecting an expired label for
+    // twice the split timeout measured from request initiation, for this node.
+    void Quarantine(uint8_t label, uint16_t node, uint64_t untilUs) noexcept;
     void Free(uint8_t label);
     void ClearBitmap();  // Clear all allocation bits but keep generation as-is
     [[nodiscard]] bool HasAnyLabelsInUse() const noexcept;
@@ -58,6 +63,9 @@ private:
     static constexpr uint8_t kMaxLabels = 64;
     static constexpr uint16_t kGenerationMask = 0x03FF; // 10-bit generation window
 
+    // One local bus, 64 physical node IDs. Histories must remain independent:
+    // a timeout on another node must not erase an older label protection.
+    std::array<std::array<std::atomic<uint64_t>, kMaxLabels>, kMaxLabels> quarantineUntil_{};
     std::atomic<uint64_t> bitmap_;
     std::atomic<uint16_t> generation_;
     std::atomic<uint8_t> next_label_{0};  ///< Simple counter for sequential label rotation

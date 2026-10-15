@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // MotuHostRebindTests.cpp
-// A bus reset while a MOTU device streams must rebind (AUDIO_DEVICE_HOST.md §5 Δ6).
+// A bus reset while a MOTU device streams must rebind.
 // MotuAudioBackend had no OnDeviceResumed: nothing restarted the stream after a
 // reset. Here the real audio device host and the real session run over the MOTU
 // recipe, so the rebind is seen as what it is on the wire: a full restart (a new

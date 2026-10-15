@@ -9,12 +9,12 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
-#include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
 #include "../Families/BeBoB/MAudio/MAudioTxClockBridge.hpp"
 #include "../Shared/TxCycleAnchor.hpp"
 #include "../Runtime/TxCompletionStampDrain.hpp"
+#include "../Runtime/TxStartupTrace.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
@@ -84,7 +84,7 @@ struct AudioDriverDeviceState {
 
     /// The device profile, resolved ONCE at graph construction. StartIO and the
     /// direct binding read this; nothing on the audio side calls FindProfile
-    /// again (TIMING_GEOMETRY_OWNERSHIP.md, G-19).
+    /// again.
     const ASFW::Isoch::Audio::IAudioDeviceProfile* profile{nullptr};
     /// The authoritative timing/HAL geometry at currentSampleRate: resolved at
     /// graph construction and on every accepted rate change. Declarations, the
@@ -141,11 +141,6 @@ public:
     ASFW::Isoch::IsochTxQueueControl* queueControl{nullptr};
     uint32_t numSlots{0};
     uint32_t slotStrideBytes{0};
-    // Optional Audio-side observer of each packet at release (e.g. a device
-    // family's phase instrument). Bound per start by the producer; null for
-    // every family that does not need one, and cleared with the slot memory.
-    ASFW::Protocols::Audio::AMDTP::ITxPacketReleaseObserver* releaseObserver{nullptr};
-
     bool AcquireWritableSlot(
         uint64_t packetIndex,
         ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
@@ -206,17 +201,6 @@ public:
         meta.immediateHeader[1] = OSSwapHostToLittleInt32(
             static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
-        // Before the release commit: once commitGeneration is stored, the slot
-        // belongs to transport and may be overwritten by the next lap.
-        if (releaseObserver != nullptr && payloadBase != nullptr) {
-            const uint32_t bytes =
-                packet.byteCount < slotStrideBytes ? packet.byteCount : slotStrideBytes;
-            releaseObserver->OnRelease(
-                packet, std::span<const uint8_t>(
-                            payloadBase + static_cast<uint64_t>(slotIdx) * slotStrideBytes,
-                            bytes));
-        }
-
         // Compute expected generation and release-store it last.
         const uint64_t generation =
             ASFW::Isoch::ExpectedTxCommitGeneration(packet.packetIndex, numSlots);
@@ -253,6 +237,11 @@ struct AudioDriverRuntimeState {
     // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
     bool txPlacementLogged{false};
     bool txSytLogged{false};
+    uint64_t txStartupEpoch{0};
+    bool txStartupRawPcm{false};
+    ASFW::Audio::Runtime::TxStartupFillTrace txStartupFillTrace;
+    ASFW::Audio::Runtime::TxStartupTrace txStartupTrace{};
+    ASFW::Audio::Runtime::TxStartupClientTrace txStartupClientTrace{};
     // TX fill (FillTransmitPayloads, IO thread only): audio frames below this
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.
@@ -297,11 +286,6 @@ struct AudioDriverRuntimeState {
     // lock is still to be reported. TX preparation queue only.
     uint64_t motuSphAcquireHostTicks{0};
     bool motuSphLockPending{false};
-    // The transmit half of the regulator's absolute-phase measurement: the
-    // slot provider's release observer while a MOTU stream runs at a rate
-    // where `rel` is formed. Bound by ArmPrimaryTxProducer, unbound with the
-    // slot memory.
-    ASFW::Audio::Runtime::MotuTxPhaseTracePublisher motuTxPhaseTrace;
 };
 
 // What BuildAudioGraph has attached to ADK, so TearDownAudioGraph removes
@@ -382,7 +366,7 @@ namespace DirectDiagnostics {
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 
-// TX placement meter (milestone 6; documentation/TX_OWNERSHIP.md). Where one
+// TX placement meter (milestone 6). Where one
 // transmitted frame sits relative to the HAL clock: the first audio frame of
 // the newest completed DATA packet, against the HAL sample time projected at
 // the bus cycle that packet left in. Diagnostic only; nothing reads it back.
@@ -390,9 +374,14 @@ struct TxPlacementSample final {
     uint64_t packetIndex{0};
     uint64_t firstAudioFrame{0};
     int64_t halSampleTime{0};
-    // firstAudioFrame - halSampleTime. Negative: the frame left after its HAL
-    // time, so output is late by that many frames.
+    // Estimate at cycle start, not a measured intra-cycle lateness.
     int64_t offsetFrames{0};
+    int64_t measuredOffsetFrames{0};
+    int64_t anchorDeltaNs{0};
+    int64_t pairDeltaTicks{0};
+    uint64_t txHost{0}, pairHost{0}, pairSpanNs{0}, pairLagNs{0};
+    uint64_t anchorHost{0}, anchorFrame{0}, anchorGeneration{0}, anchorEpoch{0}, wireEpoch{0};
+    uint32_t completionCycle{0}, pairCycle{0}, slopeQ8{0};
 };
 
 // Runs on the TX preparation queue, the timeline's only writer. False when
@@ -400,7 +389,7 @@ struct TxPlacementSample final {
 [[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
                                       TxPlacementSample& out) noexcept;
 
-// The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
+// The TX fill (ASFWAudioDriverOutputWrite.cpp):
 // copies frames CoreAudio has written to the HAL output ring into the armed
 // packets that carry them, once each, unless the packet is at or behind the
 // finality frontier (projected hardware position + guard). Runs inside
@@ -458,8 +447,8 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars, uint64_t transportGenera
 // Prepares transmit slots from startPacketIndex until requiredPacketIndex
 // (the core refill / commit-generation invariant) or limitPacketIndex is
 // reached. Content availability never extends preparation: packets are armed
-// with valid silence and FillTransmitPayloads copies PCM in later
-// (documentation/TX_OWNERSHIP.md, T4). A replay-driven packet whose RX entry
+// with valid silence and FillTransmitPayloads copies PCM in later.
+// A replay-driven packet whose RX entry
 // does not exist yet ends the pass instead of shipping NO-DATA, unless the
 // hardware would otherwise reach an uncommitted descriptor.
 // Returns the number of slots prepared. With an unseeded transmit clock the

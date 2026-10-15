@@ -295,6 +295,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
             .cycleMaster = d.csrCycleMasterControl.get(),
             .topologyMap = d.topologyMapService.get(),
             .broadcastChannel = d.broadcastChannel.get(),
+            .splitTimeout = d.asyncSubsystem->GetSplitTimeout(),
         });
         ASFW_LOG(Controller, "[Controller] CSRResponder initialized with TopologyMapService (FW-20)");
     }

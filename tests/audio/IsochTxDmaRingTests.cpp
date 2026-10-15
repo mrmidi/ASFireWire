@@ -869,7 +869,7 @@ TEST_F(IsochTxDmaRingTest,
 
 
 // ---------------------------------------------------------------------------
-// Finite IT queue (T5, documentation/TX_OWNERSHIP.md). Completion is read from
+// Finite IT queue. Completion is read from
 // OUTPUT_LAST status, the newest completed descriptor is kept as the resume
 // anchor, each refill maps a zero-terminated batch linked from the old tail,
 // and a queue that ran dry is a fault, never a replay. Each test below fails
@@ -1173,4 +1173,67 @@ TEST(IsochTxQueueControlTests, ProducerAndConsumerResetsHaveDisjointOwnership) {
     EXPECT_EQ(queue.completionCursor.load(std::memory_order_acquire), 12U);
     EXPECT_EQ(queue.statusWord.load(std::memory_order_acquire),
               IsochTxQueueStatus::kRunning);
+}
+
+TEST_F(IsochTxDmaRingTest, StartupCaptureCopiesCompletedPayloadAcrossDescriptorWrap) {
+    auto metadata = MakeMetadataRing();
+    PrimeForTest(metadata);
+    IsochTxQueueControl queue{};
+    ConfigureControl(queue);
+    queue.diagnosticCaptureEnabled.store(true);
+    sharedPayload_[0] = 0xa5;
+    sharedPayload_[514 * kSharedPayloadStride] = 0x6a;
+    for (uint64_t end = 8; end <= 520; end += 8) {
+        ASSERT_TRUE(SendThrough(end, metadata, queue).ok);
+    }
+    const uint32_t count = queue.diagnosticPacketCount.load(std::memory_order_acquire);
+    ASSERT_GT(count, 16U);
+    EXPECT_EQ(queue.diagnosticPackets[0].prefix[0], 0xa5);
+    bool foundWrapped = false;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto& packet = queue.diagnosticPackets[i];
+        EXPECT_TRUE(packet.metadataMatches);
+        EXPECT_TRUE(packet.descriptorMatches);
+        EXPECT_EQ(packet.prefixLength, 8U);
+        EXPECT_NE(packet.statusWord >> 16, 0U);
+        if (packet.packetIndex == 514) {
+            foundWrapped = true;
+            EXPECT_EQ(packet.metadataPacketIndex, 514U);
+            EXPECT_EQ(packet.prefix[0], 0x6a);
+        }
+    }
+    EXPECT_TRUE(foundWrapped);
+    // Completion payload can now be reused; captured evidence stays immutable.
+    sharedPayload_[0] = 0;
+    EXPECT_EQ(queue.diagnosticPackets[0].prefix[0], 0xa5);
+}
+
+TEST_F(IsochTxDmaRingTest, StartupCaptureRejectsDescriptorPointingAtAnotherSlot) {
+    auto metadata = MakeMetadataRing();
+    PrimeForTest(metadata);
+    IsochTxQueueControl queue{};
+    ConfigureControl(queue);
+    queue.diagnosticCaptureEnabled.store(true);
+    auto* descriptor = ring_.Slab().GetDescriptorPtr(Layout::kFirstPayloadBlock);
+    descriptor->dataAddress += kSharedPayloadStride;
+    ASSERT_TRUE(SendThrough(8, metadata, queue).ok);
+    const auto& packet = queue.diagnosticPackets[0];
+    EXPECT_TRUE(packet.metadataMatches);
+    EXPECT_FALSE(packet.descriptorMatches);
+    EXPECT_EQ(packet.prefixLength, 0U);
+}
+
+TEST_F(IsochTxDmaRingTest, StartupCaptureIsOptInAndArmResetsOnlyEvidenceCount) {
+    auto metadata = MakeMetadataRing();
+    PrimeForTest(metadata);
+    IsochTxQueueControl queue{};
+    ConfigureControl(queue);
+    ASSERT_TRUE(SendThrough(8, metadata, queue).ok);
+    EXPECT_EQ(queue.diagnosticPacketCount.load(), 0U);
+    queue.diagnosticCaptureEnabled.store(true);
+    ASSERT_TRUE(SendThrough(16, metadata, queue).ok);
+    EXPECT_EQ(queue.diagnosticPacketCount.load(), 8U);
+    queue.ResetConsumerForArm();
+    EXPECT_EQ(queue.diagnosticPacketCount.load(), 0U);
+    EXPECT_TRUE(queue.diagnosticCaptureEnabled.load());
 }

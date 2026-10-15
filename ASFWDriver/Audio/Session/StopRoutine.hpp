@@ -3,7 +3,7 @@
 //
 // StopRoutine.hpp - Stop everything a start may have left running.
 //
-// documentation/AUDIO_SESSION_REDESIGN.md §4.2. The stop does not need to know
+// The stop does not need to know
 // how far a start got: it stops every host context and asks the family to stop
 // the device, whatever state either is in. The order follows the device's stop
 // recipe (DuplexStreamProfile), resolved from the catalog.

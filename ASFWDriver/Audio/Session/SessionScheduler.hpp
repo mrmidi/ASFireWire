@@ -3,7 +3,7 @@
 //
 // SessionScheduler.hpp - One device's audio session: what should run, and making it so.
 //
-// documentation/AUDIO_SESSION_REDESIGN.md §4.2, stage S2. Callers never start
+// Callers never start
 // or stop streams themselves. They edit what the session wants (StartIO and
 // StopIO attach and detach the HAL, a rate change edits the clock, a fault or
 // bus reset asks for a restart), and the scheduler reconciles the device with

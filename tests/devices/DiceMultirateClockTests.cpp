@@ -28,11 +28,10 @@ TEST(DiceMultirateClockTests, RequestedHighRateRequiresActualReadback) {
     uint32_t selection = 0;
     ASSERT_TRUE(ASFW::Audio::DICE::DiceClockSelectForRate(96000, ClockSource::Internal, selection));
     const auto applied = rig.driver.ApplyClock({96000, selection});
-    // CLOCK_ACCEPTED is advisory. The family reports achieved hardware state,
-    // and the shared transaction classifies this as unchanged, not 96 kHz.
-    ASSERT_TRUE(applied);
-    EXPECT_EQ(applied->appliedClock.sampleRateHz, 48000);
-    EXPECT_EQ(applied->runtimeCaps.sampleRateHz, 48000);
+    // Acceptance at the old achieved rate cannot prepare the next StartIO.
+    // Refuse the transaction instead of publishing an unready clock.
+    ASSERT_FALSE(applied);
+    EXPECT_EQ(applied.error(), kIOReturnTimeout);
     EXPECT_FALSE(rig.driver.IsRunning());
     EXPECT_EQ(rig.bus.Enable(), 0);
 }

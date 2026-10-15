@@ -43,7 +43,7 @@ LinkPolicy SpeedPolicy::ForNode(uint8_t nodeId) const {
     
     auto it = nodeStates_.find(nodeId);
     if (it != nodeStates_.end()) {
-        policy.localToNode = it->second.currentSpeed;
+        policy.localToNode = it->second.currentSpeed.value_or(FwSpeed::S400);
     } else {
         policy.localToNode = FwSpeed::S400;
     }
@@ -74,7 +74,7 @@ std::optional<FW::FwSpeed> SpeedPolicy::ObservedSpeed(FW::NodeId nodeId) const n
 void SpeedPolicy::RecordVerifiedCeiling(FW::NodeId nodeId, FW::FwSpeed speed) noexcept {
     LockGuard guard(lock_);
     auto& state = nodeStates_[nodeId.value];
-    if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
+    if (!state.currentSpeed || speed < *state.currentSpeed) {
         state.currentSpeed = speed;
     }
 }
@@ -86,7 +86,7 @@ void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
         auto& state = nodeStates_[nodeId];
         // A later successful read at a faster speed does not erase a lower
         // ceiling already learned in this bus generation.
-        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
+        if (!state.currentSpeed || speed < *state.currentSpeed) {
             state.currentSpeed = speed;
         }
         state.successCount++;
@@ -113,7 +113,7 @@ void SpeedPolicy::RecordTimeout(uint8_t nodeId, FwSpeed speed) {
         auto& state = nodeStates_[nodeId];
         state.timeoutCount++;
         timeoutCount = state.timeoutCount;
-        if (static_cast<uint8_t>(downgraded) < static_cast<uint8_t>(state.currentSpeed)) {
+        if (!state.currentSpeed || downgraded < *state.currentSpeed) {
             state.currentSpeed = downgraded;
             state.timeoutCount = 0;
         }

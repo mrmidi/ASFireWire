@@ -84,7 +84,7 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
     ivars.runtime.isRunning.store(false, std::memory_order_release);
     // A wire kept across StopIO (Runtime/WireRetention.hpp) still has its TX
     // producer armed: stop it and wait out a pass in flight before the stream
-    // stops and the slabs go (TX_OWNERSHIP.md T6). Harmless when IO already
+    // stops and the slabs go. Harmless when IO already
     // stopped it.
     ivars.runtime.txActive.store(false, std::memory_order_release);
     if (ivars.txPreparationQueue) {

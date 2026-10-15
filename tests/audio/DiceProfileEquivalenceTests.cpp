@@ -3,8 +3,7 @@
 //
 // DiceProfileEquivalenceTests.cpp - What every DICE profile answers, recorded.
 //
-// Stage C of documentation/DICE_TCAT_ARCHITECTURE.md §4.2 collapses the DICE
-// profile classes into one builder. This dumps every profile accessor that
+// The DICE profile classes were collapsed into one builder. This dumps every profile accessor that
 // still has a caller, for each DICE builder the catalog names and for the
 // registry's generic fallback, at every rate the driver can publish, into
 // tests/golden/dice-profiles/<builder>.txt. The files were first recorded from

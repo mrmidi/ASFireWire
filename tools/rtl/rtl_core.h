@@ -8,7 +8,7 @@
 // only moves samples and timestamps into rtl_engine_step() and prints.
 //
 // Vocabulary (RTL_raw, RTL_ts, scheduling distance, residual) is defined in
-// documentation/LATENCY_VOCABULARY.md and tools/rtl/README.md.
+// tools/rtl/README.md.
 #ifndef ASFW_TOOLS_RTL_CORE_H
 #define ASFW_TOOLS_RTL_CORE_H
 

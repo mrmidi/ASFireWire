@@ -8,7 +8,7 @@
 // progress a DICE bring-up tracks. Session state (what should run,
 // what runs) belongs to Audio/Session/SessionScheduler; the lifecycle variant,
 // clock-request tokens and rollback ledger that used to live here went with
-// AudioDuplexCoordinator (documentation/AUDIO_SESSION_REDESIGN.md, stage S2).
+// AudioDuplexCoordinator.
 
 #pragma once
 

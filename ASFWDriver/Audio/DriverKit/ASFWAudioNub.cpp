@@ -22,6 +22,7 @@
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
 #include "../Protocols/DICE/Core/DICETypes.hpp"
+#include "../Protocols/DICE/Core/DiceRateFormats.hpp"
 #include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Protocols/AVC/AVCUnit.hpp"
@@ -555,6 +556,18 @@ uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
     return ivars ? ivars->currentSampleRateHz : 0;
 }
 
+void ASFWAudioNub::RefreshFromProperties()
+{
+    if (!ivars) {
+        return;
+    }
+    RefreshChannelCountsFromProperties(this, ivars);
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: refreshed from published properties rate=%u in=%u out=%u guid=0x%016llx",
+             ivars->currentSampleRateHz, ivars->inputChannelCount,
+             ivars->outputChannelCount, ivars->guid);
+}
+
 ASFWDriver* ASFWAudioNub::GetParentDriver() const
 {
     return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
@@ -828,6 +841,44 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
         ivars->currentSampleRateHz = sampleRateHz;
     }
     return kr;
+}
+
+kern_return_t IMPL(ASFWAudioNub, CopyObservedRateCatalog) {
+    if (!ivars || !outProperties) return kIOReturnBadArgument;
+    *outProperties = nullptr;
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(ivars, binding) != kIOReturnSuccess ||
+        !binding.registry || !binding.device || !binding.protocolOwner)
+        return kIOReturnNotReady;
+    const auto endpoint = FindEndpointRuntime(ivars);
+    ASFW::Audio::Model::ASFWAudioDevice prior;
+    if (!endpoint || !endpoint->CopyConfig(prior) || !prior.usesRateFormations)
+        return kIOReturnUnsupported;
+    const auto* policy = ASFW::DeviceProfiles::Audio::CurrentAudioPolicy(*binding.device);
+    if (!policy || ASFW::Audio::ChooseAudioBackend(policy->plan) != ASFW::Audio::AudioBackendKind::Dice)
+        return kIOReturnUnsupported;
+    const auto route = binding.registry->CurrentRoute(ivars->guid);
+    if (!route || route->deviceIncarnation != prior.rateRouteIncarnation) return kIOReturnAborted;
+    binding.protocol->UpdateRuntimeContext(*route, nullptr);
+    const auto owner = binding.protocolOwner;
+    const auto result = ASFW::Audio::WaitForAsyncResult<ASFW::Audio::RateHardwareObservation>(
+        [owner](auto done) { owner->ReadRateObservation(std::move(done)); }, 5000, kIOReturnTimeout);
+    if (result.status != kIOReturnSuccess) return result.status;
+    if (!binding.registry->IsCurrent(*route)) return kIOReturnAborted;
+    if (!result.value.clockConfirmed || result.value.caps.sampleRateHz != sampleRateHz)
+        return kIOReturnNotReady;
+    const auto formation = ASFW::Audio::DICE::DiceObservedRateFormation(result.value.caps);
+    if (!formation) return kIOReturnUnsupported;
+    auto catalog = ASFW::Audio::Model::WithObservedRateCatalog(prior, *formation);
+    if (!catalog) return kIOReturnNotReady;
+    catalog->rateRouteEpoch = route->routeEpoch;
+    catalog->rateBusGeneration = route->generation.value;
+    auto properties = OSSharedPtr(OSDictionary::withCapacity(32), OSNoRetain);
+    if (!properties || !catalog->PopulateNubProperties(properties.get())) return kIOReturnNoMemory;
+    if (!binding.registry->IsCurrent(*route)) return kIOReturnAborted;
+    endpoint->UpdateConfig(*catalog);
+    *outProperties = properties.detach();
+    return kIOReturnSuccess;
 }
 
 // The nub waits on its control queue; queries and their callbacks run on the

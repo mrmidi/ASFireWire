@@ -2,7 +2,7 @@
 
 // SessionRegistry — bridges discovery metadata to LoginSession instances.
 //
-// Decomposed from PR #19's SBP2SessionRegistry (§2a of SBP2_SESSION_PORT.md):
+// Decomposed from PR #19's SBP2SessionRegistry:
 // identity & lifecycle only. Sessions are created for an owner and target
 // (guid, romOffset); public operations use opaque handles plus owner validation,
 // and the registry rejects duplicate live targets by (guid, romOffset). The

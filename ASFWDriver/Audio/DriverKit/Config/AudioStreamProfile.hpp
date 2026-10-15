@@ -33,6 +33,7 @@ struct AudioStreamConfig final {
     bool cipSph{false};
     uint8_t motuMessageChunks{2};
     uint8_t motuPcmByteOffset{10};
+    uint8_t motuPcmChunks{0};
     uint8_t sourceChannelOffset{0};
     Encoding::AudioPacketFraming packetFraming{Encoding::AudioPacketFraming::kCip};
     ::ASFW::Audio::Wire::PcmSlotMap pcmSlotMap{};
@@ -52,12 +53,12 @@ struct AudioStreamTxPolicy final {
     uint32_t cadenceSlotWord{0xCF000000};
     bool dbcIsEndEvent{false};
     /// MOTU only: chunk behind each host output channel. Empty encodes in wire order.
-    Encoding::Motu::MotuPortMap motuPlaybackPorts{};
+    uint32_t motuUnitVersion{0};
     /// MOTU only: the model's transmit presentation lead (RuntimePolicy).
     uint32_t motuPresentationLeadTicks{Encoding::Motu::kDefaultPresentationLeadTicks};
-    /// MOTU only: the model's absolute-phase setpoint at 48 kHz (RuntimePolicy).
-    int32_t motuAbsolutePhaseSetpointTicks48k{
-        Encoding::Motu::kDefaultAbsolutePhaseSetpointTicks48k};
+    /// MOTU only: the model's device-relative presentation offset in frames (RuntimePolicy).
+    uint32_t motuPresentationOffsetFrames{
+        Encoding::Motu::kDefaultPresentationOffsetFrames};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
 
 };
@@ -133,6 +134,10 @@ public:
     // streams from device start to device stop). Opt-in per profile until each
     // family is verified on hardware.
     [[nodiscard]] virtual bool RetainsWireAcrossStopIO() const noexcept { return false; }
+
+    // Establish transport before HAL publication and rebuild it in the stopped
+    // configuration window, independently of whether a client is running.
+    [[nodiscard]] virtual bool StartsWireBeforePublication() const noexcept { return false; }
 
     // Sum the streams the device actually carries. The previous form was
     // pcmChannels * StreamCount(), which silently assumes every stream has

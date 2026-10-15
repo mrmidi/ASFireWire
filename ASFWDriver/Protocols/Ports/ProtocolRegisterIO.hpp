@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FireWireBusPort.hpp"
+#include "../../Async/Core/TransactionRetry.hpp"
 #include "../../Common/WireFormat.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 
@@ -62,16 +63,17 @@ public:
             return {};
         }
         const auto route = route_;
+        auto* registry = &routeRegistry_;
         return busOps_.ReadQuad(route.generation,
                                 NodeId(),
                                 address,
                                 ResolveSpeed(speedOverride),
-                                [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                  std::span<const uint8_t> payload) mutable {
                                     if (!callback) {
                                         return;
                                     }
-                                    if (!routeRegistry_.IsCurrent(route)) {
+                                    if (!registry->IsCurrent(route)) {
                                         callback(Async::AsyncStatus::kStaleGeneration, 0U);
                                         return;
                                     }
@@ -85,6 +87,41 @@ public:
                                     }
                                     callback(Async::AsyncStatus::kSuccess, FW::ReadBE32(payload.data()));
                                 });
+    }
+
+    // Opt-in command recovery; owns a fixed route for the complete logical read.
+    // Caller publishes ownership before Begin and cancels before its callback owner dies.
+    using RegisterCommand = Async::TransactionRetry<uint32_t>;
+    [[nodiscard]] std::shared_ptr<RegisterCommand> CreateQuadBERead(
+        Scheduling::ITimerScheduler* scheduler, Async::TransactionRetryPolicy policy,
+        Async::FWAddress address, QuadReadCallback callback)
+    {
+        auto io = *this;
+        return RegisterCommand::Create(scheduler, policy,
+            [io, address](QuadReadCallback completion) mutable {
+                return io.ReadQuadBE(address, std::move(completion));
+            },
+            [bus = &busOps_](Async::AsyncHandle handle) { (void)bus->Cancel(handle); },
+            [io] { return io.IsRouteCurrent(); }, std::move(callback));
+    }
+
+    [[nodiscard]] std::shared_ptr<RegisterCommand> CreateQuadBEWrite(
+        Scheduling::ITimerScheduler* scheduler, Async::TransactionRetryPolicy policy,
+        Async::FWAddress address, uint32_t value, WriteCallback callback)
+    {
+        auto io = *this;
+        return RegisterCommand::Create(scheduler, policy,
+            [io, address, value](RegisterCommand::Callback completion) mutable {
+                return io.WriteQuadBE(address, value,
+                    [completion = std::move(completion)](Async::AsyncStatus status) {
+                        completion(status, 0);
+                    });
+            },
+            [bus = &busOps_](Async::AsyncHandle handle) { (void)bus->Cancel(handle); },
+            [io] { return io.IsRouteCurrent(); },
+            [callback = std::move(callback)](Async::AsyncStatus status, uint32_t) {
+                if (callback) callback(status);
+            });
     }
 
     // RME Fireface vendor registers are little-endian quadlets. Keep these
@@ -197,15 +234,16 @@ public:
         std::array<uint8_t, sizeof(uint32_t)> bytes{};
         FW::WriteBE32(bytes.data(), value);
         const auto route = route_;
+        auto* registry = &routeRegistry_;
         return busOps_.WriteBlock(route.generation,
                                   NodeId(),
                                   address,
                                   std::span<const uint8_t>(bytes.data(), bytes.size()),
                                   ResolveSpeed(speedOverride),
-                                  [this, route, callback = std::move(callback)](Async::AsyncStatus status,
+                                  [registry, route, callback = std::move(callback)](Async::AsyncStatus status,
                                                                    std::span<const uint8_t>) mutable {
                                       if (callback) {
-                                          callback(routeRegistry_.IsCurrent(route)
+                                          callback(registry->IsCurrent(route)
                                                        ? status
                                                        : Async::AsyncStatus::kStaleGeneration);
                                       }
@@ -339,9 +377,13 @@ public:
         return routeRegistry_.LowerVerifiedLinkSpeed(route_, speed);
     }
 
+    [[nodiscard]] bool CancelTransaction(Async::AsyncHandle handle) { return busOps_.Cancel(handle); }
+
     void UpdateRoute(const Discovery::DeviceRouteToken& route) noexcept {
         route_ = route;
     }
+
+    [[nodiscard]] Discovery::DeviceRouteToken Route() const noexcept { return route_; }
 
     [[nodiscard]] bool IsRouteCurrent() const noexcept {
         return static_cast<bool>(route_) && routeRegistry_.IsCurrent(route_);

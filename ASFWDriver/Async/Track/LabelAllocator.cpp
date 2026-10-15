@@ -11,18 +11,33 @@ LabelAllocator::LabelAllocator()
     : bitmap_(0), generation_(0), next_label_(0) {}
 
 void LabelAllocator::Reset() {
+    for (auto& node : quarantineUntil_) {
+        for (auto& until : node) until.store(0, std::memory_order_relaxed);
+    }
     bitmap_.store(0, std::memory_order_relaxed);
     generation_.store(0, std::memory_order_relaxed);
     next_label_.store(0, std::memory_order_relaxed);
 }
 
-uint8_t LabelAllocator::Allocate() {
+uint8_t LabelAllocator::Allocate(uint16_t node, uint64_t nowUs) {
     // Round-robin allocator: start from next_label_ cursor, scan for a free bit.
     uint8_t start = next_label_.load(std::memory_order_relaxed);
     uint64_t snapshot = bitmap_.load(std::memory_order_relaxed);
 
     for (unsigned int attempt = 0; attempt < kMaxLabels; ++attempt) {
         const uint8_t idx = static_cast<uint8_t>((start + attempt) & 0x3F);
+        bool protectedLabel = false;
+        if (node == 0xffff) {
+            for (const auto& history : quarantineUntil_) {
+                if (history[idx].load(std::memory_order_acquire) > nowUs) {
+                    protectedLabel = true;
+                    break;
+                }
+            }
+        } else {
+            protectedLabel = quarantineUntil_[node & 0x3fu][idx].load(std::memory_order_acquire) > nowUs;
+        }
+        if (protectedLabel) continue;
         const uint64_t mask = ASFW::FW::bit<uint64_t>(idx);
         if (snapshot & mask) {
             continue;  // in use
@@ -64,6 +79,11 @@ uint8_t LabelAllocator::NextLabel() noexcept {
     return current;  // Return the label we reserved (before increment)
 }
 
+void LabelAllocator::Quarantine(uint8_t label, uint16_t node, uint64_t untilUs) noexcept {
+    if (label >= kMaxLabels) return;
+    quarantineUntil_[node & 0x3fu][label].store(untilUs, std::memory_order_release);
+}
+
 void LabelAllocator::Free(uint8_t label) {
     if (label >= kMaxLabels) {
         return;
@@ -97,6 +117,11 @@ void LabelAllocator::BumpGeneration() {
 }
 
 void LabelAllocator::SetGeneration(uint16_t newGen) {
+    if (CurrentGeneration() != (newGen & kGenerationMask)) {
+        for (auto& node : quarantineUntil_) {
+            for (auto& until : node) until.store(0, std::memory_order_release);
+        }
+    }
     generation_.store(newGen & kGenerationMask, std::memory_order_release);
 }
 

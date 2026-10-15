@@ -53,7 +53,7 @@ public:
     // Copies host frames into the packets that carry them. A frame whose
     // packet index is below firstWritablePacket is not written: that packet
     // may already be with the hardware, so it keeps its armed silence and is
-    // counted as having missed finality (documentation/TX_OWNERSHIP.md).
+    // counted as having missed finality.
     // 0 means every packet is writable.
     virtual void WriteFloat32Interleaved(
         const Protocols::Audio::AMDTP::HostAudioBufferView& hostBuffer,
@@ -102,7 +102,8 @@ public:
         std::span<const uint8_t> payload,
         uint32_t strideQuadlets,
         uint32_t framesDecoded,
-        uint16_t cycle) noexcept = 0;
+        uint16_t cycle,
+        uint64_t firstAudioFrame) noexcept = 0;
 
     [[nodiscard]] virtual bool IsTimingEstablished() const noexcept = 0;
     virtual void Reset() noexcept = 0;

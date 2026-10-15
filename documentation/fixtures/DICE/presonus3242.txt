@@ -1,0 +1,208 @@
+ASFW DICE DEVICE REPORT
+=======================
+Generated: 2026-10-11T09:02:44Z
+Report app: 0.5.0 (build 19)
+Driver:     0.5.0 (6b3162e on release/arm64-dext-at-ring-rme-clock, dirty) built 2026-10-10T10:56:44Z
+Rate mode: low (32-48k)
+
+This is a read-only dump of the device's DICE register spaces.
+Paste it whole into the issue; do not trim sections.
+
+IDENTITY
+--------
+GUID:          0x000A9204050839AE
+Vendor:        PreSonus
+Model:         StudioLive 32.4.2
+Node / gen:    1 / 2
+TCAT vendor:   0x000A92
+TCAT category: 0x04  (standard DICE)
+TCAT product:  0x014
+TCAT serial:   539054
+
+SECTION TABLES  (offsets and sizes in quadlets)
+-----------------------------------------------
+general space @ 0xFFFFE0000000
+  global         offset=0x0000A (0x000028 B)  size=0x0005F (380 B)
+  tx             offset=0x00069 (0x0001A4 B)  size=0x0008E (568 B)
+  rx             offset=0x000F7 (0x0003DC B)  size=0x0008E (568 B)
+  ext_sync       offset=0x00185 (0x000614 B)  size=0x00004 (16 B)
+  unused2        offset=0x00000 (0x000000 B)  size=0x00000 (0 B)
+
+extension space @ 0xFFFFE0200000
+  <absent>
+
+GLOBAL
+--------
+OWNER              = 0xFFFF000000000000  (no owner)
+NOTIFICATION       = 0x00000000   -
+NICK_NAME          = 'StudioLive'
+CLOCK_SELECT       = 0x0000020C   source=12 (internal)  rate=2 (48000)
+ENABLE             = 0x00000000   streaming=no
+STATUS             = 0x00000201   locked=yes  nominal=48000
+EXTENDED_STATUS    = 0x00000000
+    locked  : -
+    slipped : -
+    NOTE: slip bits are read-to-clear and fluctuate without notification;
+          this is an instantaneous sample, not a stable value.
+SAMPLE_RATE        = 48000 Hz  (measured)
+VERSION            = 0x01000C00   (1.0.12.0)
+CLOCK_CAPABILITIES = 0x10000004
+    rates   : 48000
+    sources : internal
+CLOCK_SOURCE_NAMES:
+    0   aes1      'Unused'
+    1   aes2      'Unused'
+    2   aes3      'Unused'
+    3   aes4      'Unused'
+    4   aes_any   'Unused'
+    5   adat      'Unused'
+    6   tdif      'Unused'
+    7   wc        'Unused'
+    8   arx1      'Unused'
+    9   arx2      'Unused'
+    10  arx3      'Unused'
+    11  arx4      'Unused'
+    12  internal  'Internal'
+
+TX STREAMS  (device transmits -> host capture)
+----------------------------------------------
+NUMBER = 1   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    PCM channels = 48
+    MIDI ports   = 0
+    SPEED        = S400
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'CH1'
+      1   'CH2'
+      2   'CH3'
+      3   'CH4'
+      4   'CH5'
+      5   'CH6'
+      6   'CH7'
+      7   'CH8'
+      8   'CH9'
+      9   'CH10'
+      10  'CH11'
+      11  'CH12'
+      12  'CH13'
+      13  'CH14'
+      14  'CH15'
+      15  'CH16'
+      16  'CH17'
+      17  'CH18'
+      18  'CH19'
+      19  'CH20'
+      20  'CH21'
+      21  'CH22'
+      22  'CH23'
+      23  'CH24'
+      24  'CH25'
+      25  'CH26'
+      26  'CH27'
+      27  'CH28'
+      28  'CH29'
+      29  'CH30'
+      30  'CH31'
+      31  'CH32'
+      32  'AUX1'
+      33  'AUX2'
+      34  'AUX3'
+      35  'AUX4'
+      36  'AUX5'
+      37  'AUX6'
+      38  'AUX7'
+      39  'AUX8'
+      40  'AUX9'
+      41  'AUX10'
+      42  'AUX11'
+      43  'AUX12'
+      44  'AUX13'
+      45  'AUX14'
+      46  'AUX15'
+      47  'AUX16'
+
+RX STREAMS  (device receives <- host playback)
+----------------------------------------------
+NUMBER = 1   SIZE = 70 quadlets (280 bytes)
+
+  [stream 0]
+    ISOCHRONOUS  = -1  (disabled)
+    SEQ_START    = 0
+    PCM channels = 34
+    MIDI ports   = 0
+    AC3_CAPS     = <not implemented: stream block too short>
+    NAMES:
+      0   'CH1'
+      1   'CH2'
+      2   'CH3'
+      3   'CH4'
+      4   'CH5'
+      5   'CH6'
+      6   'CH7'
+      7   'CH8'
+      8   'CH9'
+      9   'CH10'
+      10  'CH11'
+      11  'CH12'
+      12  'CH13'
+      13  'CH14'
+      14  'CH15'
+      15  'CH16'
+      16  'CH17'
+      17  'CH18'
+      18  'CH19'
+      19  'CH20'
+      20  'CH21'
+      21  'CH22'
+      22  'CH23'
+      23  'CH24'
+      24  'CH25'
+      25  'CH26'
+      26  'CH27'
+      27  'CH28'
+      28  'CH29'
+      29  'CH30'
+      30  'CH31'
+      31  'CH32'
+      32  '2TrackL'
+      33  '2TrackR'
+
+EXT_SYNC
+--------
+CLOCK_SOURCE   = 1764055928 (reserved(1764055928))
+LOCKED         = yes
+RATE           = 10 (none)
+ADAT_USER_DATA = 0xA
+
+EAP CAPABILITIES
+----------------
+<absent>
+
+EAP STREAM FORMAT STAGING AREA  (written, then LOADed — not the live config)
+----------------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP ROUTER STAGING AREA  (written, then LOADed — not the live config)
+---------------------------------------------------------------------
+  <empty — nothing staged>
+
+EAP CURRENT ROUTER — low (32-48k)  (0 entries)  [ACTIVE]
+--------------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — middle (88.2-96k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+EAP CURRENT ROUTER — high (176.4-192k)  (0 entries)
+---------------------------------------------------
+  <not read>
+
+NOTES
+--------
+- TX section is allocated for 2 stream block(s) but NUMBER reports 1.
+- RX section is allocated for 2 stream block(s) but NUMBER reports 1.
+- No extended application (EAP) space at 0xFFFFE0200000.

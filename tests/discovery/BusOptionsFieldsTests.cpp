@@ -9,7 +9,7 @@
 //   Bits [28]    bmc=0
 //   Bits [27]    pmc=0
 //   Bits [23:16] cyc_clk_acc=0x64 (100 ppm)
-//   Bits [15:12] max_rec=6          (512-byte max async payload)
+//   Bits [15:12] max_rec=6          (128-byte max async payload)
 //   Bits [11:10] reserved=0
 //   Bits [9:8]   max_ROM=1          (general ROM present)
 //   Bits [7:4]   generation=0
@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <bit>
+#include <array>
 
 #include <gtest/gtest.h>
 
@@ -29,6 +30,20 @@ namespace {
 constexpr uint32_t kTA1999027BusOptions = 0xE0646102u;
 
 } // namespace
+
+TEST(BusOptionsFieldsTests, MaxRecDecodesToBytesForEveryFourBitValue) {
+    // Explicit byte limits, independent of the production conversion formula.
+    constexpr std::array<uint32_t, 16> expectedBytes{
+        2, 4, 8, 16, 32, 64, 128, 256,
+        512, 1024, 2048, 4096, 8192, 16384, 32768, 65536};
+    for (uint8_t maxRec = 0; maxRec < expectedBytes.size(); ++maxRec) {
+        SCOPED_TRACE(static_cast<unsigned>(maxRec));
+        const auto decoded = ASFW::FW::DecodeBusOptions(
+            static_cast<uint32_t>(maxRec) << ASFW::FW::BusOptionsFields::kMaxRecShift);
+        EXPECT_EQ(ASFW::FW::MaxAsyncPayloadBytesFromMaxRec(decoded.maxRec),
+                  expectedBytes[maxRec]);
+    }
+}
 
 // =============================================================================
 // DecodeBusOptions
@@ -46,7 +61,7 @@ TEST(BusOptionsFieldsTests, Decode_TA1999027_AnnexC) {
 
     // Numeric fields
     EXPECT_EQ(d.cycClkAcc, 0x64u);  // 100 ppm
-    EXPECT_EQ(d.maxRec,    0x6u);   // 2^(6+1) = 128 bytes min, 512 bytes typical
+    EXPECT_EQ(d.maxRec,    0x6u);   // 2^(6+1) = 128 bytes
     EXPECT_EQ(d.maxRom,    0x1u);   // general ROM
     EXPECT_EQ(d.generation, 0x0u);
     EXPECT_EQ(d.linkSpd,   0x2u);   // S400

@@ -47,7 +47,7 @@ enum class DeviceDefinitionId : uint32_t {
     MAudioFireWire1814Bootloader,
     MAudioFireWire1814,
     MAudioProjectMix,
-    // MOTU publishes root model_id 0; the model lives in Unit_Sw_Version, so
+    // MOTU may omit root model_id; the model lives in Unit_Sw_Version, so
     // these are the one family matched from the unit directory alone.
     Motu828mk2,
     Motu896hd,
@@ -71,6 +71,7 @@ enum class DeviceDefinitionId : uint32_t {
     GenericDice,
     Motu828, Motu896, Motu828mk3, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
+    MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -117,8 +118,7 @@ enum class ProbePolicyId : uint8_t {
 };
 
 /// Device preparation that must run before an identity can become anything
-/// else. Only the BeBoB bootloader persona carries one; see
-/// documentation/MAUDIO_BOOTLOADER_CUE_DESIGN.md.
+/// else. Only the BeBoB bootloader persona carries one.
 enum class BootloaderCuePolicy : uint8_t {
     None = 0,
     /// Write the frozen BeBoB "start application firmware" cue. This is the
@@ -250,11 +250,6 @@ struct StreamWirePolicy final {
     /// and whose firmware 4.6.0 stamps a wrong dbs above 88.2 kHz.
     bool captureTrustConfiguredStride{false};
 
-    /// Host<->device PCM is raw 24-in-32 rather than AM824 *when the runtime
-    /// geometry matches* (8 PCM channels in 9 slots). Conditional on purpose:
-    /// the Saffire Pro 24 DSP switches wire format with its configuration, so
-    /// this cannot be a static property of the identity.
-    bool rawPcm24In32WhenEightInNineSlots{false};
     /// RME Fireface headerless LE PCM with signed data in the upper 24 bits.
     bool headerlessUpper24LE{false};
 };

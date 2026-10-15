@@ -85,7 +85,7 @@ public:
     /// Write silence instead of the host's samples, into the same packets. The
     /// packets stay DATA: their cadence is the device's own, replayed from the
     /// receive stream, and only their content changes. The transmit producer
-    /// sets this from the SPH regulator's gate (MotuSphHardResyncGate) before
+    /// sets this from the synthesizer's mute state before
     /// each packet it prepares; the gate holds the output silent until the
     /// regulator has locked.
     void SetPcmMuted(bool muted) noexcept;
