@@ -266,7 +266,7 @@ TEST(DiceFamilyDriverTests, PrepareSequenceMatchesReferenceWindow) {
     //     clock. That read consumes one extra scripted response, locked at target.
     //  2. The capture opens with a GLOBAL_STATUS read (0x7C) whose value the
     //     kext discards. The bring-up starts with the section table instead,
-    //     as TCAT RestartStreaming does (AUDIO_SESSION_REDESIGN.md S3).
+    //     as TCAT RestartStreaming does.
     const auto& refRequests = ReferencePhase0ParityFixture::kPrepareExpectedRequests;
     const auto& refResponses = ReferencePhase0ParityFixture::kPrepareResponseSteps;
     std::vector<ExpectedRequest> requests(refRequests.begin() + 1, refRequests.end());

@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // RmeFamilyAdapterTests.cpp
-// The RME Fireface adapter on the audio device host (documentation/AUDIO_DEVICE_HOST.md
-// §4.2, §6 E2). Plain values in, plain values out: no host, no bus, no driver.
+// The RME Fireface adapter on the audio device host. Plain values in, plain values out: no host, no bus, no driver.
 // Policies come from a real DeviceRegistry seeded with a ConfigROM, so the
 // catalog decision is the one the driver would make.
 

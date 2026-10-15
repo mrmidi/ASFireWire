@@ -34,7 +34,7 @@ namespace ASFW::AVC::Cmd {
 // ---------------------------------------------------------------------------
 
 /// operand[0] of a UNIT INFO response (TA 2004006 Figure 27) and of the command we send.
-/// DEVIATION, recorded in documentation/avc-rebuild/magic-numbers-audit.md: the spec (Figure 26)
+/// DEVIATION: the spec (Figure 26)
 /// and Apple (IOFireWireAVCUnit.cpp:946) send FF here, ta1394 (general.rs:29) sends 07 as we do.
 /// Both the Duet and the Phase 88 answer this form; do not change it without a capture.
 inline constexpr uint8_t kUnitInfoFirstOperand = 0x07;

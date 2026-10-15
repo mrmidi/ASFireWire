@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioDeviceHostTests.cpp
-// Behaviour of the audio device host (documentation/AUDIO_DEVICE_HOST.md §4,
-// §6.1). Assertions are on the host's per-outcome counters: every decision the
+// Behaviour of the audio device host. Assertions are on the host's per-outcome counters: every decision the
 // host makes is Record()ed exactly once.
 //
 // These tests were written from the design doc (§4.2, §4.3, §4.4, §6.1) and the

@@ -474,7 +474,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
     // next start writes anyway. "At target" needs both halves there. CLOCK_SELECT
     // is the rate that was requested; STATUS and SAMPLE_RATE are the rate the
     // device reached, and they disagree after a change the device did not
-    // complete (DICE_STABILITY_REGRESSION.md §3).
+    // complete.
     const uint32_t targetHz = session_.desiredClock.sampleRateHz;
     const bool requestedAtTarget = preClaimClockSelect_ == diceClock_.clockSelect;
     const bool achievedAtTarget =

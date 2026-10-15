@@ -374,7 +374,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 
-# Every DICE profile's answers, recorded (DICE_TCAT_ARCHITECTURE.md §4.2 stage C).
+# Every DICE profile's answers, recorded.
 # Zero timestamps the RX path publishes, recorded (Epic 4, T1).
 add_audio_test(ZtsCharacterizationTests
     ZtsCharacterizationTests.cpp

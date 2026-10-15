@@ -29,7 +29,7 @@ uint32_t SafetyFrames(double) noexcept {
 }
 
 uint32_t RoundTripFrames(bool projectMix, double) noexcept {
-    // 48 kHz vendor values: midi-branch/documentation/1814.md:426-433.
+    // 48 kHz vendor values (M-Audio 1814 vendor driver).
     return projectMix ? 208U : 225U;
 }
 

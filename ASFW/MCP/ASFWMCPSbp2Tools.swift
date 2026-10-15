@@ -1,6 +1,6 @@
 import Foundation
 
-// FW-84: SBP-2 inspection and developer control tools (MCP_TOOL_TAXONOMY.md §5.8).
+// FW-84: SBP-2 inspection and developer control tools.
 //
 // Inspection (units, unit directory, session status) is read-only. Login and ORB
 // submission are intentionally lower priority and treated as raw developer-tier

@@ -112,7 +112,7 @@ private:
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
-    // Every family runs on the host (documentation/AUDIO_DEVICE_HOST.md §6).
+    // Every family runs on the host.
     // Adapters are declared before the host so they outlive its teardown.
     Host::DiceFamilyAdapter diceAdapter_;
     Host::RmeFamilyAdapter rmeAdapter_;

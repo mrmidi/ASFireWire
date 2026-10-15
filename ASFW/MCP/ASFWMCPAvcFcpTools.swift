@@ -1,6 +1,6 @@
 import Foundation
 
-// FW-82: AV/C and FCP tools (MCP_TOOL_TAXONOMY.md §5.6).
+// FW-82: AV/C and FCP tools.
 //
 // AV/C unit/subunit inspection and inquiry/status FCP commands are read-only.
 // Control/notify/vendor-dependent FCP commands mutate device state and are

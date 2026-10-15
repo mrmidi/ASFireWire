@@ -4,8 +4,7 @@
 // DiceProfile.hpp - The one DICE audio profile.
 //
 // Every DICE device is described the same way: its stream geometry, rates,
-// clock and channel names come from its own registers (DICE_TCAT_ARCHITECTURE.md
-// §4.1), so a profile keeps only what the device cannot report. That is a small
+// clock and channel names come from its own registers, so a profile keeps only what the device cannot report. That is a small
 // spec per catalog builder -- a name, the host framing policy, and the one
 // geometry fact backed by a reference stack -- instead of the seven per-model
 // classes it replaces (stage C of §4.2). The vendor kexts carry no per-model

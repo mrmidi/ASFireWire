@@ -1067,7 +1067,7 @@ TEST(AudioDriverTxProducerTests, MotuTimingReadinessFlipsOnlyAtLock) {
     EXPECT_GE(decisionsAtFlip, 2u);
 }
 
-// TX ownership goldens (milestone 6, T1; documentation/TX_OWNERSHIP.md)
+// TX ownership goldens (milestone 6)
 //
 // Records, before milestone 6 changes anything, which CoreAudio frames reach
 // which packets on the wire. Each run of packets becomes one line:
@@ -1290,7 +1290,7 @@ TEST(TxOwnershipGolden, SaffireStall48k) {
 // T4: a CoreAudio stall no longer makes TX run ahead of the RX replay. Before,
 // the producer chased W + 4160 frames on resume, read past RX, and shipped a
 // NO-DATA packet per miss -- each one a cycle of permanent lag (the 157 ms RTL
-// residual, TX_OWNERSHIP.md §1b). Now preparation stays within coverage and
+// residual). Now preparation stays within coverage and
 // a miss would end the pass.
 TEST(TxOwnershipGolden, StallDoesNotRunTxAheadOfRxReplay) {
     const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
@@ -1306,7 +1306,7 @@ TEST(TxOwnershipGolden, StallDoesNotRunTxAheadOfRxReplay) {
 
 // T4 on hardware: with the fill on the TX preparation queue, a 64-frame
 // buffer lost packets whenever the queue woke late (up to 13.7 ms), because a
-// frame has ~1 ms from WriteEnd to its packet's deadline (TX_OWNERSHIP.md §1d).
+// frame has ~1 ms from WriteEnd to its packet's deadline.
 // The fill now runs inside WriteEnd, so it must not depend on that wake:
 // here WriteEnd's wake requests are never run, and after start-up no frame
 // may miss its deadline.
@@ -1416,7 +1416,7 @@ TEST(TxPacketIndexWidth, APacketPastTwoToTheThirtySecondCommitsItsOwnGeneration)
     EXPECT_EQ(queue.committedEnd.load(), kPacket + 1);
 }
 
-// T7 (TX_OWNERSHIP.md §1g): the TX frame cursor starts at the projected frame.
+// The TX frame cursor starts at the projected frame.
 // Rounding it down to a packet boundary delayed every output frame by 0-7
 // frames depending on the start; on hardware RTL_ts measured 105.03 + that.
 TEST(TxFrameCursorProjection, KeepsTheProjectedFrameInsteadOfAPacketBoundary) {

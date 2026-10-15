@@ -17,8 +17,7 @@
 //   ./rtl_loopback -d ASFW --tone            play a sine, find every glitch (dropout/slip/click)
 //   ./rtl_loopback -d ASFW --tone --frames 32 --duration 60
 //
-// See tools/rtl/README.md for the meaning of every number, and
-// documentation/LATENCY_VOCABULARY.md for the shared vocabulary.
+// See tools/rtl/README.md for the meaning of every number.
 //
 // The IOProc allocates nothing, logs nothing, and touches only preallocated
 // storage. All analysis happens after the run.

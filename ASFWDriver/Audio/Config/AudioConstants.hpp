@@ -8,8 +8,7 @@
 namespace ASFW::Isoch::Config {
 
 /// DBS / PCM channel ceilings. Wire facts: the authority is Encoding
-/// (AmdtpRateGeometry.hpp); these are aliases for Isoch::Config callers
-/// (TIMING_GEOMETRY_OWNERSHIP.md, G-21).
+/// (AmdtpRateGeometry.hpp); these are aliases for Isoch::Config callers.
 inline constexpr uint32_t kMaxAmdtpDbs = ASFW::Encoding::kMaxAmdtpDbs;
 inline constexpr uint32_t kMaxPcmChannels = ASFW::Encoding::kMaxPcmChannels;
 

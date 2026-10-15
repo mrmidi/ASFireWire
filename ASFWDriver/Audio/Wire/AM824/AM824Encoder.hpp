@@ -4,7 +4,6 @@
 // Converts 24-bit PCM audio samples to AM824 quadlets per IEC 61883-6.
 // AM824 format: [0x40 label][24-bit big-endian sample]
 //
-// Reference: docs/Isoch/PHASE_1_5_ENCODING.md
 // Verified against: 000-48kORIG.txt FireBug capture
 //
 

@@ -6,8 +6,8 @@
 // For every start/stop recipe the device catalog resolves, these record what
 // the session does: host transport calls (IRM reservation, DMA
 // prepare/start/stop), device stages, and for DICE the bus traffic underneath.
-// They were first recorded against AudioDuplexCoordinator; stage S2 of
-// documentation/AUDIO_SESSION_REDESIGN.md replaced it with SessionScheduler,
+// They were first recorded against AudioDuplexCoordinator; the session
+// redesign replaced it with SessionScheduler,
 // which reproduced every trace except three declared deltas (double-start,
 // fault-after-stop, stop-after-refused-start). Like the S0 DICE goldens, they
 // characterize; they do not judge.

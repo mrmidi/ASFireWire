@@ -4,8 +4,6 @@
 // ResolvedTimingGeometry.hpp -- the single authority for host-facing timing
 // and HAL geometry of one audio stream at one sample rate.
 //
-// Ownership model: documentation/TIMING_GEOMETRY_OWNERSHIP.md (FW-180).
-//
 //   wire facts        AmdtpRateGeometryForSampleRate(rate), AmdtpTransferDelayTicks
 //   device policy     DeviceTimingPolicy (from the device profile, at the rate)
 //   HAL policy        HalBufferProfileForRate(rate)
@@ -89,8 +87,7 @@ struct ResolvedTimingGeometry final {
                                      const ResolvedTimingGeometry&) = default;
 };
 
-/// Transfer delay applied on the wire (decision D1, TIMING_GEOMETRY_MIDI_
-/// DISTILLATION.md): the Linux-derived formula in blocking mode for every
+/// Transfer delay applied on the wire (decision D1): the Linux-derived formula in blocking mode for every
 /// stream, as the midi branch applies it. 12800 ticks at 48/96/192 kHz,
 /// 13162 in the 44.1 kHz family, 14848 at 32 kHz.
 [[nodiscard]] constexpr uint32_t AppliedTransferDelayTicks(

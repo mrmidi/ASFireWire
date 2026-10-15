@@ -210,8 +210,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
                                                    const Model::ASFWAudioDevice& config) noexcept {
     // The host stores the description and publishes or refreshes through its one
-    // rule (§4.3). It no longer overwrites the endpoint config under a live nub
-    // (AUDIO_DEVICE_HOST.md §5 Δ8).
+    // rule. It no longer overwrites the endpoint config under a live nub.
     host_.OfferDiscoveredDescription(guid, config);
 }
 
@@ -231,8 +230,7 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
     }
 
     // The host asks the family whether it acts on it (FamilyAdapter::ActsOn):
-    // only DICE does; RME, AV/C and MOTU decline it, as their backends did
-    // (AUDIO_DEVICE_HOST.md §6 E5).
+    // only DICE does; RME, AV/C and MOTU decline it, as their backends did.
     if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
 }
 

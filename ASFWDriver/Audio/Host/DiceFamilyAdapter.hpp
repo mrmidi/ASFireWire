@@ -3,7 +3,7 @@
 //
 // DiceFamilyAdapter.hpp - DICE/TCAT behind the audio device host.
 //
-// documentation/AUDIO_DEVICE_HOST.md §6 E5. What DiceAudioBackend did that is
+// What DiceAudioBackend did that is
 // DICE's own:
 //   - Describe: the device's registers describe its streams (EnsureNubForGuid's
 //     body). Every refusal it made is kept, now named, so the host's

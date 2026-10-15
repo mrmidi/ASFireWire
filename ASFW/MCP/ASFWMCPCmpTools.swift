@@ -1,6 +1,6 @@
 import Foundation
 
-// FW-83: Connection Management Procedures (CMP) tools (MCP_TOOL_TAXONOMY.md §5.7).
+// FW-83: Connection Management Procedures (CMP) tools.
 //
 // Plug listing and PCR reads are read-only inspection. PCR writes and
 // connection establish/break are mutations: they are compare-swaps against the

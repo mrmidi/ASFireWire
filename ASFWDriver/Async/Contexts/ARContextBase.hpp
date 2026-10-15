@@ -368,8 +368,6 @@ std::optional<FilledBufferInfo> ARContextBase<Derived, Tag>::Dequeue() noexcept 
     // FetchRange() alone provides sufficient ordering via DSB. Adding ReadBarrier may
     // actually CAUSE cache coherency issues, not fix them!
     //
-    // See: ANALYSIS_DMA_BARRIERS_AND_CACHE_COHERENCY.md for full technical explanation
-    //
     // Driver::ReadBarrier();  // ⚠️  DISABLED: May cause reordering with device memory on ARM64
 
     // Check for filled buffer

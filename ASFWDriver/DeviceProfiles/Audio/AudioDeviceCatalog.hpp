@@ -118,8 +118,7 @@ enum class ProbePolicyId : uint8_t {
 };
 
 /// Device preparation that must run before an identity can become anything
-/// else. Only the BeBoB bootloader persona carries one; see
-/// documentation/MAUDIO_BOOTLOADER_CUE_DESIGN.md.
+/// else. Only the BeBoB bootloader persona carries one.
 enum class BootloaderCuePolicy : uint8_t {
     None = 0,
     /// Write the frozen BeBoB "start application firmware" cue. This is the

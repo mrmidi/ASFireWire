@@ -84,7 +84,7 @@ struct AudioDriverDeviceState {
 
     /// The device profile, resolved ONCE at graph construction. StartIO and the
     /// direct binding read this; nothing on the audio side calls FindProfile
-    /// again (TIMING_GEOMETRY_OWNERSHIP.md, G-19).
+    /// again.
     const ASFW::Isoch::Audio::IAudioDeviceProfile* profile{nullptr};
     /// The authoritative timing/HAL geometry at currentSampleRate: resolved at
     /// graph construction and on every accepted rate change. Declarations, the
@@ -366,7 +366,7 @@ namespace DirectDiagnostics {
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 
-// TX placement meter (milestone 6; documentation/TX_OWNERSHIP.md). Where one
+// TX placement meter (milestone 6). Where one
 // transmitted frame sits relative to the HAL clock: the first audio frame of
 // the newest completed DATA packet, against the HAL sample time projected at
 // the bus cycle that packet left in. Diagnostic only; nothing reads it back.
@@ -389,7 +389,7 @@ struct TxPlacementSample final {
 [[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
                                       TxPlacementSample& out) noexcept;
 
-// The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
+// The TX fill (ASFWAudioDriverOutputWrite.cpp):
 // copies frames CoreAudio has written to the HAL output ring into the armed
 // packets that carry them, once each, unless the packet is at or behind the
 // finality frontier (projected hardware position + guard). Runs inside
@@ -447,8 +447,8 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars, uint64_t transportGenera
 // Prepares transmit slots from startPacketIndex until requiredPacketIndex
 // (the core refill / commit-generation invariant) or limitPacketIndex is
 // reached. Content availability never extends preparation: packets are armed
-// with valid silence and FillTransmitPayloads copies PCM in later
-// (documentation/TX_OWNERSHIP.md, T4). A replay-driven packet whose RX entry
+// with valid silence and FillTransmitPayloads copies PCM in later.
+// A replay-driven packet whose RX entry
 // does not exist yet ends the pass instead of shipping NO-DATA, unless the
 // hardware would otherwise reach an uncommitted descriptor.
 // Returns the number of slots prepared. With an unseeded transmit clock the

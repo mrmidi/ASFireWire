@@ -456,8 +456,8 @@ struct AudioTransportControlBlock final {
     AudioClientCursor client{};
     AudioRtCounters counters{};
     HostClockAnchorState hostClockAnchor{};
-    // The device's one sample-time authority (frame <-> bus <-> host);
-    // documentation/HARDWARE_TIMELINE_OWNERSHIP.md. StartIO begins its epoch;
+    // The device's one sample-time authority (frame <-> bus <-> host).
+    // StartIO begins its epoch;
     // CoreAudio ZTS is a projection of it through hostClockAnchor.
     HardwareSampleTimeline hardwareTimeline{};
     std::atomic<uint64_t> discontinuities{0};

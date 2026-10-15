@@ -2,7 +2,7 @@
 // ASFWAudioDriverOutputWrite.cpp
 // ASFWDriver
 //
-// The CoreAudio output side of TX (documentation/TX_OWNERSHIP.md):
+// The CoreAudio output side of TX:
 //
 // - WriteEnd publishes the client's write end W and the playback-ring range,
 //   fills, and wakes the TX producer. The HAL output ring CoreAudio just
@@ -90,7 +90,7 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     // Fill here, on CoreAudio's IO thread, not on the TX preparation queue: a
     // frame has ~1 ms between this write and its packet's deadline, and queue
     // wakes were measured up to 13.7 ms late on hardware, leaving packets
-    // silent (TX_OWNERSHIP.md §1d). This thread is the fill's only owner.
+    // silent. This thread is the fill's only owner.
     FillTransmitPayloads(ivars);
 
     // Wake the producer so packet arming keeps pace with CoreAudio. The

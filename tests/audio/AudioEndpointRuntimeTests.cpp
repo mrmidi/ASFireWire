@@ -166,7 +166,7 @@ TEST(AudioEndpointRuntime, PlaybackOnlyPresentationKeepsPhysicalReturnRingForDup
 
 // A rate change moves the active ring inside the unchanged allocation: the same
 // descriptors are republished with the new ring and a bumped generation, so no
-// memory is replaced under CoreAudio (V3, TIMING_GEOMETRY_OWNERSHIP.md).
+// memory is replaced under CoreAudio (V3 geometry).
 TEST(AudioEndpointRuntime, RateChangeMovesActiveRingAndReusesMemory) {
     ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
     runtime.UpdateConfig(MakeDeviceConfig());

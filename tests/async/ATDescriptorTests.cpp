@@ -225,7 +225,7 @@ TEST_F(ATDescriptorZValueTests, ExtractTLabel_HandlesNullPointer) {
 }
 
 TEST_F(ATDescriptorZValueTests, ExtractTLabel_RealHardwarePacket) {
-    // Real packet data from hardware logs (see DECOMPILATION.md tLabel extraction bug fix)
+    // Real packet data from hardware logs (tLabel extraction bug fix)
     // TX descriptor sent with tLabel=0; in host-order immediate data this is
     // 0xFFC00140 before submit-time byte-order conversion.
     //

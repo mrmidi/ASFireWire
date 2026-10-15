@@ -2,7 +2,7 @@
 """FW-184 tree guard: retired timing/HAL geometry must not come back.
 
 Epic FW-177 replaced several parallel derivations of the timing and HAL
-buffer geometry with one resolver (documentation/TIMING_GEOMETRY_OWNERSHIP.md).
+buffer geometry with one resolver (Audio/Runtime/ResolvedTimingGeometry.hpp).
 This scan fails when a retired name, a second profile lookup or a hand-written
 geometry literal reappears in driver code. Comments are stripped first, so
 history may still be discussed in prose.
@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         print(violation)
     if violations:
         print(f"\n{len(violations)} timing-geometry guard violation(s). "
-              "See documentation/TIMING_GEOMETRY_OWNERSHIP.md.", file=sys.stderr)
+              "See ASFWDriver/Audio/Runtime/ResolvedTimingGeometry.hpp.", file=sys.stderr)
         return 1
     print("timing-geometry guard: clean")
     return 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-stream-start alignment facts from the driver log ring (TX_OWNERSHIP.md §1g).
+"""Per-stream-start alignment facts from the driver log ring.
 
 For each StartIO after --after (ring sequence), prints the [TxAlign] frame cursor and
 projected frame (diff = projected - cursor), the first [TxSyt] sytOffDelayFree, the ZTS

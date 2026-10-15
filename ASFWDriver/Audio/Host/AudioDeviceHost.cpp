@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 ASFireWire Project
 //
-// AudioDeviceHost.cpp - see AudioDeviceHost.hpp and
-// documentation/AUDIO_DEVICE_HOST.md §4.
+// AudioDeviceHost.cpp - see AudioDeviceHost.hpp.
 
 #include "AudioDeviceHost.hpp"
 
@@ -613,7 +612,7 @@ AudioDeviceHost::ClockProbeResult AudioDeviceHost::ProbeClock(uint64_t guid, con
 
     if (!health->sourceLocked || !health->clockReferenceHealthy) {
         // Logged only: the TCAT kexts also only log lock loss
-        // (AUDIO_SESSION_REDESIGN.md §2.4). A real config change restarts.
+        // A real config change restarts.
         snprintf(text, sizeof(text), "detail=0x%08x locked=%u refHealthy=%u status=0x%08x ext=0x%08x",
                  detail, health->sourceLocked ? 1U : 0U, health->clockReferenceHealthy ? 1U : 0U,
                  health->status, health->extStatus);

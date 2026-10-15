@@ -3,8 +3,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // MotuFamilyAdapterTests.cpp
-// The MOTU adapter on the audio device host (documentation/AUDIO_DEVICE_HOST.md
-// §4.2, §6 E3/E3a). The adapter runs against the real MotuProtocol over a
+// The MOTU adapter on the audio device host. The adapter runs against the real MotuProtocol over a
 // recording bus, so Describe's register read, the channel counts it publishes
 // and the wire traffic it causes are all the production ones.
 // Policies come from a real DeviceRegistry seeded with a ConfigROM, so the

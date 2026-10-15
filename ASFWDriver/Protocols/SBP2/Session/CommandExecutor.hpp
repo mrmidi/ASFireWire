@@ -2,7 +2,7 @@
 
 // CommandExecutor — SBP-2 command plane for one logged-in session.
 //
-// Decomposed from PR #19's SBP2SessionRegistry (§2b of SBP2_SESSION_PORT.md): the
+// Decomposed from PR #19's SBP2SessionRegistry: the
 // command god-object that bloated SBP2SessionRecord (command ORB, page table,
 // management ORB, in-flight tracking, pending result) is lifted out into this
 // type, one instance per SessionRecord. It drives the session's FetchAgent by

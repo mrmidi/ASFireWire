@@ -249,7 +249,7 @@ TEST(ResolvedAudioConfigurationTests, DiceReadbackChecksEveryStreamRatherThanAgg
     EXPECT_FALSE(ASFW::Audio::RuntimeCapsMatchConfiguration(config, caps));
 }
 
-// E7b (AUDIO_DEVICE_HOST.md §4.7): a republish diffs against the committed
+// A republish diffs against the committed
 // configuration. A rate transaction moved the endpoint to 96 kHz after it was
 // published at 48 kHz; a description read at either rate of the same formation
 // list is unchanged against the committed one, though it differs from the

@@ -55,7 +55,7 @@ struct Model final {
 };
 // Wire facts: references/linux-sound-firewire-stack/firewire/motu/
 // motu.c:164-180; motu-protocol-v2.c:274-320; motu-protocol-v3.c:269-359.
-// Vendor disagreements: tmp/motu-research/vendor-four-gaps.md. Counts include
+// Counts include
 // padding chunks; they must never be interpreted as physical port counts.
 inline constexpr std::array kModels{
     Model{0x1, "828", ProtocolVersion::V1, {10,0,0}, {10,0,0}, OpticalLayout::None, FetchRule::None, 0, kOriginal828},

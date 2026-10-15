@@ -22,7 +22,7 @@
 //
 // Thus RX can never gate or reset the TX-derived playback clock. This follows
 // the vendor driver's start/timestamp ordering documented in
-// documentation/MAUDIO_1814_START_CHOREOGRAPHY.md sections 2 and 4, and Linux's
+// by the M-Audio 1814 vendor driver, and Linux's
 // special-M-Audio post-domain rate command in
 // references/linux-sound-firewire-stack/firewire/bebob/bebob_stream.c:636-663.
 

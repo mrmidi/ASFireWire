@@ -179,7 +179,7 @@ inline void ClearObserver(void* context) {
             // Unsolicited: the device changed something on its own (front
             // panel, external clock). Rare, so logged every time. Only a named
             // clock-changed bit becomes a host event; other bits stay unnamed
-            // until traced (tmp/motu-research/vendor-controller-followup.md).
+            // until traced.
             ASFW_LOG(Audio, "[MotuNotify] guid=%016llx bits=0x%08x unsolicited clockChanged=%u",
                      delivery.guid, bits, delivery.clockChanged ? 1U : 0U);
             auto& observerLock = ObserverLock();

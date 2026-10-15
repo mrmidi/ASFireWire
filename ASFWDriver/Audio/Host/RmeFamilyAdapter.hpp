@@ -3,7 +3,7 @@
 //
 // RmeFamilyAdapter.hpp - RME Fireface on the audio device host (E2).
 //
-// documentation/AUDIO_DEVICE_HOST.md §4.2. Replaces RmeAudioBackend. The
+// Replaces RmeAudioBackend. The
 // Fireface publishes a fixed description: 48 kHz only, one stream per
 // direction, 28 channels on the FF800 and 18 on the FF400 (the endpoint the
 // backend published, unchanged). Every runtime fault restarts: the family

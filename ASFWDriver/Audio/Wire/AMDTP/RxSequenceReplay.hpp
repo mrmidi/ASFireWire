@@ -135,7 +135,7 @@ struct RxSequenceReplayReadDiagnostic final {
 
 class RxSequenceReplayState final {
 public:
-    // History and read delay are separate budgets (TX_OWNERSHIP.md, T5):
+    // History and read delay are separate budgets:
     // - kReadDelay is how far behind the newest RX entry a reader starts. The
     //   distance from an RX observation to the TX packet that replays it is
     //   kReadDelay plus the TX lead when the reader began, so it does not

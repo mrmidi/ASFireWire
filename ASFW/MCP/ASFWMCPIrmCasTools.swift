@@ -1,6 +1,6 @@
 import Foundation
 
-// FW-81: IRM and CAS tools (MCP_TOOL_TAXONOMY.md §5.5).
+// FW-81: IRM and CAS tools.
 //
 // IRM state is read-only inspection; channel/bandwidth allocation and the
 // compare-swap primitive are mutations gated by the FW-79 write policy. CAS

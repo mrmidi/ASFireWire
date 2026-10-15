@@ -90,7 +90,7 @@ namespace {
 
 // Stop the TX producer and wait out a pass in flight, for every device family,
 // before the slot provider is cleared and the mapped slabs are released
-// (TX_OWNERSHIP.md, T6). It used to wait only for M-Audio, so a DICE/OXFW/MOTU
+// It used to wait only for M-Audio, so a DICE/OXFW/MOTU
 // pass could still be writing packets while StopIO released them. The producer
 // runs on txPreparationQueue and never waits on workQueue, so this cannot
 // deadlock when called from workQueue.
@@ -1139,7 +1139,7 @@ void InstallDriverFormation(ASFWAudioDriver_IVars& driver,
 // and the commit (PerformDeviceConfigurationChange): the rate must be one this
 // device advertised and resolve to a timing geometry that fits the shared
 // allocation. Resolving BEFORE the transport moves means an unsupported rate is
-// refused while the device clock is untouched (TIMING_GEOMETRY_OWNERSHIP.md §4).
+// refused while the device clock is untouched.
 [[nodiscard]] std::expected<ASFW::Audio::Runtime::ResolvedTimingGeometry, kern_return_t>
 ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* origin) noexcept {
     bool rateSupported = false;
@@ -1451,7 +1451,7 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
 
     // The commit (including the ZTS period, legal only inside the perform
     // window) happens in PerformDeviceConfigurationChange; the host stops IO,
-    // performs, then restarts IO (SAMPLE_RATE_EXPANSION.md, ADK transaction).
+    // performs, then restarts IO (the ADK configuration-change transaction).
     (void)ReleaseIdleKeptWire(*this->ivars, ASFW::Audio::Runtime::WireReleaseReason::kRateChange);
     ivars.device.pendingSampleRateHz.store(rateHz, std::memory_order_release);
     const kern_return_t kr =

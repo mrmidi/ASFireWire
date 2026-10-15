@@ -3,7 +3,7 @@
 //
 // FamilyDriver.hpp - What the session asks of a device family.
 //
-// documentation/AUDIO_SESSION_REDESIGN.md §4.2. A pure interface: only pure
+// A pure interface: only pure
 // stage virtuals and a virtual destructor, so every family states its answer
 // to every stage. Optional policy queries supply neutral defaults. A step with nothing to do is written out in the family, with its
 // reason; it is never inherited. Shared sequencing lives in Audio/Session's

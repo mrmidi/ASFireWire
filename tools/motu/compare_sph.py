@@ -4,7 +4,6 @@
 Independent behavioral implementation; no reference code is copied.
 Replay: references/linux-sound-firewire-stack/firewire/motu/amdtp-motu.c:303-329,
 373-393; packet cadence: amdtp-stream.c replay sequence.
-Synthesis: tmp/motu-research/vendor-motu-gap-research.md sections 1.2-1.4.
 Controller/test evidence: PR #172, head 858f07582c9dac937dab492036097a40f104cead;
 MotuSphClockServo.hpp, MotuSphClockServoTests.cpp, MotuV3SphWireParityTests.cpp.
 Vendor gains/clamps and exact phase convention are NOT fully recovered: this is

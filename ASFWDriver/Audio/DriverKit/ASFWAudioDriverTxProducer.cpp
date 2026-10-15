@@ -27,7 +27,7 @@
 
 // A producer stall up to the preparation slack is survivable by the ring; the
 // RX replay history must outlast it too, or the reader re-anchors and the lead
-// cannot recover (TX_OWNERSHIP.md, T5b).
+// cannot recover.
 static_assert(ASFW::Audio::Runtime::RxSequenceReplayState::kCapacity -
                       ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay >=
                   ASFW::IsochTransport::AudioTimingGeometry::kTxPreparationSlackPackets,
@@ -40,7 +40,7 @@ namespace ASFW::Audio::DriverKit {
 // has no integer ticks per sample, so the tick*rate product is divided.
 // It is NOT rounded to a packet boundary: rounding down made every output
 // frame play 0-7 frames late, chosen by each start's phase (measured on the
-// Pro 24 DSP: RTL_ts = 105.03 + the rounding, TX_OWNERSHIP.md §1g). Nothing
+// Pro 24 DSP: RTL_ts = 105.03 + the rounding). Nothing
 // downstream needs packet-aligned frames.
 uint64_t ProjectTxFrameCursor(uint64_t rxFirstFrame,
                               uint64_t presentationDeltaTicks,
@@ -1449,7 +1449,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         // hardware-owned ring depth, so emit on every new committed-margin low,
         // on every wake beyond the 1.5 ms early-warning threshold, and on a
         // coarse heartbeat. The actual geometry budget is encoded in
-        // kTxPreparationSlackPackets. See documentation/ZTS_AND_SYT.md §13.
+        // kTxPreparationSlackPackets.
         const uint32_t minCommittedMargin =
             directControl->txMinimumCommittedMarginPackets.load(
                 std::memory_order_relaxed);
@@ -1583,7 +1583,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             directControl->txHeartbeatLastHostTicks.store(
                 now, std::memory_order_relaxed);
             // Kept under the driver ring's 232-byte message. Fill health and
-            // the CoreAudio budget first (TX_OWNERSHIP.md, experiment E1):
+            // the CoreAudio budget first:
             // sOutMinPk = smallest S_out headroom this interval, in packets
             //   ahead of the finality frontier (-1: nothing was filled);
             // sInMinFr = smallest S_in headroom, capture frames already
@@ -1684,8 +1684,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
     txControl->MarkRefillHandled(requested);
 
     // [TxPlace]: where a transmitted frame sits against the HAL clock
-    // (milestone 6, documentation/TX_OWNERSHIP.md). The first measurement of
-    // each stream only (T8); the start-to-start difference is what matters.
+    // (milestone 6). The first measurement of
+    // each stream only; the start-to-start difference is what matters.
     if (!ivars->runtime.txPlacementLogged) {
         ASFW::Audio::DriverKit::TxPlacementSample placement{};
         if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {

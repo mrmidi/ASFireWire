@@ -60,7 +60,7 @@ add_device_test(DICETcatProtocolTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
-# Blocking DICE register access used by the linear bring-up (AUDIO_SESSION_REDESIGN.md S1).
+# Blocking DICE register access used by the linear bring-up.
 add_device_test(DiceDeviceIoTests
     DiceDeviceIoTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
@@ -70,7 +70,7 @@ add_device_test(DiceDeviceIoTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
-# DICE golden wire traces against the simulated device (AUDIO_SESSION_REDESIGN.md S0).
+# DICE golden wire traces against the simulated device.
 # Goldens live in tests/golden/dice; ASFW_UPDATE_GOLDEN=1 rewrites them.
 add_device_test(DiceWireCharacterizationTests
     DiceWireCharacterizationTests.cpp
@@ -110,7 +110,7 @@ add_device_test(SPro24DspClockChangeTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
-# Session-layer golden traces of today's duplex coordinator (AUDIO_SESSION_REDESIGN.md S2).
+# Session-layer golden traces of today's duplex coordinator.
 # Goldens live in tests/golden/session; ASFW_UPDATE_GOLDEN=1 rewrites them.
 add_device_test(SessionCharacterizationTests
     SessionCharacterizationTests.cpp
@@ -142,7 +142,7 @@ add_device_test(SessionCharacterizationTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 
-# Session scheduler: overlapping requests, faults, teardown (AUDIO_SESSION_REDESIGN.md S2).
+# Session scheduler: overlapping requests, faults, teardown.
 add_device_test(AudioSessionSchedulerTests
     AudioSessionSchedulerTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
@@ -173,8 +173,7 @@ add_device_test(AudioSessionSchedulerTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 
-# MOTU on the audio device host over the real session: a bus reset while streaming rebinds
-# (AUDIO_DEVICE_HOST.md section 5, Δ6).
+# MOTU on the audio device host over the real session: a bus reset while streaming rebinds.
 add_device_test(MotuHostRebindTests
     MotuHostRebindTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Host/AudioDeviceHost.cpp"
@@ -415,8 +414,7 @@ add_device_test(BackendLifecycleRaceTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
 
-# Audio device host: the one lifecycle shell over every family
-# (documentation/AUDIO_DEVICE_HOST.md)
+# Audio device host: the one lifecycle shell over every family.
 add_device_test(AudioDeviceHostTests
     AudioDeviceHostTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Host/AudioDeviceHost.cpp"
@@ -490,7 +488,7 @@ add_device_test(DiceMultirateClockTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp")
 target_compile_definitions(DiceMultirateClockTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)
 
-# RME Fireface adapter on the audio device host (AUDIO_DEVICE_HOST.md §6 E2).
+# RME Fireface adapter on the audio device host.
 add_device_test(RmeFamilyAdapterTests
     RmeFamilyAdapterTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Host/RmeFamilyAdapter.cpp"
@@ -499,7 +497,7 @@ add_device_test(RmeFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
-# MOTU adapter on the audio device host (AUDIO_DEVICE_HOST.md §6 E3/E3a). Runs the real
+# MOTU adapter on the audio device host. Runs the real
 # MotuProtocol over a recording bus.
 add_device_test(MotuFamilyAdapterTests
     MotuFamilyAdapterTests.cpp
@@ -513,7 +511,7 @@ add_device_test(MotuFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
 )
 
-# AV/C adapter on the audio device host (AUDIO_DEVICE_HOST.md §6 E4).
+# AV/C adapter on the audio device host.
 add_device_test(AvcFamilyAdapterTests
     AvcFamilyAdapterTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Host/AvcFamilyAdapter.cpp"
@@ -523,8 +521,8 @@ add_device_test(AvcFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
 )
 
-# AudioCoordinator routing: every family to the audio device host
-# (AUDIO_DEVICE_HOST.md §6 E2-E5). Links the coordinator and the host with the real
+# AudioCoordinator routing: every family to the audio device host.
+# Links the coordinator and the host with the real
 # isoch transport; only the device manager is faked.
 add_device_test(AudioCoordinatorRoutingTests
     AudioCoordinatorRoutingTests.cpp
@@ -580,7 +578,7 @@ add_device_test(AudioCoordinatorRoutingTests
 )
 
 # DICE family adapter on the audio device host: Describe refusals, runtime-fault
-# judgement, and device-event mapping (AUDIO_DEVICE_HOST.md §6 E5).
+# judgement, and device-event mapping.
 add_device_test(DiceFamilyAdapterTests
     DiceFamilyAdapterTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"

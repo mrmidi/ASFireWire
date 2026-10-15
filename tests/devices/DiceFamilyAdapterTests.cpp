@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // DiceFamilyAdapterTests.cpp - The DICE adapter on the audio device host
-// (documentation/AUDIO_DEVICE_HOST.md §6 E5). Written from the adapter's spec:
+// Written from the adapter's spec:
 // Describe refuses with a named reason or describes the device from its
 // registers; a runtime fault self-heals only when the device still reports a
 // locked, healthy clock; config changes restart; device notification bits

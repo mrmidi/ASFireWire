@@ -869,7 +869,7 @@ TEST_F(IsochTxDmaRingTest,
 
 
 // ---------------------------------------------------------------------------
-// Finite IT queue (T5, documentation/TX_OWNERSHIP.md). Completion is read from
+// Finite IT queue. Completion is read from
 // OUTPUT_LAST status, the newest completed descriptor is kept as the resume
 // anchor, each refill maps a zero-terminated batch linked from the old tail,
 // and a queue that ran dry is a fault, never a replay. Each test below fails

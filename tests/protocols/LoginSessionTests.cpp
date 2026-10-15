@@ -16,7 +16,7 @@
 // two-queue IOSleep model, and command-plane ORB submission/retry/status-matching
 // is delegated to the composed FetchAgent. #19's two-queue-specific test
 // (LoginRetryDelayUsesTimeoutQueueInsteadOfWorkQueue) is dropped — that machinery
-// is removed in DICE (SBP2_SESSION_PORT.md §4).
+// is removed in DICE.
 
 namespace {
 

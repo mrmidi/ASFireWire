@@ -108,7 +108,7 @@ TEST(HostClockAnchorTests, RejectsOnlyInvalidHostMetadata) {
     EXPECT_EQ(control.hostClockAnchor.generation.load(), 1U);
 }
 
-// Epic 4 (HARDWARE_TIMELINE_OWNERSHIP.md): an anchor carries the timeline
+// Epic 4: an anchor carries the timeline
 // epoch it was projected in, so the HAL publish point can refuse one whose
 // epoch has ended.
 TEST(HostClockAnchorTests, AnchorCarriesItsTimelineEpoch) {

@@ -1,6 +1,6 @@
 import Foundation
 
-// FW-85: DICE/TCAT low-level register tools (MCP_TOOL_TAXONOMY.md §5.9).
+// FW-85: DICE/TCAT low-level register tools.
 //
 // Low-level protocol register/application-space access — NOT audio-control UX
 // (no phantom power, routing, mixer, or device-control semantics here). DICE/TCAT

@@ -2,8 +2,8 @@ import Foundation
 
 // FW-78: foundational MCP schemas for FireWire async transactions.
 //
-// These are pure value types modelling the request/result contract documented in
-// documentation/MCP_TOOL_TAXONOMY.md §5.3 (async transactions) and §5.5 (CAS).
+// These are pure value types modelling the request/result contract of the
+// async transaction and CAS tools.
 // They carry no live driver access. Mutating requests (write/CAS) must be cleared
 // by the FW-79 write policy engine before any of them may reach the
 // driver/user-client write path — see ASFWMCPWritePolicy.swift.

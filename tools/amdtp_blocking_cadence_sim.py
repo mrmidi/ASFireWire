@@ -5,8 +5,8 @@ amdtp_blocking_cadence_sim.py -- 44.1-family blocking cadence/SYT simulator.
 Executable validation of the blocking-mode packet cadence math for the
 complete IEC 61883-6 rate ladder -- 32, 44.1, 48, 88.2, 96, 176.4, and
 192 kHz with SYT intervals 8/8/8/16/16/32/32 -- covering both the 44.1 and
-48k families, per documentation/SAMPLE_RATE_EXPANSION.md (Phase 2 golden
-sequences) and documentation/44100.md (Apple AppleFWAudio RE notes).
+48k families, with Apple AppleFWAudio's IDA-recovered 44.1 cadence as a
+cross-check.
 
 Three independent models are simulated and cross-checked:
 
@@ -18,11 +18,11 @@ Three independent models are simulated and cross-checked:
      current 125 us cycle; the SYT offset is the deadline's position in
      that cycle. Data/no-data, SYT, and DBC all derive from this one state.
 
-  2. AppleNuDcl441 -- a port of the implementation-neutral pseudocode in
-     documentation/44100.md section 7 with the exact IDA-recovered
+  2. AppleNuDcl441 -- implementation-neutral pseudocode of Apple
+     AppleFWAudio's 44.1 cadence with the exact IDA-recovered
      constants (packet phase step 30,720,000; next-SYT seed 117,220,000;
      SYT step 44,582,312; modulus 491,520,000; all FireWire ticks x 10^4).
-     The resynchronization branch is deliberately absent (as in the doc).
+     The resynchronization branch is deliberately absent.
 
   3. Oracles -- invariants documented by independent, hardware-proven
      stacks (behavior only; no code copied):
@@ -30,7 +30,7 @@ Three independent models are simulated and cross-checked:
          comment): mod-cycle SYT increments 1386/1387 with an exact
          147-event period; pool_blocking_data_blocks (:350-366): data iff
          SYT deadline due. Reference commit 2c7c88a412aa.
-       * Saffire kext (44100.md section 9): full SYT deltas 4458/4459 with
+       * Saffire kext: full SYT deltas 4458/4459 with
          exactly 34 long deltas per 147 events.
        * 441 data packets per 640 cycles; 3528 frames per 640 cycles.
 
@@ -44,7 +44,7 @@ Also checked:
     timeline ring (unlike the 4-cycle 48k period), proving the cadence must
     be stateful, not slot-index-derived.
   * DBC continuity: +sytInterval mod 256 on data, unchanged on no-data.
-  * Replay path (SAMPLE_RATE_EXPANSION.md section 3): a device-clocked
+  * Replay path: a device-clocked
     generator at +/-ppm feeds a 512-entry ring consumed 256 behind the
     writer; TX replays dataBlocks 1:1. Asserts exact rate lock and exact
     preservation of the device's SYT-delta pattern at every tested ppm.
@@ -73,8 +73,7 @@ SCOPE: this sim validates MATH ONLY; it does not enable 44.1 in the driver.
 The run ends with a "Production wiring status" section listing exactly what
 must change (file:line) before 44.1 is real, and the zero-seed golden prefix
 is an engine regression anchor, NOT a wire contract -- startup seed/lead/
-reset policy is a separate, capture-gated deliverable
-(SAMPLE_RATE_EXPANSION.md sections 6 and 8).
+reset policy is a separate, capture-gated deliverable.
 
 Every claim either passes with numbers or fails loudly (exit code 1). All
 "any window" checks are exhaustive, including the final window. Output is
@@ -107,15 +106,15 @@ SYT_LONG_DELTAS_PER_PERIOD = 34
 
 TIMELINE_SLOTS = 512  # AudioTimingGeometry::kTimelineSlots
 
-# Apple NuDCL constants (documentation/44100.md section 7, IDA-recovered).
+# Apple NuDCL constants (AppleFWAudio, IDA-recovered).
 APPLE_SCALE = 10_000
 APPLE_CYCLE_PHASE = 30_720_000          # 3072 ticks * 10^4
 APPLE_PHASE_MODULO = 491_520_000        # 16 cycles * 10^4
 APPLE_HALF_RING = APPLE_PHASE_MODULO // 2
 APPLE_SYT_STEP_441 = 44_582_312         # ~4458.2312 ticks * 10^4
 APPLE_NEXT_SYT_SEED = 117_220_000       # 11,722 ticks * 10^4
-APPLE_STARTUP_PREFIX = "NNNDNDDNDDNDDDND"  # 44100.md section 7
-APPLE_STARTUP_WINDOW_DATA = 439            # 44100.md section 7
+APPLE_STARTUP_PREFIX = "NNNDNDDNDDNDDDND"
+APPLE_STARTUP_WINDOW_DATA = 439
 
 
 @dataclass
@@ -265,7 +264,7 @@ def verify_441_golden_header(path: Path) -> bool:
 
 
 class AppleNuDcl441:
-    """Port of documentation/44100.md section 7 pseudocode (exact constants).
+    """Apple AppleFWAudio 44.1 cadence pseudocode (exact constants).
 
     Returns per cycle: (is_data, next_syt_phase_before_advance) so the
     deadline phase itself can be compared against the rational engine."""
@@ -340,7 +339,7 @@ def check_441_schedule(decisions: List[Decision], rate: int,
     #
     # REGRESSION ANCHOR ONLY -- the zero seed is NOT a wire contract. The
     # start phase is a wire-visible policy that must be derived from the bus
-    # epoch or a capture (SAMPLE_RATE_EXPANSION.md section 8): Apple's
+    # epoch or a capture: Apple's
     # recovered seed opens N,N,N,D...; an accumulate-then-test accumulator
     # opens N,D,D.... All are rate-identical; they differ only in seed phase.
     prefix32 = "".join("D" if d.is_data else "N" for d in decisions[:32])
@@ -543,8 +542,7 @@ def check_zts(cycles: int) -> None:
     observability (needs ZTS period % framesPerDataPacket == 0), anchor
     spacing, frames<->bus-time slope bounded by one cycle, Q8 quantization
     under 0.2 ppm -- and demonstrates the anchor-thinning failure mode a bad
-    period would cause (the static-assert residual in
-    SAMPLE_RATE_EXPANSION.md section 6)."""
+    period would cause (the static-assert residual)."""
     cases = [(32000, 8), (44100, 8), (48000, 8), (88200, 16), (96000, 16),
              (176400, 32), (192000, 32)]
     for rate, interval in cases:
@@ -689,8 +687,7 @@ def check_ring_wrap() -> None:
     check("ring wrap: 44.1 period does NOT divide the 512-slot ring",
           TIMELINE_SLOTS % period_441 != 0,
           f"{TIMELINE_SLOTS} % {period_441} = {TIMELINE_SLOTS % period_441}; "
-          "cadence state must live in the engine, not the slot index "
-          "(SAMPLE_RATE_EXPANSION.md section 6, item 4)")
+          "cadence state must live in the engine, not the slot index")
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +705,7 @@ def check_apple_model(cycles: int) -> None:
             apple_deadlines.append(deadline)
 
     prefix = "".join("D" if x else "N" for x in apple_dn[:16])
-    check("Apple: startup prefix (44100.md section 7)",
+    check("Apple: startup prefix",
           prefix == APPLE_STARTUP_PREFIX,
           f"first 16 = {prefix}")
     first_window = sum(1 for x in apple_dn[:FAMILY_441_PERIOD_CYCLES] if x)
@@ -1046,7 +1043,7 @@ def print_wiring_status() -> None:
          "add static assert zeroTimestampPeriodFrames % framesPerDataPacket"
          " == 0 (see the 1544-period counterexample above)."),
         ("startup seed / lead / reset policy",
-         "capture-gated (SAMPLE_RATE_EXPANSION.md section 8); the zero-seed "
+         "capture-gated; the zero-seed "
          "prefix asserted here is an engine regression anchor, not the wire "
          "contract."),
     ]

@@ -35,8 +35,8 @@ namespace {
 // The device's own DICE registers describe its streams, and every consumer
 // reads that one description: bandwidth (DuplexStreamProfile), capture framing
 // (IsochDuplexHostTransport) and playback framing (the nub's per-stream arrays,
-// BuildResolvedTxStreamConfig). The profile states no geometry
-// (DICE_TCAT_ARCHITECTURE.md §4.2 stage C). What is left to check here: the one
+// BuildResolvedTxStreamConfig). The profile states no geometry.
+// What is left to check here: the one
 // stream count a reference stack says a device overstates, and that the device
 // described something usable. See StreamGeometryResolver.hpp.
 
@@ -492,7 +492,7 @@ void DiceFamilyAdapter::OnNotification(uint64_t guid, uint32_t bits) noexcept {
     DeviceEventSink* sink = sink_.load(std::memory_order_acquire);
     if (sink == nullptr) return;
     // The device changed its stream configuration: restart the running streams
-    // on the new one (TCAT NotificationWriteCallback, AUDIO_SESSION_REDESIGN.md §2.4).
+    // on the new one (TCAT NotificationWriteCallback).
     if ((bits & (DICE::Notify::kRxConfigChange | DICE::Notify::kTxConfigChange)) != 0) {
         sink->OnDeviceEvent(guid, DeviceEvent::kStreamConfigChanged, bits);
     }

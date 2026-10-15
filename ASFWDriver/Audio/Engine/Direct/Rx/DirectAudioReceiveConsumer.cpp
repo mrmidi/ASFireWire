@@ -474,7 +474,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     //
     // With a Receive epoch on the device's hardware timeline, the packet is an
     // observation and the timeline projects every ZTS boundary it covers,
-    // including one inside the packet (documentation/HARDWARE_TIMELINE_OWNERSHIP.md).
+    // including one inside the packet.
     // The observation is the packet's arrival: its receive bus time and the
     // drain's (bus, host) pair, the same arithmetic as the host time above,
     // so a boundary on a packet start is byte-identical to before.
@@ -676,7 +676,6 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     // would move the input ring and the RX replay the TX cursor aligns from
     // (milestone 6). Accounting for the lost frames, instead of the restart
     // the timing-loss callback triggers, is FW-218's call.
-    // documentation/HARDWARE_TIMELINE_OWNERSHIP.md decision (b).
     if (wasEstablished && !configuration_.isSecondary) {
         auto& timeline = control->hardwareTimeline;
         if (timeline.Epoch() != 0 &&

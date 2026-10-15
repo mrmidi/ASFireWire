@@ -3,13 +3,13 @@
 //
 // FamilyAdapter.hpp - What the audio device host asks of a device family.
 //
-// documentation/AUDIO_DEVICE_HOST.md §4.2. The host owns the lifecycle shell
+// The host owns the lifecycle shell
 // (admission, route checks, queueing, dedupe, teardown); a family states only
 // what differs in its sources or on the wire. Adapters hold no state of their
 // own (§4.1 rule 6): every per-device fact arrives in the call's arguments, and
 // every answer leaves as a value.
 //
-// Two-protocol rule (DEVICE_BACKEND_UNIFICATION.md): a method lives here only
+// Two-protocol rule: a method lives here only
 // when two unrelated families implement it meaningfully. Describe: all four.
 // JudgeRuntimeFault: DICE (device health) and AV/C (settle, then RX replay).
 

@@ -5,7 +5,6 @@
 // Q0: [EOH][SID][DBS][FN][QPC][SPH][rsv][DBC]
 // Q1: [EOH][FMT][FDF][SYT]
 //
-// Reference: docs/Isoch/PHASE_1_5_ENCODING.md
 // Verified against: 000-48kORIG.txt FireBug capture
 //
 

@@ -92,7 +92,7 @@ public:
 
     // Transfer delay is not device policy: it is derived from the wire rate
     // geometry by ResolveTimingGeometry (AmdtpTransferDelay.hpp). No profile
-    // ever overrode the old 12800 default (TIMING_GEOMETRY_INVENTORY.md G-04).
+    // ever overrode the old 12800 default.
 };
 
 } // namespace ASFW::Isoch::Audio

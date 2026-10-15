@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // ProfileTimingGeometry.hpp -- the one bridge from a device profile to the
-// timing resolver (documentation/TIMING_GEOMETRY_OWNERSHIP.md).
+// timing resolver (Audio/Runtime/ResolvedTimingGeometry.hpp).
 //
 // The audio driver resolves its profile once (graph construction) and calls
 // this at graph time and on every accepted rate change. Nothing else asks the

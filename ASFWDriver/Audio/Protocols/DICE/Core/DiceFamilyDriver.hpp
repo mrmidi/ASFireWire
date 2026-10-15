@@ -4,7 +4,7 @@
 // DiceFamilyDriver.hpp - Linear DICE duplex bring-up and teardown.
 //
 // Replaces the callback-chained DICEDuplexBringupController
-// (documentation/AUDIO_SESSION_REDESIGN.md, stage S1). Every method runs to
+// Every method runs to
 // completion on the caller's thread and reads top to bottom: each register
 // access goes through DiceDeviceIo, each wait through DiceWaitClock. The wire
 // behaviour is the controller's, transaction for transaction; the golden

@@ -3,8 +3,8 @@
 //
 // DiceWireCharacterizationTests.cpp - Golden wire traces of today's DICE bring-up.
 //
-// Stage S0 of documentation/AUDIO_SESSION_REDESIGN.md. Each test drives a DICE
-// protocol through its FamilyDriver (the callback interface it used until S5),
+// Each test drives a DICE
+// protocol through its FamilyDriver (the callback interface it used before),
 // in the order the session calls it, against a SimulatedDiceDevice built from a recorded device, and
 // compares every transaction put on the wire with tests/golden/dice/*.trace.
 //
@@ -582,7 +582,7 @@ TEST_P(DiceWireScenarios, AlreadyAtTargetClock) {
 }
 
 TEST_P(DiceWireScenarios, RequestedRateNotAchieved) {
-    // DICE_STABILITY_REGRESSION.md §3: CLOCK_SELECT says 48k, the device runs 44.1k.
+    // CLOCK_SELECT says 48k, the device runs 44.1k.
     DiceRig rig(*GetParam());
     rig.SetClock(kClockSelect48kInternal, ClockRateIndex::k44100, true);
     (void)rig.Start(48000);

@@ -3,7 +3,7 @@
 //
 // AvcCodecTests.cpp - Unit tests for the rebuilt AV/C frame codec (ASFW::AVC).
 //
-// Tests conform to documentation/avc-rebuild/phase-1.md Steps 1.2 and 1.3:
+// Covered:
 // - CommandFrame::Make (headers, boundary checks, extended address rejection, quadlet padding)
 // - ParseResponse (bounds, non-response detection, response code mapping)
 // - ParseResponseFor (address/opcode echo checks)
@@ -1428,8 +1428,7 @@ TEST(AvcReshapedTests, DescriptorCommands_OpenAndRead) {
 }
 
 // ===========================================================================
-// Wire constants pinned after the magic-number audit
-// (documentation/avc-rebuild/magic-numbers-audit.md): each test fails if the
+// Wire constants pinned after the magic-number audit: each test fails if the
 // named constant it covers is changed.
 // ===========================================================================
 

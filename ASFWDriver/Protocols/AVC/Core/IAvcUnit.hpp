@@ -3,7 +3,7 @@
 //
 // IAvcUnit.hpp - The AV/C Unit runtime interface and typed command dispatch seam.
 //
-// Concept source: Apple IOFireWireAVCUnit (behaviour only; see documentation/avc-rebuild/00-overview.md).
+// Concept source: Apple IOFireWireAVCUnit (behaviour only).
 //
 // Contract:
 // - Asynchronous and callback-based; non-blocking.

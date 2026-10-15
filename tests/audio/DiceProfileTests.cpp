@@ -127,8 +127,7 @@ TEST(DiceProfileTests, ResolvesOriginalPro40ByModel) {
 }
 
 // A DICE profile states no stream geometry: channel counts, stream counts and
-// slot layout come from the device's TX/RX registers (DICE_TCAT_ARCHITECTURE.md
-// §4.1), as in every TCAT kext. The default configs carry framing constants only.
+// slot layout come from the device's TX/RX registers, as in every TCAT kext. The default configs carry framing constants only.
 TEST(DiceProfileTests, DiceProfilesStateNoStreamGeometry) {
     for (uint32_t id = 1; id <= static_cast<uint32_t>(ProfileBuilderId::kLastValid); ++id) {
         const auto* profile = AudioProfileRegistry::DiceProfileForBuilderId(id);
@@ -245,8 +244,7 @@ TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
     // Hardware-calibrated Saffire declarations (decision D3): 6-packet playback
     // safety, 10-packet capture safety, device latency 53 in / 52 out at 48 kHz
     // doubling per rate tier (E1a's 56 and E1b's 8-packet capture safety were
-    // tried and reverted; T7 removed the rounding E1a had measured,
-    // TX_OWNERSHIP.md §1g).
+    // tried and reverted; T7 removed the rounding E1a had measured).
     // 48 kHz
     EXPECT_EQ(profile->TxSafetyOffsetFrames(48000.0), 24);   // 3 x 8 (E2)
     EXPECT_EQ(profile->RxSafetyOffsetFrames(48000.0), 80);   // 10 x 8

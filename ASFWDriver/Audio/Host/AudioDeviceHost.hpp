@@ -3,7 +3,7 @@
 //
 // AudioDeviceHost.hpp - The one lifecycle shell around every audio family.
 //
-// documentation/AUDIO_DEVICE_HOST.md. Replaces the shell the four backends
+// Replaces the shell the four backends
 // each wrote for themselves: publication admission, route checks, one work
 // queue, per-device recovery dedupe, and teardown. A family supplies only a
 // FamilyAdapter (how to describe the endpoint, whether a fault is real, which

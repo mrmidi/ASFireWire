@@ -20,8 +20,7 @@
 // Changed geometry therefore has exactly one correct outcome today: refuse, say
 // so, and leave the endpoint on the description it was built with until it is
 // recreated. Live reconfiguration must coordinate the audio graph, buffers,
-// and HAL channel layout; updating properties alone is insufficient. See
-// documentation/DICE_TCAT_ARCHITECTURE.md sec 3.4 and 4.2 step D.
+// and HAL channel layout; updating properties alone is insufficient.
 
 #pragma once
 
@@ -76,7 +75,7 @@ ClassifyGeometryRefresh(const ASFWAudioDevice& published,
 }
 
 /// A republish is a diff against the configuration the endpoint holds NOW, not
-/// the one it was first published with (AUDIO_DEVICE_HOST.md §4.7, E7b). A rate
+/// the one it was first published with. A rate
 /// transaction moves a formation-based endpoint to another formation after
 /// publication; a description read at that rate, or at any other rate of the
 /// same formation list, is projected onto the committed rate before comparing.

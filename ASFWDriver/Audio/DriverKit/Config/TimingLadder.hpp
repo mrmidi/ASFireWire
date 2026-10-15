@@ -8,8 +8,7 @@
 // own copy of the 8/16/32 frames-per-packet ladder keyed on `rate > 48000.0`.
 // Frames per packet is a wire fact (the SYT interval), so it is read from
 // AmdtpRateGeometryForSampleRate here; only the delay-packet counts and the
-// latency ladder are device policy (documentation/TIMING_GEOMETRY_OWNERSHIP.md,
-// row G-02).
+// latency ladder are device policy.
 //
 // For an AMDTP rate this reproduces the old per-profile ladders exactly (the
 // SYT interval is 8/16/32 for the 1x/2x/4x tiers of both rate families). For a

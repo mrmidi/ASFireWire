@@ -317,8 +317,6 @@ REFERENCES:
 
 - IEEE 1394a-2000: PHY Register 1 bit layout
   → Bits [5:0] must be preserved across reset operations
-
-- ASFW Bug Report: /ASFW/docs/BUGS/GAP_COUNT_ISSUE.md
 """)
 
 

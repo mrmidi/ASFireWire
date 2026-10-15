@@ -265,7 +265,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     // The single timing/HAL geometry authority for this device at its current
-    // rate (documentation/TIMING_GEOMETRY_OWNERSHIP.md). Everything below --
+    // rate. Everything below --
     // the ZTS period, latency and safety declarations -- is read from it.
     {
         uint32_t allocationFrames = ASFW::IsochTransport::kAllocatedFrameRingFrames;
@@ -366,7 +366,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // per-device audio state (Audio MIDI Setup speaker configuration incl. the
     // preferred stereo pair, volumes) keyed by this UID. A shared constant UID
     // let one device's stereo-pair setting silently remap the output channels
-    // of every ASFW device (BUGLIST.md Bug 1: "right channel only").
+    // of every ASFW device (the "right channel only" bug).
     char deviceUidString[32] = {};
     std::snprintf(deviceUidString, sizeof(deviceUidString), "ASFW-%016llX",
                   static_cast<unsigned long long>(ivars.device.guid));

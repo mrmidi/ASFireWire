@@ -3,8 +3,7 @@
 //
 // DiceWaitClock.hpp - The only way the DICE bring-up lets time pass.
 //
-// The bring-up is linear and blocking (documentation/AUDIO_SESSION_REDESIGN.md
-// S1). It runs on the caller's queue - the audio nub's queue or
+// The bring-up is linear and blocking. It runs on the caller's queue - the audio nub's queue or
 // com.asfw.audio.dice - never on the driver's Default queue, where bus
 // completions arrive. It waits in two ways: a poll interval between register
 // reads, and a short backoff while one bus transaction is in flight. Both go

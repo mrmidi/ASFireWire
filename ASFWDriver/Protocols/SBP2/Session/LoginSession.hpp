@@ -4,7 +4,7 @@
 //
 // Decomposed from PR #19's SBP2LoginSession (1847 lines). The post-login command
 // plane (fetch-agent ORB submission, status→ORB matching, agent reset) lives in
-// the composed FetchAgent (§1b of SBP2_SESSION_PORT.md); this class owns only the
+// the composed FetchAgent; this class owns only the
 // management plane:
 //
 //   1. Configure() with ROM-derived target parameters.

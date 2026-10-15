@@ -2,9 +2,8 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // AudioCoordinatorRoutingTests.cpp
-// Which family serves a device event: the RME Fireface (E2), the AV/C family
-// (E4) and MOTU (E3) go to the audio device host (documentation/AUDIO_DEVICE_HOST.md
-// §6), DICE stays on its backend.
+// Which family serves a device event: the RME Fireface, the AV/C family
+// and MOTU go to the audio device host, DICE stays on its backend.
 // The coordinator is built for real; only the device manager is a fake, and
 // the assertions read the host's per-outcome counters.
 
