@@ -58,7 +58,10 @@ void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
 // Initial device setup runs on callbacks, including all waits. Saffire 4.3
 // StartDev -> TimerFired uses two 200 ms ticks before RestartStreaming;
 // RestartStreaming selects the clock before creating CoreAudio streams.
-// Evidence: documentation/DICE_START_RELOCK_2026-10-11.md (kext addresses).
+// Evidence (Saffire 4.3.0.41017 kext): StartDev 0xb654 arms the timer at
+// 0xb872; initHardware sets the 200 ms interval at 0xa853; TimerFired counts
+// two ticks at 0xaad9 before RestartStreaming at 0xa9e8, which writes
+// CLOCK_SELECT at 0xe3fe before allocating streams at 0xe656.
 struct DICETcatProtocol::InitialClockPreparation {
     std::atomic<bool> active{true};
     Discovery::DeviceRouteToken route;

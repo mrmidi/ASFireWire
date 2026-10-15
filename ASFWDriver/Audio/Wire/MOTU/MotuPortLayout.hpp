@@ -17,8 +17,7 @@
 //   - 828mk2:    PortGroups_828MKII,   motu_avdevice.cpp:111-121
 //   - UltraLite: PortGroups_ULTRALITE, motu_avdevice.cpp:135-145
 // Vendor CreateStreams/SetupStrmFwIds supply physical identities where FFADO's
-// older tables differ. Evidence and per-model addresses: documentation/research/
-// motu-channel-map-audit.md. Linux supplies independent packet geometry.
+// older tables differ. Linux supplies independent packet geometry.
 
 #pragma once
 
