@@ -10,7 +10,9 @@
 //
 //   create    non-real-time. Allocates EVERYTHING the IOProc will touch (trial
 //             store or capture + callback records), reads the host clock scale,
-//             initialises the engine. Nothing is allocated after this returns.
+//             initialises the engine, and touches every page of those buffers
+//             so the IOProc never takes a first-write page fault. Nothing is
+//             allocated after this returns.
 //   run       blocking, called from a non-real-time thread. Registers the
 //             overload listener, creates and starts the IOProc, then sleeps in
 //             50 ms steps until the IOProc reports done (atomic), the caller

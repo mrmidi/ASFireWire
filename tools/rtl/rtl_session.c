@@ -352,6 +352,16 @@ static double host_ticks_to_sec(void) {
     return (double)tb.numer / (double)tb.denom * 1e-9;
 }
 
+// Writes one byte per page so the kernel backs the whole buffer now. A fresh
+// calloc/malloc of this size is mapped lazily: without this, the IOProc's first
+// write to each page would take a page fault on the real-time thread. The
+// volatile store keeps the compiler from folding it into the allocation.
+static void prefault(void *p, size_t bytes) {
+    volatile unsigned char *b = (volatile unsigned char *)p;
+    const size_t page = (size_t)getpagesize();
+    for (size_t i = 0; i < bytes; i += page) b[i] = 0;
+}
+
 static rtl_session_t *session_alloc(session_kind_t kind, uint32_t device, double sr,
                                     uint32_t outCh, uint32_t inCh) {
     rtl_session_t *s = calloc(1, sizeof *s);
@@ -401,11 +411,13 @@ rtl_session_t *rtl_session_create_impulse(const rtl_impulse_config_t *cfg,
                                      cfg->outChannel, cfg->inChannel);
     if (!s) return fail(status, RTL_SESSION_NO_MEMORY);
     // Zero trials is legal (the engine finishes at once); keep the store non-NULL.
-    s->trials = calloc(cfg->trials ? cfg->trials : 1, sizeof *s->trials);
+    const size_t nTrials = cfg->trials ? cfg->trials : 1;
+    s->trials = calloc(nTrials, sizeof *s->trials);
     if (!s->trials) {
         rtl_session_destroy(s);
         return fail(status, RTL_SESSION_NO_MEMORY);
     }
+    prefault(s->trials, nTrials * sizeof *s->trials);
 
     const double sr = cfg->sampleRate;
     rtl_engine_init(&s->engine, s->trials, cfg->trials, cfg->window,
@@ -438,6 +450,8 @@ rtl_session_t *rtl_session_create_tone(const rtl_tone_config_t *cfg,
         rtl_session_destroy(s);
         return fail(status, RTL_SESSION_NO_MEMORY);
     }
+    prefault(s->cap, (size_t)s->capCap * sizeof *s->cap);
+    prefault(s->cb, (size_t)s->cbCap * sizeof *s->cb);
     tone_gen_init(&s->gen, cfg->sampleRate, cfg->freqHz, cfg->amplitude);
     s->progressTotal = s->capCap;
     s->timeoutSec = (uint32_t)((int)(cfg->durationSec * 2.0) + 5);
