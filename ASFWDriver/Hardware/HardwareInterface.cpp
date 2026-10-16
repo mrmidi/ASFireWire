@@ -91,6 +91,11 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     uint16_t vendorId = 0, deviceId = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
+    uint8_t revisionId = 0;
+    pci->ConfigurationRead8(kIOPCIConfigurationOffsetRevisionID, &revisionId);
+    // Revision matters for quirks: Linux disables MSI on FW643 rev 6 (ohci.c:344).
+    ASFW_LOG(Hardware, "PCI controller vendor=0x%04x device=0x%04x revision=0x%02x",
+             vendorId, deviceId, revisionId);
 
     quirk_agere_lsi_ = (vendorId == 0x11c1 && (deviceId == 0x5901 || deviceId == 0x5900));
     if (quirk_agere_lsi_) {
