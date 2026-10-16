@@ -64,7 +64,7 @@ TEST(MotuStack, ProprietaryReceivePrefixIsScopedToV3Codec) {
 // choice; activation is. Each FireWire-only model waits for the regulator's
 // lock before the device may fetch.
 TEST(MotuStack, ActivationPoliciesAreChosenPerModel) {
-    for (auto version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U}) {
+    for (auto version : {1U,2U,3U,5U,9U,13U,15U,21U,23U,25U,27U,57U}) {
         ASSERT_TRUE(FireWireOnly(version));
         EXPECT_TRUE(FindModel(version)->runtime.requireTimingBeforeFetch) << version;
     }
