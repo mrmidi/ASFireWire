@@ -8,7 +8,10 @@
 #include "../Model/ASFWAudioDevice.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "../Ports/IMidiReceiveWake.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Midi/Capabilities/MidiEndpointCapabilities.hpp"
+#include "../../Midi/Transport/MidiTransportBlock.hpp"
 
 #include <DriverKit/IOLib.h>
 
@@ -38,10 +41,28 @@ struct AudioOutputObserverState final {
     uint32_t sampleRateHz{0};
 };
 
+/// The MIDI shape of an endpoint, as the services on either side of the seam
+/// need it. `sources` are device -> host (CoreMIDI sources, the capture stream)
+/// and `destinations` host -> device (CoreMIDI destinations, the playback
+/// stream); "tx" and "rx" are not used here because they mean opposite things on
+/// the two sides.
+struct MidiEndpointAttachment final {
+    ::ASFW::Midi::MidiDirectionCapabilities sources{};
+    ::ASFW::Midi::MidiDirectionCapabilities destinations{};
+
+    [[nodiscard]] bool AnyUsable() const noexcept {
+        return sources.Usable() || destinations.Usable();
+    }
+
+    friend bool operator==(const MidiEndpointAttachment&,
+                           const MidiEndpointAttachment&) noexcept = default;
+};
+
 class AudioEndpointRuntime final : public Runtime::IDirectAudioBindingSource {
 public:
     explicit AudioEndpointRuntime(uint64_t guid) noexcept : guid_(guid), lock_(IOLockAlloc()) {}
     ~AudioEndpointRuntime() noexcept {
+        ReleaseMidiTransport();
         ReleaseDirectAudioMemory();
         if (lock_) {
             IOLockFree(lock_);
@@ -295,6 +316,144 @@ public:
         return complete;
     }
 
+    // ---- MIDI attachment ---------------------------------------------------
+    //
+    // The endpoint owns the MIDI byte seam the way it owns the direct audio
+    // memory: one retained descriptor, mapped here, handed to each service that
+    // needs it (the MIDI service, and the audio driver for TX composition) as a
+    // retained reference to map for itself. It is entirely separate from the
+    // audio memory and from the stream session:
+    //
+    //   * Nothing here starts or stops a stream, and nothing here keeps one
+    //     alive. MIDI is carried only while the audio streams run, and the
+    //     block's epoch/active flag is armed and quiesced by those streams'
+    //     start and stop (BeginMidiRun / EndMidiRun). MIDI therefore adds no
+    //     lease, no refcount and no state to the audio start path.
+    //     (The midi branch's lease on a shared session is the suspected cause of
+    //     audio restart failing with a MIDI nub published, 2026-09-14.)
+    //   * A MIDI byte written while no stream runs is refused at the producer
+    //     (block inactive), never queued for a later stream.
+
+    /// Allocate the byte seam and record the MIDI geometry. Safe to call again
+    /// with the same capabilities. Never touches the audio memory or generation.
+    [[nodiscard]] kern_return_t ConfigureMidi(const ::ASFW::Midi::MidiEndpointCapabilities& caps) noexcept {
+        if (!lock_) return kIOReturnNotReady;
+        if (!caps.AnyUsable()) return kIOReturnUnsupported;
+        IOLockLock(lock_);
+        kern_return_t kr = kIOReturnSuccess;
+        if (midiBlock_ == nullptr) {
+            kr = CreateMappedDirectBuffer(sizeof(::ASFW::Midi::MidiTransportBlock), 64,
+                                          &midiMemory_, &midiMap_);
+            if (kr == kIOReturnSuccess) {
+                auto* block = reinterpret_cast<::ASFW::Midi::MidiTransportBlock*>(
+                    static_cast<uintptr_t>(midiMap_->GetAddress()));
+                new (block) ::ASFW::Midi::MidiTransportBlock();
+                midiBlock_ = block;
+            }
+        }
+        if (kr == kIOReturnSuccess) {
+            MidiEndpointAttachment next{};
+            next.sources = caps.deviceToHost;
+            next.destinations = caps.hostToDevice;
+            // A republish of an unchanged endpoint must not look like a change
+            // to a receive consumer that is mid-stream.
+            if (!(next == midiAttachment_)) {
+                midiAttachment_ = next;
+                ++midiBindingGeneration_;
+            }
+        }
+        IOLockUnlock(lock_);
+        return kr;
+    }
+
+    /// The services' view: a retained descriptor for the byte seam and the
+    /// geometry each direction uses. The caller releases the descriptor.
+    [[nodiscard]] kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory,
+                                                        MidiEndpointAttachment& outAttachment) noexcept {
+        outAttachment = {};
+        if (outMemory) *outMemory = nullptr;
+        if (!outMemory || !lock_) return kIOReturnBadArgument;
+        IOLockLock(lock_);
+        if (midiMemory_ == nullptr || midiBlock_ == nullptr) {
+            IOLockUnlock(lock_);
+            return kIOReturnNotReady;
+        }
+        midiMemory_->retain();
+        *outMemory = midiMemory_;
+        outAttachment = midiAttachment_;
+        IOLockUnlock(lock_);
+        return kIOReturnSuccess;
+    }
+
+    [[nodiscard]] bool HasMidi() noexcept {
+        if (!lock_) return false;
+        IOLockLock(lock_);
+        const bool has = midiBlock_ != nullptr;
+        IOLockUnlock(lock_);
+        return has;
+    }
+
+    /// Who the receive path wakes when bytes arrive; null detaches it.
+    void SetMidiReceiveWake(Ports::IMidiReceiveWake* wake) noexcept {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        midiWake_ = wake;
+        ++midiBindingGeneration_;
+        IOLockUnlock(lock_);
+    }
+
+    /// A stream run begins: publish a new epoch and mark the seam active. Rings
+    /// are not cleared (their producers may be running); each consumer drops its
+    /// own backlog when it sees the epoch move. Call before the transport can
+    /// deliver or compose a byte.
+    uint64_t BeginMidiRun() noexcept {
+        if (!lock_) return 0;
+        IOLockLock(lock_);
+        uint64_t epoch = 0;
+        if (midiBlock_ != nullptr) {
+            epoch = ++midiEpoch_;
+            midiBlock_->Arm(epoch);
+        }
+        IOLockUnlock(lock_);
+        return epoch;
+    }
+
+    /// The streams stopped (or failed to start): refuse further ring use. The
+    /// mapping stays valid until every service has dropped its own.
+    void EndMidiRun() noexcept {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        if (midiBlock_ != nullptr) midiBlock_->Quiesce();
+        IOLockUnlock(lock_);
+    }
+
+    [[nodiscard]] uint64_t MidiEpoch() noexcept {
+        if (!lock_) return 0;
+        IOLockLock(lock_);
+        const uint64_t epoch = midiEpoch_;
+        IOLockUnlock(lock_);
+        return epoch;
+    }
+
+    void ReleaseMidiTransport() noexcept {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        if (midiBlock_ != nullptr) midiBlock_->Quiesce();
+        midiBlock_ = nullptr;
+        midiWake_ = nullptr;
+        if (midiMap_) {
+            midiMap_->release();
+            midiMap_ = nullptr;
+        }
+        if (midiMemory_) {
+            midiMemory_->release();
+            midiMemory_ = nullptr;
+        }
+        midiAttachment_ = {};
+        ++midiBindingGeneration_;
+        IOLockUnlock(lock_);
+    }
+
     [[nodiscard]] bool IsTransmitTimingReady() noexcept override {
         if (!lock_) return false;
         IOLockLock(lock_);
@@ -340,6 +499,18 @@ public:
         out.control = directControl_;
         out.sampleRateHz = directSampleRateHz_;
         out.valid = true;
+        if (midiBlock_ != nullptr && midiAttachment_.sources.Usable()) {
+            out.midiRx.generation = midiBindingGeneration_;
+            out.midiRx.endpointId = guid_;
+            out.midiRx.block = midiBlock_;
+            out.midiRx.wake = midiWake_;
+            out.midiRx.geometry = ::ASFW::Encoding::MpxMidiGeometry{
+                .dbs = midiAttachment_.sources.dbs,
+                .midiSlotIndex = midiAttachment_.sources.midiSlotIndex,
+                .portCount = midiAttachment_.sources.portCount,
+                .dbcAligned = midiAttachment_.sources.dbcAligned,
+            };
+        }
         IOLockUnlock(lock_);
         return true;
     }
@@ -715,6 +886,15 @@ private:
     uint32_t directInputChannels_{0};
     Runtime::AudioTransportControlBlock* directControl_{nullptr};
     uint32_t directSampleRateHz_{0};
+
+    // MIDI byte seam (see "MIDI attachment" above). Guarded by lock_.
+    IOBufferMemoryDescriptor* midiMemory_{nullptr};
+    IOMemoryMap* midiMap_{nullptr};
+    ::ASFW::Midi::MidiTransportBlock* midiBlock_{nullptr};
+    MidiEndpointAttachment midiAttachment_{};
+    Ports::IMidiReceiveWake* midiWake_{nullptr};
+    uint64_t midiBindingGeneration_{0};
+    uint64_t midiEpoch_{0};
 };
 
 } // namespace ASFW::Audio

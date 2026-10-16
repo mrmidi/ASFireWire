@@ -1248,6 +1248,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 kTxPreparationLeadPackets,
             replayEstablished);
 
+    // MIDI follows the arming pass, on this same queue: it writes only into
+    // packets that exist, beyond the finality frontier, and only the MPX slot.
+    // A no-op for an endpoint without a MIDI service.
+    ASFW::Audio::DriverKit::ComposeMidiTx(*ivars);
+
     const uint64_t preparationUs = ASFW::Timing::hostTicksToNanos(mach_absolute_time() - preparationBegin) / 1000;
     if (queueDelayUs >= 5000 || preparationUs >= 5000) {
         ASFW_LOG(DirectAudio, "[TxPrepStall] phase=end queue=TxPreparation generation=%llu queueDelayUs=%llu preparationUs=%llu prepared=%u clientFrame=%llu clientHost=%llu",
@@ -1655,6 +1660,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             if (ivars->runtime.motuSphActive.load(std::memory_order_relaxed)) {
                 ASFW::Audio::DriverKit::LogMotuSphSummary(*ivars);
             }
+            ASFW::Audio::DriverKit::ReportMidiTx(*ivars);
         }
 
         directControl->counters.txPreparationWakeRequests.store(

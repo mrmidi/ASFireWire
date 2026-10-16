@@ -53,6 +53,14 @@ public:
     AudioCoordinator& operator=(const AudioCoordinator&) = delete;
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
+    // Told when an endpoint is published and when it is retired (MIDI rides
+    // endpoints this way; see Midi/Core/MidiEndpointPublication.hpp). Composition
+    // time, before device callbacks; the observer must outlive this coordinator
+    // or be detached with null first.
+    void SetEndpointObserver(Host::IAudioEndpointObserver* observer) noexcept {
+        endpointObserver_.store(observer, std::memory_order_release);
+        host_.SetEndpointObserver(observer);
+    }
     // The bus's IRM client; the audio session reserves stream resources with it.
     void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept { sessions_.SetIrmClient(client); }
 
@@ -110,6 +118,7 @@ private:
     // neutral interface; none owns a second wrapper around IsochService.
     IsochDuplexHostTransport hostTransport_;
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
+    std::atomic<Host::IAudioEndpointObserver*> endpointObserver_{nullptr};
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
     // Every family runs on the host.

@@ -67,7 +67,7 @@ enum ASFWLogRingCategories {
         "Controller", "Hardware", "BusReset", "Topology", "Metrics", "Async",
         "UserClient", "Discovery", "IRM", "BusManager", "ConfigROM",
         "MusicSubunit", "FCP", "CMP", "AVC", "Isoch", "Audio", "DirectAudio",
-        "DICE", "Zts", "TxSyt", "PayloadWriter", "Oxfw",
+        "DICE", "Zts", "TxSyt", "PayloadWriter", "Oxfw", "Midi",
     ]
 
     static func name(for category: UInt8) -> String {

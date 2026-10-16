@@ -4,6 +4,8 @@
 #include "DirectRxTypes.hpp"
 #include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
+#include "../../../Wire/AM824/MpxMidiDemux.hpp"
+#include "../../../Ports/IMidiByteSink.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -13,6 +15,27 @@ class IRxPayloadCodec;
 }
 
 namespace ASFW::AudioEngine::Direct::Rx {
+
+/// Where, and how, to lift MPX-MIDI bytes out of a packet's data blocks.
+///
+/// Optional: a default-constructed value disables extraction, which is what
+/// every endpoint without a MIDI service gets. The processor reads MIDI from the
+/// wire payload itself and never from what the PCM writer managed to bind, so it
+/// works while no CoreAudio client holds the input buffer.
+struct RxMidiExtraction final {
+    ASFW::Audio::Ports::IMidiByteSink* sink{nullptr};
+    ASFW::Encoding::MpxMidiGeometry geometry{};
+    ASFW::Encoding::MpxMidiDemuxCounters* counters{nullptr};
+    /// The drain this packet belongs to. Each packet is dated from its own
+    /// descriptor timestamp against this (cycle, host) pair, so MIDI time does
+    /// not depend on the audio drain cadence.
+    uint32_t drainCycleTimer{0};
+    uint64_t drainHostTicks{0};
+
+    [[nodiscard]] bool Enabled() const noexcept {
+        return sink != nullptr && geometry.Valid();
+    }
+};
 
 struct RxAudioPacketProcessorResult final {
     DirectRxWriteStatus status{DirectRxWriteStatus::kUnavailable};
@@ -30,6 +53,12 @@ struct RxAudioPacketProcessorResult final {
     uint32_t strideQuadlets{0};
     uint8_t dbc{0};
     bool mapRejected{false};
+    /// MPX-MIDI bytes handed to the sink out of this packet.
+    uint32_t midiBytesDelivered{0};
+    /// The packet could not be trusted for MIDI (unusable header, truncated or
+    /// ragged payload): any bytes it carried are lost, so the sink was told the
+    /// stream is discontinuous.
+    bool midiGap{false};
 };
 
 class RxAudioPacketProcessor final {
@@ -48,7 +77,8 @@ public:
         const RxCaptureChannelMap& captureMap = {},
         bool primeDelayLine = false,
         ::ASFW::Encoding::AudioPacketFraming framing =
-            ::ASFW::Encoding::AudioPacketFraming::kCip) noexcept;
+            ::ASFW::Encoding::AudioPacketFraming::kCip,
+        const RxMidiExtraction& midi = {}) noexcept;
 
 private:
     DirectInputWriter& writer_;

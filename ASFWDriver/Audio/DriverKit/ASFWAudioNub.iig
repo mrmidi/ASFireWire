@@ -52,6 +52,19 @@ public:
                                                 uint32_t* outSampleRateHz,
                                                 uint64_t* outGeneration);
 
+    // The endpoint's MIDI byte seam, for the audio driver's TX composition: a
+    // retained descriptor to map, plus the host -> device geometry (the MPX
+    // slot's place in the playback data block). kIOReturnNotReady when the
+    // endpoint publishes no MIDI service, which is the ordinary case. The audio
+    // driver maps it for the life of one TX run and drops the mapping with the
+    // TX slabs; the endpoint keeps the memory alive (retained descriptor).
+    virtual kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory,
+                                                  uint32_t* outDestinationPorts,
+                                                  uint32_t* outDestinationSlotIndex,
+                                                  uint32_t* outDestinationDbs,
+                                                  uint32_t* outDestinationPcmChannels,
+                                                  uint32_t* outDbcAligned);
+
     virtual kern_return_t StartAudioStreaming(uint32_t sampleRateHz);
     virtual kern_return_t StopAudioStreaming();
 

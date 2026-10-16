@@ -14,6 +14,7 @@ add_executable(IsochReceiveContextTests
     IsochReceiveContextTests.cpp
     IsochRxDmaRingTests.cpp
     IsochRxTimingTests.cpp
+    MidiReceivePathTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
@@ -273,6 +274,7 @@ add_audio_test(AudioDriverTxProducerTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverZts.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTxProducer.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverOutputWrite.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverMidi.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"

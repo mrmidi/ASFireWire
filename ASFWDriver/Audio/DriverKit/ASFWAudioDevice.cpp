@@ -180,6 +180,9 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
         }
     }
 
+    // The MIDI view goes with the TX slab it composes into; the TX preparation
+    // queue was drained by QuiesceTxPreparation above.
+    ASFW::Audio::DriverKit::UnbindMidiTx(ivars);
     ivars.txPayloadMap = nullptr;
     ivars.txMetadataMap = nullptr;
     ivars.txControlMap = nullptr;
@@ -322,6 +325,7 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
         bool txResourcesAllocated = false;
 
         const auto releaseTxResources = [&]() noexcept {
+            ASFW::Audio::DriverKit::UnbindMidiTx(ivars);
             ivars.txPayloadMap = nullptr;
             ivars.txMetadataMap = nullptr;
             ivars.txControlMap = nullptr;
@@ -647,6 +651,10 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
                 kr = failStart(armed.status, armed.failedStage);
                 return;
             }
+            // MIDI composition for this run, if the endpoint has a MIDI service.
+            // Never fails the start: a seam that cannot be used leaves MIDI TX
+            // off and audio exactly as it was.
+            ASFW::Audio::DriverKit::BindMidiTx(ivars, txConfig);
             const uint32_t timingRateHz =
                 ivars.device.currentSampleRate > 0
                     ? static_cast<uint32_t>(ivars.device.currentSampleRate)

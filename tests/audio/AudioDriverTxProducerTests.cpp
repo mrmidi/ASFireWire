@@ -35,6 +35,8 @@
 #include "../support/MotuSphFixture.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Logging/LogRing.hpp"
+#include "Common/DriverKitOwnership.hpp"
+#include "Midi/Transport/MidiTransportBlock.hpp"
 
 #include <gtest/gtest.h>
 
@@ -47,6 +49,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -215,6 +218,9 @@ public:
         if (armed.failedStage != nullptr) {
             return false;
         }
+        // As StartOrJoinWire: MIDI composition binds once the producer is
+        // armed. Inert unless the nub hands out a MIDI seam (EnableMidi).
+        ASFW::Audio::DriverKit::BindMidiTx(ivars_, txConfig);
 
         ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(ivars_);
         if (queue_->committedEnd.load() != numSlots_) {
@@ -276,6 +282,51 @@ public:
 
     // Long runs keep no copy of the wire.
     void RecordWire(bool record) { recordWire_ = record; }
+
+    // The endpoint's MIDI seam as the audio nub hands it to StartIO: a
+    // descriptor holding a MidiTransportBlock, one port each way after
+    // `pcmChannels` PCM slots. Call before Start.
+    ASFW::Midi::MidiTransportBlock* EnableMidi(uint32_t pcmChannels) {
+        IOBufferMemoryDescriptor* raw = nullptr;
+        EXPECT_EQ(IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut,
+                                                   sizeof(ASFW::Midi::MidiTransportBlock), 64,
+                                                   &raw),
+                  kIOReturnSuccess);
+        midiMemory_ = OSSharedPtr<IOBufferMemoryDescriptor>(raw, OSNoRetain);
+        EXPECT_EQ(ASFW::Common::CreateSharedMapping(midiMemory_, midiMap_), kIOReturnSuccess);
+        auto* block = new (reinterpret_cast<void*>(static_cast<uintptr_t>(midiMap_->GetAddress())))
+            ASFW::Midi::MidiTransportBlock();
+        nub_.midiTransportProvider = [this, pcmChannels](
+                                         IOMemoryDescriptor** out, uint32_t* ports,
+                                         uint32_t* slot, uint32_t* dbs, uint32_t* pcm,
+                                         uint32_t* aligned) -> kern_return_t {
+            midiMemory_->retain();
+            *out = midiMemory_.get();
+            *ports = 1;
+            *slot = pcmChannels;
+            *dbs = pcmChannels + 1;
+            *pcm = pcmChannels;
+            *aligned = 1;
+            return kIOReturnSuccess;
+        };
+        return block;
+    }
+
+    // Treat a packet as the hardware's once the rig clock is within the TX
+    // fill finality guard of it (the frontier both the PCM fill and the MIDI
+    // composer write beyond), and record every packet whose bytes changed
+    // after that point. A byte written there is lost on hardware.
+    void CheckFinality() { checkFinality_ = true; }
+
+    // The TX preparation queue does not run for the next `interrupts`
+    // interrupts, as on hardware when its wake is late (up to ~13 ms seen).
+    // The finality frontier moves on meanwhile.
+    void DelayPreparation(uint32_t interrupts) { skipPreparation_ = interrupts; }
+    struct LateWrite final {
+        uint64_t packet{0};
+        size_t offset{0};
+    };
+    [[nodiscard]] const std::vector<LateWrite>& LateWrites() const { return lateWrites_; }
 
     // Sub-cycle offset of every OUTPUT_LAST completion stamp. Hardware stamps
     // land anywhere in the cycle; the rig defaults to its start.
@@ -398,6 +449,9 @@ private:
             const uint64_t packet = completed_ + i;
             const auto& meta = metadata_[packet % numSlots_];
             const uint8_t* bytes = payload_.data() + (packet % numSlots_) * stride_;
+            if (checkFinality_) {
+                CompareTaken(packet, bytes);
+            }
             if (recordWire_) {
                 wire_.push_back({packet, std::vector<uint8_t>(bytes, bytes + meta.payloadLength)});
             }
@@ -405,6 +459,9 @@ private:
             // CoreAudio wakes on its own clock, not on our interrupt: give it
             // every packet time, after that packet has left.
             clockPacket_ = packet + 1;
+            if (checkFinality_) {
+                SnapshotTaken();
+            }
             DriveHostWrites(packet + 1);
         }
         completed_ += delta;
@@ -414,13 +471,35 @@ private:
              .cycleTimer32 = CycleTimerFor(completed_, 0)});
 
         const uint64_t requested = queue_->refillRequestGeneration.load();
-        if (requested == queue_->refillHandledGeneration.load()) {
+        if (skipPreparation_ > 0) {
+            --skipPreparation_;  // the preparation queue is late this interrupt
+        } else if (requested == queue_->refillHandledGeneration.load()) {
             queue_->refillRequestGeneration.store(requested + 1);
             driver_.TxPreparationReady_Impl(nullptr, requested + 1);
         }
 
         if (queue_->statusWord.load() == IsochTxQueueStatus::kProducerFault) {
             fault_ = TransportFault{completed_, "producer-fault-status"};
+        }
+    }
+
+    void SnapshotTaken() {
+        const uint64_t takenEnd =
+            clockPacket_ + ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
+        for (; takenSnapshotEnd_ < takenEnd; ++takenSnapshotEnd_) {
+            const uint8_t* bytes = payload_.data() + (takenSnapshotEnd_ % numSlots_) * stride_;
+            taken_[takenSnapshotEnd_ % numSlots_].assign(bytes, bytes + stride_);
+        }
+    }
+    void CompareTaken(uint64_t packet, const uint8_t* bytes) {
+        if (packet >= takenSnapshotEnd_) return;  // completed before the checker saw it
+        const auto& snap = taken_[packet % numSlots_];
+        if (snap.size() != stride_) return;
+        for (size_t i = 0; i < stride_; ++i) {
+            if (snap[i] != bytes[i]) {
+                lateWrites_.push_back({packet, i});
+                return;
+            }
         }
     }
 
@@ -635,6 +714,14 @@ private:
     uint64_t rxCycles_{0};
     uint64_t rxFrames_{0};
     uint8_t rxDbc_{0};
+
+    OSSharedPtr<IOBufferMemoryDescriptor> midiMemory_;
+    OSSharedPtr<IOMemoryMap> midiMap_;
+    bool checkFinality_{false};
+    uint32_t skipPreparation_{0};
+    uint64_t takenSnapshotEnd_{0};
+    std::unordered_map<uint64_t, std::vector<uint8_t>> taken_;
+    std::vector<LateWrite> lateWrites_;
 
     uint64_t completed_{0};
     uint64_t loadedEnd_{0};
@@ -1659,4 +1746,142 @@ TEST(AudioDriverTxProducerTests, FocusriteMatchesActualHostSamplesWithFilledPack
         nonzero |= (sample.encodedWords[0] & 0xffffffU) != 0;
     }
     EXPECT_TRUE(nonzero);
+}
+
+// ---------------------------------------------------------------------------
+// MIDI through the real producer (Saffire Pro 24 DSP geometry: 8 PCM + 1 MPX
+// slot, DBS 9). The MIDI composer runs on the TX preparation queue after the
+// arming pass, writes only the MPX slot, and only packets at or beyond the
+// same finality frontier the PCM fill obeys. On main there is no payload seal:
+// the frontier is the ownership rule, and these runs check it byte for byte.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct MidiRun final {
+    std::vector<uint8_t> midiBytes;     // label 0x81..0x83 bytes, in wire order
+    std::vector<uint8_t> midiPorts;     // port of each, (DBC + block) % 8
+    size_t emptyMidiQuadlets{0};        // 0x80000000
+    size_t otherMidiQuadlets{0};        // anything else in the MPX slot
+};
+
+MidiRun ReadMidiSlot(const std::vector<WirePacket>& wire, uint32_t dbs, uint32_t slot) {
+    MidiRun run;
+    for (const auto& packet : wire) {
+        if (!packet.IsData()) continue;
+        const uint32_t blocks = BlocksIn(packet, dbs);
+        for (uint32_t b = 0; b < blocks; ++b) {
+            const uint32_t q = packet.Quadlet(8 + (b * dbs + slot) * 4);
+            const uint32_t label = q >> 24;
+            if (q == 0x80000000u) {
+                ++run.emptyMidiQuadlets;
+            } else if (label >= 0x81 && label <= 0x83) {
+                for (uint32_t i = 0; i < label - 0x80; ++i) {
+                    run.midiBytes.push_back(static_cast<uint8_t>(q >> (16 - 8 * i)));
+                    run.midiPorts.push_back(static_cast<uint8_t>((packet.Dbc() + b) % 8));
+                }
+            } else {
+                ++run.otherMidiQuadlets;
+            }
+        }
+    }
+    return run;
+}
+
+void StartSaffire(TxProducerRig& rig, const ASFW::Isoch::Audio::DICE::DiceProfile& profile) {
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    // WriteEnd's own wakes are not run: preparation runs only from the
+    // transport interrupts, so DelayPreparation really delays it.
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112, .dispatchWriteEndWakes = false});
+    rig.CheckFinality();
+}
+
+} // namespace
+
+TEST(MidiTxThroughTheProducer, BytesLeaveInTheMpxSlotInOrderAndAudioIsUntouched) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig plain;
+    StartSaffire(plain, profile);
+    TxProducerRig midi;
+    auto* block = midi.EnableMidi(8);
+    StartSaffire(midi, profile);
+    ASSERT_NE(midi.Ivars().runtime.midiTxBlock, nullptr) << "StartIO did not bind MIDI TX";
+    ASSERT_EQ(plain.Ivars().runtime.midiTxBlock, nullptr);
+
+    // The coordinator armed the seam before the streams started.
+    block->Arm(1);
+    ASSERT_TRUE(plain.RunPackets(2000)) << plain.DescribeFault();
+    ASSERT_TRUE(midi.RunPackets(2000)) << midi.DescribeFault();
+
+    // A Note On / Note Off pair sent while the stream runs (with a small
+    // buffer, so the PCM fill writes close to the frontier too).
+    const std::vector<uint8_t> sent{0x90, 0x3C, 0x40, 0x80, 0x3C, 0x00};
+    ASSERT_TRUE(block->hostToDevice[0].TryWrite(sent, 1));
+    // The next pass runs 12 interrupts (96 packets, 12 ms) late, so the
+    // frontier has overtaken everything the last pass reached.
+    plain.DelayPreparation(12);
+    midi.DelayPreparation(12);
+    ASSERT_TRUE(plain.RunPackets(2000)) << plain.DescribeFault();
+    ASSERT_TRUE(midi.RunPackets(2000)) << midi.DescribeFault();
+
+    const MidiRun run = ReadMidiSlot(midi.Wire(), kSaffireDbs, 8);
+    EXPECT_EQ(run.midiBytes, sent);
+    for (const uint8_t port : run.midiPorts) EXPECT_EQ(port, 0u);
+    EXPECT_EQ(run.otherMidiQuadlets, 0u);
+    EXPECT_TRUE(block->hostToDevice[0].Empty());
+    EXPECT_EQ(midi.Ivars().runtime.midiTxComposer.Counters().bytesComposed, sent.size());
+    EXPECT_GT(midi.Ivars().runtime.midiTxComposer.Counters().packetsPastFrontier, 0u)
+        << "the late pass must have found the frontier past its cursor";
+
+    // Every byte outside the MPX slot is what the same run without MIDI sent.
+    const auto& a = plain.Wire();
+    const auto& b = midi.Wire();
+    ASSERT_EQ(a.size(), b.size());
+    size_t differingQuadlets = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        ASSERT_EQ(a[i].bytes.size(), b[i].bytes.size()) << "packet " << i;
+        for (size_t off = 0; off < a[i].bytes.size(); off += 4) {
+            const bool inMidiSlot = off >= 8 && ((off - 8) / 4) % kSaffireDbs == 8;
+            if (a[i].Quadlet(off) == b[i].Quadlet(off)) continue;
+            ++differingQuadlets;
+            EXPECT_TRUE(inMidiSlot) << "packet " << i << " offset " << off;
+        }
+    }
+    EXPECT_EQ(differingQuadlets, sent.size());
+
+    // Nothing, PCM or MIDI, was written into a packet the hardware had taken.
+    EXPECT_TRUE(plain.LateWrites().empty()) << "PCM late write at packet "
+                                            << plain.LateWrites().front().packet;
+    EXPECT_TRUE(midi.LateWrites().empty()) << "late write at packet "
+                                           << midi.LateWrites().front().packet << " offset "
+                                           << midi.LateWrites().front().offset;
+}
+
+TEST(MidiTxThroughTheProducer, AQuiescedSeamComposesNothing) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig midi;
+    auto* block = midi.EnableMidi(8);
+    StartSaffire(midi, profile);
+    block->Arm(1);
+    ASSERT_TRUE(midi.RunPackets(1000)) << midi.DescribeFault();
+    ASSERT_TRUE(block->hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C, 0x40}, 1));
+    // The stream stopped (StopStreaming quiesced the seam) before a pass ran.
+    block->Quiesce();
+    ASSERT_TRUE(midi.RunPackets(1000)) << midi.DescribeFault();
+
+    const MidiRun run = ReadMidiSlot(midi.Wire(), kSaffireDbs, 8);
+    EXPECT_TRUE(run.midiBytes.empty());
+    EXPECT_GT(midi.Ivars().runtime.midiTxComposer.Counters().inactivePasses, 0u);
+    EXPECT_TRUE(midi.LateWrites().empty());
+}
+
+TEST(MidiTxThroughTheProducer, AStreamWhoseGeometryDiffersFromTheSeamIsNotComposed) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig midi;
+    // The seam was projected for 6 PCM + MIDI (DBS 7); the stream runs DBS 9.
+    (void)midi.EnableMidi(6);
+    StartSaffire(midi, profile);
+    EXPECT_EQ(midi.Ivars().runtime.midiTxBlock, nullptr);
 }

@@ -253,6 +253,12 @@ void AudioDeviceHost::FinishRecovery(uint64_t guid) noexcept {
     IOLockUnlock(lock_);
 }
 
+void AudioDeviceHost::NotifyEndpointPublished(uint64_t guid, AudioBackendKind kind,
+                                              const Model::ASFWAudioDevice& description) noexcept {
+    IAudioEndpointObserver* observer = endpointObserver_.load(std::memory_order_acquire);
+    if (observer != nullptr) observer->OnEndpointPublished(guid, kind, description);
+}
+
 // --- Publication (§4.3) --------------------------------------------------
 
 void AudioDeviceHost::OfferDiscoveredDescription(uint64_t guid,
@@ -321,7 +327,8 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
     const auto route = policy->route;
     const char* family = adapter->Name();
     const auto committed = input.committed;
-    adapter->Describe(input, [this, guid, route, family, admission, committed](DescribeResult result) {
+    const AudioBackendKind backendKind = *kind;
+    adapter->Describe(input, [this, guid, route, family, backendKind, admission, committed](DescribeResult result) {
         if (admission->AbortIfStopping()) {
             Record(guid, family, HostEvent::Publish, HostOutcome::RefusedTeardown, kIOReturnAborted);
             return;
@@ -361,12 +368,14 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                     Record(guid, family, HostEvent::Publish,
                            unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
                            unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
+                    if (unchanged) NotifyEndpointPublished(guid, backendKind, value);
                     return;
                 }
                 const bool unchanged = publisher_.RefreshNubProperties(guid, value, family);
                 Record(guid, family, HostEvent::Publish,
                        unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
                        unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
+                if (unchanged) NotifyEndpointPublished(guid, backendKind, value);
                 return;
             }
             if (const auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
@@ -376,6 +385,7 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             Record(guid, family, HostEvent::Publish,
                    published ? HostOutcome::Published : HostOutcome::PublishFailed,
                    published ? kIOReturnSuccess : kIOReturnError, 0, detailText);
+            if (published) NotifyEndpointPublished(guid, backendKind, value);
         };
 
         std::visit(
