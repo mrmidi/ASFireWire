@@ -188,6 +188,18 @@ targets:
     sources:
       # Includes DICE diagnostics model, reader, store and view, and the AV/C report model, formatter, store and view; also AnalyzerRenderSubmission.swift, AnalyzerDisplaySmoother.swift, shared Metal plots, Views/AnalyzerPanelCanvas.swift, AnalyzerGlyphAtlas.swift, AnalyzerLivePanel.swift, MetalSpectrogramView.swift, SpectrogramTimeline.swift, SpectrumVisualization.swift, SpectrumFFTLayout.swift, WaterfallProjection.swift, AnalyzerTimingStatistics.swift, AnalyzerReadoutBatch.swift, AnalyzerKernelTiming.swift, KWeightBlockPipeline.swift, KWeightBlocks.metal, and analyzer shaders.
       - path: ASFW
+      # Round-Trip Latency: the platform-neutral C core and the shared CoreAudio
+      # session from tools/rtl, the same sources the rtl_loopback command line
+      # builds. The IOProc stays in C (rtl_session.c); Swift reaches it through
+      # the bridging header.
+      - path: tools/rtl/rtl_core.c
+      - path: tools/rtl/rtl_core.h
+      - path: tools/rtl/tone_core.c
+      - path: tools/rtl/tone_core.h
+      - path: tools/rtl/tone_io.c
+      - path: tools/rtl/tone_io.h
+      - path: tools/rtl/rtl_session.c
+      - path: tools/rtl/rtl_session.h
     dependencies:
       - target: ASFWDriver
         embed: true
@@ -209,11 +221,19 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
         ENABLE_USER_SELECTED_FILES: readwrite
+        # Microphone (audio input) for the Round-Trip Latency loopback. Matches
+        # com.apple.security.device.audio-input in the entitlements files, so the
+        # sandbox and the hardened runtime both grant it.
+        ENABLE_RESOURCE_ACCESS_AUDIO_INPUT: YES
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        # The Round-Trip Latency tool records a looped-back signal through the
+        # device's input, which is microphone access as far as macOS is concerned.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "ASFW's Round-Trip Latency tool plays a test signal on an audio interface output and records it back from an input to measure the round trip. The recording is analysed on this Mac and is never stored or sent."
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ASFWDriver/Shared"
+          - "$(SRCROOT)/tools/rtl"
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
