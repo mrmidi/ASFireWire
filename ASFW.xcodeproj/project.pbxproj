@@ -108,6 +108,7 @@
 		313F28505E424F8BA7480A7D /* ASFWMCPDiceRegisterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D812407770D49EEF46141F /* ASFWMCPDiceRegisterMap.swift */; };
 		319CC4C54BFDF715B4F35C7C /* ASFWDriver.iig in Sources */ = {isa = PBXBuildFile; fileRef = 49272738AA5479B3357D6624 /* ASFWDriver.iig */; };
 		31A5F98B3E7B01E9B348D2DF /* DiagnosticsTextFormatter+Hardware.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30AEC085823D6C50F1463AB4 /* DiagnosticsTextFormatter+Hardware.swift */; };
+		31EFCC287705BE0B4E97987D /* DriverExtensionPropertiesProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A2ABBDF6C14F2F71A2178F /* DriverExtensionPropertiesProbe.swift */; };
 		325D181772DEEB8A43FCE367 /* Scheduler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9379C84175E3D9E61640368D /* Scheduler.cpp */; };
 		326299D53B08D873F06736A8 /* DiagnosticsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966891563B1C443910EA5BA /* DiagnosticsStore.swift */; };
 		327560F79A91289F9FBD13EE /* DriverConnector+Duet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 168E3080E7C55D54003B176B /* DriverConnector+Duet.swift */; };
@@ -517,6 +518,7 @@
 		F94BE42C10D6C60D5792B557 /* DriverConnector+AVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 607B3B147596F916CB2EBB11 /* DriverConnector+AVC.swift */; };
 		F9E5BE0D1C6927E740FFA316 /* FireWireBusImpl.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1DC9C3863E2E23A2E1EACC27 /* FireWireBusImpl.cpp */; };
 		FA8EB77AE75DA096CD8B147C /* SaffireMixerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF26B9D9B6DD1E2CD447CB18 /* SaffireMixerView.swift */; };
+		FB60C58E1EAC617FCBFB5E65 /* DriverExtensionUpdatePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A618492F0FC71AA72E1DE29 /* DriverExtensionUpdatePolicyTests.swift */; };
 		FC274937C743B11008958EFB /* ASFWMCPAudioStreamTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6A8CEBCAFE125A3333F4B3 /* ASFWMCPAudioStreamTools.swift */; };
 		FE51B3659D68E398113DC16A /* MCPConsoleLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040E3246E90734BBE6ED2380 /* MCPConsoleLogTests.swift */; };
 		FE637EF925C41CE31E55B42B /* AnalyzerCalibrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C78E954A8A81AE50ABCCD7 /* AnalyzerCalibrationTests.swift */; };
@@ -876,6 +878,7 @@
 		49272738AA5479B3357D6624 /* ASFWDriver.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWDriver.iig; sourceTree = "<group>"; };
 		4A29B65AFF65A07671ACC9BB /* InterruptDispatcher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = InterruptDispatcher.cpp; sourceTree = "<group>"; };
 		4A31981D5A750F1E32361F70 /* OnceCompletion.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OnceCompletion.hpp; sourceTree = "<group>"; };
+		4A618492F0FC71AA72E1DE29 /* DriverExtensionUpdatePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverExtensionUpdatePolicyTests.swift; sourceTree = "<group>"; };
 		4A89236ABF709F1C06A46D40 /* RoleCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RoleCoordinator.hpp; sourceTree = "<group>"; };
 		4AB7F2D9A1A8EC9FF5ADB40E /* AudioGeometrySections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioGeometrySections.swift; sourceTree = "<group>"; };
 		4AE8FA92BD497B00B01107A3 /* ITimerScheduler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ITimerScheduler.hpp; sourceTree = "<group>"; };
@@ -1422,6 +1425,7 @@
 		CFBE8CA65AB808A853E1392B /* AudioTelemetryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTelemetryView.swift; sourceTree = "<group>"; };
 		D052AC7D4757845AB77B75B1 /* MCPSbp2ToolsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSbp2ToolsTests.swift; sourceTree = "<group>"; };
 		D0941CE629D5F2534ADE5436 /* IFireWireBusInfo.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IFireWireBusInfo.hpp; sourceTree = "<group>"; };
+		D0A2ABBDF6C14F2F71A2178F /* DriverExtensionPropertiesProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverExtensionPropertiesProbe.swift; sourceTree = "<group>"; };
 		D0D02F4FA98530583232F0C5 /* DiceNotificationMailbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceNotificationMailbox.hpp; sourceTree = "<group>"; };
 		D0E9BE99CAFCBEDAD1B11BEB /* ApogeeVendorCodec.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeVendorCodec.cpp; sourceTree = "<group>"; };
 		D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPLiveDriverControl.swift; sourceTree = "<group>"; };
@@ -2317,6 +2321,7 @@
 				67D910E07C1B26B84C2119E2 /* DiceReportTextFormatterTests.swift */,
 				6A754FD91C272D2F8CCC9EE0 /* DiceWireTests.swift */,
 				9237D8E4E50101E35CA33676 /* DriverExtensionHealthPolicyTests.swift */,
+				4A618492F0FC71AA72E1DE29 /* DriverExtensionUpdatePolicyTests.swift */,
 				B482A34520BBA350FDE6C098 /* DriverLogViewModelTests.swift */,
 				C3C3C0A53557FD4630647F63 /* DuetCodecTests.swift */,
 				51751F4E2707BF3956287D1F /* DuetViewModelLogicTests.swift */,
@@ -2760,6 +2765,7 @@
 				264D4CD41FF948792F95E023 /* DriverConnector+Status.swift */,
 				487FFDBA8B98968F6A7E5DCB /* DriverConnectorLogStore.swift */,
 				3E3B0B43A80EA689D344C17A /* DriverConnectorTransport.swift */,
+				D0A2ABBDF6C14F2F71A2178F /* DriverExtensionPropertiesProbe.swift */,
 				F37F1F4012E2B4047631684D /* DriverExtensionRegistry.swift */,
 				DE7778D9CE7D3F4D24363D3F /* DriverInstallManager.swift */,
 				164B3D3E4F3CDD56A801EB18 /* DriverModels.swift */,
@@ -4269,6 +4275,7 @@
 				1764B86AD16F92E703D25BCB /* DiceReportTextFormatterTests.swift in Sources */,
 				B6E71966B40BEADE279FB2D6 /* DiceWireTests.swift in Sources */,
 				663D93B423682470BB5CCB54 /* DriverExtensionHealthPolicyTests.swift in Sources */,
+				FB60C58E1EAC617FCBFB5E65 /* DriverExtensionUpdatePolicyTests.swift in Sources */,
 				A18A108AE5B0D9D77ACF32E0 /* DriverLogViewModelTests.swift in Sources */,
 				38FE60619DFBA6ECB035BE64 /* DuetCodecTests.swift in Sources */,
 				BBC4374CAF02DA7A26022E78 /* DuetViewModelLogicTests.swift in Sources */,
@@ -4445,6 +4452,7 @@
 				88663772C9C228C3DC7F6CBD /* DriverConnectorLogStore.swift in Sources */,
 				25455E383D36F3D65BC17AC6 /* DriverConnectorModels.swift in Sources */,
 				164B174B49691D4A71E869E4 /* DriverConnectorTransport.swift in Sources */,
+				31EFCC287705BE0B4E97987D /* DriverExtensionPropertiesProbe.swift in Sources */,
 				62D1A2CEFB52CCA12344F175 /* DriverExtensionRegistry.swift in Sources */,
 				B65BD9693CE6549875CE773E /* DriverInstallManager.swift in Sources */,
 				E9D21B43286A0AFDACC3BDC5 /* DriverLogRow.swift in Sources */,
