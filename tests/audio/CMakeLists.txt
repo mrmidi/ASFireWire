@@ -454,3 +454,16 @@ add_audio_test(DeviceConfigurationStateMachineTests
 
 add_audio_test(DiceMultirateValidationTests DiceMultirateValidationTests.cpp)
 target_compile_definitions(DiceMultirateValidationTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)
+
+# Controls: AUAA semantic core (FW-202) and the AV/C projection (FW-204).
+add_audio_test(TopologyModelTests
+    topology/TopologyModelTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+add_audio_test(AvcControlProjectionTests
+    topology/AvcControlProjectionTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)

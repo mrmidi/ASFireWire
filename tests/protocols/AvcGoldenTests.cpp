@@ -24,6 +24,8 @@
 #include "SimulatedAvcUnit.hpp"
 #include "WireTrace.hpp"
 #include "ExchangeReplayUnit.hpp"
+#include "Audio/Controls/AvcControlProjection.hpp"
+#include "Audio/Model/Topology/Validate.hpp"
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
@@ -361,6 +363,40 @@ TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
     EXPECT_LT(highest - lowest, 64U * 1024U) << "completions nest: the stack grows with each command";
 }
 
+// Controls (FW-204): a real discovery graph projects into a topology that
+// validates, whose state is legal, and whose every binding addresses a feature
+// channel the graph actually reported.
+static void ExpectValidControlProjection(const ASFW::Protocols::AVC::Graph::DeviceGraph& graph,
+                                         size_t expectedParameters) {
+    namespace AM = ASFW::AudioModel;
+    const auto model = ASFW::Audio::Controls::ProjectAvcControls(graph, 1);
+    const auto structural = AM::validate(model.topology);
+    ASSERT_TRUE(structural.has_value()) << structural.error().message;
+    const auto state = AM::validateState(model.topology, model.state);
+    ASSERT_TRUE(state.has_value()) << state.error().message;
+    EXPECT_EQ(model.topology.parameters.size(), expectedParameters);
+    EXPECT_EQ(model.bindings.size(), expectedParameters);
+    for (const auto& binding : model.bindings) {
+        EXPECT_TRUE(std::ranges::any_of(graph.featureChannels, [&](const auto& channel) {
+            return channel.subunit == binding.subunit && channel.block == binding.block &&
+                   channel.channel == binding.channel;
+        })) << "binding without a feature channel: token " << binding.Token();
+    }
+    const auto routers = std::ranges::count_if(model.topology.nodes, [](const auto& node) {
+        return std::holds_alternative<AM::RouterNode>(node.body);
+    });
+    const auto selectors = std::ranges::count_if(graph.controls, [&](const auto& block) {
+        if (block.type != ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kSelector) return false;
+        for (const auto& info : graph.selectors)
+            if (info.audioSubunitId == block.audioSubunitId && info.functionBlockId == block.id)
+                return !info.declaredInputs.empty();
+        return !block.inputSources.empty();
+    });
+    EXPECT_EQ(routers, selectors);
+    std::printf("[controls] %zu parameters, %zu bindings, %td routers\n",
+                model.topology.parameters.size(), model.bindings.size(), routers);
+}
+
 // ============================================================================
 // 1. Duet Attach Discovery
 // ============================================================================
@@ -385,6 +421,9 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
 
     rig.ExpectGolden("duet__phase4_attach_discovery");
     ExpectOnlyMeasuredFrames(rig.Sim(), kDuetUncaptured);
+    ASSERT_NE(rig.Unit()->GetDiscoveredGraph(), nullptr);
+    // The Duet has no AV/C feature blocks: its controls are Apogee vendor commands.
+    ExpectValidControlProjection(*rig.Unit()->GetDiscoveredGraph(), 0);
 }
 
 TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
@@ -555,6 +594,8 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     });
     ASSERT_NE(mixerMaster, graph->controls.end());
     EXPECT_TRUE(IsAvcOutputMaster(*graph, *mixerMaster));
+    // Captured 2026-09-28 Phase 88 descriptors: 7 confirmed feature volume/mute values.
+    ExpectValidControlProjection(*graph, 7);
     for (const auto& block : graph->controls)
         if (block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id != 1)
             EXPECT_FALSE(IsAvcOutputMaster(*graph, block));

@@ -77,6 +77,9 @@ add_protocols_test(AvcSimulatedUnitTests
 # AVC Golden Wire Characterization Tests (Phase 2a)
 add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCMusicCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/AVCDiscoveryDocument.cpp"
