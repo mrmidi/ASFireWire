@@ -154,4 +154,32 @@ inline constexpr uint32_t kStartupMixerCoefficientCount =
     static_cast<uint32_t>(sizeof(kStartupMixerCoefficients) /
                           sizeof(kStartupMixerCoefficients[0]));
 
+// The firmware's own monitor matrix, read off the device: the six analog and
+// two S/PDIF inputs into all eight outputs, even outputs fed from the even
+// inputs and odd from the odd, 32 cells at one gain latched from the
+// front-panel knob at power-on. Measured 0x40, 0x80, 0xc0 and 0x101 (all
+// multiples of 64) against a unity of 0x4000: -48 to -36 dB of every input
+// leaking into every output, audible as hum and radio pickup on a hot input.
+//
+// These are NOT part of the startup program above: writing two of them there
+// (out0<-in6 and out1<-in7) silenced every analog output, which is why the
+// startup table leaves them out. Cleared once the stream is confirmed they are
+// harmless - see DICETcatProtocol::ClearFirmwareMonitorCells.
+inline constexpr uint16_t kFirmwareMonitorCells[] = {
+      0,   2,   4,   6,  // out 0 <- in 0,2,4,6
+     19,  21,  23,  25,  // out 1 <- in 1,3,5,7
+     36,  38,  40,  42,  // out 2
+     55,  57,  59,  61,  // out 3
+     72,  74,  76,  78,  // out 4
+     91,  93,  95,  97,  // out 5
+    108, 110, 112, 114,  // out 6 (S/PDIF L)
+    127, 129, 131, 133,  // out 7 (S/PDIF R)
+};
+// Application section +0x14, UILEDState: the front-panel speaker LED. See
+// DICETcatProtocol::RewriteFrontPanelLed.
+inline constexpr uint32_t kUILedStateOffset = 0x14;
+
+inline constexpr uint32_t kFirmwareMonitorCellCount =
+    static_cast<uint32_t>(sizeof(kFirmwareMonitorCells) / sizeof(kFirmwareMonitorCells[0]));
+
 } // namespace ASFW::Audio::DICE::Avid::MboxProRouting
