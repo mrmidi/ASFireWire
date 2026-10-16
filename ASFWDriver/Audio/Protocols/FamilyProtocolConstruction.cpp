@@ -109,6 +109,10 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
                             DICE::Avid::MboxProRouting::kStartupMixerCoefficients,
                         .startupMixerCellCount =
                             DICE::Avid::MboxProRouting::kStartupMixerCoefficientCount,
+                        .postStartMixerZeros =
+                            DICE::Avid::MboxProRouting::kFirmwareMonitorCells,
+                        .postStartMixerZeroCount =
+                            DICE::Avid::MboxProRouting::kFirmwareMonitorCellCount,
                     }, timerScheduler);
             }
             ASFW_LOG(DICE,
