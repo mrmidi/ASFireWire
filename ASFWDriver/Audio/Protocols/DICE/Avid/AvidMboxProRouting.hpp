@@ -175,6 +175,10 @@ inline constexpr uint16_t kFirmwareMonitorCells[] = {
     108, 110, 112, 114,  // out 6 (S/PDIF L)
     127, 129, 131, 133,  // out 7 (S/PDIF R)
 };
+// Application section +0x14, UILEDState: the front-panel speaker LED. See
+// DICETcatProtocol::RewriteFrontPanelLed.
+inline constexpr uint32_t kUILedStateOffset = 0x14;
+
 inline constexpr uint32_t kFirmwareMonitorCellCount =
     static_cast<uint32_t>(sizeof(kFirmwareMonitorCells) / sizeof(kFirmwareMonitorCells[0]));
 

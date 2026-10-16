@@ -669,6 +669,39 @@ void DICETcatProtocol::ClearFirmwareMonitorCells() {
     }
 }
 
+// --- Front-panel LED ----------------------------------------------------------
+//
+// The Mbox Pro powers up with UILEDState (application section +0x14) already
+// holding its value - 0x121, the speaker LED on green - but the LED stays dark
+// until a host writes the register. Writing the very value it holds back lights
+// it, without choosing a speaker set on the user's behalf. Once per instance,
+// like the monitor cells: the firmware keeps it lit until the next power-on.
+void DICETcatProtocol::RewriteFrontPanelLed() {
+    const uint32_t offset = runtimePolicy_.frontPanelLedRewriteOffset;
+    if (offset == 0 || frontPanelLedRewritten_) {
+        return;
+    }
+    const auto ext = deviceIo_.ReadExtensionSections();
+    if (!ext) {
+        return;
+    }
+    const uint32_t appBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext->application);
+    if (appBase == kDICEExtensionOffset) {
+        return;
+    }
+    const auto value = deviceIo_.ReadQuad(appBase + offset);
+    if (!value) {
+        ASFW_LOG(DICE, "Front-panel LED: read failed (0x%08x)", value.error());
+        return;
+    }
+    if (!deviceIo_.WriteQuad(appBase + offset, *value)) {
+        ASFW_LOG(DICE, "Front-panel LED: write failed (value=0x%08x)", *value);
+        return;
+    }
+    frontPanelLedRewritten_ = true;
+    ASFW_LOG(DICE, "Front-panel LED rewritten (value=0x%08x)", *value);
+}
+
 void DICETcatProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
     if (runtimePolicy_.clockChangeObserver != nullptr) {
         runtimePolicy_.clockChangeObserver->BeforeClockSelectWrite(io);
@@ -871,6 +904,7 @@ std::expected<DuplexConfirmResult, IOReturn> DICETcatProtocol::Confirm() {
         // The device has its clock and the stream is confirmed: the earliest
         // moment its own monitor matrix is safe to clear.
         ClearFirmwareMonitorCells();
+        RewriteFrontPanelLed();
     }
     return result;
 }
