@@ -31,6 +31,7 @@
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoveryLog.hpp"
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
+#include "ASFWDriver/UserClient/Handlers/ControlsHandler.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
 #include <DriverKit/OSData.h>
@@ -999,6 +1000,162 @@ TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     ASSERT_TRUE(ok);
     ::ASFW::Testing::ExpectTextMatchesGolden(UserClientGolden::Capture(rig.Unit(), kDuet.guid),
                                              "avc/duet__user_client.txt");
+}
+
+
+// ============================================================================
+// Controls end to end (FW-206): user-client snapshot, a confirmed write, and
+// the refusals, against the Phase 88 discovery graph.
+// ============================================================================
+
+namespace ControlsE2E {
+std::shared_ptr<AVCUnit> AttachPhase88(AvcGoldenRig& rig, bool answerResolution) {
+    // The captured Phase 88 does not answer the volume RESOLUTION query, so no
+    // level is publishable from it (same rule as CoreAudio). To exercise a
+    // level write, a test may let feature block 1 report a 1 dB resolution.
+    if (answerResolution)
+        rig.Sim().SetResponseOverride({0x01, 0x08, 0xB8, 0x81, 0x01, 0x01, 0x02, 0x00, 0x02},
+                                      {0x0C, 0x08, 0xB8, 0x81, 0x01, 0x01, 0x02, 0x00, 0x02, 0x02, 0x01, 0x00});
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    rig.Sim().SetResponseOverride({0x01, 0xFF, 0x1A, 0xFF, 0xFF, 0xFE, 0xFF, 0x00},
+                                  {0x0C, 0xFF, 0x1A, 0x10, 0x60, 0x00, 0xFF, 0x00});
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    EXPECT_TRUE(ok);
+    return rig.Unit();
+}
+
+kern_return_t Call(UserClient::ControlsHandler& handler, kern_return_t (UserClient::ControlsHandler::*method)(IOUserClientMethodArguments*),
+                   std::vector<uint64_t> in, std::vector<uint64_t>& out, OSData** document = nullptr) {
+    IOUserClientMethodArguments args{};
+    args.scalarInput = in.data();
+    args.scalarInputCount = static_cast<uint32_t>(in.size());
+    out.assign(4, 0);
+    args.scalarOutput = out.data();
+    args.scalarOutputCount = static_cast<uint32_t>(out.size());
+    const auto kr = (handler.*method)(&args);
+    out.resize(args.scalarOutputCount);
+    if (document) *document = kr == kIOReturnSuccess ? args.structureOutput : nullptr;
+    else if (args.structureOutput) args.structureOutput->release();
+    return kr;
+}
+} // namespace ControlsE2E
+
+TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot) {
+    using namespace ControlsE2E;
+    namespace C = ASFW::Audio::Controls;
+    namespace AM = ASFW::AudioModel;
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    const auto unit = AttachPhase88(rig, true);
+    UserClientGolden::OneUnitDiscovery discovery(unit);
+    UserClient::ControlsHandler handler(&discovery);
+    const uint64_t guid = kPhase88.guid;
+    std::vector<uint64_t> out;
+
+    // The snapshot is served in the discovery-document page envelope.
+    OSData* page = nullptr;
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlSnapshot, {guid >> 32, guid & 0xFFFFFFFFu, 0}, out, &page), kIOReturnSuccess);
+    ASSERT_NE(page, nullptr);
+    ASSERT_GT(page->getLength(), sizeof(UserClient::Wire::AVCDiscoveryPageWire));
+    UserClient::Wire::AVCDiscoveryPageWire header{};
+    std::memcpy(&header, page->getBytesNoCopy(), sizeof(header));
+    const std::string firstPage(static_cast<const char*>(page->getBytesNoCopy()) + sizeof(header), header.length);
+    page->release();
+    EXPECT_NE(firstPage.find("\"schema\":\"asfw.controls.v1\""), std::string::npos);
+
+    // Pick a volume the projection published, and a legal target two steps below its maximum.
+    const auto revision = unit->GetDiscoverySnapshot()->session.value;
+    EXPECT_EQ(header.session, static_cast<uint32_t>(revision));
+    const auto model = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto volume = std::ranges::find_if(model.bindings, [](const auto& b) { return b.kind == C::AvcBindingKind::kFeatureVolume; });
+    ASSERT_NE(volume, model.bindings.end());
+    const double target = (volume->range.maximum - 2 * volume->range.resolution) / 256.0;
+    const auto raw = static_cast<uint16_t>(static_cast<int16_t>(volume->range.maximum - 2 * volume->range.resolution));
+    const uint8_t address = static_cast<uint8_t>(0x08 | volume->subunit);
+    // The device acknowledges CONTROL and then reports the new CURRENT value on STATUS.
+    const std::vector<uint8_t> operands{0xB8, 0x81, volume->block, 0x10, 0x02, volume->channel, 0x02};
+    auto control = std::vector<uint8_t>{0x00, address}; control.insert(control.end(), operands.begin(), operands.end());
+    auto status = std::vector<uint8_t>{0x01, address}; status.insert(status.end(), operands.begin(), operands.end());
+    auto accepted = std::vector<uint8_t>{0x09, address}; accepted.insert(accepted.end(), operands.begin(), operands.end());
+    accepted.insert(accepted.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
+    auto stable = std::vector<uint8_t>{0x0C, address}; stable.insert(stable.end(), operands.begin(), operands.end());
+    stable.insert(stable.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
+    rig.Sim().SetResponseOverride(control, accepted);
+    rig.Sim().SetResponseOverride(status, stable);
+
+    const auto bits = std::bit_cast<uint64_t>(target);
+    const auto id = volume->parameter.value;
+    // Refusals happen before any bus traffic.
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision + 1, id, 1, bits}, out), kIOReturnNotPermitted);
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, 0xFFFFFFu, 1, bits}, out), kIOReturnNotFound);
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 0, 1}, out), kIOReturnBadArgument); // bool for a level
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, std::bit_cast<uint64_t>(1000.0)}, out), kIOReturnBadArgument);
+
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, bits}, out), kIOReturnSuccess);
+    ASSERT_EQ(out.size(), 1U);
+    const uint64_t request = out[0];
+    rig.Settle();
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnSuccess);
+    ASSERT_EQ(out.size(), 2U);
+    EXPECT_EQ(out[0], static_cast<uint64_t>(UserClient::ControlValueKind::kDouble));
+    EXPECT_DOUBLE_EQ(std::bit_cast<double>(out[1]), target);
+    // A result is collected once.
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnNotFound);
+
+    // The readback republished the graph, so the next projection carries the value.
+    const auto after = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto& value = after.state.parameters.at(volume->parameter);
+    EXPECT_DOUBLE_EQ(std::get<double>(value.value), target);
+    EXPECT_EQ(value.origin, AM::StateOrigin::Observed);
+}
+
+
+TEST(AvcGoldenTests, ControlsMuteWriteOnCapturedPhase88IsConfirmed) {
+    using namespace ControlsE2E;
+    namespace C = ASFW::Audio::Controls;
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    const auto unit = AttachPhase88(rig, false);
+    UserClientGolden::OneUnitDiscovery discovery(unit);
+    UserClient::ControlsHandler handler(&discovery);
+    const uint64_t guid = kPhase88.guid;
+    const auto revision = unit->GetDiscoverySnapshot()->session.value;
+    const auto model = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto mute = std::ranges::find_if(model.bindings, [](const auto& b) { return b.kind == C::AvcBindingKind::kFeatureMute; });
+    ASSERT_NE(mute, model.bindings.end());
+    const uint8_t address = static_cast<uint8_t>(0x08 | mute->subunit);
+    const std::vector<uint8_t> operands{0xB8, 0x81, mute->block, 0x10, 0x02, mute->channel, 0x01};
+    auto control = std::vector<uint8_t>{0x00, address}; control.insert(control.end(), operands.begin(), operands.end());
+    auto status = std::vector<uint8_t>{0x01, address}; status.insert(status.end(), operands.begin(), operands.end());
+    auto accepted = std::vector<uint8_t>{0x09, address}; accepted.insert(accepted.end(), operands.begin(), operands.end());
+    accepted.insert(accepted.end(), {0x01, 0x70}); // TRUE
+    auto stable = std::vector<uint8_t>{0x0C, address}; stable.insert(stable.end(), operands.begin(), operands.end());
+    stable.insert(stable.end(), {0x01, 0x70});
+    rig.Sim().SetResponseOverride(control, accepted);
+    rig.Sim().SetResponseOverride(status, stable);
+    std::vector<uint64_t> out;
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, mute->parameter.value, 0, 1}, out), kIOReturnSuccess);
+    const uint64_t request = out[0];
+    rig.Settle();
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnSuccess);
+    EXPECT_EQ(out[0], static_cast<uint64_t>(UserClient::ControlValueKind::kBool));
+    EXPECT_EQ(out[1], 1U);
+    const auto after = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    EXPECT_TRUE(std::get<bool>(after.state.parameters.at(mute->parameter).value));
 }
 
 // What the driver ring shows for an attach: every discovered fact by its spec name, every unnamed value as

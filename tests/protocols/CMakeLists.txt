@@ -78,6 +78,8 @@ add_protocols_test(AvcSimulatedUnitTests
 add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Handlers/ControlsHandler.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
