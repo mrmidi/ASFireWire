@@ -284,17 +284,11 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
 kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
 {
     ASFW_LOG(Controller, "[SCSIHBA] UserInitializeController");
-    // Tag the HBA as a FireWire, external interconnect (mirrors the removed
-    // IOFireWireSerialBusProtocolTransport bridge's Protocol Characteristics).
-    OSDictionary* props = OSDictionary::withCapacity(2);
-    if (props != nullptr) {
-        OSString* interconnect = OSString::withCString("FireWire");
-        OSString* location = OSString::withCString("External");
-        if (interconnect != nullptr) { props->setObject("Physical Interconnect", interconnect); interconnect->release(); }
-        if (location != nullptr)     { props->setObject("Physical Interconnect Location", location); location->release(); }
-        UserSetHBAProperties(props);
-        props->release();
-    }
+    // "Physical Interconnect" = "FireWire" lives in the Info.plist personality:
+    // the kernel family builds Protocol Characteristics from the service's own
+    // properties in start(), before this runs, and UserSetHBAProperties does
+    // not accept that key (IOSCSIParallelInterfaceController.cpp:268-306).
+    // SCSITaskLib clients such as Phocus require "FireWire" there.
 
     // All seven keys are required and must be reported before this method
     // returns (IOUserSCSIParallelInterfaceController.h contract). Without this
