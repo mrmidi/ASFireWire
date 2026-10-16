@@ -458,6 +458,8 @@ add_device_test(BackendLifecycleRaceTests
 # Audio device host: the one lifecycle shell over every family.
 add_device_test(AudioDeviceHostTests
     AudioDeviceHostTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Core/MidiEndpointPublication.cpp"
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Host/AudioDeviceHost.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"

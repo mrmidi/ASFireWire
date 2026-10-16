@@ -63,3 +63,9 @@ add_midi_test(MidiTxComposerTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
+# Nub publication order: endpoint id explicitly after Create, before Publish.
+add_midi_test(MidiNubPublisherTests
+    MidiNubPublisherTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Core/MidiNubPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
+)
