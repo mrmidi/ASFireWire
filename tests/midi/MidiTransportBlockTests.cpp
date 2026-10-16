@@ -143,16 +143,37 @@ TEST(MidiTransportBlockTest, ArmMakesItUsableForThatEpochOnly) {
     EXPECT_FALSE(block.Usable(8));
 }
 
-TEST(MidiTransportBlockTest, ArmClearsThePreviousStreamsBytes) {
+TEST(MidiTransportBlockTest, ArmLeavesTheRingCursorsToTheirOwners) {
+    // Arm runs on the owner's queue while the MIDI service's real-time thread
+    // may be mid-enqueue. Zeroing a producer-owned cursor from here is the race
+    // that opens a stream with the previous one's bytes, so Arm must not.
     MidiTransportBlock block;
     block.Arm(1);
     ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}, 0u)));
     ASSERT_TRUE((block.deviceToHost[3].TryWrite(std::vector<uint8_t>{0xF8}, 0u)));
 
     block.Arm(2);
-    EXPECT_TRUE(block.hostToDevice[0].Empty());
-    EXPECT_TRUE(block.deviceToHost[3].Empty());
+    EXPECT_EQ(block.hostToDevice[0].Available(), 2u);
+    EXPECT_EQ(block.deviceToHost[3].Available(), 1u);
+    EXPECT_EQ(block.hostToDevice[0].writeIndex.load(), 2u);
     EXPECT_TRUE(block.Usable(2));
+    EXPECT_FALSE(block.Usable(1));
+}
+
+TEST(MidiTransportBlockTest, AConsumerThatSeesANewEpochDiscardsOnlyItsOwnBacklog) {
+    MidiTransportBlock block;
+    block.Arm(1);
+    ASSERT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x90, 0x3C}, 0u)));
+    block.Arm(2);
+
+    block.hostToDevice[0].DiscardBacklog();
+    EXPECT_TRUE(block.hostToDevice[0].Empty());
+    // The producer's cursor and its drop/gap accounting were not written.
+    EXPECT_EQ(block.hostToDevice[0].writeIndex.load(), 2u);
+    EXPECT_EQ(block.hostToDevice[0].discontinuities.load(), 0u);
+    // The producer keeps working across the discard.
+    EXPECT_TRUE((block.hostToDevice[0].TryWrite(std::vector<uint8_t>{0x80, 0x3C, 0x40}, 0u)));
+    EXPECT_EQ(block.hostToDevice[0].Available(), 3u);
 }
 
 TEST(MidiTransportBlockTest, QuiesceStopsUseWithoutDestroyingTheMapping) {

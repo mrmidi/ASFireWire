@@ -200,8 +200,10 @@ struct MidiByteRing final {
     ///
     /// Not assignment: the atomics make MidiByteRing non-copyable, and that is
     /// the right default -- a ring in shared memory must never be clobbered
-    /// wholesale by a caller that merely has a reference to it. Only the owner
-    /// calls this, between streams, with no producer or consumer running.
+    /// wholesale by a caller that merely has a reference to it. Only for a ring
+    /// nobody else has mapped yet (construction, tests); once the block is
+    /// shared, a stream change goes through Arm and the consumers' own
+    /// DiscardBacklog, never through this.
     void Clear() noexcept {
         writeIndex.store(0, std::memory_order_relaxed);
         readIndex.store(0, std::memory_order_relaxed);
@@ -210,11 +212,25 @@ struct MidiByteRing final {
         discontinuityIndex.store(0, std::memory_order_relaxed);
     }
 
-    /// Drop everything buffered. Called on epoch change and teardown by the
-    /// side that owns the cursor being moved.
-    void ResetConsumer() noexcept {
+    /// Consumer: drop everything buffered, by moving only the consumer's own
+    /// cursor to the producer's.
+    ///
+    /// This is how a consumer discards a previous stream's bytes on an epoch
+    /// change. It never writes a producer-owned field, so it is safe while the
+    /// producer is still running: a byte enqueued concurrently is either
+    /// dropped with the backlog or kept whole, never half-seen. The consumer is
+    /// the one choosing to discard, so it resets its own parser at the same
+    /// moment and no discontinuity marker is needed.
+    void DiscardBacklog() noexcept {
         readIndex.store(writeIndex.load(std::memory_order_acquire),
                         std::memory_order_release);
+    }
+
+    /// Producer-side variant of the above, kept for callers that discard on
+    /// behalf of a stalled consumer: also marks the gap so the real consumer
+    /// resets its parser.
+    void ResetConsumer() noexcept {
+        DiscardBacklog();
         MarkDiscontinuity();
     }
 };
@@ -228,7 +244,7 @@ struct MidiTransportBlock final {
     /// Bumped when the layout changes, so a stale mapping is detected rather
     /// than silently misread.
     static constexpr uint32_t kMagic = 0x4D494449; // "MIDI"
-    static constexpr uint32_t kLayoutVersion = 2;
+    static constexpr uint32_t kLayoutVersion = 3;
 
     std::atomic<uint32_t> layoutVersion{kLayoutVersion};
     /// Stream epoch this content belongs to. A consumer that sees a different
@@ -247,13 +263,20 @@ struct MidiTransportBlock final {
                streamEpoch.load(std::memory_order_acquire) == expectedEpoch;
     }
 
-    /// Owner: arm for a new stream. Clears every ring and publishes the epoch
-    /// before marking the block active, so no consumer can observe live rings
-    /// carrying the previous stream's bytes.
+    /// Owner: arm for a new stream.
+    ///
+    /// Publishes the new epoch and marks the block active. It deliberately does
+    /// NOT clear the rings. Each ring has a producer and a consumer running on
+    /// other threads (the MIDI service's real-time callback, the receive queue,
+    /// the TX preparation queue), and an owner that zeroed the cursors would
+    /// write both of them: a producer that had already read the old write index
+    /// would store its run on top of the cleared ring and the next stream would
+    /// open with the previous stream's bytes. Instead every consumer compares
+    /// `streamEpoch` with the epoch it last served and, on a change, discards
+    /// its backlog with MidiByteRing::DiscardBacklog -- writing only its own
+    /// cursor -- and resets its parser or limiter.
     void Arm(uint64_t epoch) noexcept {
         active.store(0, std::memory_order_release);
-        for (auto& ring : deviceToHost) ring.Clear();
-        for (auto& ring : hostToDevice) ring.Clear();
         layoutVersion.store(kLayoutVersion, std::memory_order_relaxed);
         streamEpoch.store(epoch, std::memory_order_release);
         active.store(1, std::memory_order_release);

@@ -106,6 +106,9 @@ struct MidiDirectionCapabilities final {
     [[nodiscard]] constexpr bool Usable() const noexcept {
         return status == MidiCapabilityStatus::kOk && portCount > 0;
     }
+
+    friend constexpr bool operator==(const MidiDirectionCapabilities&,
+                                     const MidiDirectionCapabilities&) noexcept = default;
 };
 
 /// MIDI capability of one endpoint, both directions.

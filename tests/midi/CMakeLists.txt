@@ -39,3 +39,27 @@ add_midi_test(MpxMidiDemuxTests
 add_midi_test(MpxMidiTxTests
     MpxMidiTxTests.cpp
 )
+
+# Device -> host consumer: gap-safe drain, epoch handoff.
+add_midi_test(MidiRxDrainTests
+    MidiRxDrainTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Ump/MidiByteStreamToUmp.cpp"
+)
+
+# Host -> device producer: whole callbacks, transactional SysEx.
+add_midi_test(MidiTxIngressTests
+    MidiTxIngressTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Ump/UmpToMidiByteStream.cpp"
+)
+
+# Composition into armed packets built by the production packetizer.
+add_midi_test(MidiTxComposerTests
+    MidiTxComposerTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+)
+
