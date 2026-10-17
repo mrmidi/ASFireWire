@@ -8,6 +8,7 @@
 #include "MOTU/MotuProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
+#include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
 #include "RME/FirefaceProfile.hpp"
 
@@ -95,6 +96,7 @@ DiceProfile gGenericDiceProfile{{.name = "Generic DICE"}};
 // all of them. Device-specific code is controls only, and lives in the
 // protocol (the Duet's knob, params and meters).
 AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
+AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
@@ -189,7 +191,9 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MAudioProjectMix:
             return &gMAudioProjectMixProfile;
         // Its controls are the Duet protocol's; its streams are discovered.
+        // Timing is Apogee's own table (ApogeeDuetProfile.hpp).
         case Builder::ApogeeDuet:
+            return &gApogeeDuetProfile;
         case Builder::TerraTecPhase88:
         case Builder::MackieOnyxIOxfw:
         case Builder::GenericAvc:

@@ -126,6 +126,7 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
     "${ASFW_TESTS_DIR}/support/SimulatedAvcUnit.cpp"
