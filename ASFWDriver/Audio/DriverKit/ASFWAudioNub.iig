@@ -208,26 +208,6 @@ public:
     virtual kern_return_t ReadControlParameter(uint32_t parameterId, bool normalized,
         uint64_t* kind, uint64_t* bits);
 
-    // Confirmed graph-backed controls. token encodes subunit/block/channel;
-    // the nub validates it against the current graph before sending traffic.
-    virtual kern_return_t SetAvcFeatureControl(uint32_t token, bool muteControl,
-                                               int32_t value, int32_t* outConfirmedValue);
-
-    // Protocol-backed boolean control bridge. Same process as above - this
-    // crosses dispatch queues, not processes. No device currently answers these:
-    // the phantom/polarity path they served was removed with the CoreAudio
-    // control policy decision (FW-132), so IDeviceProtocol's defaults report
-    // kIOReturnUnsupported. Phantom and polarity move to the ASFW app over the
-    // user client instead.
-    virtual kern_return_t GetProtocolBooleanControl(
-        uint32_t classIdFourCC,
-        uint32_t element,
-        bool* outValue);
-
-    virtual kern_return_t SetProtocolBooleanControl(
-        uint32_t classIdFourCC,
-        uint32_t element,
-        bool value);
 };
 
 struct ASFWAudioNub_IVars {

@@ -48,7 +48,7 @@ void ControlService::SetRoute(uint64_t guid, uint64_t revision, AM::NodeId node,
 }
 
 void ControlService::SetParameter(uint64_t guid, uint64_t revision, AM::ParameterId id,
-    const AM::ParameterValue& value, IControlProvider::Completion done) const {
+    const AM::ParameterValue& value, IControlProvider::Completion done, std::function<bool()> active) const {
     const auto snapshot = CopySnapshot(guid);
     if (!snapshot) { done(kIOReturnNotReady, false); return; }
     if (snapshot->topology.revision != revision) { done(kIOReturnNotPermitted, false); return; }
@@ -74,7 +74,7 @@ void ControlService::SetParameter(uint64_t guid, uint64_t revision, AM::Paramete
                 done(status == kIOReturnSuccess && !confirmed ? kIOReturnError : status, confirmed.value_or(AM::ParameterValue{false}));
             });
         };
-        if (choice->levelParameter) SetParameter(guid, revision, *choice->levelParameter, *choice->levelValue, std::move(switchSource));
+        if (choice->levelParameter) SetParameter(guid, revision, *choice->levelParameter, *choice->levelValue, std::move(switchSource), active);
         else switchSource(kIOReturnSuccess, false);
         return;
     }
@@ -105,6 +105,6 @@ void ControlService::SetParameter(uint64_t guid, uint64_t revision, AM::Paramete
         : static_cast<int32_t>(std::lround(std::get<double>(value) * 256.0));
     WriteAvcFeature(unit, *route, *channel, mute, raw, [done = std::move(done), mute](auto status, int32_t raw) {
         done(status, mute ? AM::ParameterValue{raw != 0} : AM::ParameterValue{static_cast<double>(raw) / 256.0});
-    });
+    }, active ? std::move(active) : std::function<bool()>([] { return true; }));
 }
 } // namespace ASFW::Audio::Controls

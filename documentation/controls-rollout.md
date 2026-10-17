@@ -64,6 +64,15 @@ Fixes after the checkpoint:
 - Host-test mocks for the new driver/nub API; the HAL push test now covers
   level, boolean, selector and the re-read-all invalidation.
 
+Superseded paths removed: the AV/C-only CoreAudio path (`ASFWAvcLevelControl`,
+`SetAvcFeatureControl`/`ApplyAvcFeatureControl`, the `ASFWAvcControls` nub
+property and the driver's copies of it) and the protocol-boolean path
+(`ASFWProtocolBooleanControl`, `AudioControlBuilder`, `IDeviceProtocol`
+boolean virtuals), which nothing had published since FW-132. The AV/C config
+keeps its internal master list; it chooses the generic master volume/mute.
+The one behaviour of the old write path still missing was restored: a
+CoreAudio write whose 2 s wait timed out is not sent to the device late.
+
 Not done here: the composite Input Type is two writes, not atomic. If the
 source switch fails after the level write, the readback reports the device's
 real state.

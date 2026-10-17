@@ -86,10 +86,6 @@ public:
     kern_return_t RegisterControlChangeAction(OSAction* action) { controlChangeAction = action; return kIOReturnSuccess; }
     OSAction* controlChangeAction{nullptr};
 
-    kern_return_t SetProtocolBooleanControl(uint32_t, uint32_t, bool) { return kIOReturnUnsupported; }
-    kern_return_t GetProtocolBooleanControl(uint32_t, uint32_t, bool*) { return kIOReturnUnsupported; }
-    kern_return_t SetAvcFeatureControl(uint32_t, bool, int32_t, int32_t*) { ++featureWrites; return kIOReturnUnsupported; }
-    uint32_t featureWrites{0};
     // Generic parameter seam. A push must never cause a write; reads answer
     // from `readValues` (parameter -> {kind, bits}), as the controller's state.
     kern_return_t SetControlParameter(uint32_t, uint64_t, uint64_t, uint64_t*, uint64_t*) {

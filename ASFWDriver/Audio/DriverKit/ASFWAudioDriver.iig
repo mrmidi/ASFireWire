@@ -67,15 +67,6 @@ public:
     kern_return_t ApplyControlParameter(uint32_t parameterId, uint64_t kind, uint64_t bits,
         uint64_t* confirmedKind, uint64_t* confirmedBits) LOCALONLY;
 
-    kern_return_t ApplyAvcFeatureControl(uint32_t token, bool muteControl,
-                                        int32_t value, int32_t* outConfirmedValue) LOCALONLY;
-    // Protocol-backed boolean control bridge (used by custom control subclass).
-    kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
-                                              uint32_t element,
-                                              bool value) LOCALONLY;
-    kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
-                                             uint32_t element,
-                                             bool* outValue) LOCALONLY;
 };
 
 #endif /* ASFWAudioDriver_h */

@@ -3,8 +3,8 @@
 //
 // AvcControlWrite.hpp - the one AV/C feature write path (FW-206).
 //
-// CoreAudio (ASFWAudioNub::SetAvcFeatureControl) and the app/MCP (user-client
-// SetControlParameter) both write through here, so a value set from either side
+// CoreAudio (ASFWAudioNub::SetControlParameter) and the app/MCP (user-client
+// SetControlParameter) both reach it through ControlService, so a value set from either side
 // is confirmed the same way and lands in the same place: CONTROL, then a STATUS
 // readback (SetAvcFeature), then the confirmed reply republishes the unit's
 // immutable graph (AVCUnit::RememberConfirmedFeature). The graph is the only

@@ -2,7 +2,7 @@
 // ASFWAudioDriverControls.cpp
 // ASFWDriver
 //
-// Protocol-backed control forwarding for ASFWAudioDriver.
+// CoreAudio control writes and confirmed-value pushes for ASFWAudioDriver.
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
@@ -14,36 +14,6 @@ kern_return_t ASFWAudioDriver::ApplyControlParameter(uint32_t parameterId, uint6
     uint64_t* confirmedKind, uint64_t* confirmedBits) {
     if (!ivars || !ivars->device.audioNub) return kIOReturnNotReady;
     return ivars->device.audioNub->SetControlParameter(parameterId, kind, bits, confirmedKind, confirmedBits);
-}
-
-kern_return_t ASFWAudioDriver::ApplyProtocolBooleanControl(uint32_t classIdFourCC,
-                                                           uint32_t element,
-                                                           bool value)
-{
-    if (!ivars || !ivars->device.audioNub) {
-        return kIOReturnNotReady;
-    }
-    return ivars->device.audioNub->SetProtocolBooleanControl(classIdFourCC, element, value);
-}
-
-kern_return_t ASFWAudioDriver::ReadProtocolBooleanControl(uint32_t classIdFourCC,
-                                                          uint32_t element,
-                                                          bool* outValue)
-{
-    if (!outValue) {
-        return kIOReturnBadArgument;
-    }
-    *outValue = false;
-    if (!ivars || !ivars->device.audioNub) {
-        return kIOReturnNotReady;
-    }
-    return ivars->device.audioNub->GetProtocolBooleanControl(classIdFourCC, element, outValue);
-}
-
-kern_return_t ASFWAudioDriver::ApplyAvcFeatureControl(uint32_t token, bool muteControl,
-                                                     int32_t value, int32_t* outConfirmedValue) {
-    if (!ivars || !ivars->device.audioNub) return kIOReturnNotReady;
-    return ivars->device.audioNub->SetAvcFeatureControl(token, muteControl, value, outConfirmedValue);
 }
 
 namespace {

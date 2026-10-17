@@ -50,9 +50,6 @@ public:
     std::vector<uint32_t> stoppedDevices;
     uint32_t stopDeviceAt{0};
 
-    kern_return_t ApplyProtocolBooleanControl(uint32_t, uint32_t, bool);
-    kern_return_t ReadProtocolBooleanControl(uint32_t, uint32_t, bool*);
-    kern_return_t ApplyAvcFeatureControl(uint32_t, bool, int32_t, int32_t*);
     kern_return_t ApplyControlParameter(uint32_t, uint64_t, uint64_t, uint64_t*, uint64_t*);
     void ControlParameterChanged_Impl(ASFWAudioDriver_ControlParameterChanged_Args);
     void ZtsAnchorReady_Impl(ASFWAudioDriver_ZtsAnchorReady_Args);

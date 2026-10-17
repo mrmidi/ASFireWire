@@ -22,27 +22,14 @@ constexpr uint32_t kMaxSampleRates = 8;
 // so per-channel device labels can be carried for every element, not just the
 // first 8. Each name is at most 64 bytes (see ParsedAudioDriverConfig).
 constexpr uint32_t kMaxNamedChannels = ::ASFW::Audio::Runtime::kMaxHostPcmChannels;
-constexpr uint32_t kMaxBoolControls = 16;
 /// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
 /// Duplicated rather than included so this header stays on the AudioDriverKit
 /// side of the nub; DiceFamilyAdapter static_asserts the two agree.
 constexpr uint32_t kMaxConfiguredStreams = 4;
 
-constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
-constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
-constexpr uint32_t kScopeInput = static_cast<uint32_t>('inpt');
-
 enum class StreamMode : uint32_t {
     kNonBlocking = 0,
     kBlocking = 1,
-};
-
-struct BoolControlDescriptor {
-    uint32_t classIdFourCC{0};
-    uint32_t scopeFourCC{0};
-    uint32_t element{0};
-    bool isSettable{false};
-    bool initialValue{false};
 };
 
 /// One isochronous stream's resolved wire shape, parsed from the nub.
@@ -100,10 +87,6 @@ struct ParsedAudioDriverConfig {
     bool deviceSampleRates{false};
 
     std::vector<::ASFW::Audio::Controls::CoreAudioControl> parameterControls;
-    uint32_t avcControlCount{0};
-    ::ASFW::Audio::Model::AvcPublishedControl avcControls[::ASFW::Audio::Model::kMaxAvcControls]{};
-    uint32_t boolControlCount{0};
-    BoolControlDescriptor boolControls[kMaxBoolControls]{};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
