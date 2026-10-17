@@ -917,14 +917,13 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
         return kIOReturnNoResources;
     }
 
-    ASFW_LOG(UserClient, "[Lifecycle] NewUserClient manual Start client=%p provider=%p", client, this);
-    ret = client->Start(this);
-    if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "NewUserClient Start failed: 0x%08x", ret);
-        client->release();
-        return ret;
-    }
-
+    // No Start here: DriverKit starts the client itself after this returns.
+    // Each successful Start retains the provider until Stop (IOService.iig),
+    // and a client also started here was started twice and stopped once, so
+    // every app connection left this driver one reference it never dropped:
+    // free() never ran and the dext process outlived every unplug and
+    // upgrade (2026-10-17). IOService.iig's NewUserClient and
+    // ADKVirtualAudioLab's NewUserClient_Impl both only Create.
     *userClient = client;
     ASFW_LOG(Controller, "NewUserClient success (client=%p)", client);
     return kIOReturnSuccess;
