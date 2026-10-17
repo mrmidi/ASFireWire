@@ -241,6 +241,7 @@ enum ClauseConstraintBit : uint16_t {
         case ProfileBuilderId::Motu896mk3:
         case ProfileBuilderId::MotuUltraliteMk3:
         case ProfileBuilderId::MotuTravelerMk3:
+        case ProfileBuilderId::MotuTrack16:
             return ProtocolImplementationId::MotuRegister;
         case ProfileBuilderId::RmeFireface400:
         case ProfileBuilderId::RmeFireface800:

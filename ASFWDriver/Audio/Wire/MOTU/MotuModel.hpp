@@ -9,7 +9,9 @@
 
 namespace ASFW::Encoding::Motu {
 enum class ProtocolVersion : uint8_t { V1 = 1, V2, V3 };
-enum class OpticalLayout : uint8_t { None, V2, V2EightPre, V3Banks };
+// V3BankA: one optical bank. Vendor BoxTrack16::SetupStrmFwIds @0x51330 reads only
+// the bank-A bits of 0x0c94 (in 0x1/0x10000, out 0x100/0x40000).
+enum class OpticalLayout : uint8_t { None, V2, V2EightPre, V3Banks, V3BankA };
 enum class FetchRule : uint8_t { None, Traveler, Spartan, V3 };
 // How far ahead of its transmit cycle a packet's presentation time is: the
 // first DATA packet's first block is stamped with its transmit time plus this
@@ -73,16 +75,18 @@ inline constexpr std::array kModels{
     Model{0x33, "Audio Express", ProtocolVersion::V3, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::V3},
     Model{0x35, "828mk3 Hybrid", ProtocolVersion::V3, {18,18,14}, {14,14,14}, OpticalLayout::V3Banks, FetchRule::V3, 4},
     Model{0x37, "896mk3 Hybrid", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 5},
-    Model{0x39, "Track16", ProtocolVersion::V3, {14,14,14}, {6,6,6}, OpticalLayout::V3Banks, FetchRule::V3, 7},
+    Model{0x39, "Track16", ProtocolVersion::V3, {14,14,14}, {6,6,6}, OpticalLayout::V3BankA, FetchRule::V3, 0, kTimingBeforeFetch},
     Model{0x45, "4pre", ProtocolVersion::V3, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::V3},
 };
 // Vendor 896mk3 SetupStrmFwIds @0x3f118 compares provider Gestalt to
 // 0x31333934 ("1394"): FireWire selects 18 playback chunks at 1x, matching
 // Linux motu-protocol-v3.c. The 16-chunk branch belongs to other providers.
+// Track16 is a USB/FireWire hybrid, but its vendor FireWire class (BoxTrack16)
+// does not consult Gestalt: one geometry, matching Linux motu-protocol-v3.c:330-337.
 [[nodiscard]] constexpr bool FireWireOnly(uint32_t version) noexcept {
     switch (version) {
     case 1: case 2: case 3: case 5: case 9: case 0xd: case 0xf:
-    case 0x15: case 0x17: case 0x19: case 0x1b: return true;
+    case 0x15: case 0x17: case 0x19: case 0x1b: case 0x39: return true;
     default: return false;
     }
 }
