@@ -45,7 +45,7 @@ inline std::optional<DuetControlWrite> BuildDuetParameterWrite(const DuetControl
     else if (id >= DuetControl::OutputVolume && id <= DuetControl::HeadphoneMuteMode) {
         group = DuetControlGroup::Output;
         switch (id) {
-            case DuetControl::OutputVolume: next.output.volume = static_cast<uint8_t>(std::lround(std::get<double>(value) + 64)); break;
+            case DuetControl::OutputVolume: next.output.volume = static_cast<uint8_t>(std::lround(-std::get<double>(value))); break;
             case DuetControl::OutputMute: next.output.mute = std::get<bool>(value); break;
             case DuetControl::OutputSource: next.output.source = static_cast<OutputSource>(std::get<int64_t>(value)); break;
             case DuetControl::OutputLevel: next.output.nominalLevel = static_cast<OutputNominalLevel>(std::get<int64_t>(value)); break;
