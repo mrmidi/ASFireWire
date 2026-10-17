@@ -104,7 +104,9 @@ TEST(AvcControlProjection, SelectorBecomesARouterWithTheConfirmedInputActive) {
     ASSERT_NE(router, model.topology.nodes.end());
     EXPECT_EQ(router->name, "Selector 2"); // unnamed block gets a stable fallback
     const auto& body = std::get<AM::RouterNode>(router->body);
-    EXPECT_EQ(body.inputs.size(), 3U);
+    EXPECT_EQ(body.inputs.size(), 6U);
+    EXPECT_EQ(body.outputs.size(), 2U);
+    EXPECT_EQ(body.legalBundles.front().routes.size(), 2U);
     EXPECT_EQ(body.legalBundles.size(), 3U);
     const auto& active = model.state.routers.at(router->id).activeBundles;
     ASSERT_EQ(active.size(), 1U);
@@ -129,6 +131,27 @@ TEST(AvcControlProjection, IdsAreStableAcrossProjectionsOfTheSameGraph) {
     ASSERT_EQ(a.topology.parameters.size(), b.topology.parameters.size());
     for (size_t i = 0; i < a.topology.parameters.size(); ++i)
         EXPECT_EQ(a.topology.parameters[i].id, b.topology.parameters[i].id);
+}
+
+
+TEST(AvcControlProjection, DescriptorPathsConnectHostChannelsWithoutGuessing) {
+    auto graph = Graph();
+    graph.controls.front().inputSources = {Source{0xF0, 0}};
+    graph.playback.channelCount = graph.capture.channelCount = 2;
+    graph.playbackAudioChannels = {{0, 0, 0, 0}, {1, 0, 0, 1}};
+    graph.captureAudioChannels = {{0, 0, 1, 0}, {1, 0, 1, 1}};
+    graph.audioSourcePlugs = {{0, 1, Source{static_cast<uint8_t>(BlockType::kFeature), 1}}};
+    auto model = ProjectAvcControls(graph, 7);
+    ASSERT_TRUE(AM::validate(model.topology)) << AM::validate(model.topology).error().message;
+    EXPECT_EQ(model.topology.fixedLinks.size(), 8U); // both selector sources, feature input, capture
+    EXPECT_EQ(std::ranges::count_if(model.topology.nodes, [](const auto& n) {
+        return std::holds_alternative<AM::EndpointNode>(n.body);
+    }), 2);
+    graph.playbackAudioChannels[1].position = 0; // malformed evidence cannot become an endpoint
+    model = ProjectAvcControls(graph, 7);
+    EXPECT_EQ(std::ranges::count_if(model.topology.ports, [](const auto& p) {
+        return p.signal.kind == AM::SignalKind::HostStream && p.direction == AM::PortDirection::Output;
+    }), 0);
 }
 
 TEST(AvcControlProjection, ConfirmedWriteShowsUpInTheNextProjection) {

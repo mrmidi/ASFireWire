@@ -12,6 +12,10 @@
 
 #include "ApogeeParamsSerdes.hpp"
 #include "ApogeeTransport.hpp"
+#include "../../../Controls/ControlNotifications.hpp"
+#include "../../../Model/Topology/Validate.hpp"
+#include <algorithm>
+#include <bit>
 
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Protocols/AVC/CMP/CMPClient.hpp"
@@ -49,6 +53,7 @@ IOReturn ApogeeDuetProtocol::Initialize() {
 }
 
 IOReturn ApogeeDuetProtocol::Shutdown() {
+    StopControlPoll(); controlsReady_ = false; controlBusy_ = false; ++controlsEpoch_;
     duplex_.Shutdown();
     return kIOReturnSuccess;
 }
@@ -65,7 +70,10 @@ void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
 void ApogeeDuetProtocol::ExecuteVendorSequence(const std::vector<VendorCommand>& commands,
                                                bool isStatus,
                                                VendorSequenceCallback callback) {
-    VendorFcp::ExecuteSequence(runtime_.avcUnit, commands, isStatus, std::move(callback));
+    const auto unit = runtime_.avcUnit;
+    const auto route = runtime_.route;
+    VendorFcp::ExecuteSequence(unit, commands, isStatus, std::move(callback),
+        [unit, route] { return unit && unit->IsCurrentRoute(route); });
 }
 
 void ApogeeDuetProtocol::GetKnobState(ResultCallback<KnobState> callback) {
@@ -248,6 +256,230 @@ void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
     Oxford::ReadHardwareId(runtime_.busOps, MakeRouteProvider(), std::move(callback));
+}
+
+
+std::optional<ASFW::Audio::Controls::ControlSnapshot> ApogeeDuetProtocol::CopySnapshot() const {
+    return controlsReady_ ? controlSnapshot_ : std::nullopt;
+}
+
+void ApogeeDuetProtocol::ReadControlGroup(DuetControlGroup group, VoidCallback done) {
+    auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
+    if (!self || !runtime_.avcUnit) { done(kIOReturnNotReady); return; }
+    const auto epoch = controlsEpoch_;
+    auto finish = [self, epoch, done](IOReturn status, auto apply) {
+        if (epoch != self->controlsEpoch_) { done(kIOReturnAborted); return; }
+        if (status == kIOReturnSuccess) apply();
+        done(status);
+    };
+    switch (group) {
+        case DuetControlGroup::Input:
+            GetInputParams([self, finish](auto status, auto input) { finish(status, [self, input] { self->controls_.input = input; }); }); break;
+        case DuetControlGroup::Output:
+            GetOutputParams([self, finish](auto status, auto output) { finish(status, [self, output] { self->controls_.output = output; }); }); break;
+        case DuetControlGroup::Mixer:
+            GetMixerParams([self, finish](auto status, auto mixer) { finish(status, [self, mixer] { self->controls_.mixer = mixer; }); }); break;
+        case DuetControlGroup::Display:
+            GetDisplayParams([self, finish](auto status, auto display) { finish(status, [self, display] { self->controls_.display = display; }); }); break;
+        case DuetControlGroup::Knob:
+            GetKnobState([self, finish](auto status, auto knob) { finish(status, [self, knob] {
+                self->controls_.knob = knob;
+                self->controls_.input.gains = knob.inputGains;
+                self->controls_.output.volume = knob.outputVolume;
+                self->controls_.output.mute = knob.outputMute;
+            }); }); break;
+        case DuetControlGroup::Action: done(kIOReturnSuccess); break;
+    }
+}
+void ApogeeDuetProtocol::Prepare(std::function<void(IOReturn)> done) {
+    if (controlsReady_) { done(kIOReturnSuccess); return; }
+    if (controlBusy_ || !runtime_.avcUnit) { done(kIOReturnNotReady); return; }
+    auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
+    if (!self) { done(kIOReturnNotReady); return; }
+    controlBusy_ = true;
+    const auto epoch = controlsEpoch_;
+    // Each continuation owns the protocol. No queue waits while FCP is pending.
+    auto finish = [self, epoch, done](IOReturn status) {
+        if (epoch != self->controlsEpoch_) { done(kIOReturnAborted); return; }
+        if (status == kIOReturnSuccess) {
+            self->controlsReady_ = true;
+            if (!self->CommitControls()) { self->controlsReady_ = false; status = kIOReturnError; }
+        }
+        self->controlBusy_ = false;
+        if (status == kIOReturnSuccess) self->ScheduleControlPoll();
+        done(status);
+    };
+    ReadControlGroup(DuetControlGroup::Input, [self, finish](auto status) {
+        if (status != kIOReturnSuccess) { finish(status); return; }
+        self->ReadControlGroup(DuetControlGroup::Output, [self, finish](auto status) {
+            if (status != kIOReturnSuccess) { finish(status); return; }
+            self->ReadControlGroup(DuetControlGroup::Mixer, [self, finish](auto status) {
+                if (status != kIOReturnSuccess) { finish(status); return; }
+                self->ReadControlGroup(DuetControlGroup::Display, [self, finish](auto status) {
+                    if (status != kIOReturnSuccess) { finish(status); return; }
+                    self->ReadControlGroup(DuetControlGroup::Knob, finish);
+                });
+            });
+        });
+    });
+}
+bool ApogeeDuetProtocol::CommitControls() {
+    namespace AM = ASFW::AudioModel;
+    namespace C = ASFW::Audio::Controls;
+    auto next = BuildDuetControls(controls_, runtime_.route.routeEpoch,
+        controlSnapshot_ ? controlSnapshot_->sequence : 0);
+    if (!AM::validate(next.topology) || !AM::validateState(next.topology, next.state)) return false;
+    if (!controlSnapshot_ || controlSnapshot_->topology.revision != next.topology.revision) {
+        const bool rebound = controlSnapshot_.has_value();
+        if (rebound) next.sequence = C::ControlNotifications::Shared().NextSequence();
+        controlSnapshot_ = std::move(next);
+        if (rebound) C::ControlNotifications::Shared().Publish({runtime_.route.guid,
+            controlSnapshot_->topology.revision, controlSnapshot_->sequence, 0, 4, 0});
+        return true;
+    }
+    bool metadata = false;
+    for (const auto& [id, state] : next.state.routers) {
+        const auto old = controlSnapshot_->state.routers.find(id);
+        if (old == controlSnapshot_->state.routers.end() || old->second.activeBundles != state.activeBundles) metadata = true;
+    }
+    std::vector<C::ParameterChanged> events;
+    for (const auto& [id, state] : next.state.parameters) {
+        const auto old = controlSnapshot_->state.parameters.find(id);
+        if (old == controlSnapshot_->state.parameters.end()) { metadata = true; continue; }
+        if (old->second.domainOverride != state.domainOverride || old->second.applicable != state.applicable) metadata = true;
+        if (old->second.value == state.value) continue;
+        C::ParameterChanged event{runtime_.route.guid, next.topology.revision, 0, id.value, 0, 0};
+        std::visit([&](const auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, bool>) { event.kind = 0; event.bits = value; }
+            else if constexpr (std::is_same_v<T, double>) { event.kind = 1; event.bits = std::bit_cast<uint64_t>(value); }
+            else if constexpr (std::is_same_v<T, int64_t>) { event.kind = 2; event.bits = static_cast<uint64_t>(value); }
+        }, state.value);
+        events.push_back(event);
+    }
+    if (metadata) events = {{runtime_.route.guid, next.topology.revision, 0, 0, 4, 0}};
+    for (auto& event : events) event.sequence = next.sequence = C::ControlNotifications::Shared().NextSequence();
+    controlSnapshot_ = std::move(next); // exact values/watermark before fan-out
+    for (const auto& event : events) C::ControlNotifications::Shared().Publish(event);
+    return true;
+}
+void ApogeeDuetProtocol::StopControlPoll() {
+    if (runtime_.timerScheduler && controlPoll_ != Scheduling::kInvalidTimerToken)
+        runtime_.timerScheduler->Cancel(controlPoll_);
+    controlPoll_ = Scheduling::kInvalidTimerToken;
+}
+void ApogeeDuetProtocol::ScheduleControlPoll() {
+    StopControlPoll();
+    if (!controlsReady_ || !runtime_.timerScheduler) return;
+    const auto weak = weak_from_this();
+    controlPoll_ = runtime_.timerScheduler->ScheduleAfter(500'000'000, [weak] {
+        const auto owner = weak.lock();
+        if (!owner) return;
+        auto* self = static_cast<ApogeeDuetProtocol*>(owner.get());
+        self->controlPoll_ = Scheduling::kInvalidTimerToken;
+        self->PollControls();
+    });
+}
+void ApogeeDuetProtocol::PollControls() {
+    if (!controlsReady_) return;
+    if (controlBusy_) { ScheduleControlPoll(); return; }
+    auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
+    if (!self) return;
+    controlBusy_ = true;
+    const auto epoch = controlsEpoch_;
+    ReadControlGroup(DuetControlGroup::Knob, [self, epoch](auto status) {
+        if (epoch != self->controlsEpoch_) return;
+        if (status == kIOReturnSuccess) (void)self->CommitControls();
+        self->controlBusy_ = false;
+        self->ScheduleControlPoll();
+    });
+}
+void ApogeeDuetProtocol::FinishControlWrite(AudioModel::ParameterId id, Completion done) {
+    if (!CommitControls()) { controlBusy_ = false; done(kIOReturnError, false); return; }
+    controlBusy_ = false;
+    const auto found = controlSnapshot_->state.parameters.find(id);
+    if (found == controlSnapshot_->state.parameters.end()) { done(kIOReturnError, false); return; }
+    done(kIOReturnSuccess, found->second.value);
+}
+void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value, Completion done) {
+    if (!controlsReady_ || controlBusy_) { done(kIOReturnNotReady, false); return; }
+    auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
+    if (!self) { done(kIOReturnNotReady, false); return; }
+    const auto write = BuildDuetParameterWrite(controls_, id, value);
+    if (!write) { done(kIOReturnBadArgument, false); return; }
+    controlBusy_ = true;
+    const auto epoch = controlsEpoch_;
+    if (write->group == DuetControlGroup::Action) {
+        ClearDisplay([self, epoch, done](auto status) {
+            if (epoch == self->controlsEpoch_) self->controlBusy_ = false;
+            done(epoch == self->controlsEpoch_ ? status : kIOReturnAborted, AudioModel::ActionTrigger{});
+        });
+        return;
+    }
+    // The HW_STATE setter contains gain/volume as well as target: refresh it
+    // immediately before changing target so a knob movement is not overwritten.
+    auto send = [self, epoch, id, value, done](IOReturn status) {
+        if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+        if (status != kIOReturnSuccess) { self->controlBusy_ = false; done(status, false); return; }
+        const auto plan = BuildDuetParameterWrite(self->controls_, id, value);
+        if (!plan) { self->controlBusy_ = false; done(kIOReturnBadArgument, false); return; }
+        self->ExecuteVendorSequence(plan->commands, false, [self, epoch, id, done, group = plan->group](auto status, const auto&) {
+            if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+            if (status != kIOReturnSuccess) {
+                // A multi-command group can partially apply. Re-read it before
+                // accepting any later write; never publish the intended image.
+                self->ReadControlGroup(group, [self, epoch, done, status](auto readStatus) {
+                    if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+                    if (readStatus == kIOReturnSuccess) (void)self->CommitControls();
+                    self->controlBusy_ = false; done(status, false);
+                });
+                return;
+            }
+            self->ReadControlGroup(group, [self, epoch, id, done](auto status) {
+                if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+                if (status != kIOReturnSuccess) { self->controlBusy_ = false; done(status, false); return; }
+                self->FinishControlWrite(id, done);
+            });
+        });
+    };
+    if (write->group == DuetControlGroup::Knob) ReadControlGroup(DuetControlGroup::Knob, std::move(send));
+    else send(kIOReturnSuccess);
+}
+void ApogeeDuetProtocol::SetRoute(AudioModel::NodeId router, AudioModel::PortId output,
+    std::optional<AudioModel::PortId> input, Completion done) {
+    if (!controlsReady_ || controlBusy_ || !input) { done(kIOReturnNotReady, false); return; }
+    if (router.value < DuetControl::InputRouter || router.value >= DuetControl::InputRouter + 2) {
+        done(kIOReturnUnsupported, false); return;
+    }
+    const auto ch = router.value - DuetControl::InputRouter;
+    const auto node = std::ranges::find(controlSnapshot_->topology.nodes, router, &AudioModel::Node::id);
+    if (node == controlSnapshot_->topology.nodes.end()) { done(kIOReturnNotFound, false); return; }
+    const auto& routes = std::get<AudioModel::RouterNode>(node->body);
+    const auto source = std::ranges::find(routes.inputs, *input);
+    if (routes.outputs != std::vector{output} || source == routes.inputs.end()) { done(kIOReturnBadArgument, false); return; }
+    auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
+    if (!self) { done(kIOReturnNotReady, false); return; }
+    const bool phone = source - routes.inputs.begin() == 1;
+    controlBusy_ = true; const auto epoch = controlsEpoch_;
+    // XLR level is set separately, before this source switch (generic composite).
+    ExecuteVendorSequence({VendorCommand::IndexedBool(VendorCommand::Code::InputSourceIsPhone,
+        static_cast<uint8_t>(ch), phone)}, false, [self, epoch, router, output, input, done](auto status, const auto&) {
+        if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+        self->ReadControlGroup(DuetControlGroup::Input, [self, epoch, router, input, done, status](auto readStatus) {
+            if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
+            if (readStatus == kIOReturnSuccess && !self->CommitControls()) readStatus = kIOReturnError;
+            self->controlBusy_ = false;
+            if (status != kIOReturnSuccess || readStatus != kIOReturnSuccess) {
+                done(status != kIOReturnSuccess ? status : readStatus, false); return;
+            }
+            const auto& active = self->controlSnapshot_->state.routers.at(router).activeBundles;
+            const uint32_t selected = self->controls_.input.sources[router.value - DuetControl::InputRouter] == InputSource::Phone ? 2 : 1;
+            if (active != std::vector{AudioModel::RouteBundleId{selected}}) { done(kIOReturnError, false); return; }
+            const auto& actualRouter = std::get<AudioModel::RouterNode>(std::ranges::find(
+                self->controlSnapshot_->topology.nodes, router, &AudioModel::Node::id)->body);
+            done(kIOReturnSuccess, int64_t(actualRouter.inputs[selected - 1].value));
+        });
+    });
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee

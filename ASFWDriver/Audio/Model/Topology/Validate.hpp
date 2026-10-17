@@ -77,6 +77,10 @@ std::expected<void, StateError> validateParameterValue(
     ParameterId id,
     const ParameterValue& value);
 
+/// Resolve one output edit to its indivisible route bundle and validate the result.
+[[nodiscard]] std::expected<RouterState, StateError> prepareRouteWrite(
+    const Topology&, const DeviceState&, NodeId router, PortId output, std::optional<PortId> input);
+
 std::expected<void, StateError> validateRouterState(
     const Topology& topology,
     NodeId routerNodeId,

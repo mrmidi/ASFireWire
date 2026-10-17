@@ -6,6 +6,7 @@
 //
 
 #pragma once
+#include "../Controls/CoreAudioControlProperties.hpp"
 
 #include "AudioPropertyKeys.hpp"
 #include "AvcVolumeMapping.hpp"
@@ -88,6 +89,7 @@ struct ASFWAudioDevice {
     /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
     bool resolvedGeometryRequired{false};
     bool graphResolved{false};
+    std::vector<Controls::CoreAudioControl> parameterControls;
     std::vector<AvcPublishedControl> avcControls;
 
     /// `sampleRates` came from the device (DICE CLOCK_CAPABILITIES) and the
@@ -242,6 +244,10 @@ struct ASFWAudioDevice {
             }
             properties->setObject(PropertyKeys::kDeviceSampleRates, fromDevice.get());
         }
+
+        auto parameterProperties = Controls::EncodeControls(parameterControls);
+        if (!parameterProperties) return false;
+        properties->setObject(Controls::kControlsProperty, parameterProperties.get());
 
         auto controls = OSSharedPtr(OSArray::withCapacity(static_cast<uint32_t>(avcControls.size())), OSNoRetain);
         if (!controls) return false;

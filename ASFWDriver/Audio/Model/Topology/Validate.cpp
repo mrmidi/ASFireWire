@@ -371,6 +371,7 @@ void validateRouting(const Topology& topology,
 
             // RouteBundleId is router-local
             std::unordered_set<RouteBundleId> seenBundleIds;
+            std::unordered_set<uint64_t> allBundleRoutes;
 
             for (const auto& bundle : router->legalBundles) {
                 if (auto [_, inserted] = seenBundleIds.insert(bundle.id); !inserted) {
@@ -390,6 +391,9 @@ void validateRouting(const Topology& topology,
                 std::unordered_set<uint64_t> seenRoutesInBundle;
                 for (const auto& route : bundle.routes) {
                     const uint64_t routeKey = (static_cast<uint64_t>(route.input.value) << 32) | route.output.value;
+                    if (!allBundleRoutes.insert(routeKey).second)
+                        errors.push_back({TopologyErrorKind::DuplicateRouteOrCrosspoint,
+                            "A route must belong to exactly one bundle"});
                     if (auto [_, inserted] = seenRoutesInBundle.insert(routeKey); !inserted) {
                         errors.push_back({
                             TopologyErrorKind::DuplicateRouteOrCrosspoint,
@@ -777,6 +781,38 @@ std::expected<void, StateError> validateParameterWrite(
     auto requested = current->second;
     requested.value = value;
     return validateParameterState(*found, requested);
+}
+
+std::expected<RouterState, StateError> prepareRouteWrite(
+    const Topology& topology, const DeviceState& state, NodeId id, PortId output, std::optional<PortId> input) {
+    if (state.topologyRevision != topology.revision)
+        return std::unexpected(StateError{StateErrorKind::TopologyRevisionMismatch, "Stale router state"});
+    const auto node = std::ranges::find(topology.nodes, id, &Node::id);
+    const auto* router = node == topology.nodes.end() ? nullptr : std::get_if<RouterNode>(&node->body);
+    const auto current = state.routers.find(id);
+    if (!router || current == state.routers.end())
+        return std::unexpected(StateError{StateErrorKind::NonexistentRouter, "Unknown router"});
+    if (!router->writable)
+        return std::unexpected(StateError{StateErrorKind::ReadOnlyParameter, "Routing is read-only"});
+    if (std::ranges::find(router->outputs, output) == router->outputs.end())
+        return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Unknown router output"});
+    auto requested = current->second;
+    const RouteBundle* target = nullptr;
+    for (const auto& bundle : router->legalBundles) for (const auto& route : bundle.routes)
+        if (input && route.input == *input && route.output == output) {
+            if (target) return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Route belongs to multiple bundles"});
+            target = &bundle;
+        }
+    if (input && !target)
+        return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Route is not legal"});
+    std::erase_if(requested.activeBundles, [&](auto bundleId) {
+        const auto bundle = std::ranges::find(router->legalBundles, bundleId, &RouteBundle::id);
+        return bundle != router->legalBundles.end() && std::ranges::any_of(bundle->routes,
+            [&](const auto& route) { return route.output == output; });
+    });
+    if (target) requested.activeBundles.push_back(target->id);
+    if (const auto valid = validateRouterState(topology, id, requested); !valid) return std::unexpected(valid.error());
+    return requested;
 }
 
 std::expected<void, StateError> validateRouterState(

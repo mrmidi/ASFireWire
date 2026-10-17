@@ -45,6 +45,7 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     }
     state = {};
 
+    ivars.device.parameterControls.clear();
     for (auto& slot : ivars.device.avcControlSlots) slot = {};
     ivars.device.controlRevision = 0;
     ivars.device.avcControlCount = 0;

@@ -5,6 +5,8 @@
 
 #include "ControlSnapshotDocument.hpp"
 #include "JsonWriter.hpp"
+#include "../../Audio/Controls/CoreAudioProjection.hpp"
+#include <algorithm>
 
 #include <cmath>
 #include <cstdio>
@@ -130,6 +132,7 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
                 j.Key("inputs"); PortList(j, body.inputs);
                 j.Key("outputs"); PortList(j, body.outputs);
                 if constexpr (std::is_same_v<T, AM::RouterNode>) {
+                    j.Key("writable").Bool(body.writable);
                     j.Key("bundles").Open('[');
                     for (const auto& bundle : body.legalBundles) {
                         j.Open('{');
@@ -160,12 +163,25 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
         j.Key("direction").String(port.direction == AM::PortDirection::Input ? "in" : "out");
         j.Key("channels").Number(port.channels);
         j.Key("name").String(port.name);
+        j.Key("signalKind").Number(static_cast<uint8_t>(port.signal.kind));
+        j.Key("signalIndex").Number(port.signal.index);
         j.Close('}');
     }
     j.Close(']');
 
+    j.Key("fixedLinks").Open('[');
+    for (const auto& link : topology.fixedLinks)
+        j.Open('[').Number(link.source.value).Number(link.destination.value).Close(']');
+    j.Close(']');
+
+    const auto inputTypes = ASFW::Audio::Controls::ProjectInputTypes(topology, state);
     j.Key("parameters").Open('[');
     for (const auto& parameter : topology.parameters) {
+        // App projection uses the same composite choices as CoreAudio. The
+        // real connector/level parameters remain in the provider's model.
+        if (std::ranges::any_of(inputTypes, [&](const auto& type) {
+            return std::ranges::any_of(type.choices, [&](const auto& choice) { return choice.levelParameter == parameter.id; });
+        })) continue;
         j.Open('{');
         j.Key("id").Number(parameter.id.value);
         j.Key("name").String(parameter.name);
@@ -200,6 +216,23 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
             j.Key("origin").Null();
         }
         j.Close('}');
+    }
+    const auto projected = ASFW::Audio::Controls::ProjectCoreAudioControls(topology, state);
+    for (const auto& type : inputTypes) {
+        const auto id = ASFW::Audio::Controls::InputTypeParameterId(type.router);
+        const auto descriptor = std::ranges::find(projected, id, &ASFW::Audio::Controls::CoreAudioControl::parameter);
+        j.Open('{');
+        j.Key("id").Number(id.value); j.Key("name").String("Input Type");
+        j.Key("semantic").String("nominalLevel");
+        j.Key("target").Open('{').Key("node").Number(type.router.value).Close('}');
+        j.Key("domain").Open('{').Key("kind").String("enum").Key("values").Open('[');
+        for (const auto& choice : type.choices)
+            j.Open('{').Key("value").RawNumber(std::to_string(choice.value)).Key("name").String(choice.name).Close('}');
+        j.Close(']').Close('}');
+        j.Key("access").String(descriptor != projected.end() && descriptor->settable ? "readWrite" : "readOnly");
+        j.Key("applicable").Bool(true);
+        j.Key("value"); if (type.selected) j.RawNumber(std::to_string(*type.selected)); else j.Null();
+        j.Key("origin").String("derived"); j.Close('}');
     }
     j.Close(']');
     j.Close('}');

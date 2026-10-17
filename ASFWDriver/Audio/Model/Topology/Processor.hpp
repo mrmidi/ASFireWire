@@ -14,6 +14,8 @@ namespace ASFW::AudioModel {
 struct ProcessorNode {
     std::vector<PortId> inputs;
     std::vector<PortId> outputs;
+    /// Explicit evidence that input k feeds output k without mixing.
+    bool channelPreserving{false};
 };
 
 } // namespace ASFW::AudioModel

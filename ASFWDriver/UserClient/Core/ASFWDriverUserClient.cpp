@@ -6,6 +6,7 @@
 //  Refactored into handler-based architecture for maintainability
 //
 
+#include "../../Audio/Controls/ControlNotifications.hpp"
 #include "ASFWDriverUserClient.h"
 #include "../../Audio/Controls/AvcControlChange.hpp"
 #include "../../Logging/LogConfig.hpp"
@@ -85,6 +86,7 @@ enum {
     kMethodGetControlSnapshot = 80,
     kMethodSetControlParameter = 81,
     kMethodGetControlWriteResult = 82,
+    kMethodSetControlRoute = 83,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -231,6 +233,8 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.Controls().GetControlSnapshot(arguments);
     case kMethodSetControlParameter:
         return runtimeState.Controls().SetControlParameter(arguments);
+    case kMethodSetControlRoute:
+        return runtimeState.Controls().SetControlRoute(arguments);
     case kMethodGetControlWriteResult:
         return runtimeState.Controls().GetControlWriteResult(arguments);
     default:
@@ -509,6 +513,7 @@ bool ASFWDriverUserClient::init() {
 void ASFWDriverUserClient::free() {
     ASFW_LOG(UserClient, "[Teardown] ASFWDriverUserClient free() client=%p", this);
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     if (ivars) {
         if (ivars->driver && ivars->statusRegistered) {
             ivars->driver->UnregisterStatusListener(this);
@@ -543,6 +548,7 @@ void ASFWDriverUserClient::free() {
 
 kern_return_t IMPL(ASFWDriverUserClient, Start) {
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ++ivars->startCount);
     kern_return_t ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
@@ -579,6 +585,7 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
 
 kern_return_t IMPL(ASFWDriverUserClient, Stop) {
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     IOLockLock(ivars->actionLock);
     const auto transactionHolds = ivars->transactionHolds;
     IOLockUnlock(ivars->actionLock);

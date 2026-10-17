@@ -5,6 +5,7 @@
 //  Handler for controller status related UserClient methods
 //
 
+#include "../../Audio/Controls/ControlNotifications.hpp"
 #include "StatusHandler.hpp"
 #include "../../Audio/Controls/AvcControlChange.hpp"
 #include "../../Controller/ControllerCore.hpp"         // ASFWDriver/Controller/ControllerCore.hpp
@@ -146,6 +147,7 @@ kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments*
     }
 
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(userClient);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(userClient);
     IOLockLock(userClient->ivars->actionLock);
     if (userClient->ivars->statusAction) {
         userClient->ivars->statusAction->release();
@@ -164,6 +166,14 @@ kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments*
             static_cast<ASFWDriverUserClient*>(owner)->NotifyControlParameterChanged(event.guid,
                 event.revision, event.sequence, event.parameterId, event.kind, event.bits, event.origin);
         })) return kIOReturnNoResources;
+    if (!ASFW::Audio::Controls::ControlNotifications::Shared().Register(userClient,
+        [](void* owner, const auto& event) {
+            static_cast<ASFWDriverUserClient*>(owner)->NotifyControlParameterChanged(event.guid,
+                event.revision, event.sequence, event.parameterId, event.kind, event.bits, event.origin);
+        })) {
+        ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(userClient);
+        return kIOReturnNoResources;
+    }
     userClient->ivars->driver->RegisterStatusListener(userClient);
     return kIOReturnSuccess;
 }

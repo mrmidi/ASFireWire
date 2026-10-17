@@ -12,9 +12,17 @@ protocol DeviceControlsSource: AnyObject {
     func getControlSnapshot(guid: UInt64) -> Result<Data, ControlsDriverError>
     func setControlParameter(guid: UInt64, revision: UInt64, parameterId: UInt32,
                              value: ControlValue) -> Result<UInt64, ControlsDriverError>
+    func setControlRoute(guid: UInt64, revision: UInt64, routerId: UInt32,
+                         output: UInt32, input: UInt32?) -> Result<UInt64, ControlsDriverError>
     func getControlWriteResult(requestId: UInt64) -> Result<ControlValue, ControlsDriverError>
 }
 
+extension DeviceControlsSource {
+    func setControlRoute(guid: UInt64, revision: UInt64, routerId: UInt32,
+                         output: UInt32, input: UInt32?) -> Result<UInt64, ControlsDriverError> {
+        .failure(.driver(kIOReturnUnsupported))
+    }
+}
 extension ASFWDriverConnector: DeviceControlsSource {}
 
 /// The Device Controls screen: one device's control snapshot, and writes that
@@ -102,9 +110,11 @@ final class DeviceControlsViewModel: ObservableObject {
         }
         let devicesByGUID = Dictionary((source.getDiscoveredDevices() ?? []).map { ($0.guid, $0) },
                                        uniquingKeysWith: { first, _ in first })
-        devices = (source.getAVCUnits() ?? []).map { unit in
-            let model = devicesByGUID[unit.guid]?.modelName ?? ""
-            return Device(guid: unit.guid, title: model.isEmpty ? "AV/C unit \(unit.guidHex)" : model)
+        let avc = source.getAVCUnits() ?? []
+        let guids = Set(avc.map(\.guid)).union(devicesByGUID.values.filter { $0.isAudio }.map(\.guid))
+        devices = guids.sorted().map { guid in
+            let name = devicesByGUID[guid]?.modelName ?? ""
+            return Device(guid: guid, title: name.isEmpty ? String(format: "Audio device 0x%016llX", guid) : name)
         }
         if selectedGUID == nil || !devices.contains(where: { $0.guid == selectedGUID }) {
             select(devices.first?.guid)
@@ -194,6 +204,29 @@ final class DeviceControlsViewModel: ObservableObject {
         }
     }
 
+    func writeRoute(router: UInt32, output: UInt32, input: UInt32?) async {
+        guard let guid = selectedGUID, let snapshot,
+              let node = snapshot.node(router), node.writable else { return }
+        let key = router | 0x8000_0000
+        if case .writing = writeState(key) { return }
+        writeStates[key] = .writing(.int(Int64(input ?? 0)))
+        let revision = snapshot.revision
+        let sequenceBeforeWrite = snapshot.sequence
+        switch source.setControlRoute(guid: guid, revision: revision, routerId: router, output: output, input: input) {
+        case .failure(let error):
+            writeStates[key] = .failed(Self.refusalText(error))
+        case .success(let request):
+            let result = await awaitConfirmation(request)
+            guard selectedGUID == guid, self.snapshot?.revision == revision else { return }
+            switch result {
+            case .success:
+                writeStates[key] = .idle
+                if self.snapshot?.sequence == sequenceBeforeWrite { refreshSnapshot() }
+            case .failure(let error): writeStates[key] = .failed(error.text)
+            }
+        }
+    }
+
     private func perform(guid: UInt64, parameterId: UInt32, value: ControlValue) async {
         guard let revision = snapshot?.revision else { return }
         let sequenceBeforeWrite = lastChangeSequence[parameterId]
@@ -261,6 +294,12 @@ final class DeviceControlsViewModel: ObservableObject {
     /// arrive here. Never issue a write in response to a notification.
     func receive(_ change: ControlParameterChange) {
         guard source.isConnected, change.guid == selectedGUID, let snapshot else { return }
+        if change.revision < snapshot.revision { return }
+        if change.stateInvalidated {
+            guard change.sequence > (snapshot.sequence ?? 0) else { return }
+            refreshSnapshot()
+            return
+        }
         if change.revision > snapshot.revision {
             // Topology changed, rather than just a value. Fetch it once.
             refreshSnapshot()

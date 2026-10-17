@@ -215,4 +215,25 @@ TEST(TopologyModel, SnapshotCarriesAccessAndDynamicStateMetadata) {
     EXPECT_NE(doc.find("\"domainOverride\":{\"kind\":\"scalar\",\"min\":-20"), std::string::npos);
 }
 
+
+TEST(TopologyModel, RouteWriteResolvesTheWholeBundleAndChecksRevisionAndAccess) {
+    auto t = SmallTopology();
+    auto& router = std::get<RouterNode>(t.nodes[1].body);
+    auto s = StateFor(t);
+    EXPECT_FALSE(prepareRouteWrite(t, s, NodeId{2}, PortId{5}, PortId{3}));
+    router.writable = true;
+    auto result = prepareRouteWrite(t, s, NodeId{2}, PortId{5}, PortId{3});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->activeBundles, std::vector{RouteBundleId{1}});
+    EXPECT_FALSE(prepareRouteWrite(t, s, NodeId{2}, PortId{5}, PortId{99}));
+    auto stale = s; ++stale.topologyRevision;
+    EXPECT_FALSE(prepareRouteWrite(t, stale, NodeId{2}, PortId{5}, PortId{3}));
+    auto none = prepareRouteWrite(t, s, NodeId{2}, PortId{5}, std::nullopt);
+    ASSERT_TRUE(none);
+    EXPECT_TRUE(none->activeBundles.empty());
+    router.legalBundles.push_back({RouteBundleId{3}, {{PortId{3}, PortId{5}}}});
+    EXPECT_FALSE(validate(t));
+    EXPECT_FALSE(prepareRouteWrite(t, s, NodeId{2}, PortId{5}, PortId{3}));
+}
+
 } // namespace

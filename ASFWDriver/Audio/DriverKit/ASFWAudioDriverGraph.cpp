@@ -10,6 +10,10 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "ASFWAvcLevelControl.h"
+#include "ASFWParameterLevelControl.h"
+#include "../Controls/CoreAudioControlProperties.hpp"
+#include "ASFWParameterBooleanControl.h"
+#include "ASFWParameterSelectorControl.h"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
@@ -50,6 +54,9 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.currentSampleRate = parsedConfig.currentSampleRate;
     device.streamModeRaw = std::to_underlying(parsedConfig.streamMode);
     device.rateFormationCandidates = parsedConfig.rateFormationCandidates;
+    device.parameterControls.clear();
+    for (const auto& descriptor : parsedConfig.parameterControls)
+        device.parameterControls.push_back({descriptor});
     device.avcControlCount = parsedConfig.avcControlCount;
     std::copy_n(parsedConfig.avcControls, device.avcControlCount, device.avcControls);
     device.boolControlCount = parsedConfig.boolControlCount;
@@ -775,41 +782,45 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
     }
 
-    for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
-        const auto& descriptor = ivars.device.avcControls[index];
-        auto controlName = OSSharedPtr(OSString::withCString(descriptor.name), OSNoRetain);
-        if (!controlName) return kIOReturnNoMemory;
-        if (descriptor.hasVolume) {
-            auto volume = ASFWAvcLevelControl::Create(&driver, descriptor);
-            if (!volume) return kIOReturnNoMemory;
-            ivars.device.avcControlSlots[index].level = volume;
-            if ((error = volume->SetName(controlName.get())) != kIOReturnSuccess ||
-                (error = ivars.audioDevice->AddControl(volume.get())) != kIOReturnSuccess) return error;
-        }
-        if (descriptor.hasMute) {
-            auto mute = ASFWProtocolBooleanControl::Create(&driver, true, descriptor.muted, descriptor.element,
-                static_cast<IOUserAudioObjectPropertyScope>(descriptor.scope), IOUserAudioClassID::MuteControl,
-                static_cast<uint32_t>(IOUserAudioClassID::MuteControl), descriptor.token);
-            if (!mute) return kIOReturnNoMemory;
-            ivars.device.avcControlSlots[index].mute = mute;
-            if ((error = mute->SetName(controlName.get())) != kIOReturnSuccess ||
-                (error = ivars.audioDevice->AddControl(mute.get())) != kIOReturnSuccess) return error;
-        }
-    }
+    OSDictionary* rawParameterProperties = nullptr;
+    const auto parameterStatus = ivars.device.audioNub->CopyParameterControls(&rawParameterProperties);
+    auto parameterProperties = OSSharedPtr(rawParameterProperties, OSNoRetain);
+    if (parameterStatus == kIOReturnSuccess && parameterProperties) {
+        const auto descriptors = ASFW::Audio::Controls::DecodeControls(
+            OSDynamicCast(OSArray, parameterProperties->getObject(ASFW::Audio::Controls::kControlsProperty)));
+        ivars.device.parameterControls.clear();
+        for (const auto& descriptor : descriptors) ivars.device.parameterControls.push_back({descriptor});
+    } else if (parameterStatus != kIOReturnUnsupported) return parameterStatus;
 
-    error = ASFW::Isoch::Audio::AddBooleanControlsToDevice(
-        driver,
-        *ivars.audioDevice,
-        ivars.device.boolControls,
-        ivars.device.boolControlCount);
-    if (!requireAdkSuccess("device.AddBooleanControls", error)) {
-        return error;
+    for (auto& slot : ivars.device.parameterControls) {
+        const auto& descriptor = slot.descriptor;
+        auto name = OSSharedPtr(OSString::withCString(descriptor.name.c_str()), OSNoRetain);
+        if (!name) return kIOReturnNoMemory;
+        OSSharedPtr<IOUserAudioControl> control;
+        using Kind = ASFW::Audio::Controls::CoreAudioControlKind;
+        switch (descriptor.kind) {
+            case Kind::Level: {
+                auto level = ASFWParameterLevelControl::Create(&driver, descriptor);
+                slot.level = level; control = level; break;
+            }
+            case Kind::Boolean: {
+                auto boolean = ASFWParameterBooleanControl::Create(&driver, descriptor);
+                slot.boolean = boolean; control = boolean; break;
+            }
+            case Kind::Selector: {
+                auto selector = ASFWParameterSelectorControl::Create(&driver, descriptor);
+                slot.selector = selector; control = selector; break;
+            }
+        }
+        if (!control) return kIOReturnNoMemory;
+        if ((error = control->SetName(name.get())) != kIOReturnSuccess ||
+            (error = ivars.audioDevice->AddControl(control.get())) != kIOReturnSuccess) return error;
     }
 
     // Confirmed AV/C controls opt in to the host's durable settings store.
     // Restoration travels through the same checked write/readback callbacks.
     // Other families keep their existing physical-control authority policy.
-    ivars.audioDevice->SetWantsControlsRestored(ivars.device.avcControlCount != 0);
+    ivars.audioDevice->SetWantsControlsRestored(!ivars.device.parameterControls.empty());
     ASFW_LOG(Audio, "[AvcControl] restoration controls=%u streamFormats=1 descriptors=%u initialValues=discovery hostRestoreSource=unspecified", ivars.device.avcControlCount != 0, ivars.device.avcControlCount);
     ASFW_LOG(Audio, "[AvcControl] init-state guid=0x%016llx sampleRate=%.0f source=nub hostRestore=requested completion=not-observable", ivars.device.guid, ivars.device.currentSampleRate);
     for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {

@@ -464,10 +464,23 @@ add_audio_test(TopologyModelTests
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
 )
 add_audio_test(AvcControlProjectionTests
     topology/AvcControlProjectionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+add_audio_test(CoreAudioProjectionTests
+    topology/CoreAudioProjectionTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+add_audio_test(DuetControlModelTests
+    topology/DuetControlModelTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )

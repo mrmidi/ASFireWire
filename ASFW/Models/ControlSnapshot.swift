@@ -71,8 +71,9 @@ nonisolated struct ControlNode: Decodable, Sendable, Equatable, Identifiable {
     /// Routers only: the legal route bundles and the ones active now.
     var bundles: [ControlBundle]
     var activeBundles: [UInt32]
+    var writable: Bool = false
 
-    private enum CodingKeys: String, CodingKey { case id, name, kind, inputs, outputs, host, bundles, activeBundles }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, inputs, outputs, host, bundles, activeBundles, writable }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -84,6 +85,7 @@ nonisolated struct ControlNode: Decodable, Sendable, Equatable, Identifiable {
         host = try c.decodeIfPresent(Bool.self, forKey: .host)
         bundles = try c.decodeIfPresent([ControlBundle].self, forKey: .bundles) ?? []
         activeBundles = try c.decodeIfPresent([UInt32].self, forKey: .activeBundles) ?? []
+        writable = try c.decodeIfPresent(Bool.self, forKey: .writable) ?? false
     }
 
     init(id: UInt32, name: String, kind: Kind, inputs: [UInt32] = [], outputs: [UInt32] = [], host: Bool? = nil,
@@ -338,6 +340,7 @@ nonisolated struct ControlParameterChange: Sendable, Equatable {
     var parameterId: UInt32
     var value: ControlValue
     var origin: ControlOrigin
+    var stateInvalidated: Bool = false
 
     init(guid: UInt64, revision: UInt64, sequence: UInt64, parameterId: UInt32,
          value: ControlValue, origin: ControlOrigin = .observed) {
@@ -346,6 +349,13 @@ nonisolated struct ControlParameterChange: Sendable, Equatable {
     }
 
     init?(scalars: [UInt64]) {
+        if scalars.count == 8, scalars[1] == Self.notificationReason,
+           scalars[4] == 0, scalars[5] == 4, scalars[6] == 0, scalars[7] == 0 {
+            self.init(guid: scalars[2], revision: scalars[3], sequence: scalars[0],
+                      parameterId: 0, value: .bool(false))
+            stateInvalidated = true
+            return
+        }
         guard scalars.count == 8, scalars[1] == Self.notificationReason,
               scalars[4] <= UInt32.max, scalars[7] == 0, scalars[5] < 3,
               let value = ControlValue(kind: scalars[5], bits: scalars[6]) else { return nil }

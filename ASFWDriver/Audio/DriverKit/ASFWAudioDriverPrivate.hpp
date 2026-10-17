@@ -60,6 +60,14 @@ struct AudioDriverDeviceState {
     std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
     std::vector<ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
+    struct ParameterControlSlot {
+        ASFW::Audio::Controls::CoreAudioControl descriptor;
+        OSSharedPtr<IOUserAudioLevelControl> level;
+        OSSharedPtr<IOUserAudioBooleanControl> boolean;
+        OSSharedPtr<IOUserAudioSelectorControl> selector;
+        uint64_t sequence{};
+    };
+    std::vector<ParameterControlSlot> parameterControls;
     struct AvcControlSlot {
         OSSharedPtr<IOUserAudioLevelControl> level;
         OSSharedPtr<IOUserAudioBooleanControl> mute;

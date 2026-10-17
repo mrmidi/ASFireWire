@@ -166,7 +166,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterIoRestartRequiredAction");
     }
 
-    if (ivars->device.avcControlCount != 0) {
+    if (!ivars->device.parameterControls.empty()) {
         OSAction* rawControlChangeAction = nullptr;
         error = CreateActionControlParameterChanged(0, &rawControlChangeAction);
         if (error != kIOReturnSuccess || !rawControlChangeAction)
