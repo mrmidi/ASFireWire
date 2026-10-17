@@ -37,7 +37,7 @@ bool ASFWAudioDriver::init()
 
 void ASFWAudioDriver::free()
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: free()");
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver free obj=%p", this);
 
     if (ivars) {
         if (ivars->device.audioNub) {

@@ -511,7 +511,7 @@ bool ASFWDriverUserClient::init() {
 }
 
 void ASFWDriverUserClient::free() {
-    ASFW_LOG(UserClient, "[Teardown] ASFWDriverUserClient free() client=%p", this);
+    ASFW_LOG(UserClient, "[Lifecycle] ASFWDriverUserClient free obj=%p", this);
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
     ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     if (ivars) {

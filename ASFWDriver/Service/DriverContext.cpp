@@ -51,7 +51,7 @@ void ServiceContext::DisarmProviderNotifications() {
         auto* source = providerNotifications.detach();
         auto* action = providerNotificationAction.detach();
         ASFW_LOG(Controller, "[Teardown] provider notifications cancel requested source=%p action=%p", source, action);
-        auto done = teardownCompletion->Begin();
+        auto done = teardownCompletion->Begin("provider notifications");
         const kern_return_t kr = source->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] provider notifications cancel completed source=%p action=%p", source, action);
             source->release();

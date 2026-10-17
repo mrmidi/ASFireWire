@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <new>
+#include "../../../Logging/Logging.hpp"
 using namespace ASFW::Audio::Controls;
 OSSharedPtr<ASFWParameterLevelControl> ASFWParameterLevelControl::Create(ASFWAudioDriver* driver, CoreAudioControl descriptor) {
     auto* control = OSTypeAlloc(ASFWParameterLevelControl);
@@ -31,6 +32,7 @@ bool ASFWParameterLevelControl::init(ASFWAudioDriver* driver, CoreAudioControl d
     return true;
 }
 void ASFWParameterLevelControl::free() {
+    ASFW_LOG(Audio, "[Lifecycle] ASFWParameterLevelControl free obj=%p", this);
     if (ivars) {
         ivars->~ASFWParameterLevelControl_IVars();
         IOSafeDeleteNULL(ivars, ASFWParameterLevelControl_IVars, 1);

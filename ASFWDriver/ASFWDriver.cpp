@@ -308,7 +308,7 @@ bool ASFWDriver::init() {
 }
 
 void ASFWDriver::free() {
-    ASFW_LOG(Controller, "ASFWDriver: free()");
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver free obj=%p", this);
     if (ivars) {
         if (ivars->context) {
             ivars->context->Reset();
@@ -527,6 +527,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop enter obj=%p provider=%p stopPending=%d",
+             this, provider, ivars ? int(ivars->stopPending) : -1);
     if (ivars && ivars->stopPending) {
         return kIOReturnSuccess;
     }
@@ -559,7 +561,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
             ivars->wakeVerifyTimer = nullptr;
             ivars->wakeVerifyAction = nullptr;
             ASFW_LOG(Controller, "[Teardown] wake verify cancel requested source=%p action=%p", timer, action);
-            auto done = completion->Begin();
+            auto done = completion->Begin("wake verify");
             const kern_return_t kr = timer->Cancel(^{
                 ASFW_LOG(Controller, "[Teardown] wake verify cancel completed source=%p action=%p", timer, action);
                 timer->release();
@@ -577,10 +579,11 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     completion->FinishWhenDrained([this, provider] {
         ASFW_LOG(Controller, "[Teardown] ASFWDriver cancellations drained; calling superclass Stop");
         const auto kr = Stop(provider, SUPERDISPATCH);
-        ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop complete kr=0x%x", kr);
+        ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop done obj=%p kr=0x%x", this, kr);
         provider->release();
         release();
     });
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop returned obj=%p (superclass Stop waits for teardown tokens)", this);
     return kIOReturnSuccess;
 }
 

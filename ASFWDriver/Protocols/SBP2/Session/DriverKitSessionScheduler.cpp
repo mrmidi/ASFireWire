@@ -112,7 +112,7 @@ void DriverKitSessionScheduler::Reset() noexcept {
         auto* timer = timer_.detach();
         auto* action = action_.detach();
         ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel requested source=%p action=%p", timer, action);
-        auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+        auto done = teardownCompletion_ ? teardownCompletion_->Begin("SBP2 timer") : std::function<void()>{};
         const kern_return_t kr = timer->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel completed source=%p action=%p", timer, action);
             timer->release();

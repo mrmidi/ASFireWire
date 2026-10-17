@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include "../Logging/Logging.hpp"
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
 #else
@@ -21,27 +22,35 @@ public:
     TeardownCompletion(const TeardownCompletion&) = delete;
     TeardownCompletion& operator=(const TeardownCompletion&) = delete;
 
-    [[nodiscard]] std::function<void()> Begin() {
+    // `label` names the cancellation in the [Lifecycle] trace, so a token
+    // that never ends (and so a final Stop that never runs) is identifiable.
+    // It must have static lifetime (callers pass string literals).
+    [[nodiscard]] std::function<void()> Begin(const char* label = "unnamed") {
         IOLockLock(lock_);
-        ++pending_;
+        const size_t pending = ++pending_;
         IOLockUnlock(lock_);
-        return [self = shared_from_this()] { self->Complete(); };
+        ASFW_LOG(Controller, "[Lifecycle] teardown token begin %{public}s pending=%zu", label, pending);
+        return [self = shared_from_this(), label] { self->Complete(label); };
     }
 
     void FinishWhenDrained(std::function<void()> finish) {
         IOLockLock(lock_);
         finish_ = std::move(finish);
+        const size_t pending = pending_;
         auto ready = pending_ == 0 ? std::move(finish_) : std::function<void()>{};
         IOLockUnlock(lock_);
+        ASFW_LOG(Controller, "[Lifecycle] teardown drain requested pending=%zu", pending);
         if (ready) ready();
     }
 
 private:
-    void Complete() {
+    void Complete(const char* label) {
         IOLockLock(lock_);
-        --pending_;
+        const size_t pending = --pending_;
         auto ready = pending_ == 0 ? std::move(finish_) : std::function<void()>{};
         IOLockUnlock(lock_);
+        ASFW_LOG(Controller, "[Lifecycle] teardown token end %{public}s pending=%zu%{public}s", label, pending,
+                 ready ? " (running final stop)" : "");
         if (ready) ready();
     }
     IOLock* lock_;

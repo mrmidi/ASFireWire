@@ -221,13 +221,16 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
 
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver Stop enter obj=%p provider=%p", this, provider);
 
     if (ivars) {
         ASFW::Audio::DriverKit::StopAudioDriverGraph(*this, *ivars);
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver graph stopped obj=%p", this);
     }
 
-    return Stop(provider, SUPERDISPATCH);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
 }
 
 kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,

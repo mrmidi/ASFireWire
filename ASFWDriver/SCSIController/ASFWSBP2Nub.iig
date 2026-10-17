@@ -20,6 +20,7 @@ class ASFWSBP2Nub: public IOService
 public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
+    virtual void free() override;
 };
 
 #endif /* ASFWSBP2Nub_h */

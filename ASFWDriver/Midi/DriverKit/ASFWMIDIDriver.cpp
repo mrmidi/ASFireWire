@@ -71,6 +71,7 @@ bool ASFWMIDIDriver::init() {
 }
 
 void ASFWMIDIDriver::free() {
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver free obj=%p", this);
     if (ivars != nullptr) {
         ivars->workQueue.reset();
         ivars->device.reset();
@@ -209,7 +210,8 @@ kern_return_t IMPL(ASFWMIDIDriver, Start) {
 }
 
 kern_return_t IMPL(ASFWMIDIDriver, Stop) {
-    ASFW_LOG(Midi, "ASFWMIDIDriver: stopping guid=0x%llx", ivars ? ivars->guid : 0);
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver Stop enter obj=%p provider=%p guid=0x%llx",
+             this, provider, ivars ? ivars->guid : 0);
     // Order matters. Withdraw the wake first so the core driver stops handing us
     // work; then stop using the rings; then stop the service; and only then drop
     // the mapping. Releasing the mapping first would leave a callback that is
@@ -219,10 +221,14 @@ kern_return_t IMPL(ASFWMIDIDriver, Stop) {
     }
     bool quiesced = true;
     if (ivars != nullptr && ivars->device) {
+        ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver StopIO obj=%p", this);
         (void)ivars->device->StopIO();
+        ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver UnbindTransport obj=%p", this);
         quiesced = ivars->device->UnbindTransport();
+        ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver transport unbound obj=%p quiesced=%d", this, int(quiesced));
     }
     const kern_return_t ret = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMIDIDriver Stop done obj=%p kr=0x%x", this, ret);
     if (ivars != nullptr) {
         ivars->nub = nullptr;
         ivars->device.reset();

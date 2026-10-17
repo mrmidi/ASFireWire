@@ -70,6 +70,7 @@ bool ASFWAudioDevice::init(IOUserAudioDriver* in_driver,
 }
 
 void ASFWAudioDevice::free() {
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDevice free obj=%p", this);
     if (ivars) {
         ivars->driverIvars = nullptr;
         if (ivars->rateLock) IOLockFree(ivars->rateLock);

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include "../../../Logging/Logging.hpp"
 using namespace ASFW::Audio::Controls;
 OSSharedPtr<ASFWParameterSelectorControl> ASFWParameterSelectorControl::Create(ASFWAudioDriver* driver, CoreAudioControl descriptor) {
     auto* control = OSTypeAlloc(ASFWParameterSelectorControl);
@@ -37,6 +38,7 @@ bool ASFWParameterSelectorControl::init(ASFWAudioDriver* driver, CoreAudioContro
     return true;
 }
 void ASFWParameterSelectorControl::free() {
+    ASFW_LOG(Audio, "[Lifecycle] ASFWParameterSelectorControl free obj=%p", this);
     if (ivars) {
         ivars->~ASFWParameterSelectorControl_IVars();
         IOSafeDeleteNULL(ivars, ASFWParameterSelectorControl_IVars, 1);

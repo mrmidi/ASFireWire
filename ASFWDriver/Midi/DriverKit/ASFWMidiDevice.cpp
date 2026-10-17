@@ -154,6 +154,7 @@ bool ASFWMidiDevice::init(IOUserMIDIDriver* driver,
 }
 
 void ASFWMidiDevice::free() {
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMidiDevice free obj=%p", this);
     if (ivars != nullptr) {
         ivars->driver.reset();
         ivars->workQueue.reset();

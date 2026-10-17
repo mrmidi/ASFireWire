@@ -281,7 +281,7 @@ bool ASFWAudioNub::init()
 
 void ASFWAudioNub::free()
 {
-    ASFW_LOG(Audio, "ASFWAudioNub: free()");
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioNub free obj=%p", this);
     if (ivars) {
         (void)RegisterControlChangeAction(nullptr);
         if (ivars->txPreparationAction) {
@@ -333,7 +333,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
 
 kern_return_t IMPL(ASFWAudioNub, Stop)
 {
-    ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioNub Stop enter obj=%p provider=%p", this, provider);
     (void)RegisterControlChangeAction(nullptr);
     if (ivars) {
         ASFWDriver* parent = GetParentASFWDriver(ivars);
@@ -363,7 +363,9 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
         }
         ivars->parentDriver = nullptr;
     }
-    return Stop(provider, SUPERDISPATCH);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioNub Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
 }
 
 // Queries the synchronized host time and physical cycle timer snapshot.

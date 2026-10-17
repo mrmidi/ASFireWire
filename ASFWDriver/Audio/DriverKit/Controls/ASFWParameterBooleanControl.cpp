@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include "../../../Logging/Logging.hpp"
 using namespace ASFW::Audio::Controls;
 OSSharedPtr<ASFWParameterBooleanControl> ASFWParameterBooleanControl::Create(ASFWAudioDriver* driver, CoreAudioControl descriptor) {
     auto* control = OSTypeAlloc(ASFWParameterBooleanControl);
@@ -26,6 +27,7 @@ bool ASFWParameterBooleanControl::init(ASFWAudioDriver* driver, CoreAudioControl
     return true;
 }
 void ASFWParameterBooleanControl::free() {
+    ASFW_LOG(Audio, "[Lifecycle] ASFWParameterBooleanControl free obj=%p", this);
     if (ivars) {
         ivars->~ASFWParameterBooleanControl_IVars();
         IOSafeDeleteNULL(ivars, ASFWParameterBooleanControl_IVars, 1);

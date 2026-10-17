@@ -59,6 +59,7 @@ bool ASFWMidiNub::init() {
 }
 
 void ASFWMidiNub::free() {
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMidiNub free obj=%p", this);
     if (ivars != nullptr) {
         ivars->receiveAction.store(nullptr, std::memory_order_release);
         for (uint32_t i = 0; i < ivars->retainedCount; ++i) {
@@ -84,13 +85,16 @@ kern_return_t IMPL(ASFWMidiNub, Start) {
 }
 
 kern_return_t IMPL(ASFWMidiNub, Stop) {
-    ASFW_LOG(Midi, "ASFWMidiNub: stopping endpoint=%llu", ivars ? ivars->endpointId : 0ULL);
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMidiNub Stop enter obj=%p provider=%p endpoint=%llu",
+             this, provider, ivars ? ivars->endpointId : 0ULL);
     if (ivars != nullptr) {
         // Stop notifying first; the retained actions stay alive until free().
         ivars->receiveAction.store(nullptr, std::memory_order_release);
         ivars->parentDriver = nullptr;
     }
-    return Stop(provider, SUPERDISPATCH);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Midi, "[Lifecycle] ASFWMidiNub Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
 }
 
 void ASFWMidiNub::SetEndpointId(uint64_t endpointId) {
