@@ -94,3 +94,12 @@ TEST(HbaTaskPolicyTests, ReadySessionForwardsEverythingElse) {
         EXPECT_EQ(Disposition::Forward, Policy::Classify(0, op, true));
     }
 }
+
+// Apple's SBP-2 transport ceiling (512 PTEs x 0xF000). The Hasselblad H4D reads
+// its calibration block as one 1,966,080-byte READ with a 5,242,880-byte retry;
+// the former 1 MiB cap clipped both and the camera never initialised capture.
+TEST(HbaTaskPolicyTests, TransferCapMatchesAppleAndCoversHasselbladCalibrationReads) {
+    EXPECT_EQ(Policy::kMaxTransferBytes, 512ull * 0xF000ull);
+    EXPECT_GE(Policy::kMaxTransferBytes, 1'966'080ull);
+    EXPECT_GE(Policy::kMaxTransferBytes, 5'242'880ull);
+}
