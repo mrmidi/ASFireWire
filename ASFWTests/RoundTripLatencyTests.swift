@@ -60,7 +60,7 @@ struct RoundTripLatencyVisibilityTests {
 
     private func visible(advanced: Bool, asfwDevice: Bool) -> Bool {
         Section.roundTripLatency.isVisible(showAdvancedTools: advanced, hasAVCDevice: false,
-                                           hasDICEDevice: false, hasDuetDevice: false,
+                                           hasDICEDevice: false,
                                            hasASFWAudioDevice: asfwDevice)
     }
 
@@ -79,7 +79,7 @@ struct RoundTripLatencyVisibilityTests {
     @Test func unpluggingTheLastDeviceFallsBackToOverview() {
         let visible = Section.allCases.filter {
             $0.isVisible(showAdvancedTools: true, hasAVCDevice: false, hasDICEDevice: false,
-                         hasDuetDevice: false, hasASFWAudioDevice: false)
+                         hasASFWAudioDevice: false)
         }
         #expect(!visible.contains(.roundTripLatency))
         #expect(Section.resolvedSelection(.roundTripLatency, visible: visible) == .overview)

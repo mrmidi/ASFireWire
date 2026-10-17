@@ -19,6 +19,8 @@ nonisolated struct ControlSnapshot: Decodable, Sendable, Equatable {
     var sequence: UInt64?
     var nodes: [ControlNode]
     var ports: [ControlPort]
+    /// Fixed signal links, source port to destination port (older drivers omit them).
+    var fixedLinks: [ControlRoute]?
     var parameters: [ControlParameter]
 
     static func decode(_ data: Data) throws -> ControlSnapshot {
@@ -72,8 +74,10 @@ nonisolated struct ControlNode: Decodable, Sendable, Equatable, Identifiable {
     var bundles: [ControlBundle]
     var activeBundles: [UInt32]
     var writable: Bool = false
+    /// Mixers only: which input feeds which output through each crosspoint.
+    var crosspoints: [ControlCrosspoint] = []
 
-    private enum CodingKeys: String, CodingKey { case id, name, kind, inputs, outputs, host, bundles, activeBundles, writable }
+    private enum CodingKeys: String, CodingKey { case id, name, kind, inputs, outputs, host, bundles, activeBundles, writable, crosspoints }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -86,6 +90,7 @@ nonisolated struct ControlNode: Decodable, Sendable, Equatable, Identifiable {
         bundles = try c.decodeIfPresent([ControlBundle].self, forKey: .bundles) ?? []
         activeBundles = try c.decodeIfPresent([UInt32].self, forKey: .activeBundles) ?? []
         writable = try c.decodeIfPresent(Bool.self, forKey: .writable) ?? false
+        crosspoints = try c.decodeIfPresent([ControlCrosspoint].self, forKey: .crosspoints) ?? []
     }
 
     init(id: UInt32, name: String, kind: Kind, inputs: [UInt32] = [], outputs: [UInt32] = [], host: Bool? = nil,
@@ -99,6 +104,15 @@ nonisolated struct ControlNode: Decodable, Sendable, Equatable, Identifiable {
         self.bundles = bundles
         self.activeBundles = activeBundles
     }
+}
+
+/// One mixer crosspoint: the gain from `input` into `output` (both mixer ports).
+nonisolated struct ControlCrosspoint: Decodable, Sendable, Equatable {
+    var id: UInt32
+    var input: UInt32
+    var output: UInt32
+
+    private enum CodingKeys: String, CodingKey { case id, input = "in", output = "out" }
 }
 
 /// A set of routes a router can have active together.
@@ -135,6 +149,10 @@ nonisolated struct ControlPort: Decodable, Sendable, Equatable, Identifiable {
     var direction: Direction
     var channels: Int
     var name: String
+    /// Endpoint ports: the driver's SignalKind (0 unknown, 8 host stream) and
+    /// the 1-based first channel within that kind. Older drivers omit both.
+    var signalKind: Int?
+    var signalIndex: Int?
 }
 
 /// What a parameter means. Unknown names from a newer driver decode as `.unknown`.

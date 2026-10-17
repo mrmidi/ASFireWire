@@ -153,15 +153,6 @@ class DebugViewModel: ObservableObject {
             .contains { $0.isDICEDevice }
     }
 
-    var hasDuetDevice: Bool {
-        guard isConnected else { return false }
-        return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices).contains { item in
-            guard let device = item.device else { return false }
-            return device.vendorId == ASFWDriverConnector.duetVendorID &&
-                device.modelId == ASFWDriverConnector.duetModelID
-        }
-    }
-
     func fetchTopology() {
         statusFetchQueue.async { [weak self] in
             guard let self = self else { return }

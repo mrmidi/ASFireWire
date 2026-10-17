@@ -1,21 +1,35 @@
 import SwiftUI
 
-/// Device Controls: the selected device's control snapshot as cards, one per
-/// node. Values shown are the driver's; after a write, the one the hardware
-/// confirmed. Nothing here polls while idle.
+/// How Device Controls draws a snapshot: as a console, or as one card per
+/// node of the driver's model (every parameter, provenance included).
+enum DeviceControlsPresentation: String, CaseIterable, Identifiable {
+    case console = "Console"
+    case parameters = "Parameters"
+    var id: String { rawValue }
+}
+
+/// Device Controls: the selected device's control snapshot. Values shown are
+/// the driver's; after a write, the one the hardware confirmed. Nothing here
+/// polls while idle.
 struct DeviceControlsView: View {
     @ObservedObject var model: DeviceControlsViewModel
+    @AppStorage("deviceControls.presentation") private var presentation = DeviceControlsPresentation.console
 
     var body: some View {
         ScrollView {
-            DeviceControlsContent(model: model)
-                .frame(maxWidth: 1120)
+            DeviceControlsContent(model: model, presentation: presentation)
+                .frame(maxWidth: presentation == .console ? .infinity : 1120)
                 .padding(24)
                 .frame(maxWidth: .infinity)
         }
         .navigationTitle("Device Controls")
         .toolbar {
             ToolbarItemGroup {
+                Picker("Presentation", selection: $presentation) {
+                    ForEach(DeviceControlsPresentation.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .help("Console: the device as hardware strips. Parameters: every control of the driver's model, by block.")
                 if let updated = model.lastUpdated {
                     Text("Updated \(updated.formatted(date: .omitted, time: .standard))")
                         .font(.caption).foregroundStyle(.secondary)
@@ -33,6 +47,9 @@ struct DeviceControlsView: View {
 /// The screen's content without the scroll view and toolbar (so it can be rendered on its own).
 struct DeviceControlsContent: View {
     @ObservedObject var model: DeviceControlsViewModel
+    var presentation: DeviceControlsPresentation = .parameters
+    /// False only to render offscreen (see ControlConsoleView.scrolls).
+    var consoleScrolls = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -95,7 +112,10 @@ struct DeviceControlsContent: View {
         case .failed(let text):
             banner(text, systemImage: "exclamationmark.triangle.fill", tint: .red)
         case .loaded(let snapshot):
-            nodes(snapshot)
+            switch presentation {
+            case .console: ControlConsoleView(snapshot: snapshot, model: model, scrolls: consoleScrolls)
+            case .parameters: nodes(snapshot)
+            }
         }
     }
 
@@ -314,7 +334,7 @@ private struct EndpointCard: View {
 // MARK: - Parameters
 
 /// One parameter: a slider, toggle or menu by its domain, with its write state and provenance.
-private struct ParameterRow: View {
+struct ParameterRow: View {
     let parameter: ControlParameter
     let state: DeviceControlsViewModel.WriteState
     let write: (ControlValue) -> Void
@@ -460,7 +480,7 @@ private struct ParameterRow: View {
 }
 
 /// A small capsule of text.
-private struct ControlBadge: View {
+struct ControlBadge: View {
     let text: String
     var tint: Color = .secondary
     var monospaced = false

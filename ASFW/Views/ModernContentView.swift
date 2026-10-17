@@ -87,7 +87,6 @@ struct ModernContentView: View {
         case audio = "Core Audio"
         case audioAnalyzer = "Audio Analyzer"
         case roundTripLatency = "Round-Trip Latency"
-        case duet = "Duet"
         case diagnostics = "Driver Report"
         case diceReport = "DICE Report"
         case diceDiagnostics = "DICE Diagnostics"
@@ -115,7 +114,6 @@ struct ModernContentView: View {
             case .audio: return "hifispeaker.fill"
             case .audioAnalyzer: return "waveform"
             case .roundTripLatency: return "arrow.left.arrow.right"
-            case .duet: return "slider.horizontal.below.square.filled.and.square"
             case .diagnostics: return "heart.text.square"
             case .diceReport: return "doc.text.magnifyingglass"
             case .diceDiagnostics: return "waveform.path.ecg"
@@ -126,7 +124,7 @@ struct ModernContentView: View {
         var group: SidebarGroup {
             switch self {
             case .overview, .about: .general
-            case .busInspector, .avcUnits, .deviceControls, .duet, .audioAnalyzer: .devices
+            case .busInspector, .avcUnits, .deviceControls, .audioAnalyzer: .devices
             case .dvCapture: .video
             case .diagnostics, .diceReport, .avcReport: .reports
             case .logs, .loggingSettings: .support
@@ -141,13 +139,11 @@ struct ModernContentView: View {
         func isVisible(showAdvancedTools: Bool,
                        hasAVCDevice: Bool,
                        hasDICEDevice: Bool,
-                       hasDuetDevice: Bool,
                        hasASFWAudioDevice: Bool) -> Bool {
             guard showAdvancedTools || !requiresAdvancedTools else { return false }
             switch self {
             case .avcUnits, .avcCommands, .avcReport: return hasAVCDevice
             case .diceReport, .diceDiagnostics: return hasDICEDevice
-            case .duet: return hasDuetDevice
             case .audioAnalyzer, .audioTelemetry, .audioGeometry, .roundTripLatency:
                 return hasASFWAudioDevice
             default: return true
@@ -169,7 +165,6 @@ struct ModernContentView: View {
             section.isVisible(showAdvancedTools: showAdvancedTools,
                               hasAVCDevice: debugVM.hasAVCDevice,
                               hasDICEDevice: debugVM.hasDICEDevice,
-                              hasDuetDevice: debugVM.hasDuetDevice,
                               hasASFWAudioDevice: !publishedAudioDevices.isEmpty)
         }
     }
@@ -248,8 +243,6 @@ struct ModernContentView: View {
                 case .roundTripLatency:
                     RoundTripLatencyView(viewModel: roundTripVM, publishedDevices: publishedAudioDevices,
                                          mcpServerEnabled: mcpVM.isEnabled)
-                case .duet:
-                    DuetControlView(connector: debugVM.connector)
                 case .diagnostics:
                     DiagnosticsView(store: diagnosticsStore, showAdvancedTools: showAdvancedTools)
                 case .diceReport:
