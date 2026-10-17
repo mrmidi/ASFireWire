@@ -1,4 +1,5 @@
 #include "AudioDriverConfig.hpp"
+#include "../../Controls/CoreAudioControlProperties.hpp"
 
 #include "../../Model/AudioPropertyKeys.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -228,6 +229,8 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
         return;
     }
 
+    inOutConfig.parameterControls = ::ASFW::Audio::Controls::DecodeControls(
+        OSDynamicCast(OSArray, properties->getObject(::ASFW::Audio::Controls::kControlsProperty)));
     if (auto* controls = OSDynamicCast(OSArray, properties->getObject(::ASFW::Audio::Model::kAvcControlsProperty))) {
         inOutConfig.avcControlCount = 0;
         for (uint32_t i = 0; i < std::min(controls->getCount(), ::ASFW::Audio::Model::kMaxAvcControls); ++i) {

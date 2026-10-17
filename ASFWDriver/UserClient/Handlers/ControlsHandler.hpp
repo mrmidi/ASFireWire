@@ -16,6 +16,7 @@
 #include <DriverKit/IOLib.h>
 
 #include <cstdint>
+#include "../../Audio/Controls/ControlService.hpp"
 
 struct IOUserClientMethodArguments;
 
@@ -23,15 +24,18 @@ namespace ASFW::Protocols::AVC {
 class IAVCDiscovery;
 }
 
+namespace ASFW::Audio { class AudioRuntimeRegistry; }
+
 namespace ASFW::UserClient {
 
 /// Value kinds on the wire (scalarInput[4] / scalarOutput[0]). A double travels
 /// as its IEEE-754 bit pattern.
-enum class ControlValueKind : uint64_t { kBool = 0, kDouble = 1, kInt = 2 };
+enum class ControlValueKind : uint64_t { kBool = 0, kDouble = 1, kInt = 2, kAction = 3 };
 
 class ControlsHandler {
 public:
-    explicit ControlsHandler(Protocols::AVC::IAVCDiscovery* discovery) : discovery_(discovery) {}
+    explicit ControlsHandler(Protocols::AVC::IAVCDiscovery* discovery, Audio::Controls::ControlService::ProtocolLookup lookup = {})
+        : discovery_(discovery), lookup_(std::move(lookup)) {}
 
     /// scalarInput: guidHi, guidLo, offset. structureOutput: one page.
     /// kIOReturnUnsupported when the device has no control projection.
@@ -41,6 +45,8 @@ public:
     /// scalarOutput[0]: request id. Refusals (stale revision, unknown id, wrong
     /// kind, out of domain) return an error at once, before any bus traffic.
     kern_return_t SetControlParameter(IOUserClientMethodArguments* args);
+    /// guidHi, guidLo, revision, routerId, outputPortId, inputPortId (UINT64_MAX disconnect).
+    kern_return_t SetControlRoute(IOUserClientMethodArguments* args);
 
     /// scalarInput: request id. scalarOutput: valueKind, valueBits (confirmed).
     /// kIOReturnNotReady while the device has not answered.
@@ -48,6 +54,7 @@ public:
 
 private:
     Protocols::AVC::IAVCDiscovery* discovery_{nullptr};
+    Audio::Controls::ControlService::ProtocolLookup lookup_;
 };
 
 } // namespace ASFW::UserClient

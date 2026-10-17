@@ -20,8 +20,9 @@
 //                              current input is the active bundle
 //   STATUS-confirmed values -> StateOrigin::Observed
 //
-// Not projected yet: endpoints, fixed links between blocks, and stream ports.
-// Controls do not need them, and a wrong link is worse than a missing one.
+// Confirmed stream boundaries and descriptor-declared feature/selector links
+// are projected when their channel geometry agrees. Unknown physical endpoints
+// and undecoded processing blocks remain absent rather than guessed.
 #pragma once
 
 #include "../Model/AvcVolumeMapping.hpp"

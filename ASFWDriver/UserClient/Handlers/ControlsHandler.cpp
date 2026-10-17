@@ -4,6 +4,8 @@
 // ControlsHandler.cpp - see ControlsHandler.hpp.
 
 #include "ControlsHandler.hpp"
+#include "../../Audio/Controls/ControlService.hpp"
+#include "../../Audio/Controls/CoreAudioProjection.hpp"
 
 #include "../WireFormats/AVCDiscoveryDocument.hpp"
 #include "../WireFormats/ControlSnapshotDocument.hpp"
@@ -18,6 +20,7 @@
 #include <DriverKit/OSData.h>
 
 #include <bit>
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <unordered_map>
@@ -27,7 +30,6 @@ namespace {
 
 namespace AM = ASFW::AudioModel;
 namespace C = ASFW::Audio::Controls;
-using UnitPtr = std::shared_ptr<Protocols::AVC::AVCUnit>;
 
 constexpr size_t kMaxWireSize = 4096; // DriverKit drops larger structure outputs
 
@@ -75,41 +77,12 @@ uint64_t GuidOf(const IOUserClientMethodArguments* args) {
     return (static_cast<uint64_t>(args->scalarInput[0]) << 32) | (args->scalarInput[1] & 0xFFFF'FFFFull);
 }
 
-UnitPtr FindUnit(Protocols::AVC::IAVCDiscovery& discovery, uint64_t guid) {
-    for (auto& unit : discovery.Units()) {
-        if (!unit || unit->GetDiscoveryStatus() == Protocols::AVC::AVCDiscoveryStatus::Running) continue;
-        const auto device = unit->GetDevice();
-        if (device && device->GetGUID() == guid) return unit;
-    }
-    return nullptr;
-}
-
-/// The unit's current control model. The discovery session is the revision:
-/// ids are valid until the device is discovered again.
-struct CurrentModel {
-    UnitPtr unit;
-    std::shared_ptr<const Protocols::AVC::Graph::DeviceGraph> graph;
-    C::AvcControlModel model;
-    uint32_t generation{0};
-};
-
-std::optional<CurrentModel> Current(Protocols::AVC::IAVCDiscovery& discovery, uint64_t guid) {
-    auto unit = FindUnit(discovery, guid);
-    if (!unit) return std::nullopt;
-    const auto snapshot = unit->GetDiscoverySnapshot();
-    auto graph = unit->GetDiscoveredGraph();
-    if (!snapshot || !graph) return std::nullopt;
-    CurrentModel current{.unit = std::move(unit), .graph = graph,
-                         .model = C::ProjectAvcControls(*graph, snapshot->session.value),
-                         .generation = snapshot->route.generation.value};
-    return current;
-}
-
 std::optional<AM::ParameterValue> DecodeValue(uint64_t kind, uint64_t bits) {
     switch (static_cast<ControlValueKind>(kind)) {
-        case ControlValueKind::kBool: return AM::ParameterValue{bits != 0};
+        case ControlValueKind::kBool: if (bits > 1) return std::nullopt; return AM::ParameterValue{bits != 0};
         case ControlValueKind::kDouble: return AM::ParameterValue{std::bit_cast<double>(bits)};
         case ControlValueKind::kInt: return AM::ParameterValue{static_cast<int64_t>(bits)};
+        case ControlValueKind::kAction: if (bits != 0) return std::nullopt; return AM::ActionTrigger{};
     }
     return std::nullopt;
 }
@@ -120,12 +93,12 @@ kern_return_t ControlsHandler::GetControlSnapshot(IOUserClientMethodArguments* a
     if (!discovery_) return kIOReturnNotReady;
     if (!args || !args->scalarInput || args->scalarInputCount < 3) return kIOReturnBadArgument;
     const uint64_t guid = GuidOf(args);
-    const auto current = Current(*discovery_, guid);
-    if (!current) return kIOReturnUnsupported; // no AV/C projection for this device (yet)
-    const auto document = Wire::BuildControlSnapshotDocument(guid, "avc", current->model.topology,
-                                                             current->model.state);
-    const auto page = Wire::SerializeDiscoveryPage(document, static_cast<uint32_t>(current->model.topology.revision),
-                                                   current->generation,
+    const auto current = C::ControlService(discovery_, lookup_).CopySnapshot(guid);
+    if (!current) return kIOReturnUnsupported;
+    const auto document = Wire::BuildControlSnapshotDocument(guid, current->family, current->topology,
+                                                             current->state, current->sequence);
+    const auto page = Wire::SerializeDiscoveryPage(document, static_cast<uint32_t>(current->topology.revision),
+                                                   0,
                                                    static_cast<uint32_t>(args->scalarInput[2]), kMaxWireSize);
     OSData* data = OSData::withBytes(page.data(), static_cast<uint32_t>(page.size()));
     if (!data) return kIOReturnNoMemory;
@@ -140,47 +113,67 @@ kern_return_t ControlsHandler::SetControlParameter(IOUserClientMethodArguments* 
         args->scalarOutputCount < 1) return kIOReturnBadArgument;
     const uint64_t guid = GuidOf(args);
     const uint64_t revision = args->scalarInput[2];
+    if (args->scalarInput[3] > UINT32_MAX) return kIOReturnBadArgument;
     const AM::ParameterId id{static_cast<uint32_t>(args->scalarInput[3])};
     const auto value = DecodeValue(args->scalarInput[4], args->scalarInput[5]);
     if (!value) return kIOReturnBadArgument;
 
-    const auto current = Current(*discovery_, guid);
+    const auto current = C::ControlService(discovery_, lookup_).CopySnapshot(guid);
     if (!current) return kIOReturnUnsupported;
-    // A different revision means the ids the caller holds belong to an older
-    // discovery: refuse rather than guess what they now address.
-    if (revision != current->model.topology.revision) {
-        ASFW_LOG(UserClient, "[Controls] refused stale revision guid=0x%016llx have=%llu got=%llu",
-                 guid, current->model.topology.revision, revision);
-        return kIOReturnNotPermitted;
+    if (revision != current->topology.revision) return kIOReturnNotPermitted;
+    if ((id.value & 0x80000000u) != 0) {
+        const auto controls = C::ProjectCoreAudioControls(current->topology, current->state);
+        const auto found = std::ranges::find(controls, id, &C::CoreAudioControl::parameter);
+        if (found == controls.end()) return kIOReturnNotFound;
+        if (!found->settable) return kIOReturnNotWritable;
+        const AM::Parameter projected{id, AM::NodeId{0}, AM::ParameterSemantic::NominalLevel, found->domain, found->name};
+        if (!AM::validateParameterValue(projected, *value)) return kIOReturnBadArgument;
+    } else if (const auto valid = AM::validateParameterWrite(current->topology, current->state, id, *value); !valid) {
+        const auto kind = valid.error().kind;
+        if (kind == AM::StateErrorKind::NonexistentParameter) return kIOReturnNotFound;
+        return kind == AM::StateErrorKind::ReadOnlyParameter || kind == AM::StateErrorKind::ParameterNotApplicable
+            ? kIOReturnNotWritable : kIOReturnBadArgument;
     }
-    const auto* binding = current->model.FindBinding(id);
-    if (!binding) return kIOReturnNotFound;
-    if (const auto legal = AM::validateParameterValue(current->model.topology, id, *value); !legal) {
-        ASFW_LOG(UserClient, "[Controls] refused value guid=0x%016llx parameter=%u: %{public}s",
-                 guid, id.value, legal.error().message.c_str());
-        return kIOReturnBadArgument;
-    }
-    const auto* channel = C::FindAvcFeatureChannel(*current->graph, binding->Token());
-    const auto route = current->unit->CurrentRoute();
-    if (!channel || !route || !current->unit->IsCurrentRoute(*route)) return kIOReturnNotReady;
-
-    const bool mute = binding->kind == C::AvcBindingKind::kFeatureMute;
-    const int32_t raw = mute ? (std::get<bool>(*value) ? 1 : 0)
-                             : static_cast<int32_t>(std::lround(std::get<double>(*value) * 256.0));
     const uint64_t request = Reserve();
-    ASFW_LOG(UserClient, "[Controls] write guid=0x%016llx revision=%llu parameter=%u token=0x%06x raw=%d request=%llu",
-             guid, revision, id.value, binding->Token(), raw, request);
-    C::WriteAvcFeature(current->unit, *route, *channel, mute, raw, [request, mute](IOReturn status, int32_t confirmed) {
-        WriteResult result{.status = status};
-        if (status == kIOReturnSuccess) {
-            result.kind = mute ? ControlValueKind::kBool : ControlValueKind::kDouble;
-            result.bits = mute ? static_cast<uint64_t>(confirmed != 0)
-                               : std::bit_cast<uint64_t>(static_cast<double>(confirmed) / 256.0);
-        }
-        Complete(request, result);
-    });
+    C::ControlService(discovery_, lookup_).SetParameter(guid, revision, id, *value,
+        [request](IOReturn status, AM::ParameterValue confirmed) {
+            WriteResult result{.status = status};
+            std::visit([&](const auto& value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_same_v<T, bool>) { result.kind = ControlValueKind::kBool; result.bits = value; }
+                else if constexpr (std::is_same_v<T, double>) { result.kind = ControlValueKind::kDouble; result.bits = std::bit_cast<uint64_t>(value); }
+                else if constexpr (std::is_same_v<T, int64_t>) { result.kind = ControlValueKind::kInt; result.bits = static_cast<uint64_t>(value); }
+                else { result.kind = ControlValueKind::kAction; result.bits = 0; }
+            }, confirmed);
+            Complete(request, result);
+        });
     args->scalarOutput[0] = request;
     args->scalarOutputCount = 1;
+    return kIOReturnSuccess;
+}
+
+kern_return_t ControlsHandler::SetControlRoute(IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount != 6 || !args->scalarOutput ||
+        args->scalarOutputCount < 1 || args->scalarInput[3] > UINT32_MAX || args->scalarInput[4] > UINT32_MAX ||
+        (args->scalarInput[5] != UINT64_MAX && args->scalarInput[5] > UINT32_MAX)) return kIOReturnBadArgument;
+    const uint64_t guid = GuidOf(args), revision = args->scalarInput[2];
+    const AM::NodeId router{static_cast<uint32_t>(args->scalarInput[3])};
+    const AM::PortId output{static_cast<uint32_t>(args->scalarInput[4])};
+    const auto input = args->scalarInput[5] == UINT64_MAX ? std::nullopt :
+        std::optional{AM::PortId{static_cast<uint32_t>(args->scalarInput[5])}};
+    const auto current = C::ControlService(discovery_, lookup_).CopySnapshot(guid);
+    if (!current) return kIOReturnUnsupported;
+    if (current->topology.revision != revision) return kIOReturnNotPermitted;
+    if (const auto valid = AM::prepareRouteWrite(current->topology, current->state, router, output, input); !valid)
+        return valid.error().kind == AM::StateErrorKind::ReadOnlyParameter ? kIOReturnNotWritable : kIOReturnBadArgument;
+    const auto request = Reserve();
+    C::ControlService(discovery_, lookup_).SetRoute(guid, revision, router, output, input,
+        [request](auto status, const auto& confirmed) {
+            const auto* port = std::get_if<int64_t>(&confirmed);
+            Complete(request, WriteResult{.status = status == kIOReturnSuccess && !port ? kIOReturnError : status,
+                .kind = ControlValueKind::kInt, .bits = port ? static_cast<uint64_t>(*port) : 0});
+        });
+    args->scalarOutput[0] = request; args->scalarOutputCount = 1;
     return kIOReturnSuccess;
 }
 

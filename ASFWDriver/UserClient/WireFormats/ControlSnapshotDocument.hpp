@@ -32,6 +32,6 @@ inline constexpr std::string_view kControlSnapshotSchema = "asfw.controls.v1";
 
 [[nodiscard]] std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
                                                        const AudioModel::Topology& topology,
-                                                       const AudioModel::DeviceState& state);
+                                                       const AudioModel::DeviceState& state, uint64_t sequence = 0);
 
 } // namespace ASFW::UserClient::Wire

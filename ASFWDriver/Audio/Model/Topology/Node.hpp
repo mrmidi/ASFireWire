@@ -33,6 +33,7 @@ struct RouterNode {
     std::vector<PortId> outputs;
     std::vector<RouteBundle> legalBundles;
     RouterConstraints constraints;
+    bool writable{false};
 };
 
 struct MixerNode {

@@ -4,6 +4,7 @@
 #include "Validate.hpp"
 
 #include <cmath>
+#include <algorithm>
 #include "Format.hpp"
 #include <unordered_map>
 #include <unordered_set>
@@ -370,6 +371,7 @@ void validateRouting(const Topology& topology,
 
             // RouteBundleId is router-local
             std::unordered_set<RouteBundleId> seenBundleIds;
+            std::unordered_set<uint64_t> allBundleRoutes;
 
             for (const auto& bundle : router->legalBundles) {
                 if (auto [_, inserted] = seenBundleIds.insert(bundle.id); !inserted) {
@@ -389,6 +391,9 @@ void validateRouting(const Topology& topology,
                 std::unordered_set<uint64_t> seenRoutesInBundle;
                 for (const auto& route : bundle.routes) {
                     const uint64_t routeKey = (static_cast<uint64_t>(route.input.value) << 32) | route.output.value;
+                    if (!allBundleRoutes.insert(routeKey).second)
+                        errors.push_back({TopologyErrorKind::DuplicateRouteOrCrosspoint,
+                            "A route must belong to exactly one bundle"});
                     if (auto [_, inserted] = seenRoutesInBundle.insert(routeKey); !inserted) {
                         errors.push_back({
                             TopologyErrorKind::DuplicateRouteOrCrosspoint,
@@ -502,14 +507,14 @@ void validateParameters(const Topology& topology,
         std::visit([&](const auto& domain) {
             using D = std::decay_t<decltype(domain)>;
             if constexpr (std::is_same_v<D, ScalarDomain>) {
-                if (domain.min > domain.max) {
+                if (!std::isfinite(domain.min) || !std::isfinite(domain.max) || domain.min > domain.max) {
                     errors.push_back({
                         TopologyErrorKind::InvalidDomain,
                         detail::Format("Parameter {} '{}' ScalarDomain min ({}) > max ({})",
                                     param.id.value, param.name, domain.min, domain.max)
                     });
                 }
-                if (domain.step.has_value() && *domain.step <= 0) {
+                if (domain.step.has_value() && (!std::isfinite(*domain.step) || *domain.step <= 0)) {
                     errors.push_back({
                         TopologyErrorKind::InvalidDomain,
                         detail::Format("Parameter {} '{}' ScalarDomain step ({}) <= 0",
@@ -662,7 +667,13 @@ std::expected<void, StateError> validateParameterValue(
         });
     }
 
-    // Validate value against domain
+    return validateParameterValue(*found, value);
+}
+
+std::expected<void, StateError> validateParameterValue(
+    const Parameter& parameter, const ParameterValue& value) {
+    const auto* found = &parameter;
+    const auto id = parameter.id;
     return std::visit([&](const auto& domain) -> std::expected<void, StateError> {
         using D = std::decay_t<decltype(domain)>;
         if constexpr (std::is_same_v<D, BooleanDomain>) {
@@ -680,7 +691,9 @@ std::expected<void, StateError> validateParameterValue(
                 });
             }
             const double v = std::get<double>(value);
-            if (!std::isfinite(v) || v < domain.min || v > domain.max) {
+            if (!std::isfinite(domain.min) || !std::isfinite(domain.max) || domain.min > domain.max ||
+                (domain.step && (!std::isfinite(*domain.step) || *domain.step <= 0)) ||
+                !std::isfinite(v) || v < domain.min || v > domain.max) {
                 return std::unexpected(StateError{
                     StateErrorKind::InvalidParameterValue,
                     detail::Format("Parameter {} '{}' value {} out of range [{}, {}] or non-finite",
@@ -699,6 +712,10 @@ std::expected<void, StateError> validateParameterValue(
                     });
                 }
             }
+        } else if constexpr (std::is_same_v<D, ActionDomain>) {
+            if (!std::holds_alternative<ActionTrigger>(value))
+                return std::unexpected(StateError{StateErrorKind::InvalidParameterValue,
+                    "An action requires a one-shot trigger"});
         } else if constexpr (std::is_same_v<D, EnumDomain>) {
             if (!std::holds_alternative<int64_t>(value)) {
                 return std::unexpected(StateError{
@@ -724,6 +741,78 @@ std::expected<void, StateError> validateParameterValue(
         }
         return {};
     }, found->domain);
+}
+
+std::expected<void, StateError> validateParameterState(
+    const Parameter& parameter, const ParameterState& state) {
+    Parameter effective = parameter;
+    if (state.domainOverride) {
+        const auto* base = std::get_if<ScalarDomain>(&parameter.domain);
+        const auto& domain = *state.domainOverride;
+        if (!base || domain.unit != base->unit || !std::isfinite(domain.min) ||
+            !std::isfinite(domain.max) || domain.min > domain.max ||
+            (domain.step && (!std::isfinite(*domain.step) || *domain.step <= 0)))
+            return std::unexpected(StateError{StateErrorKind::InvalidParameterState,
+                "A dynamic range must be finite, ordered, positive-step and retain the scalar unit"});
+        effective.domain = domain;
+    }
+    return validateParameterValue(effective, state.value);
+}
+
+std::expected<void, StateError> validateParameterWrite(
+    const Topology& topology, const DeviceState& state, ParameterId id,
+    const ParameterValue& value) {
+    if (state.topologyRevision != topology.revision)
+        return std::unexpected(StateError{StateErrorKind::TopologyRevisionMismatch, "Stale control state"});
+    const auto found = std::ranges::find(topology.parameters, id, &Parameter::id);
+    if (found == topology.parameters.end())
+        return std::unexpected(StateError{StateErrorKind::NonexistentParameter, "Unknown parameter"});
+    if (found->access == ParameterAccess::ReadOnly)
+        return std::unexpected(StateError{StateErrorKind::ReadOnlyParameter, "This parameter is read-only"});
+    const auto current = state.parameters.find(id);
+    if (current == state.parameters.end()) {
+        if (std::holds_alternative<ActionDomain>(found->domain)) return validateParameterValue(*found, value);
+        return std::unexpected(StateError{StateErrorKind::MissingParameter, "No confirmed parameter state"});
+    }
+    if (!current->second.applicable)
+        return std::unexpected(StateError{StateErrorKind::ParameterNotApplicable, "This control has no effect in the current mode"});
+    // Reject invalid provider metadata even when the requested value itself fits.
+    if (auto legal = validateParameterState(*found, current->second); !legal) return legal;
+    auto requested = current->second;
+    requested.value = value;
+    return validateParameterState(*found, requested);
+}
+
+std::expected<RouterState, StateError> prepareRouteWrite(
+    const Topology& topology, const DeviceState& state, NodeId id, PortId output, std::optional<PortId> input) {
+    if (state.topologyRevision != topology.revision)
+        return std::unexpected(StateError{StateErrorKind::TopologyRevisionMismatch, "Stale router state"});
+    const auto node = std::ranges::find(topology.nodes, id, &Node::id);
+    const auto* router = node == topology.nodes.end() ? nullptr : std::get_if<RouterNode>(&node->body);
+    const auto current = state.routers.find(id);
+    if (!router || current == state.routers.end())
+        return std::unexpected(StateError{StateErrorKind::NonexistentRouter, "Unknown router"});
+    if (!router->writable)
+        return std::unexpected(StateError{StateErrorKind::ReadOnlyParameter, "Routing is read-only"});
+    if (std::ranges::find(router->outputs, output) == router->outputs.end())
+        return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Unknown router output"});
+    auto requested = current->second;
+    const RouteBundle* target = nullptr;
+    for (const auto& bundle : router->legalBundles) for (const auto& route : bundle.routes)
+        if (input && route.input == *input && route.output == output) {
+            if (target) return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Route belongs to multiple bundles"});
+            target = &bundle;
+        }
+    if (input && !target)
+        return std::unexpected(StateError{StateErrorKind::RoutingConstraintViolated, "Route is not legal"});
+    std::erase_if(requested.activeBundles, [&](auto bundleId) {
+        const auto bundle = std::ranges::find(router->legalBundles, bundleId, &RouteBundle::id);
+        return bundle != router->legalBundles.end() && std::ranges::any_of(bundle->routes,
+            [&](const auto& route) { return route.output == output; });
+    });
+    if (target) requested.activeBundles.push_back(target->id);
+    if (const auto valid = validateRouterState(topology, id, requested); !valid) return std::unexpected(valid.error());
+    return requested;
 }
 
 std::expected<void, StateError> validateRouterState(
@@ -892,12 +981,13 @@ std::expected<void, StateError> validateState(
         topoParams.insert(param.id);
         auto it = state.parameters.find(param.id);
         if (it == state.parameters.end()) {
+            if (std::holds_alternative<ActionDomain>(param.domain)) continue;
             return std::unexpected(StateError{
                 StateErrorKind::MissingParameter,
                 detail::Format("DeviceState is missing required ParameterId {} '{}'", param.id.value, param.name)
             });
         }
-        if (auto res = validateParameterValue(topology, param.id, it->second.value); !res) {
+        if (auto res = validateParameterState(param, it->second); !res) {
             return res;
         }
     }

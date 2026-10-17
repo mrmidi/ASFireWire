@@ -8,6 +8,8 @@
 
 #include "AvcAudioConfig.hpp"
 #include "AvcControlMapping.hpp"
+#include "../../Controls/AvcControlProjection.hpp"
+#include "../../Controls/CoreAudioProjection.hpp"
 #include "../../../Protocols/AVC/Descriptors/DescriptorTypeCodes.hpp"
 #include "../Duplex/AudioClockConfig.hpp"
 
@@ -160,6 +162,29 @@ std::optional<ASFWAudioDevice> BuildGraphAudioConfig(const AvcEndpointIdentity& 
         if (muteCount > 1) control.hasMute = false;
     }
     std::erase_if(config.avcControls, [](const auto& c) { return !c.hasVolume && !c.hasMute; });
+
+    // The binding layer preserves the descriptor-confirmed output-master
+    // frontier policy. AudioDriverKit receives parameter IDs and semantic
+    // descriptors only; no AV/C address or wire quantization crosses the seam.
+    auto controlModel = ::ASFW::Audio::Controls::ProjectAvcControls(graph, 0);
+    config.parameterControls = ::ASFW::Audio::Controls::ProjectCoreAudioControls(controlModel.topology, controlModel.state);
+    for (const auto& master : config.avcControls) {
+        using namespace ::ASFW::Audio::Controls;
+        for (const auto kind : {AvcBindingKind::kFeatureVolume, AvcBindingKind::kFeatureMute}) {
+            if (kind == AvcBindingKind::kFeatureVolume ? !master.hasVolume : !master.hasMute) continue;
+            const auto id = ::ASFW::AudioModel::ParameterId{(master.token << 1) | static_cast<uint32_t>(kind)};
+            const auto parameter = std::ranges::find(controlModel.topology.parameters, id, &::ASFW::AudioModel::Parameter::id);
+            const auto state = controlModel.state.parameters.find(id);
+            if (parameter == controlModel.topology.parameters.end() || state == controlModel.state.parameters.end()) continue;
+            const uint32_t classId = kind == AvcBindingKind::kFeatureVolume ? 'vlme' : 'mute';
+            std::erase_if(config.parameterControls, [&](const auto& c) {
+                return c.parameter == id || (c.classId == classId && c.scope == uint32_t{'outp'} && c.element == 0);
+            });
+            config.parameterControls.push_back({id, kind == AvcBindingKind::kFeatureVolume
+                ? CoreAudioControlKind::Level : CoreAudioControlKind::Boolean,
+                classId, uint32_t{'outp'}, 0, true, master.name, parameter->domain, state->second.value});
+        }
+    }
 
     const auto forced = plan.streamTraits.wire.forcedStreamMode;
     const bool blocking = forced == ForcedStreamMode::Blocking ||

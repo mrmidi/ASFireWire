@@ -320,6 +320,7 @@ add_device_test(OxfordCsrTests
     OxfordCsrTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
@@ -347,6 +348,7 @@ add_device_test(AvcTestRigTests
 add_device_test(ApogeeDuetVendorCmdTests
     ApogeeDuetVendorCmdTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"
@@ -364,6 +366,7 @@ add_device_test(ApogeeDuetVendorCmdTests
 add_device_test(ApogeeDuetClockTransitionTests
     ApogeeDuetClockTransitionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeParamsSerdes.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/OxfordCsr.cpp"

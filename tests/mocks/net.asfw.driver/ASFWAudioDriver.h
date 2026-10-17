@@ -20,6 +20,7 @@
 
 struct ASFWAudioDriver_IVars;
 
+#define ASFWAudioDriver_ControlParameterChanged_Args OSAction* action, uint64_t guid, uint64_t revision, uint64_t sequence, uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin
 #define ASFWAudioDriver_ZtsAnchorReady_Args OSAction* action, uint64_t generation
 #define ASFWAudioDriver_TxPreparationReady_Args OSAction* action, uint64_t generation
 
@@ -49,6 +50,11 @@ public:
     std::vector<uint32_t> stoppedDevices;
     uint32_t stopDeviceAt{0};
 
+    kern_return_t ApplyProtocolBooleanControl(uint32_t, uint32_t, bool);
+    kern_return_t ReadProtocolBooleanControl(uint32_t, uint32_t, bool*);
+    kern_return_t ApplyAvcFeatureControl(uint32_t, bool, int32_t, int32_t*);
+    kern_return_t ApplyControlParameter(uint32_t, uint64_t, uint64_t, uint64_t*, uint64_t*);
+    void ControlParameterChanged_Impl(ASFWAudioDriver_ControlParameterChanged_Args);
     void ZtsAnchorReady_Impl(ASFWAudioDriver_ZtsAnchorReady_Args);
     void TxPreparationReady_Impl(ASFWAudioDriver_TxPreparationReady_Args);
 };

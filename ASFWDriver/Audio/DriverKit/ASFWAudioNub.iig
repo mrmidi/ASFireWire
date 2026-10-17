@@ -132,6 +132,14 @@ public:
     virtual kern_return_t RegisterIoRestartRequiredAction(
         OSAction* action TYPE(IoRestartRequired));
 
+    // Confirmed controls: one-way to the audio driver's Default queue. Never
+    // wait on the nub control queue from the controller completion callback.
+    virtual void ControlParameterChanged(OSAction* action TARGET,
+        uint64_t guid, uint64_t revision, uint64_t sequence,
+        uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin);
+    virtual kern_return_t RegisterControlChangeAction(
+        OSAction* action TYPE(ControlParameterChanged));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
     void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
@@ -194,6 +202,12 @@ public:
         uint64_t expectedIncarnation, uint64_t expectedRouteEpoch,
         uint32_t expectedBusGeneration);
 
+    virtual kern_return_t CopyParameterControls(OSDictionary** properties);
+    virtual kern_return_t SetControlParameter(uint32_t parameterId, uint64_t kind, uint64_t bits,
+        uint64_t* confirmedKind, uint64_t* confirmedBits);
+    virtual kern_return_t ReadControlParameter(uint32_t parameterId, bool normalized,
+        uint64_t* kind, uint64_t* bits);
+
     // Confirmed graph-backed controls. token encodes subunit/block/channel;
     // the nub validates it against the current graph before sending traffic.
     virtual kern_return_t SetAvcFeatureControl(uint32_t token, bool muteControl,
@@ -238,6 +252,7 @@ struct ASFWAudioNub_IVars {
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* ioRestartRequiredAction{nullptr};
+    OSAction* controlChangeAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

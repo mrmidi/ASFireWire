@@ -28,6 +28,9 @@ enum class StateOrigin : uint8_t {
 struct ParameterState {
     ParameterValue value;
     StateOrigin origin{StateOrigin::Observed};
+    /// Current mode's scalar range; parameter identity and topology stay fixed.
+    std::optional<ScalarDomain> domainOverride{};
+    bool applicable{true};
 };
 
 struct DeviceState {

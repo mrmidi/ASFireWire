@@ -45,6 +45,9 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     }
     state = {};
 
+    ivars.device.parameterControls.clear();
+    for (auto& slot : ivars.device.avcControlSlots) slot = {};
+    ivars.device.controlRevision = 0;
     ivars.device.avcControlCount = 0;
     ivars.device.boolControlCount = 0;
     ASFW::Isoch::Audio::ResetBoolControlSlots(ivars.device.boolControls,
@@ -100,11 +103,13 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
         (void)nub->RegisterZtsAnchorAction(nullptr);
         (void)nub->RegisterDeviceClockChangedAction(nullptr);
         (void)nub->RegisterIoRestartRequiredAction(nullptr);
+        (void)nub->RegisterControlChangeAction(nullptr);
     }
     ivars.txPreparationAction.reset();
     ivars.txPreparationQueue.reset();
     ivars.deviceClockChangedAction.reset();
     ivars.ioRestartRequiredAction.reset();
+    ivars.controlChangeAction.reset();
     ivars.ztsAnchorAction.reset();
     ivars.ztsQueue.reset();
     // Detach and drop the whole ADK graph here, not in free(). The device is

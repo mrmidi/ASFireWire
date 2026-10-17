@@ -43,6 +43,28 @@ enum class IOUserAudioStartStopFlags : uint64_t {
     Prewarm = (1ULL << 0),
 };
 
+class IOUserAudioLevelControl : public OSObject {
+public:
+    kern_return_t SetDecibelValue(float value) { decibels = value; ++updates; return kIOReturnSuccess; }
+    float decibels{0};
+    uint32_t updates{0};
+};
+class IOUserAudioBooleanControl : public OSObject {
+public:
+    kern_return_t SetControlValue(bool value) { enabled = value; ++updates; return kIOReturnSuccess; }
+    bool enabled{false};
+    uint32_t updates{0};
+};
+using IOUserAudioSelectorValue = uint32_t;
+class IOUserAudioSelectorControl : public OSObject {
+public:
+    kern_return_t SetCurrentSelectedValues(const IOUserAudioSelectorValue* values, size_t count) {
+        if (values == nullptr || count != 1) return kIOReturnBadArgument;
+        selected = values[0]; ++updates; return kIOReturnSuccess;
+    }
+    uint32_t selected{0};
+    uint32_t updates{0};
+};
 class IOUserAudioStream;
 
 class IOUserAudioDevice {

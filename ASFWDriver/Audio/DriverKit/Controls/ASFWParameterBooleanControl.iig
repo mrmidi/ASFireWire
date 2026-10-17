@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+#ifndef ASFWParameterBooleanControl_h
+#define ASFWParameterBooleanControl_h
+#include <AudioDriverKit/IOUserAudioBooleanControl.iig>
+#include "CoreAudioProjection.hpp"
+class ASFWAudioDriver;
+class ASFWParameterBooleanControl : public IOUserAudioBooleanControl {
+public:
+    static OSSharedPtr<ASFWParameterBooleanControl> Create(ASFWAudioDriver* driver,
+        ASFW::Audio::Controls::CoreAudioControl descriptor) LOCALONLY;
+    bool init(ASFWAudioDriver* driver, ASFW::Audio::Controls::CoreAudioControl descriptor) LOCALONLY;
+    void free() override;
+    kern_return_t HandleChangeControlValue(bool value) override;
+};
+struct ASFWParameterBooleanControl_IVars {
+    ASFWAudioDriver* driver;
+    ASFW::Audio::Controls::CoreAudioControl descriptor;
+};
+#endif

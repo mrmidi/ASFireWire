@@ -7,6 +7,7 @@
 // Direct audio memory/control ownership lives in AudioEndpointRuntime.
 //
 
+#include "../Controls/ControlNotifications.hpp"
 #include "ASFWAudioNub.h"
 #include "ASFWDriver.h"
 #include "../Core/AudioEndpointRuntime.hpp"
@@ -33,8 +34,13 @@
 #include "../Protocols/AVC/AvcDuplexClockObservation.hpp"
 #include "../Protocols/AVC/AvcFeatureControl.hpp"
 #include "../Controls/AvcControlWrite.hpp"
+#include "../Controls/AvcControlChange.hpp"
 #include "../Protocols/Backends/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
+#include "../Controls/ControlService.hpp"
+#include "../Controls/CoreAudioProjection.hpp"
+#include "../Controls/CoreAudioControlProperties.hpp"
+#include <bit>
 #include "../../Service/DriverContext.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 
@@ -277,6 +283,7 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        (void)RegisterControlChangeAction(nullptr);
         if (ivars->txPreparationAction) {
             ivars->txPreparationAction->release();
             ivars->txPreparationAction = nullptr;
@@ -327,6 +334,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
 kern_return_t IMPL(ASFWAudioNub, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
+    (void)RegisterControlChangeAction(nullptr);
     if (ivars) {
         ASFWDriver* parent = GetParentASFWDriver(ivars);
         auto* ctx =
@@ -550,6 +558,72 @@ bool ASFWAudioNub::NotifyIoRestartRequired(uint32_t reason)
              reason, ivars->guid);
     IoRestartRequired(ivars->ioRestartRequiredAction, reason);
     return true;
+}
+
+void IMPL(ASFWAudioNub, ControlParameterChanged) {
+    (void)action; (void)guid; (void)revision; (void)sequence;
+    (void)parameterId; (void)kind; (void)bits; (void)origin;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterControlChangeAction) {
+    if (!ivars) return kIOReturnNotReady;
+    auto& notifications = ASFW::Protocols::AVC::FeatureChangeNotifications::Shared();
+    // Drain before changing the action or freeing ivars. The callback only
+    // sends an OSAction-targeted one-way RPC; it never waits on this queue.
+    notifications.Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
+    if (ivars->controlChangeAction) ivars->controlChangeAction->release();
+    ivars->controlChangeAction = action;
+    if (!action) return kIOReturnSuccess;
+    action->retain();
+    const bool registered = notifications.Register(this, [](void* owner, const auto& feature) {
+        auto* nub = static_cast<ASFWAudioNub*>(owner);
+        if (feature.route.guid != nub->ivars->guid) return;
+        const auto event = ASFW::Audio::Controls::ProjectAvcChange(feature);
+        nub->ControlParameterChanged(nub->ivars->controlChangeAction, event.guid,
+            event.revision, event.sequence, event.parameterId, event.kind, event.bits, event.origin);
+    });
+    const bool genericRegistered = ASFW::Audio::Controls::ControlNotifications::Shared().Register(this,
+        [](void* owner, const auto& event) {
+            auto* nub = static_cast<ASFWAudioNub*>(owner);
+            if (event.guid != nub->ivars->guid) return;
+            nub->ControlParameterChanged(nub->ivars->controlChangeAction, event.guid, event.revision,
+                event.sequence, event.parameterId, event.kind, event.bits, event.origin);
+        });
+    if (!registered || !genericRegistered) {
+        notifications.Unregister(this);
+        ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
+        action->release(); ivars->controlChangeAction = nullptr;
+        return kIOReturnNoResources;
+    }
+    // Close the discovery->registration window without any new bus reads.
+    // Sequence zero is a baseline: a live event already applied wins over it.
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (context && context->workQueue && context->deps.avcDiscovery) {
+        const auto discovery = context->deps.avcDiscovery;
+        const uint64_t deviceGuid = ivars->guid;
+        const OSSharedPtr<ASFWAudioNub> nub(this, OSRetain);
+        const OSSharedPtr<OSAction> target(action, OSRetain);
+        context->workQueue->DispatchAsync(^{
+            const auto unit = discovery->Unit(deviceGuid);
+            const auto snapshot = unit ? unit->GetDiscoverySnapshot() : nullptr;
+            const auto graph = unit ? unit->GetDiscoveredGraph() : nullptr;
+            if (!snapshot || !graph || !unit->IsCurrentRoute(snapshot->route)) return;
+            for (const auto& channel : graph->featureChannels) {
+                for (const bool mute : {false, true}) {
+                    if (mute ? !channel.mute.has_value() : !channel.volume.has_value()) continue;
+                    const auto event = ASFW::Audio::Controls::ProjectAvcChange({
+                        .route = snapshot->route, .revision = snapshot->session.value,
+                        .subunit = channel.subunit, .block = channel.block, .channel = channel.channel,
+                        .mute = mute, .value = mute ? static_cast<int32_t>(*channel.mute) : *channel.volume});
+                    nub->ControlParameterChanged(target.get(), event.guid, event.revision, 0,
+                        event.parameterId, event.kind, event.bits, event.origin);
+                }
+            }
+        });
+    }
+    return kIOReturnSuccess;
 }
 
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
@@ -1202,6 +1276,160 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
                                             .generation = binding.device->gen,
                                             .nodeId = binding.device->nodeId}, std::move(avcUnit));
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
+}
+
+
+namespace {
+namespace Controls = ASFW::Audio::Controls;
+namespace AM = ASFW::AudioModel;
+struct ControlReply { uint64_t kind{}, bits{}; };
+std::optional<AM::ParameterValue> DecodeControl(uint64_t kind, uint64_t bits) {
+    switch (kind) {
+        case 0: if (bits > 1) return {}; return bits != 0;
+        case 1: { const double value = std::bit_cast<double>(bits); if (!std::isfinite(value)) return {}; return value; }
+        case 2: return static_cast<int64_t>(bits);
+        case 3: if (bits != 0) return {}; return AM::ActionTrigger{};
+        default: return {};
+    }
+}
+ControlReply EncodeControl(const AM::ParameterValue& value) {
+    return std::visit([](const auto& value) -> ControlReply {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, bool>) return {0, value};
+        else if constexpr (std::is_same_v<T, double>) return {1, std::bit_cast<uint64_t>(value)};
+        else if constexpr (std::is_same_v<T, int64_t>) return {2, static_cast<uint64_t>(value)};
+        else return {3, 0};
+    }, value);
+}
+std::optional<AM::ScalarDomain> CurrentRange(const Controls::ControlSnapshot& snapshot, AM::ParameterId id) {
+    const auto p = std::ranges::find(snapshot.topology.parameters, id, &AM::Parameter::id);
+    const auto s = snapshot.state.parameters.find(id);
+    if (p == snapshot.topology.parameters.end() || s == snapshot.state.parameters.end()) return {};
+    if (s->second.domainOverride) return s->second.domainOverride;
+    if (const auto* d = std::get_if<AM::ScalarDomain>(&p->domain)) return *d;
+    return {};
+}
+}
+kern_return_t IMPL(ASFWAudioNub, CopyParameterControls) {
+    if (!ivars || !properties) return kIOReturnBadArgument;
+    *properties = nullptr;
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    auto* core = parent ? static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore()) : nullptr;
+    if (!context || !context->workQueue || !core) return kIOReturnNotReady;
+    const auto discovery = context->deps.avcDiscovery;
+    auto* runtime = core->GetAudioRuntimeRegistry();
+    const auto guid = ivars->guid;
+    const auto active = std::make_shared<std::atomic<bool>>(true);
+    const auto result = ASFW::Audio::WaitForAsyncResult<OSSharedPtr<OSDictionary>>([=](auto done) {
+        context->workQueue->DispatchAsync(^{
+            if (!active->load()) { done(kIOReturnAborted, {}); return; }
+            const auto protocol = runtime ? runtime->FindShared(guid) : nullptr;
+            const auto unit = discovery ? discovery->Unit(guid) : nullptr;
+            const auto route = unit ? unit->CurrentRoute() : std::nullopt;
+            if (protocol && unit && route) protocol->UpdateRuntimeContext(*route, unit);
+            auto finish = [=](IOReturn status) {
+                if (!active->load()) { done(kIOReturnAborted, {}); return; }
+                if (status != kIOReturnSuccess) { done(status, {}); return; }
+                Controls::ControlService service(discovery.get(), [runtime](uint64_t guid) {
+                    return runtime ? runtime->FindShared(guid) : nullptr;
+                });
+                const auto snapshot = service.CopySnapshot(guid);
+                if (!snapshot) { done(kIOReturnUnsupported, {}); return; }
+                auto controls = Controls::EncodeControls(Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state));
+                auto properties = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
+                if (!controls || !properties) { done(kIOReturnNoMemory, {}); return; }
+                properties->setObject(Controls::kControlsProperty, controls.get());
+                done(kIOReturnSuccess, std::move(properties));
+            };
+            // Ordinary AV/C uses the already-published master-frontier policy,
+            // so the caller keeps its descriptors when there is no provider.
+            if (!protocol || !protocol->Controls()) { done(kIOReturnUnsupported, {}); return; }
+            protocol->Controls()->Prepare([protocol, finish = std::move(finish)](auto status) { finish(status); });
+        });
+    }, 5000, kIOReturnTimeout, nullptr, 1);
+    active->store(false);
+    if (result.status == kIOReturnSuccess) { *properties = result.value.get(); (*properties)->retain(); }
+    return result.status;
+}
+
+kern_return_t IMPL(ASFWAudioNub, ReadControlParameter) {
+    if (!ivars || !kind || !bits) return kIOReturnBadArgument;
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    auto* core = parent ? static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore()) : nullptr;
+    if (!context || !context->workQueue || !core) return kIOReturnNotReady;
+    const auto discovery = context->deps.avcDiscovery;
+    auto* runtime = core->GetAudioRuntimeRegistry();
+    const uint64_t guid = ivars->guid;
+    const auto active = std::make_shared<std::atomic<bool>>(true);
+    const auto result = ASFW::Audio::WaitForAsyncResult<ControlReply>([=](auto done) {
+        context->workQueue->DispatchAsync(^{
+            if (!active->load()) { done(kIOReturnAborted, {}); return; }
+            const auto snapshot = Controls::ControlService(discovery.get(), [runtime](uint64_t guid) {
+                return runtime ? runtime->FindShared(guid) : nullptr;
+            }).CopySnapshot(guid);
+            if (!snapshot) { done(kIOReturnNotReady, {}); return; }
+            const AM::ParameterId id{parameterId};
+            const auto current = Controls::ControlService(discovery.get(), [runtime](uint64_t guid) {
+                return runtime ? runtime->FindShared(guid) : nullptr;
+            }).ReadParameter(guid, id);
+            if (!current) { done(kIOReturnNotFound, {}); return; }
+            if (normalized) {
+                const auto range = CurrentRange(*snapshot, id);
+                const auto* value = std::get_if<double>(&*current);
+                const auto position = range && value ? Controls::ScalarToPosition(*range, *value) : std::nullopt;
+                if (!position) { done(kIOReturnBadArgument, {}); return; }
+                done(kIOReturnSuccess, {4, std::bit_cast<uint64_t>(*position)});
+            } else done(kIOReturnSuccess, EncodeControl(*current));
+        });
+    }, 2000, kIOReturnTimeout, nullptr, 1);
+    active->store(false);
+    if (result.status == kIOReturnSuccess) { *kind = result.value.kind; *bits = result.value.bits; }
+    return result.status;
+}
+kern_return_t IMPL(ASFWAudioNub, SetControlParameter) {
+    if (!ivars || !confirmedKind || !confirmedBits) return kIOReturnBadArgument;
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    auto* core = parent ? static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore()) : nullptr;
+    if (!context || !context->workQueue || !core) return kIOReturnNotReady;
+    const auto discovery = context->deps.avcDiscovery;
+    auto* runtime = core->GetAudioRuntimeRegistry();
+    const uint64_t guid = ivars->guid;
+    const auto active = std::make_shared<std::atomic<bool>>(true);
+    const auto result = ASFW::Audio::WaitForAsyncResult<ControlReply>([=](auto done) {
+        context->workQueue->DispatchAsync(^{
+            if (!active->load()) { done(kIOReturnAborted, {}); return; }
+            Controls::ControlService service(discovery.get(), [runtime](uint64_t guid) {
+                return runtime ? runtime->FindShared(guid) : nullptr;
+            });
+            const auto snapshot = service.CopySnapshot(guid);
+            if (!snapshot) { done(kIOReturnNotReady, {}); return; }
+            const AM::ParameterId id{parameterId};
+            auto requested = DecodeControl(kind, bits);
+            std::optional<AM::ScalarDomain> range;
+            if (kind == 4) {
+                range = CurrentRange(*snapshot, id);
+                const auto scalar = range ? Controls::PositionToScalar(*range, std::bit_cast<double>(bits)) : std::nullopt;
+                if (scalar) requested = *scalar;
+            }
+            if (!requested) { done(kIOReturnBadArgument, {}); return; }
+            service.SetParameter(guid, snapshot->topology.revision, id, *requested,
+                [done, range](auto status, const auto& confirmed) {
+                    if (status != kIOReturnSuccess) { done(status, {}); return; }
+                    if (range) {
+                        const auto* scalar = std::get_if<double>(&confirmed);
+                        const auto position = scalar ? Controls::ScalarToPosition(*range, *scalar) : std::nullopt;
+                        if (!position) { done(kIOReturnError, {}); return; }
+                        done(kIOReturnSuccess, {4, std::bit_cast<uint64_t>(*position)});
+                    } else done(kIOReturnSuccess, EncodeControl(confirmed));
+                });
+        });
+    }, 2000, kIOReturnTimeout, nullptr, 1);
+    active->store(false);
+    if (result.status == kIOReturnSuccess) { *confirmedKind = result.value.kind; *confirmedBits = result.value.bits; }
+    return result.status;
 }
 
 // The nub queue may wait; the controller Default queue must never wait on FCP.

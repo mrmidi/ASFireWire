@@ -113,8 +113,8 @@ struct DeviceControlsContent: View {
                               alignment: .leading, spacing: 14) {
                         ForEach(group) { node in
                             switch node.kind {
-                            case .router: RouterCard(node: node, snapshot: snapshot)
-                            case .endpoint: EndpointCard(node: node)
+                            case .router: RouterCard(node: node, snapshot: snapshot, model: model)
+                            case .endpoint: ProcessorCard(node: node, snapshot: snapshot, model: model)
                             case .processor, .mixer: ProcessorCard(node: node, snapshot: snapshot, model: model)
                             }
                         }
@@ -200,7 +200,7 @@ private struct ProcessorCard: View {
         let parameters = snapshot.parameters(of: node.id)
         let groups = Self.groups(parameters)
         ControlCard(title: node.name, systemImage: node.kind == .mixer ? "slider.horizontal.3" : "slider.vertical.3",
-                    caption: "\(node.outputs.count) channel\(node.outputs.count == 1 ? "" : "s")") {
+                    caption: node.kind == .endpoint ? (node.host == true ? "Host" : "Connectors") : "\(node.outputs.count) channel\(node.outputs.count == 1 ? "" : "s")") {
             if parameters.isEmpty {
                 Text("No controls published for this block.").font(.callout).foregroundStyle(.secondary)
             }
@@ -247,10 +247,16 @@ private struct ProcessorCard: View {
 private struct RouterCard: View {
     let node: ControlNode
     let snapshot: ControlSnapshot
+    @ObservedObject var model: DeviceControlsViewModel
 
     var body: some View {
         ControlCard(title: node.name, systemImage: "arrow.triangle.branch",
-                    caption: "Read-only: switching inputs is not supported yet.") {
+                    caption: node.writable ? "Select an input; the device confirms the active route." : "Read-only routing.") {
+            ForEach(snapshot.parameters(of: node.id)) { parameter in
+                ParameterRow(parameter: parameter, state: model.writeState(parameter.id)) { value in
+                    Task { await model.write(parameter.id, value) }
+                }
+            }
             if node.bundles.isEmpty {
                 Text("No inputs published.").font(.callout).foregroundStyle(.secondary)
             }
@@ -263,9 +269,20 @@ private struct RouterCard: View {
                         Text(label(bundle)).fontWeight(active ? .semibold : .regular)
                         Spacer()
                         if active { ControlBadge(text: "active", tint: .accentColor) }
+                        if node.writable,
+                           !snapshot.parameters(of: node.id).contains(where: { $0.semantic == .nominalLevel && $0.origin == .derived }),
+                           let route = bundle.routes.first {
+                            Button("Select") {
+                                Task { await model.writeRoute(router: node.id, output: route.output, input: route.input) }
+                            }
+                            .disabled(active || { if case .writing = model.writeState(node.id | 0x8000_0000) { true } else { false } }())
+                        }
                     }
                     .font(.callout)
                 }
+            }
+            if case .failed(let message) = model.writeState(node.id | 0x8000_0000) {
+                Text(message).font(.caption).foregroundStyle(.red)
             }
             if !node.bundles.isEmpty && node.activeBundles.isEmpty {
                 Text("The device did not report the active input.").font(.caption).foregroundStyle(.secondary)
@@ -307,13 +324,18 @@ private struct ParameterRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            control
+            control.disabled(!parameter.isWritable)
+            if !parameter.applicable { Text("Not applicable").font(.caption).foregroundStyle(.secondary) }
+            else if parameter.access == .readOnly { Text("Read-only").font(.caption).foregroundStyle(.secondary) }
             status
         }
     }
 
     @ViewBuilder private var control: some View {
-        switch parameter.domain {
+        switch parameter.effectiveDomain {
+        case .action:
+            Button(parameter.name) { write(.action) }
+                .disabled({ if case .writing = state { true } else { false } }())
         case .scalar(let domain):
             scalar(domain)
         case .bool:
@@ -380,7 +402,9 @@ private struct ParameterRow: View {
     }
 
     @ViewBuilder private var provenance: some View {
-        if parameter.value == nil {
+        if parameter.domain == .action {
+            EmptyView()
+        } else if parameter.value == nil {
             ControlBadge(text: "no value", tint: .secondary)
         } else if let origin = parameter.origin, origin != .observed {
             ControlBadge(text: origin.rawValue, tint: .secondary)
@@ -425,6 +449,7 @@ private struct ParameterRow: View {
 
     static func describe(_ value: ControlValue, _ domain: ControlDomain) -> String {
         switch (value, domain) {
+        case (.action, _): "action"
         case (.bool(let on), _): on ? "on" : "off"
         case (.double(let number), .scalar(let scalar)): format(number, scalar)
         case (.int(let number), .enumeration(let items)): items.first { $0.value == number }?.name ?? "\(number)"

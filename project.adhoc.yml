@@ -116,6 +116,7 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(SRCROOT)/ASFWDriver/Audio/Model"
+          - "$(SRCROOT)/ASFWDriver/Audio/Controls"
         ASFW_AVC_MULTIRATE_VALIDATION: "1"
         GCC_PREPROCESSOR_DEFINITIONS:
           - "$(inherited)"

@@ -66,7 +66,8 @@ void Send(const std::shared_ptr<AVC::IAvcUnit>& unit,
 void ExecuteSequence(const std::shared_ptr<AVC::IAvcUnit>& unit,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
-                     SequenceCallback callback);
+                     SequenceCallback callback,
+                     std::function<bool()> alive = {});
 
 } // namespace VendorFcp
 

@@ -80,6 +80,22 @@ extension ASFWDriverConnector {
         return .success(requestId)
     }
 
+    func setControlRoute(guid: UInt64, revision: UInt64, routerId: UInt32,
+                         output: UInt32, input: UInt32?) -> Result<UInt64, ControlsDriverError> {
+        guard isConnected, connection != 0 else { return .failure(.notConnected) }
+        let scalars: [UInt64] = [guid >> 32, guid & 0xFFFF_FFFF, revision, UInt64(routerId),
+                                 UInt64(output), input.map(UInt64.init) ?? UInt64.max]
+        var request: UInt64 = 0
+        var count: UInt32 = 1
+        let status = scalars.withUnsafeBufferPointer {
+            IOConnectCallScalarMethod(connection, Method.setControlRoute.rawValue,
+                                      $0.baseAddress, UInt32(scalars.count), &request, &count)
+        }
+        guard status == KERN_SUCCESS else { return .failure(.driver(status)) }
+        guard count == 1 else { return .failure(.malformed("no route request id")) }
+        return .success(request)
+    }
+
     /// The hardware-confirmed value of write `requestId`. `kIOReturnNotReady`
     /// while the device has not answered. A result is handed out once; asking
     /// again gives `kIOReturnNotFound`.

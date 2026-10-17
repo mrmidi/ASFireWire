@@ -157,6 +157,8 @@ public:
                         uint8_t* data,
                         uint32_t maxDataLength) LOCALONLY;
 
+    void NotifyControlParameterChanged(uint64_t guid, uint64_t revision, uint64_t sequence,
+        uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin) LOCALONLY;
     void NotifyStatus(uint64_t sequence,
                       uint32_t reason) LOCALONLY;
 

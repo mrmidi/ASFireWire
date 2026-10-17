@@ -250,12 +250,22 @@ extension ASFWDriverConnector {
                 let base = rawPtr.baseAddress!
                 let scalarCountOffset = MemoryLayout<mach_msg_header_t>.size + MemoryLayout<mach_msg_body_t>.size + MemoryLayout<mach_msg_port_descriptor_t>.size
                 let count = base.load(fromByteOffset: scalarCountOffset, as: UInt32.self).littleEndian
-                guard count >= 2 else { return }
                 let scalarsOffset = scalarCountOffset + MemoryLayout<UInt32>.size
-                let scalarsPtr = base.advanced(by: scalarsOffset).assumingMemoryBound(to: UInt64.self)
-                let sequence = scalarsPtr.pointee
-                let reasonRaw = scalarsPtr.advanced(by: 1).pointee
-                handleStatusNotification(sequence: sequence, reason: UInt32(truncatingIfNeeded: reasonRaw))
+                let messageBytes = Int(base.load(as: mach_msg_header_t.self).msgh_size)
+                guard count >= 2, count <= 16,
+                      scalarsOffset + Int(count) * MemoryLayout<UInt64>.size <= messageBytes,
+                      messageBytes <= rawPtr.count else { return }
+                // Packed Mach data is not guaranteed to align UInt64 values.
+                let scalars = (0..<Int(count)).map {
+                    base.loadUnaligned(fromByteOffset: scalarsOffset + $0 * 8, as: UInt64.self)
+                }
+                if scalars[1] == ControlParameterChange.notificationReason {
+                    if let change = ControlParameterChange(scalars: scalars) {
+                        controlChangeSubject.send(change)
+                    }
+                    return
+                }
+                handleStatusNotification(sequence: scalars[0], reason: UInt32(truncatingIfNeeded: scalars[1]))
             }
         }
     }

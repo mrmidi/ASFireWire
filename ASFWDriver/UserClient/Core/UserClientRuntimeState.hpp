@@ -5,6 +5,7 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../Handlers/AVCHandler.hpp"
 #include "../Handlers/ControlsHandler.hpp"
+#include "../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../Handlers/BusResetHandler.hpp"
 #include "../Handlers/ConfigROMHandler.hpp"
 #include "../Handlers/ControllerCoreAccess.hpp"
@@ -54,7 +55,10 @@ class UserClientRuntimeState final {
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
-        controlsHandler_ = std::make_unique<ControlsHandler>(avcDiscovery);
+        controlsHandler_ = std::make_unique<ControlsHandler>(avcDiscovery, [controllerCore](uint64_t guid) {
+            auto* runtime = controllerCore ? controllerCore->GetAudioRuntimeRegistry() : nullptr;
+            return runtime ? runtime->FindShared(guid) : nullptr;
+        });
         isochHandler_ = std::make_unique<IsochHandler>(
             driver, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner)));
         sbp2Handler_ = std::make_unique<SBP2Handler>([driver]() -> SBP2Handler::Targets {

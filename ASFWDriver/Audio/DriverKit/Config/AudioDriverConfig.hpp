@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "../../Controls/CoreAudioProjection.hpp"
 #include "../../Model/AvcVolumeMapping.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../../Runtime/ResolvedAudioConfiguration.hpp"
@@ -98,6 +99,7 @@ struct ParsedAudioDriverConfig {
     /// The sample rates above came from the device; keep them over a profile's.
     bool deviceSampleRates{false};
 
+    std::vector<::ASFW::Audio::Controls::CoreAudioControl> parameterControls;
     uint32_t avcControlCount{0};
     ::ASFW::Audio::Model::AvcPublishedControl avcControls[::ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};

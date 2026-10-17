@@ -91,11 +91,13 @@ struct SequenceState {
     bool isStatus{false};
     std::shared_ptr<AVC::IAvcUnit> unit;
     SequenceCallback completion;
+    std::function<bool()> alive;
 };
 
 /// One step; each completion schedules the next. The state is owned only by
 /// the pending completion, so it is released when the sequence ends.
 void RunStep(const std::shared_ptr<SequenceState>& state) {
+    if (state->alive && !state->alive()) { state->completion(kIOReturnAborted, {}); return; }
     if (state->index >= state->commands.size()) {
         state->completion(kIOReturnSuccess, state->responses);
         return;
@@ -123,7 +125,8 @@ void RunStep(const std::shared_ptr<SequenceState>& state) {
 void ExecuteSequence(const std::shared_ptr<AVC::IAvcUnit>& unit,
                      const std::vector<ApogeeVendorCommand>& commands,
                      bool isStatus,
-                     SequenceCallback callback) {
+                     SequenceCallback callback,
+                     std::function<bool()> alive) {
     if (commands.empty()) {
         callback(kIOReturnSuccess, {});
         return;
@@ -134,6 +137,7 @@ void ExecuteSequence(const std::shared_ptr<AVC::IAvcUnit>& unit,
     state->isStatus = isStatus;
     state->unit = unit;
     state->completion = std::move(callback);
+    state->alive = std::move(alive);
     RunStep(state);
 }
 

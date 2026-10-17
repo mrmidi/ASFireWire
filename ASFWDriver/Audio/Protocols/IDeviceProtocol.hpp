@@ -29,6 +29,8 @@ struct DiceLockSnapshot;
 struct DiceReceiverDumpSnapshot;
 }
 
+namespace ASFW::Audio::Controls { class IControlProvider; }
+
 namespace ASFW::Audio {
 class FamilyDriver;
 }
@@ -40,7 +42,7 @@ namespace ASFW::Audio {
 /// Device protocols are instantiated by CreateFamilyDeviceProtocol when a
 /// audio endpoint is resolved during discovery. Each protocol handler
 /// encapsulates vendor-specific control logic (DSP, routing, etc.).
-class IDeviceProtocol {
+class IDeviceProtocol : public std::enable_shared_from_this<IDeviceProtocol> {
 public:
     virtual ~IDeviceProtocol() = default;
     
@@ -141,6 +143,9 @@ public:
         (void)route;
         (void)avcUnit;
     }
+
+    /// Optional semantic control provider, owned by this protocol.
+    virtual Controls::IControlProvider* Controls() noexcept { return nullptr; }
 
     // Explicit discovery/reset hook, including idle devices. The caller retains
     // the protocol until completion. Register protocols restore notification IO

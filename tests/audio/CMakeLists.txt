@@ -300,6 +300,7 @@ target_include_directories(AudioDriverTxProducerTests PRIVATE
 # (the dext process outlived an unplug while it did).
 add_audio_test(AudioDriverTeardownTests
     AudioDriverTeardownTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverControls.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTeardown.cpp"
     # What constructing ASFWAudioDriver_IVars links.
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
@@ -362,6 +363,9 @@ add_audio_test(ResolvedStreamConfigTests
 add_audio_test(NubGeometryRoundTripTests
     NubGeometryRoundTripTests.cpp
     ${CMAKE_SOURCE_DIR}/../ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp
+    # AudioDriverConfig decodes the published parameter controls.
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
 
 # DICE Profile Registry and Quirks Tests
@@ -460,12 +464,26 @@ target_compile_definitions(DiceMultirateValidationTests PRIVATE ASFW_DICE_MULTIR
 # Controls: AUAA semantic core (FW-202) and the AV/C projection (FW-204).
 add_audio_test(TopologyModelTests
     topology/TopologyModelTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
 )
 add_audio_test(AvcControlProjectionTests
     topology/AvcControlProjectionTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+add_audio_test(CoreAudioProjectionTests
+    topology/CoreAudioProjectionTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+add_audio_test(DuetControlModelTests
+    topology/DuetControlModelTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )

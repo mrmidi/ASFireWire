@@ -40,6 +40,9 @@ enum class StateErrorKind : uint8_t {
     MissingParameter,
     NonexistentParameter,
     InvalidParameterValue,
+    InvalidParameterState,
+    ReadOnlyParameter,
+    ParameterNotApplicable,
     MissingRouter,
     NonexistentRouter,
     NonexistentRouteBundle,
@@ -60,10 +63,23 @@ std::vector<TopologyError> validateAll(const Topology& topology);
 std::expected<void, TopologyError> validate(const Topology& topology);
 
 // Dynamic State Legality Validation
+[[nodiscard]] std::expected<void, StateError> validateParameterValue(
+    const Parameter& parameter, const ParameterValue& value);
+[[nodiscard]] std::expected<void, StateError> validateParameterState(
+    const Parameter& parameter, const ParameterState& state);
+/// Authorization and effective-domain validation before invoking any binding.
+[[nodiscard]] std::expected<void, StateError> validateParameterWrite(
+    const Topology& topology, const DeviceState& state, ParameterId id,
+    const ParameterValue& value);
+
 std::expected<void, StateError> validateParameterValue(
     const Topology& topology,
     ParameterId id,
     const ParameterValue& value);
+
+/// Resolve one output edit to its indivisible route bundle and validate the result.
+[[nodiscard]] std::expected<RouterState, StateError> prepareRouteWrite(
+    const Topology&, const DeviceState&, NodeId router, PortId output, std::optional<PortId> input);
 
 std::expected<void, StateError> validateRouterState(
     const Topology& topology,

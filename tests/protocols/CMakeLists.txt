@@ -79,6 +79,7 @@ add_protocols_test(AvcGoldenTests
     AvcGoldenTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/Handlers/ControlsHandler.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/ControlService.cpp"
     "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
@@ -97,6 +98,7 @@ add_protocols_test(AvcGoldenTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BridgeCoInventory.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
@@ -138,6 +140,7 @@ add_protocols_test(AvcDiscoveryLifecycleTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BridgeCoInventory.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeDuetDuplex.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeVendorCodec.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/Oxford/Apogee/ApogeeTransport.cpp"
@@ -431,4 +434,22 @@ add_protocols_test(CompletionQueueTeardownTests CompletionQueueTeardownTests.cpp
 add_protocols_test(AvcFeatureControlTests
     AvcFeatureControlTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
+)
+
+target_sources(AvcGoldenTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+target_sources(AvcDiscoveryLifecycleTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+
+target_sources(AvcAudioConfigTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
