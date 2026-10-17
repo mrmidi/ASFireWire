@@ -91,4 +91,21 @@ inline void WriteMpxMidiSlot(uint8_t* payload, uint32_t blocksInPacket,
         (dbcAligned ? (static_cast<uint32_t>(dbc) + f) : f) % kMpxMidiPorts);
 }
 
+/// The ports (bit n = port n) that WriteMpxMidiSlot can write in a packet of
+/// `blocksInPacket` data blocks with this DBC: the ports of its first eight
+/// blocks that the device has. A packet with fewer than eight blocks does not
+/// reach every port.
+[[nodiscard]] constexpr uint32_t MpxMidiPortsInPacket(uint32_t blocksInPacket, uint8_t dbc,
+                                                     const MpxMidiGeometry& geometry) noexcept {
+    const uint32_t blocks = blocksInPacket < kMpxMidiMaxBlocksPerPacket
+                                ? blocksInPacket
+                                : kMpxMidiMaxBlocksPerPacket;
+    uint32_t mask = 0;
+    for (uint32_t f = 0; f < blocks; ++f) {
+        const uint8_t port = MpxMidiPortForBlock(dbc, f, geometry.dbcAligned);
+        if (port < geometry.portCount) mask |= 1u << port;
+    }
+    return mask;
+}
+
 } // namespace ASFW::Encoding

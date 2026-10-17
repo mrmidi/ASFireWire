@@ -84,9 +84,15 @@ public:
     ///
     /// Nothing is consumed: the bytes stay in their rings and remain visible to
     /// the producer's free-space accounting until Commit retires them.
+    ///
+    /// `portMask` (bit n = port n) names the ports this packet has a MIDI block
+    /// for. Commit retires every byte selected here, so a byte must not be
+    /// selected for a port the packet cannot carry: it would be retired without
+    /// ever reaching the wire.
     [[nodiscard]] bool Begin(MidiTransportBlock& block, uint64_t epoch,
                              uint32_t packetIndex,
-                             MidiPacketReservation& out) noexcept {
+                             MidiPacketReservation& out,
+                             uint32_t portMask = 0xFFFF'FFFFu) noexcept {
         if (outstanding_) return false;
         out = MidiPacketReservation{};
         if (!block.Usable(epoch)) return false;
@@ -97,6 +103,7 @@ public:
             // ageing only ports that happen to have traffic would let an idle
             // port burst the moment it wakes up.
             const bool mayEmit = limiter_.AgeAndMayEmit(port);
+            if (((portMask >> port) & 1u) == 0) continue;
             uint8_t scratch[1];
             if (!mayEmit || block.hostToDevice[port].Peek(scratch) != 1) continue;
             out.byteForPort[port] = scratch[0];

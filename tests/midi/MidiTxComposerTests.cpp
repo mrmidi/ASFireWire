@@ -37,10 +37,10 @@ uint32_t Quadlet(const uint8_t* p) {
 // A stream armed by the production packetizer into a slab of fixed slots.
 class ArmedStream {
 public:
-    explicit ArmedStream(uint32_t sampleRate = 48000) {
+    explicit ArmedStream(uint32_t sampleRate = 48000, StreamMode mode = StreamMode::Blocking) {
         AmdtpStreamConfig config{};
         config.sampleRate = sampleRate;
-        config.streamMode = StreamMode::Blocking;
+        config.streamMode = mode;
         config.dbs = kDbs;
         config.pcmChannels = kPcm;
         config.midiSlots = 1;
@@ -334,4 +334,33 @@ TEST(MidiTxComposerRates, ASixteenBlockPacketCarriesAtMostEightMidiBlocks) {
             EXPECT_LT(entry.first, 8u) << "block " << entry.first << " is beyond the first eight";
         }
     }
+}
+
+TEST(MidiTxComposerNonBlocking, AByteIsRetiredOnlyByAPacketThatCarriesItsPort) {
+    // A non-blocking packet at 48 kHz has six data blocks, so it reaches six of
+    // the eight ports. A byte for one of the other two must stay queued for a
+    // later packet, not be retired with nothing written.
+    ArmedStream stream(48000, StreamMode::NonBlocking);
+    MidiTransportBlock block;
+    block.Arm(1);
+    MidiTxComposer composer;
+    ASSERT_TRUE(composer.Configure(Config(8)));
+    composer.Compose(&block, stream.timeline(), 0, 0);
+    stream.Arm(64);
+    ASSERT_NE(stream.Slot(0), nullptr);
+    ASSERT_LT(stream.Slot(0)->framesInPacket, 8u);
+
+    for (uint32_t port = 0; port < 8; ++port) Queue(block, port, {static_cast<uint8_t>(0x10 + port)});
+    composer.Compose(&block, stream.timeline(), 0, stream.armedEnd());
+
+    std::array<int, 8> seen{};
+    for (uint64_t p = 0; p < stream.armedEnd(); ++p) {
+        for (const auto& [f, byte] : stream.MidiBytes(p)) {
+            const uint8_t port = static_cast<uint8_t>((stream.Dbc(p) + f) % 8);
+            EXPECT_EQ(byte, 0x10 + port);
+            ++seen[port];
+        }
+    }
+    for (uint32_t port = 0; port < 8; ++port) EXPECT_EQ(seen[port], 1) << "port " << port;
+    EXPECT_EQ(composer.Counters().bytesComposed, 8u);
 }

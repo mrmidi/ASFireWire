@@ -174,8 +174,12 @@ public:
                 continue;
             }
 
+            // CIP quadlet 0 carries the DBC in its low byte (big-endian), the
+            // value the port rotation counts from.
+            const uint8_t dbc = slot->packetBytes[3];
             ASFW::Midi::MidiPacketReservation reservation{};
-            if (!scope_.Begin(*block, epoch, static_cast<uint32_t>(packet), reservation)) {
+            if (!scope_.Begin(*block, epoch, static_cast<uint32_t>(packet), reservation,
+                              ASFW::Encoding::MpxMidiPortsInPacket(blocks, dbc, config_.geometry))) {
                 break;
             }
             if (reservation.Any()) {
@@ -184,9 +188,6 @@ public:
                     bytes.hasByteForPort[port] = reservation.hasByteForPort[port];
                     bytes.byteForPort[port] = reservation.byteForPort[port];
                 }
-                // CIP quadlet 0 carries the DBC in its low byte (big-endian), the
-                // value the port rotation counts from.
-                const uint8_t dbc = slot->packetBytes[3];
                 ASFW::Encoding::WriteMpxMidiSlot(
                     slot->packetBytes + kCipHeaderBytes, blocks, dbc,
                     config_.geometry, bytes);
