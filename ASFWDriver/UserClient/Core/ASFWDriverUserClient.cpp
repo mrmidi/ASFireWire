@@ -80,6 +80,10 @@ enum {
     kMethodSelectAudioObserver = 66,
     kMethodGetAudioObserverState = 67,
     kMethodGetAVCDiscoveryDocument = 68,
+    // Device controls (FW-206): topology + state document, async confirmed writes.
+    kMethodGetControlSnapshot = 80,
+    kMethodSetControlParameter = 81,
+    kMethodGetControlWriteResult = 82,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -222,6 +226,12 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.AVC().GetFCPExchangeLog(arguments);
     case kMethodGetAVCDiscoveryDocument:
         return runtimeState.AVC().GetAVCDiscoveryDocument(arguments);
+    case kMethodGetControlSnapshot:
+        return runtimeState.Controls().GetControlSnapshot(arguments);
+    case kMethodSetControlParameter:
+        return runtimeState.Controls().SetControlParameter(arguments);
+    case kMethodGetControlWriteResult:
+        return runtimeState.Controls().GetControlWriteResult(arguments);
     default:
         return std::nullopt;
     }

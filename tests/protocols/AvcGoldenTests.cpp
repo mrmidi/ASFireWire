@@ -24,11 +24,15 @@
 #include "SimulatedAvcUnit.hpp"
 #include "WireTrace.hpp"
 #include "ExchangeReplayUnit.hpp"
+#include "Audio/Controls/AvcControlProjection.hpp"
+#include "Audio/Model/Topology/Validate.hpp"
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoverySession.hpp"
 #include "ASFWDriver/Protocols/AVC/Graph/DiscoveryGraph.hpp"
 #include "ASFWDriver/UserClient/WireFormats/AVCDiscoveryDocument.hpp"
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoveryLog.hpp"
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
+#include "ASFWDriver/UserClient/Handlers/ControlsHandler.hpp"
+#include "ASFWDriver/UserClient/WireFormats/ControlSnapshotDocument.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
 #include <DriverKit/OSData.h>
@@ -361,6 +365,40 @@ TEST(AvcGoldenTests, ChainedCommandsDoNotGrowTheStack) {
     EXPECT_LT(highest - lowest, 64U * 1024U) << "completions nest: the stack grows with each command";
 }
 
+// Controls (FW-204): a real discovery graph projects into a topology that
+// validates, whose state is legal, and whose every binding addresses a feature
+// channel the graph actually reported.
+static void ExpectValidControlProjection(const ASFW::Protocols::AVC::Graph::DeviceGraph& graph,
+                                         size_t expectedParameters) {
+    namespace AM = ASFW::AudioModel;
+    const auto model = ASFW::Audio::Controls::ProjectAvcControls(graph, 1);
+    const auto structural = AM::validate(model.topology);
+    ASSERT_TRUE(structural.has_value()) << structural.error().message;
+    const auto state = AM::validateState(model.topology, model.state);
+    ASSERT_TRUE(state.has_value()) << state.error().message;
+    EXPECT_EQ(model.topology.parameters.size(), expectedParameters);
+    EXPECT_EQ(model.bindings.size(), expectedParameters);
+    for (const auto& binding : model.bindings) {
+        EXPECT_TRUE(std::ranges::any_of(graph.featureChannels, [&](const auto& channel) {
+            return channel.subunit == binding.subunit && channel.block == binding.block &&
+                   channel.channel == binding.channel;
+        })) << "binding without a feature channel: token " << binding.Token();
+    }
+    const auto routers = std::ranges::count_if(model.topology.nodes, [](const auto& node) {
+        return std::holds_alternative<AM::RouterNode>(node.body);
+    });
+    const auto selectors = std::ranges::count_if(graph.controls, [&](const auto& block) {
+        if (block.type != ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kSelector) return false;
+        for (const auto& info : graph.selectors)
+            if (info.audioSubunitId == block.audioSubunitId && info.functionBlockId == block.id)
+                return !info.declaredInputs.empty();
+        return !block.inputSources.empty();
+    });
+    EXPECT_EQ(routers, selectors);
+    std::printf("[controls] %zu parameters, %zu bindings, %td routers\n",
+                model.topology.parameters.size(), model.bindings.size(), routers);
+}
+
 // ============================================================================
 // 1. Duet Attach Discovery
 // ============================================================================
@@ -385,6 +423,9 @@ TEST(AvcGoldenTests, DuetAttachDiscovery) {
 
     rig.ExpectGolden("duet__phase4_attach_discovery");
     ExpectOnlyMeasuredFrames(rig.Sim(), kDuetUncaptured);
+    ASSERT_NE(rig.Unit()->GetDiscoveredGraph(), nullptr);
+    // The Duet has no AV/C feature blocks: its controls are Apogee vendor commands.
+    ExpectValidControlProjection(*rig.Unit()->GetDiscoveredGraph(), 0);
 }
 
 TEST(AvcGoldenTests, DescriptorGraphSelectsRoutedStreamsAndValidatesGeometry) {
@@ -555,6 +596,8 @@ TEST(AvcGoldenTests, Phase88AttachDiscovery) {
     });
     ASSERT_NE(mixerMaster, graph->controls.end());
     EXPECT_TRUE(IsAvcOutputMaster(*graph, *mixerMaster));
+    // Captured 2026-09-28 Phase 88 descriptors: 7 confirmed feature volume/mute values.
+    ExpectValidControlProjection(*graph, 7);
     for (const auto& block : graph->controls)
         if (block.type == ASFW::Protocols::AVC::Descriptors::AudioFunctionBlockType::kFeature && block.id != 1)
             EXPECT_FALSE(IsAvcOutputMaster(*graph, block));
@@ -958,6 +1001,162 @@ TEST(AvcGoldenTests, DuetUserClientOutputsAreUnchanged) {
     ASSERT_TRUE(ok);
     ::ASFW::Testing::ExpectTextMatchesGolden(UserClientGolden::Capture(rig.Unit(), kDuet.guid),
                                              "avc/duet__user_client.txt");
+}
+
+
+// ============================================================================
+// Controls end to end (FW-206): user-client snapshot, a confirmed write, and
+// the refusals, against the Phase 88 discovery graph.
+// ============================================================================
+
+namespace ControlsE2E {
+std::shared_ptr<AVCUnit> AttachPhase88(AvcGoldenRig& rig, bool answerResolution) {
+    // The captured Phase 88 does not answer the volume RESOLUTION query, so no
+    // level is publishable from it (same rule as CoreAudio). To exercise a
+    // level write, a test may let feature block 1 report a 1 dB resolution.
+    if (answerResolution)
+        rig.Sim().SetResponseOverride({0x01, 0x08, 0xB8, 0x81, 0x01, 0x01, 0x02, 0x00, 0x02},
+                                      {0x0C, 0x08, 0xB8, 0x81, 0x01, 0x01, 0x02, 0x00, 0x02, 0x02, 0x01, 0x00});
+    rig.Sim().SetDescriptor(0x60, {0x80}, Fixtures::Phase88MusicStatus());
+    rig.Sim().SetDescriptor(0x60, {0x00}, Fixtures::kPhase88MusicIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x00}, Fixtures::kPhase88AudioIdentifier);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x00}, Fixtures::kPhase88TextRoot);
+    rig.Sim().SetDescriptor(0x08, {0x10, 0x18, 0x01}, Fixtures::kPhase88TextChild);
+    rig.Sim().SetResponseOverride({0x01, 0xFF, 0x1A, 0xFF, 0xFF, 0xFE, 0xFF, 0x00},
+                                  {0x0C, 0xFF, 0x1A, 0x10, 0x60, 0x00, 0xFF, 0x00});
+    bool ok = false;
+    rig.Unit()->Initialize([&](bool done) { ok = done; });
+    rig.Settle();
+    EXPECT_TRUE(ok);
+    return rig.Unit();
+}
+
+kern_return_t Call(UserClient::ControlsHandler& handler, kern_return_t (UserClient::ControlsHandler::*method)(IOUserClientMethodArguments*),
+                   std::vector<uint64_t> in, std::vector<uint64_t>& out, OSData** document = nullptr) {
+    IOUserClientMethodArguments args{};
+    args.scalarInput = in.data();
+    args.scalarInputCount = static_cast<uint32_t>(in.size());
+    out.assign(4, 0);
+    args.scalarOutput = out.data();
+    args.scalarOutputCount = static_cast<uint32_t>(out.size());
+    const auto kr = (handler.*method)(&args);
+    out.resize(args.scalarOutputCount);
+    if (document) *document = kr == kIOReturnSuccess ? args.structureOutput : nullptr;
+    else if (args.structureOutput) args.structureOutput->release();
+    return kr;
+}
+} // namespace ControlsE2E
+
+TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot) {
+    using namespace ControlsE2E;
+    namespace C = ASFW::Audio::Controls;
+    namespace AM = ASFW::AudioModel;
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    const auto unit = AttachPhase88(rig, true);
+    UserClientGolden::OneUnitDiscovery discovery(unit);
+    UserClient::ControlsHandler handler(&discovery);
+    const uint64_t guid = kPhase88.guid;
+    std::vector<uint64_t> out;
+
+    // The snapshot is served in the discovery-document page envelope.
+    OSData* page = nullptr;
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlSnapshot, {guid >> 32, guid & 0xFFFFFFFFu, 0}, out, &page), kIOReturnSuccess);
+    ASSERT_NE(page, nullptr);
+    ASSERT_GT(page->getLength(), sizeof(UserClient::Wire::AVCDiscoveryPageWire));
+    UserClient::Wire::AVCDiscoveryPageWire header{};
+    std::memcpy(&header, page->getBytesNoCopy(), sizeof(header));
+    const std::string firstPage(static_cast<const char*>(page->getBytesNoCopy()) + sizeof(header), header.length);
+    page->release();
+    EXPECT_NE(firstPage.find("\"schema\":\"asfw.controls.v1\""), std::string::npos);
+
+    // Pick a volume the projection published, and a legal target two steps below its maximum.
+    const auto revision = unit->GetDiscoverySnapshot()->session.value;
+    EXPECT_EQ(header.session, static_cast<uint32_t>(revision));
+    const auto model = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto volume = std::ranges::find_if(model.bindings, [](const auto& b) { return b.kind == C::AvcBindingKind::kFeatureVolume; });
+    ASSERT_NE(volume, model.bindings.end());
+    const double target = (volume->range.maximum - 2 * volume->range.resolution) / 256.0;
+    const auto raw = static_cast<uint16_t>(static_cast<int16_t>(volume->range.maximum - 2 * volume->range.resolution));
+    const uint8_t address = static_cast<uint8_t>(0x08 | volume->subunit);
+    // The device acknowledges CONTROL and then reports the new CURRENT value on STATUS.
+    const std::vector<uint8_t> operands{0xB8, 0x81, volume->block, 0x10, 0x02, volume->channel, 0x02};
+    auto control = std::vector<uint8_t>{0x00, address}; control.insert(control.end(), operands.begin(), operands.end());
+    auto status = std::vector<uint8_t>{0x01, address}; status.insert(status.end(), operands.begin(), operands.end());
+    auto accepted = std::vector<uint8_t>{0x09, address}; accepted.insert(accepted.end(), operands.begin(), operands.end());
+    accepted.insert(accepted.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
+    auto stable = std::vector<uint8_t>{0x0C, address}; stable.insert(stable.end(), operands.begin(), operands.end());
+    stable.insert(stable.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
+    rig.Sim().SetResponseOverride(control, accepted);
+    rig.Sim().SetResponseOverride(status, stable);
+
+    const auto bits = std::bit_cast<uint64_t>(target);
+    const auto id = volume->parameter.value;
+    // Refusals happen before any bus traffic.
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision + 1, id, 1, bits}, out), kIOReturnNotPermitted);
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, 0xFFFFFFu, 1, bits}, out), kIOReturnNotFound);
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 0, 1}, out), kIOReturnBadArgument); // bool for a level
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, std::bit_cast<uint64_t>(1000.0)}, out), kIOReturnBadArgument);
+
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, bits}, out), kIOReturnSuccess);
+    ASSERT_EQ(out.size(), 1U);
+    const uint64_t request = out[0];
+    rig.Settle();
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnSuccess);
+    ASSERT_EQ(out.size(), 2U);
+    EXPECT_EQ(out[0], static_cast<uint64_t>(UserClient::ControlValueKind::kDouble));
+    EXPECT_DOUBLE_EQ(std::bit_cast<double>(out[1]), target);
+    // A result is collected once.
+    EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnNotFound);
+
+    // The readback republished the graph, so the next projection carries the value.
+    const auto after = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto& value = after.state.parameters.at(volume->parameter);
+    EXPECT_DOUBLE_EQ(std::get<double>(value.value), target);
+    EXPECT_EQ(value.origin, AM::StateOrigin::Observed);
+}
+
+
+TEST(AvcGoldenTests, ControlsMuteWriteOnCapturedPhase88IsConfirmed) {
+    using namespace ControlsE2E;
+    namespace C = ASFW::Audio::Controls;
+    AvcGoldenRigOptions opts;
+    opts.guid = kPhase88.guid;
+    opts.nodeId = static_cast<uint16_t>(kPhase88.nodeId);
+    opts.generation = kPhase88.generation;
+    opts.unitOptions = DiscoveryOptionsFor(AvcExtensionInventory::kBridgeCo);
+    AvcGoldenRig rig(kPhase88, opts);
+    const auto unit = AttachPhase88(rig, false);
+    UserClientGolden::OneUnitDiscovery discovery(unit);
+    UserClient::ControlsHandler handler(&discovery);
+    const uint64_t guid = kPhase88.guid;
+    const auto revision = unit->GetDiscoverySnapshot()->session.value;
+    const auto model = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    const auto mute = std::ranges::find_if(model.bindings, [](const auto& b) { return b.kind == C::AvcBindingKind::kFeatureMute; });
+    ASSERT_NE(mute, model.bindings.end());
+    const uint8_t address = static_cast<uint8_t>(0x08 | mute->subunit);
+    const std::vector<uint8_t> operands{0xB8, 0x81, mute->block, 0x10, 0x02, mute->channel, 0x01};
+    auto control = std::vector<uint8_t>{0x00, address}; control.insert(control.end(), operands.begin(), operands.end());
+    auto status = std::vector<uint8_t>{0x01, address}; status.insert(status.end(), operands.begin(), operands.end());
+    auto accepted = std::vector<uint8_t>{0x09, address}; accepted.insert(accepted.end(), operands.begin(), operands.end());
+    accepted.insert(accepted.end(), {0x01, 0x70}); // TRUE
+    auto stable = std::vector<uint8_t>{0x0C, address}; stable.insert(stable.end(), operands.begin(), operands.end());
+    stable.insert(stable.end(), {0x01, 0x70});
+    rig.Sim().SetResponseOverride(control, accepted);
+    rig.Sim().SetResponseOverride(status, stable);
+    std::vector<uint64_t> out;
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, mute->parameter.value, 0, 1}, out), kIOReturnSuccess);
+    const uint64_t request = out[0];
+    rig.Settle();
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnSuccess);
+    EXPECT_EQ(out[0], static_cast<uint64_t>(UserClient::ControlValueKind::kBool));
+    EXPECT_EQ(out[1], 1U);
+    const auto after = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
+    EXPECT_TRUE(std::get<bool>(after.state.parameters.at(mute->parameter).value));
 }
 
 // What the driver ring shows for an attach: every discovered fact by its spec name, every unnamed value as
@@ -1442,4 +1641,27 @@ TEST(AvcGoldenTests, VolumeLimitsAreReadPerConfirmedChannelAndRetainedInTheGraph
     const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), rig.Unit()->GetDiscoveredGraph().get(), {});
     EXPECT_NE(document.find("\"featureChannels\""), std::string::npos);
     EXPECT_NE(document.find("\"minimum\":-16384"), std::string::npos);
+}
+
+
+// The app snaps a slider onto min + k * step and SetControlParameter checks the
+// same grid, so the document must carry the exact step. AV/C volumes step in
+// 1/256 dB, which a fixed four-decimal print rounded to 0.0039.
+TEST(AvcGoldenTests, ControlSnapshotCarriesTheExactAvcVolumeStep) {
+    namespace AM = ASFW::AudioModel;
+    AM::Topology topology;
+    topology.revision = 3;
+    topology.nodes.push_back(AM::Node{.id = AM::NodeId{1}, .name = "Feature 1", .body = AM::ProcessorNode{}});
+    topology.parameters.push_back(AM::Parameter{
+        .id = AM::ParameterId{2}, .target = AM::ParameterTarget{AM::NodeId{1}}, .semantic = AM::ParameterSemantic::Level,
+        .domain = AM::ScalarDomain{.min = -128.0, .max = 0.0, .step = 1.0 / 256.0, .unit = AM::ScalarUnit::Decibels},
+        .name = "Master Volume"});
+    AM::DeviceState state;
+    state.topologyRevision = 3;
+    state.parameters.emplace(AM::ParameterId{2}, AM::ParameterState{.value = -12.0 - 1.0 / 256.0,
+                                                                    .origin = AM::StateOrigin::Observed});
+    const auto json = UserClient::Wire::BuildControlSnapshotDocument(1, "avc", topology, state);
+    EXPECT_NE(json.find("\"step\":0.00390625"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"min\":-128,"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"value\":-12.00390625"), std::string::npos) << json;
 }

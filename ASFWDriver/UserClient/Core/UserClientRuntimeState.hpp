@@ -4,6 +4,7 @@
 
 #include "../../Controller/ControllerCore.hpp"
 #include "../Handlers/AVCHandler.hpp"
+#include "../Handlers/ControlsHandler.hpp"
 #include "../Handlers/BusResetHandler.hpp"
 #include "../Handlers/ConfigROMHandler.hpp"
 #include "../Handlers/ControllerCoreAccess.hpp"
@@ -53,6 +54,7 @@ class UserClientRuntimeState final {
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
+        controlsHandler_ = std::make_unique<ControlsHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(
             driver, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner)));
         sbp2Handler_ = std::make_unique<SBP2Handler>([driver]() -> SBP2Handler::Targets {
@@ -73,6 +75,7 @@ class UserClientRuntimeState final {
         }
         sbp2Handler_.reset();
         isochHandler_.reset();
+        controlsHandler_.reset();
         avcHandler_.reset();
         deviceDiscoveryHandler_.reset();
         configRomHandler_.reset();
@@ -102,7 +105,7 @@ class UserClientRuntimeState final {
         return busResetHandler_ != nullptr && topologyHandler_ != nullptr &&
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
-               avcHandler_ != nullptr && isochHandler_ != nullptr &&
+               avcHandler_ != nullptr && controlsHandler_ != nullptr && isochHandler_ != nullptr &&
                sbp2Handler_ != nullptr && diagnosticsHandler_ != nullptr;
     }
 
@@ -117,6 +120,7 @@ class UserClientRuntimeState final {
         return *deviceDiscoveryHandler_;
     }
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
+    [[nodiscard]] ControlsHandler& Controls() noexcept { return *controlsHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
     [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
     [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
@@ -133,6 +137,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<ConfigROMHandler> configRomHandler_{};
     std::unique_ptr<DeviceDiscoveryHandler> deviceDiscoveryHandler_{};
     std::unique_ptr<AVCHandler> avcHandler_{};
+    std::unique_ptr<ControlsHandler> controlsHandler_{};
     std::unique_ptr<IsochHandler> isochHandler_{};
     std::unique_ptr<SBP2Handler> sbp2Handler_{};
     std::unique_ptr<DiagnosticsHandler> diagnosticsHandler_{};

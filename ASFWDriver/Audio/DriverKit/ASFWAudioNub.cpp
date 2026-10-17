@@ -32,6 +32,7 @@
 #include "../Model/DiscoveredRuntimeCaps.hpp"
 #include "../Protocols/AVC/AvcDuplexClockObservation.hpp"
 #include "../Protocols/AVC/AvcFeatureControl.hpp"
+#include "../Controls/AvcControlWrite.hpp"
 #include "../Protocols/Backends/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
@@ -1223,28 +1224,16 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
     const auto result = ASFW::Audio::WaitForAsyncResult<int32_t>([=](auto done) {
         queue->DispatchAsync(^{
             ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=controller-begin queue=controller elapsedUs=%llu", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000);
-            namespace A = ASFW::AVC;
             const auto unit = discovery->Unit(guid);
             const auto route = unit ? unit->CurrentRoute() : std::nullopt;
             const auto graph = unit ? unit->GetDiscoveredGraph() : nullptr;
             if (!unit || !route || !unit->IsCurrentRoute(*route) || !graph) { done(kIOReturnNotReady, 0); return; }
-            auto found = graph->featureChannels.end();
-            for (auto it = graph->featureChannels.begin(); it != graph->featureChannels.end(); ++it) {
-                if (ASFW::Audio::Model::AvcControlToken(it->subunit, it->block, it->channel) == token) { found = it; break; }
-            }
-            if (found == graph->featureChannels.end()) { done(kIOReturnUnsupported, 0); return; }
-            const auto subunit = found->subunit;
-            ASFW::Audio::SetAvcFeature(unit, *route, *found, muteControl, value,
-                [unit, route = *route, subunit, muteControl, token, done, traceId, traceBegin](auto reply) {
-                    ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=device-complete queue=controller elapsedUs=%llu ok=%u", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000, reply.has_value());
-                    if (!reply) {
-                        const auto& error = reply.error();
-                        ASFW_LOG(Audio, "[AvcControl] transaction failed guid=0x%016llx token=0x%06x errorKind=%u response=%d operandOffset=%u", route.guid, token, static_cast<unsigned>(error.kind), error.response ? static_cast<int>(*error.response) : -1, error.operandOffset);
-                        done(A::ToIOReturn(error), 0); return;
-                    }
-                    ASFW_LOG(Audio, "[AvcControl] readback guid=0x%016llx token=0x%06x mute=%u confirmedRaw=%d generation=%u", route.guid, token, muteControl, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw(), route.generation.value);
-                    unit->RememberConfirmedFeature(route, subunit, *reply);
-                    done(kIOReturnSuccess, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw());
+            const auto* found = ASFW::Audio::Controls::FindAvcFeatureChannel(*graph, token);
+            if (!found) { done(kIOReturnUnsupported, 0); return; }
+            ASFW::Audio::Controls::WriteAvcFeature(unit, *route, *found, muteControl, value,
+                [done, traceId, traceBegin](IOReturn status, int32_t confirmed) {
+                    ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=device-complete queue=controller elapsedUs=%llu ok=%u", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000, status == kIOReturnSuccess);
+                    done(status, confirmed);
                 }, [active] { return active->load(std::memory_order_acquire); });
         });
     }, 2000, kIOReturnTimeout, nullptr, 1);

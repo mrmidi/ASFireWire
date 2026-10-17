@@ -19,6 +19,7 @@ struct ModernContentView: View {
     @StateObject private var diceDiagnosticsStore: DiceDiagnosticsStore
     @StateObject private var avcReportStore: AvcReportStore
     @StateObject private var avcUnitsStore: AvcUnitsStore
+    @StateObject private var deviceControlsVM: DeviceControlsViewModel
     @StateObject private var mcpVM: ASFWMCPControlViewModel
     @StateObject private var roundTripVM: RoundTripLatencyViewModel
     @State private var publishedAudioDevices: [AudioWrapperDevice] = []
@@ -46,6 +47,7 @@ struct ModernContentView: View {
         _diceDiagnosticsStore = StateObject(wrappedValue: DiceDiagnosticsStore(connector: debugViewModel.connector))
         _avcReportStore = StateObject(wrappedValue: AvcReportStore(connector: debugViewModel.connector))
         _avcUnitsStore = StateObject(wrappedValue: AvcUnitsStore(connector: debugViewModel.connector))
+        _deviceControlsVM = StateObject(wrappedValue: DeviceControlsViewModel(source: debugViewModel.connector))
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
         // A measurement owns the audio device; the app's own driver reads would
         // perturb the timing, so they pause for its duration. Paused: the 2 s
@@ -71,6 +73,7 @@ struct ModernContentView: View {
         case about = "About ASFireWire"
         case busInspector = "Bus Inspector"
         case avcUnits = "AV/C Units"
+        case deviceControls = "Device Controls"
         case avcCommands = "AV/C Commands"
         case controller = "Controller Status"
         case async = "Async Commands"
@@ -98,6 +101,7 @@ struct ModernContentView: View {
             case .about: return "heart.text.square"
             case .busInspector: return "network"
             case .avcUnits: return "music.note"
+            case .deviceControls: return "slider.vertical.3"
             case .avcCommands: return "command"
             case .controller: return "cpu"
             case .async: return "bolt.horizontal.circle"
@@ -122,7 +126,7 @@ struct ModernContentView: View {
         var group: SidebarGroup {
             switch self {
             case .overview, .about: .general
-            case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
+            case .busInspector, .avcUnits, .deviceControls, .duet, .audioAnalyzer: .devices
             case .dvCapture: .video
             case .diagnostics, .diceReport, .avcReport: .reports
             case .logs, .loggingSettings: .support
@@ -215,6 +219,8 @@ struct ModernContentView: View {
                     BusInspectorView(debugViewModel: debugVM, topologyViewModel: topologyVM, romViewModel: romExplorerVM)
                 case .avcUnits:
                     AvcUnitsView(store: avcUnitsStore, connector: debugVM.connector, developerTools: showAdvancedTools)
+                case .deviceControls:
+                    DeviceControlsView(model: deviceControlsVM)
                 case .avcCommands:
                     AVCCommandView(viewModel: debugVM)
                 case .controller:
