@@ -30,6 +30,7 @@
 		0B3816C326E1DFFE696D7487 /* RmeFamilyAdapter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B32B834FEE2FC90484522FF1 /* RmeFamilyAdapter.cpp */; };
 		0B68F99EEDDD3E00F10574EE /* AvcReportStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A858DB06ADB8FF473F4F7B76 /* AvcReportStore.swift */; };
 		0BEADC6EFD1ECFE9C5460FFA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2963EFBE3CF88B19098DB640 /* Assets.xcassets */; };
+		0BF9E236A2127922FDAA6901 /* ControlSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F41F897196D5CBFC6F57856 /* ControlSnapshotTests.swift */; };
 		0C3C1CA1A2105622848B654C /* AudioObserverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836FC05D0CFB4B21242C2C23 /* AudioObserverView.swift */; };
 		0C626732DADDA7124E80171F /* DVFrameAssemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5547E3B90C64AA5CE17B300A /* DVFrameAssemblerTests.swift */; };
 		0CB9E9932DEA395E4C22999E /* ControllerCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 070AC8A37A94176E7AACEFF0 /* ControllerCore.cpp */; };
@@ -58,6 +59,7 @@
 		19BCD916DD0254DAFADFED04 /* SBP2NubPublisher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 96651C7BE9CC0A6579BE51CF /* SBP2NubPublisher.cpp */; };
 		1A2632C1A4F0C7F927DFD83C /* Item.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A55E0C6EE306B863A46F3D /* Item.swift */; };
 		1AA921B5214974B982C6AF6D /* AmdtpPacketTimeline.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 63C9F7C33EAC13B5D679D034 /* AmdtpPacketTimeline.cpp */; };
+		1B4D0F45BC79725E3FE2AD88 /* DeviceControlsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4D8B147DE735538F4A29ED /* DeviceControlsViewModel.swift */; };
 		1B98140C1ABFB215EA154E06 /* LogCategoryCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C99BEBA907A7F59A00EE5A /* LogCategoryCatalogTests.swift */; };
 		1C13586E68ED0E9E8F277860 /* ASFWMCPOhciTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE3B19C3F3A7667F40119796 /* ASFWMCPOhciTools.swift */; };
 		1D7AA1D7DA25EE0F629755F7 /* DeviceProtocolChoice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 638A6B2C013E7FB7FD29F6AB /* DeviceProtocolChoice.cpp */; };
@@ -287,6 +289,7 @@
 		87061D381FC697598C58D9DE /* LogRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 003D261C038E0434E7A8B214 /* LogRing.cpp */; };
 		871EA272C6D2FB5A892E3217 /* AudioNubPublisher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B7E5492B36B350E48E9214A8 /* AudioNubPublisher.cpp */; };
 		8800EA1851CF85BCC46AD35E /* RomExplorerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA374405CB437F912867561 /* RomExplorerView.swift */; };
+		882C1B5878E8DBA2746B54C9 /* DriverConnector+Controls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D7D03402C7C252A9016E67B /* DriverConnector+Controls.swift */; };
 		88663772C9C228C3DC7F6CBD /* DriverConnectorLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 487FFDBA8B98968F6A7E5DCB /* DriverConnectorLogStore.swift */; };
 		88BC8CD3752429456D7BD5CA /* SpectrumVisualization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 580FC32A146406752A02DFC6 /* SpectrumVisualization.swift */; };
 		891FEA1BA66C81E0AEC7F604 /* DuetControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D994BDB948D370E6F61467F /* DuetControlView.swift */; };
@@ -419,6 +422,7 @@
 		C383A0E2BE9823CD5804D60A /* Logging.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0BB2655AA61DF8D0D37E22FA /* Logging.cpp */; };
 		C41DD03D4922E6C511235D0C /* DiceFamilyAdapter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E5B228E37BE686720B93D54B /* DiceFamilyAdapter.cpp */; };
 		C45F08B855B9EFD3A223D0AF /* LabelAllocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 08AC34805E6B658EC6032175 /* LabelAllocator.cpp */; };
+		C5C24D3E9F14ED23E9839202 /* DeviceControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 552789B817E70BD491801819 /* DeviceControlsView.swift */; };
 		C656D47DCC5D9B25F8FFF37E /* BusManagerElectionDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3210D655C3118526E23B9C5F /* BusManagerElectionDriver.cpp */; };
 		C7305631F9DE2A041ED453DA /* IsochReceiveContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 15835116B43BF0DCF553C721 /* IsochReceiveContext.cpp */; };
 		C733B13A8846F7E697E851F6 /* MCPLiveDriverControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C585AEE3BB2B09A798AB2E6D /* MCPLiveDriverControlTests.swift */; };
@@ -507,6 +511,7 @@
 		EFC974920245DD4E41091EBC /* TopologyViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41B725869FCC9C4B31154713 /* TopologyViewModel.swift */; };
 		F118D01B178AD54981507B90 /* ROMScanSessionIRM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */; };
 		F193984E9950C4C137BFAD6D /* MCPDiceTcatToolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B7F3D2FEC0DA11D8D9F0AC /* MCPDiceTcatToolsTests.swift */; };
+		F1BA9B22BE68BAAC368F82C6 /* ControlSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C171F11B1BD9F5E461A05E /* ControlSnapshot.swift */; };
 		F302759145BDF336C186D2BC /* HardwareInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9F7E564F41599A92B7D55B12 /* HardwareInterface.cpp */; };
 		F379036039878685C8CE4566 /* AudioAnalysisEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABE5698A40D2D1F6EEE364CF /* AudioAnalysisEngine.swift */; };
 		F3EC20E3CDECF9FD90E56995 /* ASFWSCSIController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3558EAA4E19D859BC8594170 /* ASFWSCSIController.cpp */; };
@@ -757,6 +762,7 @@
 		2CB969C8FE3B9EA62B56B7CC /* ASFWMCPWritePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPWritePolicy.swift; sourceTree = "<group>"; };
 		2D1898C56C850847761283D1 /* RomInterpreter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomInterpreter.swift; sourceTree = "<group>"; };
 		2D61E67C9C96C99CE1B98F1A /* DescriptorRing.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DescriptorRing.hpp; sourceTree = "<group>"; };
+		2D7D03402C7C252A9016E67B /* DriverConnector+Controls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+Controls.swift"; sourceTree = "<group>"; };
 		2D823DC9B2F9574EB59634E0 /* MAudioSpecialProtocol.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MAudioSpecialProtocol.cpp; sourceTree = "<group>"; };
 		2D90710CEC026067D8B5A3A0 /* SPro24DspRouting.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SPro24DspRouting.hpp; sourceTree = "<group>"; };
 		2DB8D24526FA39D9363A15E3 /* DiscoveryLog.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryLog.cpp; sourceTree = "<group>"; };
@@ -832,6 +838,7 @@
 		3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPHardwareSmokeRunnerTests.swift; sourceTree = "<group>"; };
 		3D1606D8DEE1120C1646AB8D /* ROMScanSessionIRM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionIRM.cpp; sourceTree = "<group>"; };
 		3D26D51E676FCE0D7C7747FD /* InterruptDispatcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = InterruptDispatcher.hpp; sourceTree = "<group>"; };
+		3D4D8B147DE735538F4A29ED /* DeviceControlsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceControlsViewModel.swift; sourceTree = "<group>"; };
 		3D547ADD7E216001ADD36FE1 /* TxStartupTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxStartupTrace.hpp; sourceTree = "<group>"; };
 		3D6F81F4D6F67BA694F51F03 /* ApogeeParamsSerdes.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeParamsSerdes.cpp; sourceTree = "<group>"; };
 		3DA16292178C3C5E25E7978D /* MotuPayloadWriter.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuPayloadWriter.hpp; sourceTree = "<group>"; };
@@ -908,6 +915,7 @@
 		4EC8698592218CE869026E8E /* IRMTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IRMTypes.hpp; sourceTree = "<group>"; };
 		4EEA4EE57D47F56B52411928 /* ASFWAudioDriverTeardown.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverTeardown.cpp; sourceTree = "<group>"; };
 		4F17D141D9D8F19E56E16DB9 /* ATTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ATTrace.cpp; sourceTree = "<group>"; };
+		4F41F897196D5CBFC6F57856 /* ControlSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlSnapshotTests.swift; sourceTree = "<group>"; };
 		4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RateValidation.hpp; sourceTree = "<group>"; };
 		500873644296662233E0FA3C /* AvcDeviceGraph.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcDeviceGraph.hpp; sourceTree = "<group>"; };
 		500A3FA3F1C676E10CA4F83C /* MetalAnalyzerPlotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalAnalyzerPlotView.swift; sourceTree = "<group>"; };
@@ -932,6 +940,7 @@
 		54B1D96FDA9ADC8812BE93C2 /* AsyncTraceCapture.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncTraceCapture.cpp; sourceTree = "<group>"; };
 		54B6542DE708A2C200353C5C /* MCPToolDispatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPToolDispatchTests.swift; sourceTree = "<group>"; };
 		54DAAA081F30D7179136F708 /* ControlSnapshotDocument.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ControlSnapshotDocument.hpp; sourceTree = "<group>"; };
+		552789B817E70BD491801819 /* DeviceControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceControlsView.swift; sourceTree = "<group>"; };
 		5547E3B90C64AA5CE17B300A /* DVFrameAssemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DVFrameAssemblerTests.swift; sourceTree = "<group>"; };
 		5595FDCDAFD228F4A102CB03 /* ChangeConfigurationCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ChangeConfigurationCommand.hpp; sourceTree = "<group>"; };
 		559BEBF3EF488E849A351C7D /* PayloadContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PayloadContext.hpp; sourceTree = "<group>"; };
@@ -1257,6 +1266,7 @@
 		A11A140E671E99C8E13D1BDC /* AnalyzerPublicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerPublicationTests.swift; sourceTree = "<group>"; };
 		A12F31501B6E357D6FBEE490 /* CycleObserver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CycleObserver.hpp; sourceTree = "<group>"; };
 		A1B83EC3ADCB82C27585AA13 /* MusicSubunitIdentifier.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MusicSubunitIdentifier.hpp; sourceTree = "<group>"; };
+		A1C171F11B1BD9F5E461A05E /* ControlSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlSnapshot.swift; sourceTree = "<group>"; };
 		A25FD3B270C3D5A3BDC90118 /* RestartRoutine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RestartRoutine.hpp; sourceTree = "<group>"; };
 		A26A0D6C7257A20EF0E2569E /* MotuDeviceTiming.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuDeviceTiming.hpp; sourceTree = "<group>"; };
 		A28E8932BF77A820F0B847A1 /* AmdtpRateGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AmdtpRateGeometry.hpp; sourceTree = "<group>"; };
@@ -2217,6 +2227,7 @@
 				35F37E8BD922667FEF047B58 /* CommandsView.swift */,
 				983FFE1617FDE6BE97522EEB /* CompareSwapView.swift */,
 				FCD731960BD463377A35C2E5 /* ControllerDetailView.swift */,
+				552789B817E70BD491801819 /* DeviceControlsView.swift */,
 				0D79C278B0F589F03BB2E627 /* DeviceDetailView.swift */,
 				C83DE86FA12575E4A0AB618D /* DiagnosticsView.swift */,
 				6357F7E427D7C3E7ACDADD57 /* DiceDiagnosticsDocument.swift */,
@@ -2379,6 +2390,7 @@
 				FCAAF6D468CB84A199F3F757 /* BeBoBShellTelemetryTests.swift */,
 				AED113166DE4061F3A41FC54 /* BoundedDequeTests.swift */,
 				5B668A64B66FB445EED7D417 /* BusInspectorTests.swift */,
+				4F41F897196D5CBFC6F57856 /* ControlSnapshotTests.swift */,
 				B6EABCE6198C5B339B48E9CA /* DiceDiagnosticsTests.swift */,
 				BB11B96550349557FDAD7568 /* DiceFixtures.swift */,
 				06E79A0E1AE84FC6301ACEC0 /* DiceReceiverLockTests.swift */,
@@ -2487,6 +2499,7 @@
 				442E5DDDA11037FDDDEE9B2D /* AvcUnitDocument.swift */,
 				A93C9B56E355944C8458C17C /* BoundedDeque.swift */,
 				D352E1AB20AE58242F0A5529 /* BusInspectorNode.swift */,
+				A1C171F11B1BD9F5E461A05E /* ControlSnapshot.swift */,
 				1F01A2AE881C63197695A0F1 /* DriverConnectorModels.swift */,
 				CAF69C7EAD7C9436D75E9C14 /* DuetModels.swift */,
 				FDB5F702B5BEE95708CFC5AF /* RomCache.swift */,
@@ -2819,6 +2832,7 @@
 				268D5F73922355973E130B0C /* DriverConnector+AudioTelemetry.swift */,
 				607B3B147596F916CB2EBB11 /* DriverConnector+AVC.swift */,
 				FFC7D308D1F12806CA102258 /* DriverConnector+ConfigROM.swift */,
+				2D7D03402C7C252A9016E67B /* DriverConnector+Controls.swift */,
 				E3108C4BB7FD88C670EE8539 /* DriverConnector+Dice.swift */,
 				1281C18E0DBA9B92E9E7E03C /* DriverConnector+Discovery.swift */,
 				168E3080E7C55D54003B176B /* DriverConnector+Duet.swift */,
@@ -3618,6 +3632,7 @@
 				78419429D11B1B96A60E99D2 /* AvcUnitDashboard.swift */,
 				1742F890C4B17D4B7E7F6AA1 /* AvcUnitsStore.swift */,
 				D14370CF27984ADE19CE1FD8 /* DebugViewModel.swift */,
+				3D4D8B147DE735538F4A29ED /* DeviceControlsViewModel.swift */,
 				C15C9DBE275FBE41049081BC /* DiagnosticsReport.swift */,
 				3966891563B1C443910EA5BA /* DiagnosticsStore.swift */,
 				413ED646922E3ACEA8B026DF /* DiagnosticsTextFormatter.swift */,
@@ -4341,6 +4356,7 @@
 				8C7AFFC418548B9536BB3B4C /* BeBoBShellTelemetryTests.swift in Sources */,
 				802EB5D0041784102F261F25 /* BoundedDequeTests.swift in Sources */,
 				3B5176437159E98DEA80D49D /* BusInspectorTests.swift in Sources */,
+				0BF9E236A2127922FDAA6901 /* ControlSnapshotTests.swift in Sources */,
 				0C626732DADDA7124E80171F /* DVFrameAssemblerTests.swift in Sources */,
 				80ADC164DA937210FE078A0E /* DiceDiagnosticsTests.swift in Sources */,
 				2F3912F15BE258E7CD1E1712 /* DiceFixtures.swift in Sources */,
@@ -4481,12 +4497,15 @@
 				2866349E2441924D0A944BF1 /* BusResetPacketDiagram.swift in Sources */,
 				212148746B4AA851DB9D06F3 /* CommandsView.swift in Sources */,
 				E597B02BC57AA375392DAA72 /* CompareSwapView.swift in Sources */,
+				F1BA9B22BE68BAAC368F82C6 /* ControlSnapshot.swift in Sources */,
 				233CDBED39515852CA27E4F7 /* ControllerDetailView.swift in Sources */,
 				BC6F183325AB230FA826814F /* DVCaptureAtomics.c in Sources */,
 				81F63CAB7CE122117645B31D /* DVCaptureView.swift in Sources */,
 				685BFFFAD30AFA3CA8F0BBB6 /* DVFileWriter.swift in Sources */,
 				8B2D4B6C8439F85C8060469C /* DVFrameAssembler.swift in Sources */,
 				08226566207B350FA29DBC85 /* DebugViewModel.swift in Sources */,
+				C5C24D3E9F14ED23E9839202 /* DeviceControlsView.swift in Sources */,
+				1B4D0F45BC79725E3FE2AD88 /* DeviceControlsViewModel.swift in Sources */,
 				A68ED17A5204BABFCA0885EC /* DeviceDetailView.swift in Sources */,
 				5B89574205BE33D89A93E110 /* DiagnosticsReport.swift in Sources */,
 				326299D53B08D873F06736A8 /* DiagnosticsStore.swift in Sources */,
@@ -4511,6 +4530,7 @@
 				8DD14AC382D9779CCD48EFAE /* DriverConnector+AudioStreaming.swift in Sources */,
 				67F4881BB6D8F43D34DE7221 /* DriverConnector+AudioTelemetry.swift in Sources */,
 				3D4211FC6DE43A112951FF2F /* DriverConnector+ConfigROM.swift in Sources */,
+				882C1B5878E8DBA2746B54C9 /* DriverConnector+Controls.swift in Sources */,
 				CBB34DBF08EA78876CD02FB6 /* DriverConnector+DVCapture.swift in Sources */,
 				BF4F35FA7540FFF5E06C7E32 /* DriverConnector+Dice.swift in Sources */,
 				E7B9225369B702888946F857 /* DriverConnector+Discovery.swift in Sources */,

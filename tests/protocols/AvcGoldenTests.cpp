@@ -32,6 +32,7 @@
 #include "ASFWDriver/Protocols/AVC/Discovery/DiscoveryLog.hpp"
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
 #include "ASFWDriver/UserClient/Handlers/ControlsHandler.hpp"
+#include "ASFWDriver/UserClient/WireFormats/ControlSnapshotDocument.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
 #include <DriverKit/OSData.h>
@@ -1640,4 +1641,27 @@ TEST(AvcGoldenTests, VolumeLimitsAreReadPerConfirmedChannelAndRetainedInTheGraph
     const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), rig.Unit()->GetDiscoveredGraph().get(), {});
     EXPECT_NE(document.find("\"featureChannels\""), std::string::npos);
     EXPECT_NE(document.find("\"minimum\":-16384"), std::string::npos);
+}
+
+
+// The app snaps a slider onto min + k * step and SetControlParameter checks the
+// same grid, so the document must carry the exact step. AV/C volumes step in
+// 1/256 dB, which a fixed four-decimal print rounded to 0.0039.
+TEST(AvcGoldenTests, ControlSnapshotCarriesTheExactAvcVolumeStep) {
+    namespace AM = ASFW::AudioModel;
+    AM::Topology topology;
+    topology.revision = 3;
+    topology.nodes.push_back(AM::Node{.id = AM::NodeId{1}, .name = "Feature 1", .body = AM::ProcessorNode{}});
+    topology.parameters.push_back(AM::Parameter{
+        .id = AM::ParameterId{2}, .target = AM::ParameterTarget{AM::NodeId{1}}, .semantic = AM::ParameterSemantic::Level,
+        .domain = AM::ScalarDomain{.min = -128.0, .max = 0.0, .step = 1.0 / 256.0, .unit = AM::ScalarUnit::Decibels},
+        .name = "Master Volume"});
+    AM::DeviceState state;
+    state.topologyRevision = 3;
+    state.parameters.emplace(AM::ParameterId{2}, AM::ParameterState{.value = -12.0 - 1.0 / 256.0,
+                                                                    .origin = AM::StateOrigin::Observed});
+    const auto json = UserClient::Wire::BuildControlSnapshotDocument(1, "avc", topology, state);
+    EXPECT_NE(json.find("\"step\":0.00390625"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"min\":-128,"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"value\":-12.00390625"), std::string::npos) << json;
 }

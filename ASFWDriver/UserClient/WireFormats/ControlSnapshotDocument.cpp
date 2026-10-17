@@ -52,10 +52,13 @@ const char* OriginName(AM::StateOrigin origin) {
     return "observed";
 }
 
+/// Enough digits to read back the same double. A rounded step would move the
+/// app's grid off the one SetControlParameter checks: an AV/C volume step is
+/// 1/256 dB, which "%.4f" turned into 0.0039.
 void Decimal(Json& j, double value) {
     if (!std::isfinite(value)) { j.Null(); return; }
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.4f", value);
+    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
     j.RawNumber(buffer);
 }
 
