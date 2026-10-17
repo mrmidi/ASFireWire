@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import Foundation
 import IOKit
@@ -218,8 +219,63 @@ struct ControlSnapshotTests {
         #expect(driver.polls == 3)
         #expect(model.writeState(100) == .idle)
         #expect(model.snapshot?.parameters.first { $0.id == 100 }?.value == .double(-10.0))
-        // Re-read after the write: reload + one after the confirmation.
-        #expect(driver.snapshotReads == 2)
+        // Confirmation updates the value without a snapshot poll.
+        #expect(driver.snapshotReads == 1)
+    }
+
+    @Test func decodesConfirmedPushAndRejectsMalformedEvents() {
+        let scalars: [UInt64] = [22, ControlParameterChange.notificationReason, Self.guid, 7, 101, 0, 1, 0]
+        #expect(ControlParameterChange(scalars: scalars) == ControlParameterChange(
+            guid: Self.guid, revision: 7, sequence: 22, parameterId: 101, value: .bool(true)))
+        #expect(ControlParameterChange(scalars: Array(scalars.prefix(7))) == nil)
+        var invalid = scalars; invalid[5] = 99
+        #expect(ControlParameterChange(scalars: invalid) == nil)
+        invalid = scalars; invalid[6] = 2
+        #expect(ControlParameterChange(scalars: invalid) == nil)
+    }
+
+    @Test func receivesExternalChangesWithoutPollingOrWritingBack() async {
+        let driver = FakeControlsDriver()
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        let event = ControlParameterChange(guid: Self.guid, revision: 7, sequence: 20,
+                                           parameterId: 101, value: .bool(true))
+        // A marker on the same receive queue establishes delivery, without a sleep.
+        await withCheckedContinuation { continuation in
+            driver.changes.send(event)
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(model.snapshot?.parameters.first { $0.id == 101 }?.value == .bool(true))
+        #expect(driver.snapshotReads == 1)
+        #expect(driver.writes.isEmpty)
+        model.receive(.init(guid: Self.guid, revision: 7, sequence: 19, parameterId: 101, value: .bool(false)))
+        model.receive(.init(guid: Self.guid, revision: 6, sequence: 21, parameterId: 101, value: .bool(false)))
+        model.receive(.init(guid: Self.guid + 1, revision: 7, sequence: 22, parameterId: 101, value: .bool(false)))
+        #expect(model.snapshot?.parameters.first { $0.id == 101 }?.value == .bool(true))
+        #expect(driver.snapshotReads == 1)
+    }
+
+    @Test func laterPushWinsOverAnOlderWriteResult() async {
+        let driver = FakeControlsDriver()
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        driver.confirm = { [weak model] value in
+            model?.receive(.init(guid: Self.guid, revision: 7, sequence: 25,
+                                parameterId: 100, value: .double(-5)))
+            return value
+        }
+        await model.write(100, .double(-20))
+        #expect(model.snapshot?.parameters.first { $0.id == 100 }?.value == .double(-5))
+        #expect(driver.snapshotReads == 1)
+    }
+
+    @Test func snapshotSequenceRejectsAnAlreadyIncludedPush() throws {
+        let driver = FakeControlsDriver()
+        driver.snapshotSequence = 30
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        model.receive(.init(guid: Self.guid, revision: 7, sequence: 29, parameterId: 100, value: .double(-40)))
+        #expect(model.snapshot?.parameters.first { $0.id == 100 }?.value == .double(-10.5))
     }
 
     @Test func staleRevisionRereadsAndSaysSo() async {
@@ -303,10 +359,14 @@ struct ControlSnapshotTests {
 /// A driver that serves `ControlSnapshotTests.document` and answers writes the way ControlsHandler does.
 @MainActor
 final class FakeControlsDriver: DeviceControlsSource {
+    let changes = PassthroughSubject<ControlParameterChange, Never>()
+    var controlChanges: AnyPublisher<ControlParameterChange, Never> { changes.eraseToAnyPublisher() }
+
     struct Write: Equatable { var revision: UInt64; var parameterId: UInt32; var value: ControlValue }
 
     var isConnected = true
     var revision: UInt64 = 7
+    var snapshotSequence: UInt64 = 0
     var unsupported = false
     /// Refuse SetControlParameter with this IOReturn.
     var refuseWith: kern_return_t?
@@ -334,7 +394,9 @@ final class FakeControlsDriver: DeviceControlsSource {
     func getControlSnapshot(guid: UInt64) -> Result<Data, ControlsDriverError> {
         snapshotReads += 1
         if unsupported { return .failure(.driver(kIOReturnUnsupported)) }
-        return .success(ControlSnapshotTests.document(revision: revision, masterLevel: level, masterMute: mute))
+        let data = ControlSnapshotTests.document(revision: revision, masterLevel: level, masterMute: mute)
+        let text = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\"revision\":", with: "\"sequence\":\(snapshotSequence),\"revision\":")
+        return .success(Data(text.utf8))
     }
 
     func setControlParameter(guid: UInt64, revision: UInt64, parameterId: UInt32,

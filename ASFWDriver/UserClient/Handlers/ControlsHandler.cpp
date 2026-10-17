@@ -123,7 +123,7 @@ kern_return_t ControlsHandler::GetControlSnapshot(IOUserClientMethodArguments* a
     const auto current = Current(*discovery_, guid);
     if (!current) return kIOReturnUnsupported; // no AV/C projection for this device (yet)
     const auto document = Wire::BuildControlSnapshotDocument(guid, "avc", current->model.topology,
-                                                             current->model.state);
+                                                             current->model.state, current->graph->featureChangeSequence);
     const auto page = Wire::SerializeDiscoveryPage(document, static_cast<uint32_t>(current->model.topology.revision),
                                                    current->generation,
                                                    static_cast<uint32_t>(args->scalarInput[2]), kMaxWireSize);

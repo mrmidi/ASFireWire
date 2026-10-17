@@ -101,6 +101,7 @@ targets:
     productName: net.asfw.driver
     platform: macOS
     sources:
+      # Includes confirmed FeatureChangeNotifications and the AvcControlChange semantic event projection.
       # Includes generic AvcControlMapping.hpp, graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.

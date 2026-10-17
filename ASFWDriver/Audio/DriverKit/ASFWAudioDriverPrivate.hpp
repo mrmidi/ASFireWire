@@ -60,6 +60,13 @@ struct AudioDriverDeviceState {
     std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
     std::vector<ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
+    struct AvcControlSlot {
+        OSSharedPtr<IOUserAudioLevelControl> level;
+        OSSharedPtr<IOUserAudioBooleanControl> mute;
+        uint64_t levelSequence{0}, muteSequence{0};
+    };
+    AvcControlSlot avcControlSlots[ASFW::Audio::Model::kMaxAvcControls]{};
+    uint64_t controlRevision{0};
     uint32_t avcControlCount{0};
     ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
     uint32_t boolControlCount{0};
@@ -350,6 +357,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
     OSSharedPtr<OSAction> ioRestartRequiredAction;
+    OSSharedPtr<OSAction> controlChangeAction;
 
 
 

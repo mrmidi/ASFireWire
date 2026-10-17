@@ -300,6 +300,7 @@ target_include_directories(AudioDriverTxProducerTests PRIVATE
 # (the dext process outlived an unplug while it did).
 add_audio_test(AudioDriverTeardownTests
     AudioDriverTeardownTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverControls.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/ASFWAudioDriverTeardown.cpp"
     # What constructing ASFWAudioDriver_IVars links.
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"

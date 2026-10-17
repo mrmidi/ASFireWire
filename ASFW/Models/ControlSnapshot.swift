@@ -15,6 +15,8 @@ nonisolated struct ControlSnapshot: Decodable, Sendable, Equatable {
     /// The family whose projection produced the document ("avc" today).
     var family: String
     var revision: UInt64
+    /// Latest confirmed change included in this snapshot (older drivers omit it).
+    var sequence: UInt64?
     var nodes: [ControlNode]
     var ports: [ControlPort]
     var parameters: [ControlParameter]
@@ -297,5 +299,33 @@ nonisolated struct ControlParameter: Decodable, Sendable, Equatable, Identifiabl
         case (.enumeration(let items), .int(let value)): items.contains { $0.value == value } ? requested : nil
         default: nil
         }
+    }
+}
+
+/// Confirmed parameter push on the existing status notification channel.
+/// Layout matches ASFWDriverUserClient::NotifyControlParameterChanged.
+nonisolated struct ControlParameterChange: Sendable, Equatable {
+    static let notificationReason: UInt64 = 0x4354524c // "CTRL"
+    var guid: UInt64
+    var revision: UInt64
+    var sequence: UInt64
+    var parameterId: UInt32
+    var value: ControlValue
+    var origin: ControlOrigin
+
+    init(guid: UInt64, revision: UInt64, sequence: UInt64, parameterId: UInt32,
+         value: ControlValue, origin: ControlOrigin = .observed) {
+        self.guid = guid; self.revision = revision; self.sequence = sequence
+        self.parameterId = parameterId; self.value = value; self.origin = origin
+    }
+
+    init?(scalars: [UInt64]) {
+        guard scalars.count == 8, scalars[1] == Self.notificationReason,
+              scalars[4] <= UInt32.max, scalars[7] == 0,
+              let value = ControlValue(kind: scalars[5], bits: scalars[6]) else { return nil }
+        if case .double(let number) = value, !number.isFinite { return nil }
+        if scalars[5] == 0 && scalars[6] > 1 { return nil }
+        self.init(guid: scalars[2], revision: scalars[3], sequence: scalars[0],
+                  parameterId: UInt32(scalars[4]), value: value)
     }
 }

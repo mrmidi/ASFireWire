@@ -71,7 +71,7 @@ void PortList(Json& j, const std::vector<AM::PortId>& ports) {
 } // namespace
 
 std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
-                                         const AM::Topology& topology, const AM::DeviceState& state) {
+                                         const AM::Topology& topology, const AM::DeviceState& state, uint64_t sequence) {
     Json j;
     char guidText[24];
     std::snprintf(guidText, sizeof(guidText), "0x%016llx", static_cast<unsigned long long>(guid));
@@ -80,6 +80,7 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
     j.Key("guid").String(guidText);
     j.Key("family").String(family);
     j.Key("revision").Number(topology.revision);
+    j.Key("sequence").Number(sequence);
 
     j.Key("nodes").Open('[');
     for (const auto& node : topology.nodes) {

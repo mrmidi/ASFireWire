@@ -132,6 +132,14 @@ public:
     virtual kern_return_t RegisterIoRestartRequiredAction(
         OSAction* action TYPE(IoRestartRequired));
 
+    // Confirmed controls: one-way to the audio driver's Default queue. Never
+    // wait on the nub control queue from the controller completion callback.
+    virtual void ControlParameterChanged(OSAction* action TARGET,
+        uint64_t guid, uint64_t revision, uint64_t sequence,
+        uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin);
+    virtual kern_return_t RegisterControlChangeAction(
+        OSAction* action TYPE(ControlParameterChanged));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
     void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
@@ -238,6 +246,7 @@ struct ASFWAudioNub_IVars {
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* ioRestartRequiredAction{nullptr};
+    OSAction* controlChangeAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

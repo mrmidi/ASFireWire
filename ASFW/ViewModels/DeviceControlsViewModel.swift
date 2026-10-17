@@ -6,6 +6,7 @@ import IOKit
 @MainActor
 protocol DeviceControlsSource: AnyObject {
     var isConnected: Bool { get }
+    var controlChanges: AnyPublisher<ControlParameterChange, Never> { get }
     func getAVCUnits() -> [AVCUnitInfo]?
     func getDiscoveredDevices() -> [FWDeviceInfo]?
     func getControlSnapshot(guid: UInt64) -> Result<Data, ControlsDriverError>
@@ -20,8 +21,8 @@ extension ASFWDriverConnector: DeviceControlsSource {}
 /// show only what the hardware confirmed.
 ///
 /// Nothing polls while idle. The snapshot is read on appear, on Refresh, on a
-/// device change and after each write; reading the driver while audio runs
-/// perturbs its timing. A write polls only its own result, every
+/// device change. Confirmed changes arrive by push, without a snapshot read.
+/// A write polls only its own result, every
 /// `pollInterval`, until the device answers or `writeTimeout` passes.
 @MainActor
 final class DeviceControlsViewModel: ObservableObject {
@@ -60,6 +61,8 @@ final class DeviceControlsViewModel: ObservableObject {
     private let source: any DeviceControlsSource
     private let pollInterval: Duration
     private let writeTimeout: Duration
+    private var changeSubscription: AnyCancellable?
+    private var lastChangeSequence: [UInt32: UInt64] = [:]
     /// The latest value asked for while a write to the same parameter was in
     /// flight; sent when that write finishes. One write per parameter at a time.
     private var queued: [UInt32: ControlValue] = [:]
@@ -69,6 +72,10 @@ final class DeviceControlsViewModel: ObservableObject {
         self.source = source
         self.pollInterval = pollInterval
         self.writeTimeout = writeTimeout
+        changeSubscription = source.controlChanges.receive(on: DispatchQueue.main).sink { [weak self] change in
+            // receive(on:) is the GCD/Combine boundary; the delivery is on main.
+            MainActor.assumeIsolated { self?.receive(change) }
+        }
     }
 
     var isConnected: Bool { source.isConnected }
@@ -87,6 +94,9 @@ final class DeviceControlsViewModel: ObservableObject {
     func reload() {
         guard source.isConnected else {
             devices = []
+            writeStates = [:]
+            lastChangeSequence = [:]
+            queued = [:]
             content = .notConnected
             return
         }
@@ -106,6 +116,7 @@ final class DeviceControlsViewModel: ObservableObject {
     func select(_ guid: UInt64?) {
         if guid != selectedGUID {
             writeStates = [:]
+            lastChangeSequence = [:]
             queued = [:]
             message = nil
         }
@@ -117,6 +128,9 @@ final class DeviceControlsViewModel: ObservableObject {
     /// longer exist are dropped; a failure stays on its control until the next write.
     func refreshSnapshot() {
         guard source.isConnected else {
+            writeStates = [:]
+            lastChangeSequence = [:]
+            queued = [:]
             content = .notConnected
             return
         }
@@ -128,6 +142,15 @@ final class DeviceControlsViewModel: ObservableObject {
         case .success(let data):
             do {
                 let snapshot = try ControlSnapshot.decode(data)
+                if self.snapshot?.revision != snapshot.revision {
+                    lastChangeSequence = [:]
+                    // Keep actionable refusals visible through the refresh;
+                    // only writes belonging to the old revision are withdrawn.
+                    writeStates = writeStates.filter {
+                        if case .failed = $0.value { true } else { false }
+                    }
+                    queued = [:]
+                }
                 content = .loaded(snapshot)
                 let ids = Set(snapshot.parameters.map(\.id))
                 writeStates = writeStates.filter { ids.contains($0.key) }
@@ -168,6 +191,7 @@ final class DeviceControlsViewModel: ObservableObject {
 
     private func perform(guid: UInt64, parameterId: UInt32, value: ControlValue) async {
         guard let revision = snapshot?.revision else { return }
+        let sequenceBeforeWrite = lastChangeSequence[parameterId]
         writeStates[parameterId] = .writing(value)
         let requestId: UInt64
         switch source.setControlParameter(guid: guid, revision: revision, parameterId: parameterId, value: value) {
@@ -183,18 +207,19 @@ final class DeviceControlsViewModel: ObservableObject {
         }
 
         let result = await awaitConfirmation(requestId)
-        guard selectedGUID == guid else { return } // the user moved to another device
+        guard selectedGUID == guid, snapshot?.revision == revision else { return }
         switch result {
         case .success(let confirmed):
-            applyConfirmed(parameterId, confirmed)
+            // A later push may already supersede this write result.
+            if lastChangeSequence[parameterId] == sequenceBeforeWrite {
+                applyConfirmed(parameterId, confirmed)
+            }
             writeStates[parameterId] = .idle
             message = nil
         case .failure(let failure):
             queued[parameterId] = nil
             writeStates[parameterId] = .failed(failure.text)
         }
-        // The driver's graph now holds what the device confirmed (or still the old value).
-        refreshSnapshot()
     }
 
     /// Poll the write's result until the device answers or the timeout passes.
@@ -218,13 +243,30 @@ final class DeviceControlsViewModel: ObservableObject {
         }
     }
 
-    /// Show the hardware-confirmed value (never the requested one) until the re-read snapshot replaces it.
-    private func applyConfirmed(_ parameterId: UInt32, _ confirmed: ControlValue) {
+    /// Show only a hardware-confirmed value.
+    private func applyConfirmed(_ parameterId: UInt32, _ confirmed: ControlValue, origin: ControlOrigin = .observed) {
         guard var snapshot,
               let index = snapshot.parameters.firstIndex(where: { $0.id == parameterId }) else { return }
         snapshot.parameters[index].value = confirmed
-        snapshot.parameters[index].origin = .observed
+        snapshot.parameters[index].origin = origin
         content = .loaded(snapshot)
+    }
+
+    /// Changes from CoreAudio, another app write or a device readback all
+    /// arrive here. Never issue a write in response to a notification.
+    func receive(_ change: ControlParameterChange) {
+        guard source.isConnected, change.guid == selectedGUID, let snapshot else { return }
+        if change.revision > snapshot.revision {
+            // Topology changed, rather than just a value. Fetch it once.
+            refreshSnapshot()
+            guard self.snapshot?.revision == change.revision else { return }
+        } else if change.revision != snapshot.revision { return }
+        guard change.sequence > max(lastChangeSequence[change.parameterId] ?? 0, self.snapshot?.sequence ?? 0),
+              let parameter = self.snapshot?.parameters.first(where: { $0.id == change.parameterId }),
+              parameter.legalValue(change.value) == change.value else { return }
+        lastChangeSequence[change.parameterId] = change.sequence
+        applyConfirmed(change.parameterId, change.value, origin: change.origin)
+        lastUpdated = Date()
     }
 
     struct WriteFailure: Error, Equatable {

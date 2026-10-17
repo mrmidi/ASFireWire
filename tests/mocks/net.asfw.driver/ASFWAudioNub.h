@@ -81,6 +81,13 @@ public:
     kern_return_t RegisterDeviceClockChangedAction(OSAction* action) { deviceClockChangedAction = action; return kIOReturnSuccess; }
     kern_return_t RegisterIoRestartRequiredAction(OSAction* action) { ioRestartRequiredAction = action; return kIOReturnSuccess; }
 
+    kern_return_t RegisterControlChangeAction(OSAction* action) { controlChangeAction = action; return kIOReturnSuccess; }
+    OSAction* controlChangeAction{nullptr};
+
+    kern_return_t SetProtocolBooleanControl(uint32_t, uint32_t, bool) { return kIOReturnUnsupported; }
+    kern_return_t GetProtocolBooleanControl(uint32_t, uint32_t, bool*) { return kIOReturnUnsupported; }
+    kern_return_t SetAvcFeatureControl(uint32_t, bool, int32_t, int32_t*) { ++featureWrites; return kIOReturnUnsupported; }
+    uint32_t featureWrites{0};
     uint32_t stopStreamingCalls{0};
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};

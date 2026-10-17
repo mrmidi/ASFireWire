@@ -18,6 +18,9 @@
 // Regenerate after an intended change: ASFW_UPDATE_GOLDEN=1, then review the diff.
 
 #include <gtest/gtest.h>
+#include <latch>
+#include <thread>
+#include <atomic>
 
 #include "AvcDeviceImages.inc"
 #include "RecordingFireWireBus.hpp"
@@ -33,6 +36,7 @@
 #include "ASFWDriver/UserClient/Handlers/AVCHandler.hpp"
 #include "ASFWDriver/UserClient/Handlers/ControlsHandler.hpp"
 #include "ASFWDriver/UserClient/WireFormats/ControlSnapshotDocument.hpp"
+#include "ASFWDriver/Audio/Controls/AvcControlChange.hpp"
 #include "ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp"
 #include <DriverKit/IOUserClient.h>
 #include <DriverKit/OSData.h>
@@ -1047,6 +1051,20 @@ kern_return_t Call(UserClient::ControlsHandler& handler, kern_return_t (UserClie
 }
 } // namespace ControlsE2E
 
+namespace {
+struct ControlChangeListener {
+    std::vector<ASFW::Audio::Controls::ParameterChanged> events;
+    ControlChangeListener() {
+        EXPECT_TRUE(Protocols::AVC::FeatureChangeNotifications::Shared().Register(this,
+            [](void* owner, const auto& feature) {
+                static_cast<ControlChangeListener*>(owner)->events.push_back(
+                    ASFW::Audio::Controls::ProjectAvcChange(feature));
+            }));
+    }
+    ~ControlChangeListener() { Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this); }
+};
+}
+
 TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot) {
     using namespace ControlsE2E;
     namespace C = ASFW::Audio::Controls;
@@ -1082,6 +1100,9 @@ TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot
     ASSERT_NE(volume, model.bindings.end());
     const double target = (volume->range.maximum - 2 * volume->range.resolution) / 256.0;
     const auto raw = static_cast<uint16_t>(static_cast<int16_t>(volume->range.maximum - 2 * volume->range.resolution));
+    // Firmware may confirm a different legal step than the request.
+    const double readback = target - volume->range.resolution / 256.0;
+    const auto readbackRaw = static_cast<uint16_t>(static_cast<int16_t>(std::lround(readback * 256)));
     const uint8_t address = static_cast<uint8_t>(0x08 | volume->subunit);
     // The device acknowledges CONTROL and then reports the new CURRENT value on STATUS.
     const std::vector<uint8_t> operands{0xB8, 0x81, volume->block, 0x10, 0x02, volume->channel, 0x02};
@@ -1090,18 +1111,21 @@ TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot
     auto accepted = std::vector<uint8_t>{0x09, address}; accepted.insert(accepted.end(), operands.begin(), operands.end());
     accepted.insert(accepted.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
     auto stable = std::vector<uint8_t>{0x0C, address}; stable.insert(stable.end(), operands.begin(), operands.end());
-    stable.insert(stable.end(), {0x02, static_cast<uint8_t>(raw >> 8), static_cast<uint8_t>(raw)});
+    stable.insert(stable.end(), {0x02, static_cast<uint8_t>(readbackRaw >> 8), static_cast<uint8_t>(readbackRaw)});
     rig.Sim().SetResponseOverride(control, accepted);
     rig.Sim().SetResponseOverride(status, stable);
 
     const auto bits = std::bit_cast<uint64_t>(target);
     const auto id = volume->parameter.value;
+    ControlChangeListener coreAudio, app;
     // Refusals happen before any bus traffic.
     EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision + 1, id, 1, bits}, out), kIOReturnNotPermitted);
     EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, 0xFFFFFFu, 1, bits}, out), kIOReturnNotFound);
     EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 0, 1}, out), kIOReturnBadArgument); // bool for a level
     EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, std::bit_cast<uint64_t>(1000.0)}, out), kIOReturnBadArgument);
 
+    EXPECT_TRUE(coreAudio.events.empty());
+    EXPECT_TRUE(app.events.empty());
     ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter, {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, bits}, out), kIOReturnSuccess);
     ASSERT_EQ(out.size(), 1U);
     const uint64_t request = out[0];
@@ -1109,15 +1133,40 @@ TEST(AvcGoldenTests, ControlsWriteIsConfirmedByReadbackAndShowsInTheNextSnapshot
     ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnSuccess);
     ASSERT_EQ(out.size(), 2U);
     EXPECT_EQ(out[0], static_cast<uint64_t>(UserClient::ControlValueKind::kDouble));
-    EXPECT_DOUBLE_EQ(std::bit_cast<double>(out[1]), target);
+    EXPECT_DOUBLE_EQ(std::bit_cast<double>(out[1]), readback);
     // A result is collected once.
     EXPECT_EQ(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {request}, out), kIOReturnNotFound);
+
+    ASSERT_EQ(coreAudio.events.size(), 1U);
+    ASSERT_EQ(app.events.size(), 1U);
+    const auto& event = app.events.front();
+    EXPECT_EQ(event.sequence, coreAudio.events.front().sequence);
+    EXPECT_EQ(event.guid, guid);
+    EXPECT_EQ(event.revision, revision);
+    EXPECT_EQ(event.parameterId, id);
+    EXPECT_EQ(event.kind, 1U);
+    EXPECT_DOUBLE_EQ(std::bit_cast<double>(event.bits), readback);
+    EXPECT_EQ(unit->GetDiscoveredGraph()->featureChangeSequence, event.sequence);
 
     // The readback republished the graph, so the next projection carries the value.
     const auto after = C::ProjectAvcControls(*unit->GetDiscoveredGraph(), revision);
     const auto& value = after.state.parameters.at(volume->parameter);
-    EXPECT_DOUBLE_EQ(std::get<double>(value.value), target);
+    EXPECT_DOUBLE_EQ(std::get<double>(value.value), readback);
     EXPECT_EQ(value.origin, AM::StateOrigin::Observed);
+
+    // An ACK without a successful STATUS readback must not emit anything.
+    auto rejected = stable; rejected[0] = 0x0a;
+    rig.Sim().ClearOverrides();
+    rig.Sim().SetResponseOverride(control, accepted);
+    rig.Sim().SetResponseOverride(status, rejected);
+    ASSERT_EQ(Call(handler, &UserClient::ControlsHandler::SetControlParameter,
+        {guid >> 32, guid & 0xFFFFFFFFu, revision, id, 1, bits}, out), kIOReturnSuccess);
+    const auto failedRequest = out[0];
+    rig.Settle();
+    EXPECT_NE(Call(handler, &UserClient::ControlsHandler::GetControlWriteResult, {failedRequest}, out),
+              kIOReturnSuccess);
+    EXPECT_EQ(app.events.size(), 1U);
+    EXPECT_EQ(coreAudio.events.size(), 1U);
 }
 
 
@@ -1630,13 +1679,22 @@ TEST(AvcGoldenTests, VolumeLimitsAreReadPerConfirmedChannelAndRetainedInTheGraph
     }), 9);
     auto changed = Cmd::FeatureReply{.functionBlockId = 1, .channel = 0, .control = Cmd::FeatureControl::kVolume,
                                     .data = {0xff, 0x00}, .dataLength = 2};
+    ControlChangeListener coreAudio, app;
     rig.Unit()->RememberConfirmedFeature(rig.Route(), 0, changed);
+    ASSERT_EQ(coreAudio.events.size(), 1U);
+    ASSERT_EQ(app.events.size(), 1U);
+    EXPECT_EQ(coreAudio.events.front().sequence, app.events.front().sequence);
+    EXPECT_DOUBLE_EQ(std::bit_cast<double>(app.events.front().bits), -1.0);
+    // A repeated confirmed value is not another change.
+    rig.Unit()->RememberConfirmedFeature(rig.Route(), 0, changed);
+    EXPECT_EQ(app.events.size(), 1U);
     EXPECT_TRUE(rig.Unit()->HasUserFeaturePreference(0, 1));
     EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
     EXPECT_EQ(graph->featureChannels.front().volume, 0); // previous immutable lease remains valid
     auto stale = rig.Route(); ++stale.routeEpoch;
     changed.data = {0xfe, 0x00};
     rig.Unit()->RememberConfirmedFeature(stale, 0, changed);
+    EXPECT_EQ(app.events.size(), 1U);
     EXPECT_EQ(rig.Unit()->GetDiscoveredGraph()->featureChannels.front().volume, -256);
     const auto document = UserClient::Wire::BuildAVCDiscoveryDocument(snapshot.get(), rig.Unit()->GetDiscoveredGraph().get(), {});
     EXPECT_NE(document.find("\"featureChannels\""), std::string::npos);
@@ -1664,4 +1722,48 @@ TEST(AvcGoldenTests, ControlSnapshotCarriesTheExactAvcVolumeStep) {
     EXPECT_NE(json.find("\"step\":0.00390625"), std::string::npos) << json;
     EXPECT_NE(json.find("\"min\":-128,"), std::string::npos) << json;
     EXPECT_NE(json.find("\"value\":-12.00390625"), std::string::npos) << json;
+}
+
+TEST(AvcGoldenTests, ControlChangeUnregisterWithdrawsOnlyItsListener) {
+    Protocols::AVC::FeatureChangeNotifications notifications;
+    std::vector<Protocols::AVC::FeatureChange> a, b;
+    const auto collect = [](void* context, const Protocols::AVC::FeatureChange& event) {
+        static_cast<std::vector<Protocols::AVC::FeatureChange>*>(context)->push_back(event);
+    };
+    ASSERT_TRUE(notifications.Register(&a, collect));
+    ASSERT_TRUE(notifications.Register(&b, collect));
+    notifications.Publish({.revision = 1, .value = -256});
+    notifications.Unregister(&a);
+    notifications.Publish({.revision = 1, .mute = true, .value = 1});
+    EXPECT_EQ(a.size(), 1U);
+    ASSERT_EQ(b.size(), 2U);
+    EXPECT_LT(b[0].sequence, b[1].sequence);
+    notifications.Unregister(&b);
+}
+
+TEST(AvcGoldenTests, ControlChangeUnregisterDrainsACallbackInFlight) {
+    Protocols::AVC::FeatureChangeNotifications notifications;
+    struct Consumer { std::latch entered{1}, release{1}; unsigned calls{0}; } consumer;
+    ASSERT_TRUE(notifications.Register(&consumer, [](void* owner, const auto&) {
+        auto& state = *static_cast<Consumer*>(owner);
+        ++state.calls;
+        state.entered.count_down();
+        state.release.wait();
+    }));
+    std::thread publisher([&] { notifications.Publish({.value = 1}); });
+    consumer.entered.wait();
+    std::latch unregisterStarted{1};
+    std::atomic<bool> unregistered{false};
+    std::thread teardown([&] {
+        unregisterStarted.count_down();
+        notifications.Unregister(&consumer);
+        unregistered.store(true);
+    });
+    unregisterStarted.wait();
+    EXPECT_FALSE(unregistered.load());
+    consumer.release.count_down();
+    publisher.join(); teardown.join();
+    EXPECT_TRUE(unregistered.load());
+    notifications.Publish({.value = 2});
+    EXPECT_EQ(consumer.calls, 1U);
 }

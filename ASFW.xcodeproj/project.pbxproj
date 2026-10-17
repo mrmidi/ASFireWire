@@ -1155,6 +1155,7 @@
 		782F6B3B8831C7D812DD7704 /* AsyncSubsystemBusReset.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AsyncSubsystemBusReset.cpp; sourceTree = "<group>"; };
 		7839875282ED53BE637257D5 /* ActionTeardown.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ActionTeardown.hpp; sourceTree = "<group>"; };
 		78419429D11B1B96A60E99D2 /* AvcUnitDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcUnitDashboard.swift; sourceTree = "<group>"; };
+		7844EC36313206E7FE562395 /* AvcControlChange.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcControlChange.hpp; sourceTree = "<group>"; };
 		7892E16293D409FFB4F00710 /* DriverViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverViewModel.swift; sourceTree = "<group>"; };
 		78C78E954A8A81AE50ABCCD7 /* AnalyzerCalibrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerCalibrationTests.swift; sourceTree = "<group>"; };
 		790F88B19E2C68FF684F5356 /* TxCompletionStampDrain.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TxCompletionStampDrain.hpp; sourceTree = "<group>"; };
@@ -1675,6 +1676,7 @@
 		F06C0D84ACBCF88400842D73 /* DiagnosticsHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiagnosticsHandler.hpp; sourceTree = "<group>"; };
 		F06FCED7D624C555BD8F4EB5 /* IMidiReceiveWake.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IMidiReceiveWake.hpp; sourceTree = "<group>"; };
 		F133D63E4747AA23957E888F /* IAVCAudioConfigListener.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAVCAudioConfigListener.hpp; sourceTree = "<group>"; };
+		F14CE5E3BF896E4396E418BD /* FeatureChangeNotifications.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FeatureChangeNotifications.hpp; sourceTree = "<group>"; };
 		F1683630423F4AFA2EF1721B /* BroadcastChannelCSR.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BroadcastChannelCSR.hpp; sourceTree = "<group>"; };
 		F1FF10B90F676D753B7D0423 /* AudioControlBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioControlBuilder.hpp; sourceTree = "<group>"; };
 		F201423F282625CBE45E2C45 /* CompletionBehavior.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CompletionBehavior.hpp; sourceTree = "<group>"; };
@@ -1813,6 +1815,7 @@
 		0EA355CD1240653391568F3A /* Controls */ = {
 			isa = PBXGroup;
 			children = (
+				7844EC36313206E7FE562395 /* AvcControlChange.hpp */,
 				DDCC9970166206014DB37A95 /* AvcControlProjection.cpp */,
 				1EDC75C9849121115A57DC22 /* AvcControlProjection.hpp */,
 				DB12F1A01A846AA7AB6F5ED0 /* AvcControlWrite.hpp */,
@@ -3653,6 +3656,7 @@
 				0B1E275E80008044A52CD867 /* FCPResponseRouter.hpp */,
 				632D4C8307E08820BF267291 /* FCPTransport.cpp */,
 				C5EB42ED67DD30C52C95743F /* FCPTransport.hpp */,
+				F14CE5E3BF896E4396E418BD /* FeatureChangeNotifications.hpp */,
 				E01908F08E66CD99EB44C3AE /* IAVCDiscovery.hpp */,
 				95733998E254F447F7B328A1 /* CMP */,
 				25F5B7EBAE9ECCA2658790E6 /* Commands */,

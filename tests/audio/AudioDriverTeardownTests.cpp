@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <bit>
 
 namespace {
 
@@ -130,19 +131,22 @@ TEST(AudioDriverTeardownTests, StopLeavesTheDriverFreeable) {
     ivars->device.audioNub = nub.get();
     OSSharedPtr<OSAction> actions[] = {
         {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain},
-        {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain}};
+        {new OSAction(), OSNoRetain}, {new OSAction(), OSNoRetain},
+        {new OSAction(), OSNoRetain}};
     OSSharedPtr<IODispatchQueue> queues[] = {{new IODispatchQueue(), OSNoRetain},
                                              {new IODispatchQueue(), OSNoRetain}};
     ivars->txPreparationAction = actions[0];
     ivars->ztsAnchorAction = actions[1];
     ivars->deviceClockChangedAction = actions[2];
     ivars->ioRestartRequiredAction = actions[3];
+    ivars->controlChangeAction = actions[4];
     ivars->txPreparationQueue = queues[0];
     ivars->ztsQueue = queues[1];
     nub->RegisterTxPreparationAction(actions[0].get());
     nub->RegisterZtsAnchorAction(actions[1].get());
     nub->RegisterDeviceClockChangedAction(actions[2].get());
     nub->RegisterIoRestartRequiredAction(actions[3].get());
+    nub->RegisterControlChangeAction(actions[4].get());
     ivars->runtime.isRunning.store(true);
 
     StopAudioDriverGraph(*driver, *ivars);
@@ -152,6 +156,7 @@ TEST(AudioDriverTeardownTests, StopLeavesTheDriverFreeable) {
     EXPECT_EQ(nub->ztsAnchorAction, nullptr);
     EXPECT_EQ(nub->deviceClockChangedAction, nullptr);
     EXPECT_EQ(nub->ioRestartRequiredAction, nullptr);
+    EXPECT_EQ(nub->controlChangeAction, nullptr);
     for (const auto& action : actions) EXPECT_EQ(action->GetRetainCount(), 1);
     for (const auto& queue : queues) EXPECT_EQ(queue->GetRetainCount(), 1);
     EXPECT_FALSE(ivars->runtime.isRunning.load());
@@ -229,6 +234,50 @@ TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
     EXPECT_EQ(driver->removedObjects.size(), 1U);
     EXPECT_EQ(device->removedStreams.size(), 2U);
     EXPECT_EQ(device->GetRetainCount(), 1);
+}
+
+TEST(AudioDriverTeardownTests, ConfirmedControlPushUpdatesHalWithoutAnotherHardwareWrite) {
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    OSSharedPtr<ASFWAudioNub> nub{new ASFWAudioNub(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    driver->ivars = ivars.get();
+    ivars->audioDevice = OSSharedPtr<ASFWAudioDevice>(new ASFWAudioDevice(), OSNoRetain);
+    ivars->device.guid = 42;
+    ivars->device.audioNub = nub.get();
+    ivars->controlChangeAction = OSSharedPtr<OSAction>(new OSAction(), OSNoRetain);
+    ivars->device.avcControlCount = 1;
+    ivars->device.avcControls[0] = {.token = 256, .hasMute = true, .hasVolume = true,
+                                   .range = {-60 * 256, 0, 256}};
+    auto& slot = ivars->device.avcControlSlots[0];
+    slot.level = OSSharedPtr<IOUserAudioLevelControl>(new IOUserAudioLevelControl(), OSNoRetain);
+    slot.mute = OSSharedPtr<IOUserAudioBooleanControl>(new IOUserAudioBooleanControl(), OSNoRetain);
+    auto level = slot.level;
+    auto mute = slot.mute;
+    const auto deliver = [&](uint64_t guid, uint64_t revision, uint64_t sequence, uint32_t id,
+                             uint64_t kind, uint64_t bits) {
+        driver->ControlParameterChanged_Impl(ivars->controlChangeAction.get(), guid, revision,
+                                             sequence, id, kind, bits, 0);
+    };
+    deliver(42, 1, 10, 512, 1, std::bit_cast<uint64_t>(-12.0));
+    deliver(42, 1, 11, 513, 0, 1);
+    EXPECT_EQ(level->decibels, -12.0f);
+    EXPECT_TRUE(mute->enabled);
+    EXPECT_EQ(level->updates, 1U);
+    EXPECT_EQ(mute->updates, 1U);
+    EXPECT_EQ(nub->featureWrites, 0U);
+    deliver(42, 1, 9, 512, 1, std::bit_cast<uint64_t>(-30.0)); // late event
+    deliver(42, 1, 0, 513, 0, 0); // registration baseline cannot replace live state
+    deliver(43, 1, 12, 513, 0, 0); // another device
+    deliver(42, 0, 13, 513, 0, 0); // old revision
+    deliver(42, 1, 14, 512, 1, std::bit_cast<uint64_t>(10.0)); // invalid readback
+    EXPECT_EQ(level->updates, 1U);
+    EXPECT_EQ(mute->updates, 1U);
+    StopAudioDriverGraph(*driver, *ivars);
+    EXPECT_EQ(level->GetRetainCount(), 1);
+    EXPECT_EQ(mute->GetRetainCount(), 1);
+    deliver(42, 1, 15, 513, 0, 0); // a queued action after Stop is ignored
+    EXPECT_EQ(mute->updates, 1U);
+    driver->ivars = nullptr;
 }
 
 } // namespace

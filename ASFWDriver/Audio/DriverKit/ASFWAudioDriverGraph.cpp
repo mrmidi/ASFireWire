@@ -782,6 +782,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         if (descriptor.hasVolume) {
             auto volume = ASFWAvcLevelControl::Create(&driver, descriptor);
             if (!volume) return kIOReturnNoMemory;
+            ivars.device.avcControlSlots[index].level = volume;
             if ((error = volume->SetName(controlName.get())) != kIOReturnSuccess ||
                 (error = ivars.audioDevice->AddControl(volume.get())) != kIOReturnSuccess) return error;
         }
@@ -790,6 +791,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                 static_cast<IOUserAudioObjectPropertyScope>(descriptor.scope), IOUserAudioClassID::MuteControl,
                 static_cast<uint32_t>(IOUserAudioClassID::MuteControl), descriptor.token);
             if (!mute) return kIOReturnNoMemory;
+            ivars.device.avcControlSlots[index].mute = mute;
             if ((error = mute->SetName(controlName.get())) != kIOReturnSuccess ||
                 (error = ivars.audioDevice->AddControl(mute.get())) != kIOReturnSuccess) return error;
         }

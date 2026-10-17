@@ -33,6 +33,7 @@
 #include "../Protocols/AVC/AvcDuplexClockObservation.hpp"
 #include "../Protocols/AVC/AvcFeatureControl.hpp"
 #include "../Controls/AvcControlWrite.hpp"
+#include "../Controls/AvcControlChange.hpp"
 #include "../Protocols/Backends/SyncAsyncBridge.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
@@ -277,6 +278,7 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        (void)RegisterControlChangeAction(nullptr);
         if (ivars->txPreparationAction) {
             ivars->txPreparationAction->release();
             ivars->txPreparationAction = nullptr;
@@ -327,6 +329,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
 kern_return_t IMPL(ASFWAudioNub, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
+    (void)RegisterControlChangeAction(nullptr);
     if (ivars) {
         ASFWDriver* parent = GetParentASFWDriver(ivars);
         auto* ctx =
@@ -550,6 +553,62 @@ bool ASFWAudioNub::NotifyIoRestartRequired(uint32_t reason)
              reason, ivars->guid);
     IoRestartRequired(ivars->ioRestartRequiredAction, reason);
     return true;
+}
+
+void IMPL(ASFWAudioNub, ControlParameterChanged) {
+    (void)action; (void)guid; (void)revision; (void)sequence;
+    (void)parameterId; (void)kind; (void)bits; (void)origin;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterControlChangeAction) {
+    if (!ivars) return kIOReturnNotReady;
+    auto& notifications = ASFW::Protocols::AVC::FeatureChangeNotifications::Shared();
+    // Drain before changing the action or freeing ivars. The callback only
+    // sends an OSAction-targeted one-way RPC; it never waits on this queue.
+    notifications.Unregister(this);
+    if (ivars->controlChangeAction) ivars->controlChangeAction->release();
+    ivars->controlChangeAction = action;
+    if (!action) return kIOReturnSuccess;
+    action->retain();
+    const bool registered = notifications.Register(this, [](void* owner, const auto& feature) {
+        auto* nub = static_cast<ASFWAudioNub*>(owner);
+        if (feature.route.guid != nub->ivars->guid) return;
+        const auto event = ASFW::Audio::Controls::ProjectAvcChange(feature);
+        nub->ControlParameterChanged(nub->ivars->controlChangeAction, event.guid,
+            event.revision, event.sequence, event.parameterId, event.kind, event.bits, event.origin);
+    });
+    if (!registered) {
+        action->release(); ivars->controlChangeAction = nullptr;
+        return kIOReturnNoResources;
+    }
+    // Close the discovery->registration window without any new bus reads.
+    // Sequence zero is a baseline: a live event already applied wins over it.
+    auto* parent = GetParentASFWDriver(ivars);
+    auto* context = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (context && context->workQueue && context->deps.avcDiscovery) {
+        const auto discovery = context->deps.avcDiscovery;
+        const uint64_t deviceGuid = ivars->guid;
+        const OSSharedPtr<ASFWAudioNub> nub(this, OSRetain);
+        const OSSharedPtr<OSAction> target(action, OSRetain);
+        context->workQueue->DispatchAsync(^{
+            const auto unit = discovery->Unit(deviceGuid);
+            const auto snapshot = unit ? unit->GetDiscoverySnapshot() : nullptr;
+            const auto graph = unit ? unit->GetDiscoveredGraph() : nullptr;
+            if (!snapshot || !graph || !unit->IsCurrentRoute(snapshot->route)) return;
+            for (const auto& channel : graph->featureChannels) {
+                for (const bool mute : {false, true}) {
+                    if (mute ? !channel.mute.has_value() : !channel.volume.has_value()) continue;
+                    const auto event = ASFW::Audio::Controls::ProjectAvcChange({
+                        .route = snapshot->route, .revision = snapshot->session.value,
+                        .subunit = channel.subunit, .block = channel.block, .channel = channel.channel,
+                        .mute = mute, .value = mute ? static_cast<int32_t>(*channel.mute) : *channel.volume});
+                    nub->ControlParameterChanged(target.get(), event.guid, event.revision, 0,
+                        event.parameterId, event.kind, event.bits, event.origin);
+                }
+            }
+        });
+    }
+    return kIOReturnSuccess;
 }
 
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const

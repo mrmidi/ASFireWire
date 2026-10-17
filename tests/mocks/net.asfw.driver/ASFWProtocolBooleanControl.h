@@ -7,6 +7,6 @@
 
 #pragma once
 
-#include <DriverKit/OSObject.h>
+#include <AudioDriverKit/AudioDriverKit.h>
 
-class ASFWProtocolBooleanControl : public OSObject {};
+class ASFWProtocolBooleanControl : public IOUserAudioBooleanControl {};

@@ -103,6 +103,11 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Public Publishers
 
+    let controlChangeSubject = PassthroughSubject<ControlParameterChange, Never>()
+    var controlChanges: AnyPublisher<ControlParameterChange, Never> {
+        controlChangeSubject.eraseToAnyPublisher()
+    }
+
     let statusSubject = PassthroughSubject<DriverStatus, Never>()
     var statusPublisher: AnyPublisher<DriverStatus, Never> {
         statusSubject.eraseToAnyPublisher()
