@@ -18,6 +18,10 @@ final class DiagnosticsStore: ObservableObject {
     private let client: ASFWDiagnosticsClient
     private let connector: ASFWDriverConnector
     private var statusCancellable: AnyCancellable?
+    /// True while a timing measurement owns an audio device: the status-driven
+    /// refresh is skipped, because reading the driver perturbs the timing being
+    /// measured. An explicit Refresh still runs.
+    private(set) var isStatusRefreshPaused = false
     
     init(connector: ASFWDriverConnector) {
         self.connector = connector
@@ -27,10 +31,15 @@ final class DiagnosticsStore: ObservableObject {
         statusCancellable = connector.statusPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.refresh()
+                guard let self, !self.isStatusRefreshPaused else { return }
+                self.refresh()
             }
     }
     
+    func setStatusRefreshPaused(_ paused: Bool) {
+        isStatusRefreshPaused = paused
+    }
+
     func refresh() {
         guard connector.isConnected else {
             self.error = "Not connected to ASFW driver. Check connection status."
