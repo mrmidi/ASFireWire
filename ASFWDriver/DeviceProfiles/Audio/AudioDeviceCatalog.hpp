@@ -72,6 +72,8 @@ enum class DeviceDefinitionId : uint32_t {
     Motu828, Motu896, Motu828mk3, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
     MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
+    PrismAda8Xr,
+    PrismOrpheus,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
