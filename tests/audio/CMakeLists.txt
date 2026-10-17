@@ -363,6 +363,9 @@ add_audio_test(ResolvedStreamConfigTests
 add_audio_test(NubGeometryRoundTripTests
     NubGeometryRoundTripTests.cpp
     ${CMAKE_SOURCE_DIR}/../ASFWDriver/Audio/DriverKit/Config/AudioDriverConfig.cpp
+    # AudioDriverConfig decodes the published parameter controls.
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
 
 # DICE Profile Registry and Quirks Tests

@@ -237,6 +237,8 @@ TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
 }
 
 TEST(AudioDriverTeardownTests, ConfirmedControlPushUpdatesHalWithoutAnotherHardwareWrite) {
+    namespace C = ASFW::Audio::Controls;
+    namespace AM = ASFW::AudioModel;
     OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
     OSSharedPtr<ASFWAudioNub> nub{new ASFWAudioNub(), OSNoRetain};
     auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
@@ -245,14 +247,22 @@ TEST(AudioDriverTeardownTests, ConfirmedControlPushUpdatesHalWithoutAnotherHardw
     ivars->device.guid = 42;
     ivars->device.audioNub = nub.get();
     ivars->controlChangeAction = OSSharedPtr<OSAction>(new OSAction(), OSNoRetain);
-    ivars->device.avcControlCount = 1;
-    ivars->device.avcControls[0] = {.token = 256, .hasMute = true, .hasVolume = true,
-                                   .range = {-60 * 256, 0, 256}};
-    auto& slot = ivars->device.avcControlSlots[0];
-    slot.level = OSSharedPtr<IOUserAudioLevelControl>(new IOUserAudioLevelControl(), OSNoRetain);
-    slot.mute = OSSharedPtr<IOUserAudioBooleanControl>(new IOUserAudioBooleanControl(), OSNoRetain);
-    auto level = slot.level;
-    auto mute = slot.mute;
+    const auto descriptor = [](uint32_t id, C::CoreAudioControlKind kind, AM::ParameterDomain domain,
+                               AM::ParameterValue value) {
+        return C::CoreAudioControl{AM::ParameterId{id}, kind, 0, 'outp', 0, true, "", std::move(domain), value};
+    };
+    auto& slots = ivars->device.parameterControls;
+    slots.push_back({descriptor(512, C::CoreAudioControlKind::Level,
+                                AM::ScalarDomain{-60, 0, 1.0 / 256, AM::ScalarUnit::Decibels}, -20.0)});
+    slots.push_back({descriptor(513, C::CoreAudioControlKind::Boolean, AM::BooleanDomain{}, false)});
+    slots.push_back({descriptor(514, C::CoreAudioControlKind::Selector,
+                                AM::EnumDomain{{{0, "Stream"}, {1, "Mixer"}}}, int64_t{0})});
+    slots[0].level = OSSharedPtr<IOUserAudioLevelControl>(new IOUserAudioLevelControl(), OSNoRetain);
+    slots[1].boolean = OSSharedPtr<IOUserAudioBooleanControl>(new IOUserAudioBooleanControl(), OSNoRetain);
+    slots[2].selector = OSSharedPtr<IOUserAudioSelectorControl>(new IOUserAudioSelectorControl(), OSNoRetain);
+    auto level = slots[0].level;
+    auto mute = slots[1].boolean;
+    auto source = slots[2].selector;
     const auto deliver = [&](uint64_t guid, uint64_t revision, uint64_t sequence, uint32_t id,
                              uint64_t kind, uint64_t bits) {
         driver->ControlParameterChanged_Impl(ivars->controlChangeAction.get(), guid, revision,
@@ -260,26 +270,42 @@ TEST(AudioDriverTeardownTests, ConfirmedControlPushUpdatesHalWithoutAnotherHardw
     };
     deliver(42, 1, 10, 512, 1, std::bit_cast<uint64_t>(-12.0));
     deliver(42, 1, 11, 513, 0, 1);
+    deliver(42, 1, 12, 514, 2, 1);
     EXPECT_EQ(level->decibels, -12.0f);
     EXPECT_TRUE(mute->enabled);
+    EXPECT_EQ(source->selected, 1U);
     EXPECT_EQ(level->updates, 1U);
     EXPECT_EQ(mute->updates, 1U);
-    EXPECT_EQ(nub->featureWrites, 0U);
+    EXPECT_EQ(source->updates, 1U);
+    EXPECT_EQ(nub->parameterWrites, 0U);
     deliver(42, 1, 9, 512, 1, std::bit_cast<uint64_t>(-30.0)); // late event
     deliver(42, 1, 0, 513, 0, 0); // registration baseline cannot replace live state
-    deliver(43, 1, 12, 513, 0, 0); // another device
-    deliver(42, 0, 13, 513, 0, 0); // old revision
-    deliver(42, 1, 14, 512, 1, std::bit_cast<uint64_t>(10.0)); // invalid readback
+    deliver(43, 1, 13, 513, 0, 0); // another device
+    deliver(42, 0, 14, 513, 0, 0); // old revision
+    deliver(42, 1, 15, 512, 1, std::bit_cast<uint64_t>(10.0)); // readback outside the published range
+    deliver(42, 1, 16, 999, 0, 1); // a parameter this device did not publish
     EXPECT_EQ(level->updates, 1U);
     EXPECT_EQ(mute->updates, 1U);
+
+    // A state invalidation re-reads every control from the controller's state
+    // instead of trusting a pushed value, and still never writes.
+    nub->readValues[{512, false}] = {1, std::bit_cast<uint64_t>(-6.0)};
+    nub->readValues[{513, false}] = {0, 0};
+    nub->readValues[{514, false}] = {2, 0};
+    deliver(42, 1, 20, 0, 4, 0);
+    EXPECT_EQ(level->decibels, -6.0f);
+    EXPECT_FALSE(mute->enabled);
+    EXPECT_EQ(source->selected, 0U);
+    EXPECT_EQ(nub->parameterWrites, 0U);
+
     StopAudioDriverGraph(*driver, *ivars);
     EXPECT_EQ(level->GetRetainCount(), 1);
     EXPECT_EQ(mute->GetRetainCount(), 1);
-    deliver(42, 1, 15, 513, 0, 0); // a queued action after Stop is ignored
-    EXPECT_EQ(mute->updates, 1U);
+    EXPECT_EQ(source->GetRetainCount(), 1);
+    deliver(42, 1, 21, 513, 0, 1); // a queued action after Stop is ignored
+    EXPECT_FALSE(mute->enabled);
     driver->ivars = nullptr;
 }
-
 } // namespace
 
 TEST(AudioDriverTeardownTests, AvcStreamsDropOwnerBeforeGraphRemoval) {

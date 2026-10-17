@@ -46,6 +46,18 @@ kern_return_t ASFWAudioDriver::ApplyAvcFeatureControl(uint32_t token, bool muteC
     return ivars->device.audioNub->SetAvcFeatureControl(token, muteControl, value, outConfirmedValue);
 }
 
+namespace {
+// A pushed or re-read level the HAL can show: finite, and for a dB control
+// inside the range the control was published with. A normalized control
+// carries a 0..1 position instead.
+bool LevelValueFits(const ASFW::Audio::Controls::CoreAudioControl& descriptor, double value) {
+    if (!std::isfinite(value)) return false;
+    if (descriptor.normalized) return value >= 0 && value <= 1;
+    const auto* range = std::get_if<ASFW::AudioModel::ScalarDomain>(&descriptor.domain);
+    return range != nullptr && value >= range->min && value <= range->max;
+}
+} // namespace
+
 // Delivered on the same Default queue as graph construction and teardown.
 // Set*Value updates HAL only; HandleChange* is the hardware-write entry point.
 void IMPL(ASFWAudioDriver, ControlParameterChanged) {
@@ -64,7 +76,8 @@ void IMPL(ASFWAudioDriver, ControlParameterChanged) {
             if (ivars->device.audioNub->ReadControlParameter(slot.descriptor.parameter.value,
                     slot.descriptor.normalized, &currentKind, &currentBits) != kIOReturnSuccess) continue;
             if (slot.boolean && currentKind == 0) (void)slot.boolean->SetControlValue(currentBits != 0);
-            else if (slot.level && (currentKind == 1 || currentKind == 4))
+            else if (slot.level && currentKind == (slot.descriptor.normalized ? 4u : 1u) &&
+                     LevelValueFits(slot.descriptor, std::bit_cast<double>(currentBits)))
                 (void)slot.level->SetDecibelValue(static_cast<float>(std::bit_cast<double>(currentBits)));
             else if (slot.selector && currentKind == 2) {
                 const uint32_t selected = static_cast<uint32_t>(currentBits);
@@ -89,6 +102,7 @@ void IMPL(ASFWAudioDriver, ControlParameterChanged) {
                 if (status != kIOReturnSuccess || currentKind != 4) return;
                 value = std::bit_cast<double>(currentBits);
             }
+            if (!LevelValueFits(slot.descriptor, value)) return;
             status = slot.level->SetDecibelValue(static_cast<float>(value));
         }
         if (status == kIOReturnSuccess) slot.sequence = sequence;

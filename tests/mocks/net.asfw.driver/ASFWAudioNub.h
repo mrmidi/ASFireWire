@@ -11,6 +11,8 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <utility>
 #include "Audio/Model/AudioPropertyKeys.hpp"
 #include "Audio/Runtime/RemoteDeviceStopResult.hpp"
 
@@ -88,6 +90,21 @@ public:
     kern_return_t GetProtocolBooleanControl(uint32_t, uint32_t, bool*) { return kIOReturnUnsupported; }
     kern_return_t SetAvcFeatureControl(uint32_t, bool, int32_t, int32_t*) { ++featureWrites; return kIOReturnUnsupported; }
     uint32_t featureWrites{0};
+    // Generic parameter seam. A push must never cause a write; reads answer
+    // from `readValues` (parameter -> {kind, bits}), as the controller's state.
+    kern_return_t SetControlParameter(uint32_t, uint64_t, uint64_t, uint64_t*, uint64_t*) {
+        ++parameterWrites; return kIOReturnUnsupported;
+    }
+    kern_return_t ReadControlParameter(uint32_t parameterId, bool normalized, uint64_t* kind, uint64_t* bits) {
+        ++parameterReads;
+        const auto found = readValues.find({parameterId, normalized});
+        if (found == readValues.end()) return kIOReturnNotFound;
+        *kind = found->second.first; *bits = found->second.second;
+        return kIOReturnSuccess;
+    }
+    std::map<std::pair<uint32_t, bool>, std::pair<uint64_t, uint64_t>> readValues;
+    uint32_t parameterWrites{0};
+    uint32_t parameterReads{0};
     uint32_t stopStreamingCalls{0};
     OSAction* txPreparationAction{nullptr};
     OSAction* ztsAnchorAction{nullptr};

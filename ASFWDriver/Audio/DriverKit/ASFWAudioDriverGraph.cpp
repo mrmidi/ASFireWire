@@ -785,12 +785,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     OSDictionary* rawParameterProperties = nullptr;
     const auto parameterStatus = ivars.device.audioNub->CopyParameterControls(&rawParameterProperties);
     auto parameterProperties = OSSharedPtr(rawParameterProperties, OSNoRetain);
+    // A device with a control provider (the Duet) is read now; one without
+    // keeps the AV/C controls published with its configuration. Reading the
+    // controls can fail (FCP timeout, bus reset); that costs the controls,
+    // never the audio device.
+    bool providerControls = false;
     if (parameterStatus == kIOReturnSuccess && parameterProperties) {
         const auto descriptors = ASFW::Audio::Controls::DecodeControls(
             OSDynamicCast(OSArray, parameterProperties->getObject(ASFW::Audio::Controls::kControlsProperty)));
         ivars.device.parameterControls.clear();
         for (const auto& descriptor : descriptors) ivars.device.parameterControls.push_back({descriptor});
-    } else if (parameterStatus != kIOReturnUnsupported) return parameterStatus;
+        providerControls = true;
+    } else if (parameterStatus != kIOReturnUnsupported) {
+        ASFW_LOG_ERROR(Audio, "[Controls] guid=0x%016llx provider controls unavailable kr=0x%x; "
+                       "publishing the device without them", ivars.device.guid, parameterStatus);
+        ivars.device.parameterControls.clear();
+    }
 
     for (auto& slot : ivars.device.parameterControls) {
         const auto& descriptor = slot.descriptor;
@@ -817,15 +827,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             (error = ivars.audioDevice->AddControl(control.get())) != kIOReturnSuccess) return error;
     }
 
-    // Confirmed AV/C controls opt in to the host's durable settings store.
-    // Restoration travels through the same checked write/readback callbacks.
-    // Other families keep their existing physical-control authority policy.
-    ivars.audioDevice->SetWantsControlsRestored(!ivars.device.parameterControls.empty());
-    ASFW_LOG(Audio, "[AvcControl] restoration controls=%u streamFormats=1 descriptors=%u initialValues=discovery hostRestoreSource=unspecified", ivars.device.avcControlCount != 0, ivars.device.avcControlCount);
-    ASFW_LOG(Audio, "[AvcControl] init-state guid=0x%016llx sampleRate=%.0f source=nub hostRestore=requested completion=not-observable", ivars.device.guid, ivars.device.currentSampleRate);
-    for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
-        const auto& descriptor = ivars.device.avcControls[index];
-        ASFW_LOG(Audio, "[AvcControl] init-state token=0x%06x name=%{public}s volumeKnown=%u volumeDb=%f muteKnown=%u muted=%u source=device-discovery", descriptor.token, descriptor.name, descriptor.hasVolume, ASFW::Audio::Model::AvcVolumeRange::Decibels(descriptor.current), descriptor.hasMute, descriptor.muted);
+    // Only AV/C feature controls opt in to the host's durable settings store;
+    // restoration travels through the same checked write/readback callbacks.
+    // A provider-backed device keeps its own settings (the Duet stores gain,
+    // phantom and levels), so the host must not re-apply stored values to it
+    // when it comes online.
+    const bool hostRestore = !providerControls && !ivars.device.parameterControls.empty();
+    ivars.audioDevice->SetWantsControlsRestored(hostRestore);
+    ASFW_LOG(Audio, "[Controls] guid=0x%016llx published=%zu source=%{public}s hostRestore=%u",
+             ivars.device.guid, ivars.device.parameterControls.size(),
+             providerControls ? "provider" : "avc-config", hostRestore);
+    for (const auto& slot : ivars.device.parameterControls) {
+        const auto& d = slot.descriptor;
+        ASFW_LOG(Audio, "[Controls] parameter=0x%08x class=%c%c%c%c scope=%c%c%c%c element=%u settable=%u normalized=%u name=%{public}s",
+                 d.parameter.value, (d.classId >> 24) & 0xff, (d.classId >> 16) & 0xff, (d.classId >> 8) & 0xff,
+                 d.classId & 0xff, (d.scope >> 24) & 0xff, (d.scope >> 16) & 0xff, (d.scope >> 8) & 0xff,
+                 d.scope & 0xff, d.element, d.settable, d.normalized, d.name.c_str());
     }
     if (!requireAdkSuccess(
             "driver.SetTransportType",
