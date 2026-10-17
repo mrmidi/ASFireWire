@@ -137,7 +137,7 @@ nonisolated struct ControlPort: Decodable, Sendable, Equatable, Identifiable {
 
 /// What a parameter means. Unknown names from a newer driver decode as `.unknown`.
 nonisolated enum ControlSemantic: String, Decodable, Sendable {
-    case level, mute, phantomPower, phaseInvert, pan, balance, solo, nominalLevel, clockSource, dim, unknown
+    case level, mute, phantomPower, phaseInvert, pan, balance, solo, nominalLevel, clockSource, dim, source, highPassFilter, unknown
 
     init(from decoder: Decoder) throws {
         self = ControlSemantic(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
@@ -207,6 +207,7 @@ nonisolated struct ControlEnumItem: Decodable, Sendable, Equatable, Hashable {
 
 nonisolated enum ControlDomain: Decodable, Sendable, Equatable {
     case bool
+    case action
     case scalar(ControlScalarDomain)
     case enumeration([ControlEnumItem])
 
@@ -215,6 +216,7 @@ nonisolated enum ControlDomain: Decodable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .kind) {
+        case "action": self = .action
         case "bool":
             self = .bool
         case "scalar":
@@ -236,22 +238,25 @@ nonisolated enum ControlValue: Sendable, Equatable {
     case bool(Bool)
     case double(Double)
     case int(Int64)
+    case action
 
-    enum WireKind: UInt64, Sendable { case bool = 0, double = 1, int = 2 }
+    enum WireKind: UInt64, Sendable { case bool = 0, double = 1, int = 2, action = 3 }
 
     var wire: (kind: UInt64, bits: UInt64) {
         switch self {
         case .bool(let value): (WireKind.bool.rawValue, value ? 1 : 0)
         case .double(let value): (WireKind.double.rawValue, value.bitPattern)
         case .int(let value): (WireKind.int.rawValue, UInt64(bitPattern: value))
+        case .action: (WireKind.action.rawValue, 0)
         }
     }
 
     init?(kind: UInt64, bits: UInt64) {
         switch WireKind(rawValue: kind) {
-        case .bool: self = .bool(bits != 0)
+        case .bool: guard bits <= 1 else { return nil }; self = .bool(bits != 0)
         case .double: self = .double(Double(bitPattern: bits))
         case .int: self = .int(Int64(bitPattern: bits))
+        case .action: guard bits == 0 else { return nil }; self = .action
         case nil: return nil
         }
     }
@@ -260,6 +265,8 @@ nonisolated enum ControlValue: Sendable, Equatable {
     var doubleValue: Double? { if case .double(let value) = self { value } else { nil } }
     var intValue: Int64? { if case .int(let value) = self { value } else { nil } }
 }
+
+nonisolated enum ControlAccess: String, Decodable, Sendable { case readWrite, readOnly }
 
 nonisolated struct ControlParameter: Decodable, Sendable, Equatable, Identifiable {
     var id: UInt32
@@ -270,8 +277,13 @@ nonisolated struct ControlParameter: Decodable, Sendable, Equatable, Identifiabl
     /// Nil when the driver holds no value for it.
     var value: ControlValue?
     var origin: ControlOrigin?
+    var access: ControlAccess = .readWrite
+    var applicable: Bool = true
+    var domainOverride: ControlDomain?
+    var effectiveDomain: ControlDomain { domainOverride ?? domain }
+    var isWritable: Bool { access == .readWrite && applicable }
 
-    private enum CodingKeys: String, CodingKey { case id, name, semantic, target, domain, value, origin }
+    private enum CodingKeys: String, CodingKey { case id, name, semantic, target, domain, value, origin, access, applicable, domainOverride }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -281,9 +293,22 @@ nonisolated struct ControlParameter: Decodable, Sendable, Equatable, Identifiabl
         target = try c.decode(ControlTarget.self, forKey: .target)
         domain = try c.decode(ControlDomain.self, forKey: .domain)
         origin = try c.decodeIfPresent(ControlOrigin.self, forKey: .origin)
+        access = try c.decodeIfPresent(ControlAccess.self, forKey: .access) ?? .readWrite
+        applicable = try c.decodeIfPresent(Bool.self, forKey: .applicable) ?? true
+        domainOverride = try c.decodeIfPresent(ControlDomain.self, forKey: .domainOverride)
+        if let domainOverride {
+            guard case .scalar(let base) = domain, case .scalar(let current) = domainOverride,
+                  base.unit == current.unit, let low = current.min, let high = current.max,
+                  low.isFinite, high.isFinite, low <= high,
+                  current.step.map({ $0.isFinite && $0 > 0 }) ?? true else {
+                throw DecodingError.dataCorruptedError(forKey: .domainOverride, in: c,
+                                                       debugDescription: "Invalid state range override")
+            }
+        }
         // The value's JSON type follows the domain: a wrong type is a driver
         // bug and fails the decode rather than showing a guess.
         switch domain {
+        case .action: value = nil; origin = nil
         case .bool: value = try c.decodeIfPresent(Bool.self, forKey: .value).map(ControlValue.bool)
         case .scalar: value = try c.decodeIfPresent(Double.self, forKey: .value).map(ControlValue.double)
         case .enumeration: value = try c.decodeIfPresent(Int64.self, forKey: .value).map(ControlValue.int)
@@ -293,9 +318,10 @@ nonisolated struct ControlParameter: Decodable, Sendable, Equatable, Identifiabl
     /// The value to send for `requested`: a scalar moved onto its grid; others unchanged.
     /// Nil when `requested` does not fit the domain.
     func legalValue(_ requested: ControlValue) -> ControlValue? {
-        switch (domain, requested) {
+        switch (effectiveDomain, requested) {
+        case (.action, .action): requested
         case (.bool, .bool): requested
-        case (.scalar(let scalar), .double(let value)): .double(scalar.snap(value))
+        case (.scalar(let scalar), .double(let value)) where value.isFinite: .double(scalar.snap(value))
         case (.enumeration(let items), .int(let value)): items.contains { $0.value == value } ? requested : nil
         default: nil
         }
@@ -321,7 +347,7 @@ nonisolated struct ControlParameterChange: Sendable, Equatable {
 
     init?(scalars: [UInt64]) {
         guard scalars.count == 8, scalars[1] == Self.notificationReason,
-              scalars[4] <= UInt32.max, scalars[7] == 0,
+              scalars[4] <= UInt32.max, scalars[7] == 0, scalars[5] < 3,
               let value = ControlValue(kind: scalars[5], bits: scalars[6]) else { return nil }
         if case .double(let number) = value, !number.isFinite { return nil }
         if scalars[5] == 0 && scalars[6] > 1 { return nil }

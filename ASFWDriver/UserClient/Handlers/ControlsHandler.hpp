@@ -27,7 +27,7 @@ namespace ASFW::UserClient {
 
 /// Value kinds on the wire (scalarInput[4] / scalarOutput[0]). A double travels
 /// as its IEEE-754 bit pattern.
-enum class ControlValueKind : uint64_t { kBool = 0, kDouble = 1, kInt = 2 };
+enum class ControlValueKind : uint64_t { kBool = 0, kDouble = 1, kInt = 2, kAction = 3 };
 
 class ControlsHandler {
 public:

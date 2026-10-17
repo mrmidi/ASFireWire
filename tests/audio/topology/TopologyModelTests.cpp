@@ -6,6 +6,8 @@
 
 #include "Audio/Model/Topology/Naming.hpp"
 #include "Audio/Model/Topology/Validate.hpp"
+#include "UserClient/WireFormats/ControlSnapshotDocument.hpp"
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -133,6 +135,84 @@ TEST(TopologyModel, ActiveBundleMustBelongToTheRouter) {
     s.routers.at(NodeId{2}).activeBundles = {RouteBundleId{9}};
     ASSERT_FALSE(validateState(t, s).has_value());
     EXPECT_EQ(validateState(t, s).error().kind, StateErrorKind::NonexistentRouteBundle);
+}
+
+
+TEST(TopologyModel, ReadOnlyValuesRemainObservableButCannotBeWritten) {
+    auto t = SmallTopology();
+    t.parameters[0].access = ParameterAccess::ReadOnly;
+    auto s = StateFor(t);
+    EXPECT_TRUE(validateState(t, s));
+    const auto result = validateParameterWrite(t, s, ParameterId{10}, -10.0);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().kind, StateErrorKind::ReadOnlyParameter);
+}
+
+TEST(TopologyModel, DynamicRangeChangesWithoutChangingIdentityOrRevision) {
+    auto t = SmallTopology();
+    t.parameters[0].domain = ScalarDomain{10, 75, 1, ScalarUnit::Decibels};
+    auto s = StateFor(t);
+    auto& gain = s.parameters.at(ParameterId{10});
+    gain.value = 20.0;
+    EXPECT_TRUE(validateParameterWrite(t, s, ParameterId{10}, 75.0));
+    gain.domainOverride = ScalarDomain{0, 65, 1, ScalarUnit::Decibels};
+    EXPECT_TRUE(validateState(t, s));
+    EXPECT_TRUE(validateParameterWrite(t, s, ParameterId{10}, 0.0));
+    EXPECT_FALSE(validateParameterWrite(t, s, ParameterId{10}, 75.0));
+    EXPECT_EQ(s.topologyRevision, 7);
+    gain.applicable = false;
+    auto refused = validateParameterWrite(t, s, ParameterId{10}, 20.0);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().kind, StateErrorKind::ParameterNotApplicable);
+}
+
+TEST(TopologyModel, MalformedDynamicRangesAreRejected) {
+    const auto t = SmallTopology();
+    auto s = StateFor(t);
+    auto& gain = s.parameters.at(ParameterId{10});
+    for (const auto domain : {
+            ScalarDomain{-60, 0, 0.5, ScalarUnit::Hertz},
+            ScalarDomain{0, -60, 0.5, ScalarUnit::Decibels},
+            ScalarDomain{-60, 0, 0, ScalarUnit::Decibels},
+            ScalarDomain{-60, 0, std::numeric_limits<double>::infinity(), ScalarUnit::Decibels},
+            ScalarDomain{std::numeric_limits<double>::quiet_NaN(), 0, 1, ScalarUnit::Decibels}}) {
+        gain.domainOverride = domain;
+        EXPECT_FALSE(validateState(t, s));
+        EXPECT_FALSE(validateParameterWrite(t, s, ParameterId{10}, -6.5));
+    }
+    gain.domainOverride.reset();
+    s.parameters.at(ParameterId{11}).domainOverride = ScalarDomain{0, 1};
+    EXPECT_FALSE(validateState(t, s));
+}
+
+TEST(TopologyModel, ActionsNeedNoRememberedResultAndOnlyAcceptTriggers) {
+    auto t = SmallTopology();
+    t.parameters.push_back(Parameter{ParameterId{12}, NodeId{1}, ParameterSemantic::Unknown,
+                                     ActionDomain{}, "Clear display"});
+    auto s = StateFor(t);
+    EXPECT_TRUE(validate(t));
+    EXPECT_TRUE(validateState(t, s));
+    EXPECT_TRUE(validateParameterWrite(t, s, ParameterId{12}, ActionTrigger{}));
+    EXPECT_FALSE(validateParameterWrite(t, s, ParameterId{12}, true));
+    EXPECT_FALSE(validateParameterWrite(t, s, ParameterId{12}, int64_t{1}));
+    const auto doc = ASFW::UserClient::Wire::BuildControlSnapshotDocument(1, "test", t, s, 0);
+    EXPECT_NE(doc.find("\"kind\":\"action\""), std::string::npos);
+    EXPECT_NE(doc.find("\"value\":null,\"origin\":null"), std::string::npos);
+    s.parameters.emplace(ParameterId{12}, ParameterState{ActionTrigger{}, StateOrigin::Observed});
+    const auto withMetadata = ASFW::UserClient::Wire::BuildControlSnapshotDocument(1, "test", t, s, 0);
+    EXPECT_EQ(doc, withMetadata);
+}
+
+TEST(TopologyModel, SnapshotCarriesAccessAndDynamicStateMetadata) {
+    auto t = SmallTopology();
+    t.parameters[0].access = ParameterAccess::ReadOnly;
+    auto s = StateFor(t);
+    s.parameters.at(ParameterId{10}).domainOverride = ScalarDomain{-20, 0, 0.5, ScalarUnit::Decibels};
+    s.parameters.at(ParameterId{10}).applicable = false;
+    const auto doc = ASFW::UserClient::Wire::BuildControlSnapshotDocument(1, "test", t, s, 0);
+    EXPECT_NE(doc.find("\"access\":\"readOnly\""), std::string::npos);
+    EXPECT_NE(doc.find("\"applicable\":false"), std::string::npos);
+    EXPECT_NE(doc.find("\"domainOverride\":{\"kind\":\"scalar\",\"min\":-20"), std::string::npos);
 }
 
 } // namespace

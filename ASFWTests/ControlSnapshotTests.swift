@@ -51,6 +51,63 @@ struct ControlSnapshotTests {
         """.utf8)
     }
 
+
+    @Test func decodesAccessAndModeDependentRange() throws {
+        var object = try #require(JSONSerialization.jsonObject(with: Self.document()) as? [String: Any])
+        var parameters = try #require(object["parameters"] as? [[String: Any]])
+        parameters[0]["access"] = "readOnly"
+        parameters[0]["applicable"] = false
+        parameters[0]["domainOverride"] = ["kind": "scalar", "min": -20, "max": 0, "step": 1, "unit": "dB"]
+        object["parameters"] = parameters
+        let parameter = try ControlSnapshot.decode(JSONSerialization.data(withJSONObject: object)).parameters[0]
+        #expect(!parameter.isWritable)
+        #expect(parameter.legalValue(.double(-40)) == .double(-20))
+        #expect(parameter.legalValue(.double(-5.2)) == .double(-5))
+    }
+
+    @Test func actionsHaveNoRememberedValueAndEncodeOnlyTriggers() throws {
+        var object = try #require(JSONSerialization.jsonObject(with: Self.document()) as? [String: Any])
+        object["parameters"] = [["id": 200, "name": "Clear", "semantic": "unknown",
+                                  "target": ["node": 66817], "domain": ["kind": "action"],
+                                  "value": NSNull(), "origin": NSNull()]]
+        let action = try ControlSnapshot.decode(JSONSerialization.data(withJSONObject: object)).parameters[0]
+        #expect(action.value == nil)
+        #expect(action.origin == nil)
+        #expect(action.legalValue(.action) == .action)
+        #expect(action.legalValue(.bool(true)) == nil)
+        #expect(ControlValue.action.wire.kind == 3)
+        #expect(ControlValue.action.wire.bits == 0)
+        #expect(ControlValue(kind: 3, bits: 1) == nil)
+        #expect(ControlParameterChange(scalars: [1, ControlParameterChange.notificationReason, 1, 7, 200, 3, 0, 0]) == nil)
+    }
+
+
+    @Test func refusesReadOnlyAndInactiveWritesBeforeSending() async throws {
+        let driver = FakeControlsDriver()
+        var object = try #require(JSONSerialization.jsonObject(with: Self.document()) as? [String: Any])
+        var parameters = try #require(object["parameters"] as? [[String: Any]])
+        parameters[0]["access"] = "readOnly"
+        parameters[1]["applicable"] = false
+        object["parameters"] = parameters
+        driver.documentOverride = try JSONSerialization.data(withJSONObject: object)
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        await model.write(100, .double(-20))
+        await model.write(101, .bool(true))
+        #expect(driver.writes.isEmpty)
+        #expect(model.writeState(100) == .failed("This control is read-only."))
+        #expect(model.writeState(101) == .failed("This control is not applicable."))
+    }
+
+    @Test func rejectsModeRangeWithWrongUnit() throws {
+        var object = try #require(JSONSerialization.jsonObject(with: Self.document()) as? [String: Any])
+        var parameters = try #require(object["parameters"] as? [[String: Any]])
+        parameters[0]["domainOverride"] = ["kind": "scalar", "min": -20, "max": 0, "unit": "Hz"]
+        object["parameters"] = parameters
+        let data = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: (any Error).self) { try ControlSnapshot.decode(data) }
+    }
+
     // MARK: Decoding
 
     @Test func decodesTheDocument() throws {
@@ -193,8 +250,8 @@ struct ControlSnapshotTests {
             let wire = value.wire
             #expect(ControlValue(kind: wire.kind, bits: wire.bits) == value)
         }
-        #expect(ControlValue(kind: 0, bits: 7) == .bool(true)) // any non-zero is true, as in the driver
-        #expect(ControlValue(kind: 3, bits: 0) == nil)
+        #expect(ControlValue(kind: 0, bits: 7) == nil)
+        #expect(ControlValue(kind: 3, bits: 0) == .action)
     }
 
     // MARK: Write -> poll -> confirm
@@ -379,6 +436,7 @@ final class FakeControlsDriver: DeviceControlsSource {
 
     private(set) var writes: [Write] = []
     private(set) var polls = 0
+    var documentOverride: Data?
     private(set) var snapshotReads = 0
     private var level = "-10.5000"
     private var mute = "false"
@@ -394,7 +452,7 @@ final class FakeControlsDriver: DeviceControlsSource {
     func getControlSnapshot(guid: UInt64) -> Result<Data, ControlsDriverError> {
         snapshotReads += 1
         if unsupported { return .failure(.driver(kIOReturnUnsupported)) }
-        let data = ControlSnapshotTests.document(revision: revision, masterLevel: level, masterMute: mute)
+        let data = documentOverride ?? ControlSnapshotTests.document(revision: revision, masterLevel: level, masterMute: mute)
         let text = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\"revision\":", with: "\"sequence\":\(snapshotSequence),\"revision\":")
         return .success(Data(text.utf8))
     }

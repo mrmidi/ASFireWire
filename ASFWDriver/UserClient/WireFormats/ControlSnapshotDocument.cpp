@@ -27,6 +27,8 @@ const char* SemanticName(AM::ParameterSemantic semantic) {
         case AM::ParameterSemantic::NominalLevel: return "nominalLevel";
         case AM::ParameterSemantic::ClockSource: return "clockSource";
         case AM::ParameterSemantic::Dim: return "dim";
+        case AM::ParameterSemantic::Source: return "source";
+        case AM::ParameterSemantic::HighPassFilter: return "highPassFilter";
         case AM::ParameterSemantic::Unknown: break;
     }
     return "unknown";
@@ -66,6 +68,35 @@ void PortList(Json& j, const std::vector<AM::PortId>& ports) {
     j.Open('[');
     for (const auto port : ports) j.Number(port.value);
     j.Close(']');
+}
+
+void Domain(Json& j, const AM::ParameterDomain& value) {
+    j.Open('{');
+        std::visit([&](const auto& domain) {
+            using D = std::decay_t<decltype(domain)>;
+            if constexpr (std::is_same_v<D, AM::BooleanDomain>) {
+                j.Key("kind").String("bool");
+            } else if constexpr (std::is_same_v<D, AM::ScalarDomain>) {
+                j.Key("kind").String("scalar");
+                j.Key("min"); Decimal(j, domain.min);
+                j.Key("max"); Decimal(j, domain.max);
+                if (domain.step) { j.Key("step"); Decimal(j, *domain.step); }
+                j.Key("unit").String(UnitName(domain.unit));
+            } else if constexpr (std::is_same_v<D, AM::EnumDomain>) {
+                j.Key("kind").String("enum");
+                j.Key("values").Open('[');
+                for (const auto& item : domain.values) {
+                    j.Open('{');
+                    j.Key("value").RawNumber(std::to_string(item.value));
+                    j.Key("name").String(item.name);
+                    j.Close('}');
+                }
+                j.Close(']');
+            } else {
+                j.Key("kind").String("action");
+            }
+    }, value);
+        j.Close('}');
 }
 
 } // namespace
@@ -147,37 +178,21 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
             else j.Key("crosspoint").Number(target.value);
         }, parameter.target);
         j.Close('}');
-        j.Key("domain").Open('{');
-        std::visit([&](const auto& domain) {
-            using D = std::decay_t<decltype(domain)>;
-            if constexpr (std::is_same_v<D, AM::BooleanDomain>) {
-                j.Key("kind").String("bool");
-            } else if constexpr (std::is_same_v<D, AM::ScalarDomain>) {
-                j.Key("kind").String("scalar");
-                j.Key("min"); Decimal(j, domain.min);
-                j.Key("max"); Decimal(j, domain.max);
-                if (domain.step) { j.Key("step"); Decimal(j, *domain.step); }
-                j.Key("unit").String(UnitName(domain.unit));
-            } else {
-                j.Key("kind").String("enum");
-                j.Key("values").Open('[');
-                for (const auto& item : domain.values) {
-                    j.Open('{');
-                    j.Key("value").RawNumber(std::to_string(item.value));
-                    j.Key("name").String(item.name);
-                    j.Close('}');
-                }
-                j.Close(']');
-            }
-        }, parameter.domain);
-        j.Close('}');
-        if (const auto found = state.parameters.find(parameter.id); found != state.parameters.end()) {
+        j.Key("access").String(parameter.access == AM::ParameterAccess::ReadOnly ? "readOnly" : "readWrite");
+        j.Key("domain"); Domain(j, parameter.domain);
+        const auto stateEntry = state.parameters.find(parameter.id);
+        j.Key("applicable").Bool(stateEntry == state.parameters.end() || stateEntry->second.applicable);
+        if (stateEntry != state.parameters.end() && stateEntry->second.domainOverride) {
+            j.Key("domainOverride"); Domain(j, *stateEntry->second.domainOverride);
+        }
+        if (const auto found = state.parameters.find(parameter.id); found != state.parameters.end() && !std::holds_alternative<AM::ActionDomain>(parameter.domain)) {
             j.Key("value");
             std::visit([&](const auto& value) {
                 using V = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<V, bool>) j.Bool(value);
                 else if constexpr (std::is_same_v<V, double>) Decimal(j, value);
-                else j.RawNumber(std::to_string(value));
+                else if constexpr (std::is_same_v<V, int64_t>) j.RawNumber(std::to_string(value));
+                else j.Null();
             }, found->second.value);
             j.Key("origin").String(OriginName(found->second.origin));
         } else {

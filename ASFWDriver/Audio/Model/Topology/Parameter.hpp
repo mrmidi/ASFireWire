@@ -27,6 +27,8 @@ enum class ParameterSemantic : uint8_t {
     NominalLevel,
     ClockSource,
     Dim,
+    Source,
+    HighPassFilter,
 };
 
 /// A transient command payload, never a remembered action result.

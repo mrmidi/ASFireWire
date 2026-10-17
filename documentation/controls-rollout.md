@@ -23,16 +23,19 @@ between the app and Audio MIDI Setup, AV/C volume parity, and reconnect behavior
 
 ## Phase 2 — FW-260, items 1, 4, 5
 
-Status: work-in-progress model checkpoint; not validated or complete.
+Initial model checkpoint: `0889891e`. Software implementation is now complete
+for items 1, 4, and 5: snapshot serialization and wire decoding support access,
+actions, state range overrides, and applicability. The Swift model and controls
+honor the current range and block read-only/inactive writes. Actions carry no
+remembered result and duplicate in-flight triggers are not coalesced for replay.
 
-The initial changes introduce read-only access, one-shot action domains, and
-state-carried scalar range overrides and applicability. Write validation starts
-checking these constraints before dispatching a provider write.
-
-Remaining work includes snapshot serialization, wire value decoding, Swift model
-and UI support, error mapping, and host tests. Existing serializers and exhaustive
-variant visitors still need adjustment for the action variant. This checkpoint
-must not be treated as a buildable release or as completed Phase 2 acceptance.
+Validation: 14 TopologyModelTests, 9 AvcControlProjectionTests, and 30 Swift
+ControlSnapshotTests passed. The targeted Xcode test build succeeded with signing
+disabled. New host tests cover changing Mic/Inst ranges with stable identity,
+invalid metadata, read-only/inactive writes, and action serialization. Swift tests
+cover decoding, effective range snapping, action encoding, and refusing writes
+before calling the driver. An initially missing action JSON tag was found by the
+host test and corrected. These are software checks only.
 
 ## Subsequent phases
 

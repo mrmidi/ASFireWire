@@ -461,6 +461,7 @@ target_compile_definitions(DiceMultirateValidationTests PRIVATE ASFW_DICE_MULTIR
 # Controls: AUAA semantic core (FW-202) and the AV/C projection (FW-204).
 add_audio_test(TopologyModelTests
     topology/TopologyModelTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Naming.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )

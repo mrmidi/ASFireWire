@@ -174,6 +174,11 @@ final class DeviceControlsViewModel: ObservableObject {
     func write(_ parameterId: UInt32, _ requested: ControlValue) async {
         guard let guid = selectedGUID,
               let parameter = snapshot?.parameters.first(where: { $0.id == parameterId }) else { return }
+        guard parameter.isWritable else {
+            writeStates[parameterId] = .failed(parameter.applicable ? "This control is read-only." : "This control is not applicable.")
+            return
+        }
+        if requested == .action, case .writing = writeState(parameterId) { return }
         guard let value = parameter.legalValue(requested) else {
             writeStates[parameterId] = .failed("That value does not fit this control.")
             return
@@ -211,7 +216,7 @@ final class DeviceControlsViewModel: ObservableObject {
         switch result {
         case .success(let confirmed):
             // A later push may already supersede this write result.
-            if lastChangeSequence[parameterId] == sequenceBeforeWrite {
+            if confirmed != .action, lastChangeSequence[parameterId] == sequenceBeforeWrite {
                 applyConfirmed(parameterId, confirmed)
             }
             writeStates[parameterId] = .idle
@@ -245,7 +250,7 @@ final class DeviceControlsViewModel: ObservableObject {
 
     /// Show only a hardware-confirmed value.
     private func applyConfirmed(_ parameterId: UInt32, _ confirmed: ControlValue, origin: ControlOrigin = .observed) {
-        guard var snapshot,
+        guard confirmed != .action, var snapshot,
               let index = snapshot.parameters.firstIndex(where: { $0.id == parameterId }) else { return }
         snapshot.parameters[index].value = confirmed
         snapshot.parameters[index].origin = origin
@@ -280,6 +285,7 @@ final class DeviceControlsViewModel: ObservableObject {
     static func refusalText(_ error: ControlsDriverError) -> String {
         switch error.code {
         case kIOReturnNotPermitted: return staleRevisionMessage
+        case kIOReturnNotWritable: return "This control is read-only or not applicable in the current mode."
         case kIOReturnNotFound: return "This control no longer exists on the device."
         case kIOReturnBadArgument: return "The driver refused the value (out of range or off the step grid)."
         case kIOReturnUnsupported: return "This device has no controls the driver can write."

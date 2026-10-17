@@ -687,7 +687,9 @@ std::expected<void, StateError> validateParameterValue(
                 });
             }
             const double v = std::get<double>(value);
-            if (!std::isfinite(v) || v < domain.min || v > domain.max) {
+            if (!std::isfinite(domain.min) || !std::isfinite(domain.max) || domain.min > domain.max ||
+                (domain.step && (!std::isfinite(*domain.step) || *domain.step <= 0)) ||
+                !std::isfinite(v) || v < domain.min || v > domain.max) {
                 return std::unexpected(StateError{
                     StateErrorKind::InvalidParameterValue,
                     detail::Format("Parameter {} '{}' value {} out of range [{}, {}] or non-finite",

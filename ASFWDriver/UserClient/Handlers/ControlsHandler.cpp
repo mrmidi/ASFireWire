@@ -107,9 +107,10 @@ std::optional<CurrentModel> Current(Protocols::AVC::IAVCDiscovery& discovery, ui
 
 std::optional<AM::ParameterValue> DecodeValue(uint64_t kind, uint64_t bits) {
     switch (static_cast<ControlValueKind>(kind)) {
-        case ControlValueKind::kBool: return AM::ParameterValue{bits != 0};
+        case ControlValueKind::kBool: if (bits > 1) return std::nullopt; return AM::ParameterValue{bits != 0};
         case ControlValueKind::kDouble: return AM::ParameterValue{std::bit_cast<double>(bits)};
         case ControlValueKind::kInt: return AM::ParameterValue{static_cast<int64_t>(bits)};
+        case ControlValueKind::kAction: if (bits != 0) return std::nullopt; return AM::ActionTrigger{};
     }
     return std::nullopt;
 }
@@ -158,6 +159,8 @@ kern_return_t ControlsHandler::SetControlParameter(IOUserClientMethodArguments* 
     if (const auto legal = AM::validateParameterWrite(current->model.topology, current->model.state, id, *value); !legal) {
         ASFW_LOG(UserClient, "[Controls] refused value guid=0x%016llx parameter=%u: %{public}s",
                  guid, id.value, legal.error().message.c_str());
+        if (legal.error().kind == AM::StateErrorKind::ReadOnlyParameter ||
+            legal.error().kind == AM::StateErrorKind::ParameterNotApplicable) return kIOReturnNotWritable;
         return kIOReturnBadArgument;
     }
     const auto* channel = C::FindAvcFeatureChannel(*current->graph, binding->Token());

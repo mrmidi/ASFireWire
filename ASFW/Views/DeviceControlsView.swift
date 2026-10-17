@@ -307,13 +307,18 @@ private struct ParameterRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            control
+            control.disabled(!parameter.isWritable)
+            if !parameter.applicable { Text("Not applicable").font(.caption).foregroundStyle(.secondary) }
+            else if parameter.access == .readOnly { Text("Read-only").font(.caption).foregroundStyle(.secondary) }
             status
         }
     }
 
     @ViewBuilder private var control: some View {
-        switch parameter.domain {
+        switch parameter.effectiveDomain {
+        case .action:
+            Button(parameter.name) { write(.action) }
+                .disabled({ if case .writing = state { true } else { false } }())
         case .scalar(let domain):
             scalar(domain)
         case .bool:
@@ -380,7 +385,9 @@ private struct ParameterRow: View {
     }
 
     @ViewBuilder private var provenance: some View {
-        if parameter.value == nil {
+        if parameter.domain == .action {
+            EmptyView()
+        } else if parameter.value == nil {
             ControlBadge(text: "no value", tint: .secondary)
         } else if let origin = parameter.origin, origin != .observed {
             ControlBadge(text: origin.rawValue, tint: .secondary)
@@ -425,6 +432,7 @@ private struct ParameterRow: View {
 
     static func describe(_ value: ControlValue, _ domain: ControlDomain) -> String {
         switch (value, domain) {
+        case (.action, _): "action"
         case (.bool(let on), _): on ? "on" : "off"
         case (.double(let number), .scalar(let scalar)): format(number, scalar)
         case (.int(let number), .enumeration(let items)): items.first { $0.value == number }?.name ?? "\(number)"
