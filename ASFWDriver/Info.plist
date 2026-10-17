@@ -127,6 +127,10 @@
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOUserServerOneProcess</key>
 			<true/>
+			<key>Physical Interconnect</key>
+			<string>FireWire</string>
+			<key>Physical Interconnect Location</key>
+			<string>External</string>
 		</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>

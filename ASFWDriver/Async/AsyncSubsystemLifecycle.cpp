@@ -597,6 +597,15 @@ void AsyncSubsystem::OnTimeoutTick() {
 
     const uint32_t drainedByWatchdog = DrainTxCompletions("watchdog");
 
+    // Backstop for a lost receive interrupt (an MSI edge the controller never
+    // sent, or one we acknowledged away): a packet then sits in an AR ring
+    // until something else interrupts. Same queue as the ISR, so this is the
+    // ISR's own scan, just timer-driven. Every 10 ms keeps a straddle fragment
+    // from being retried (and V2-logged) every tick.
+    if (rxPath_ && watchdogTickCount_.load(std::memory_order_relaxed) % 10 == 0) {
+        rxPath_->ProcessARInterrupts(isRunning_, busResetCapture_.get(), /*quiet=*/true);
+    }
+
     // Delegate timeout processing to Tracking actor
     if (tracking_) {
         tracking_->OnTimeoutTick(nowUsec);

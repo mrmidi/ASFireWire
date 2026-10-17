@@ -18,6 +18,7 @@
 #include "../ASFWDriver/Hardware/InterruptDrain.hpp"
 #include "../ASFWDriver/Hardware/InterruptManager.hpp"
 #include "../ASFWDriver/Hardware/RegisterMap.hpp"
+#include "AsyncControllerStub.hpp"
 
 namespace ASFW::Driver {
 
@@ -139,6 +140,7 @@ protected:
         deps.topology = topology_;
         deps.interrupts = interrupts_;
         deps.busReset = busReset_;
+        deps.asyncController = async_;
         core_ = std::make_shared<ControllerCore>(ControllerConfig{}, RolePolicy::MakeLiveDefault(),
                                                  std::move(deps));
         ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kStarting, "test", 0),
@@ -179,6 +181,7 @@ protected:
     std::shared_ptr<TopologyManager> topology_ = std::make_shared<TopologyManager>();
     std::shared_ptr<InterruptManager> interrupts_ = std::make_shared<InterruptManager>();
     std::shared_ptr<BusResetCoordinator> busReset_ = std::make_shared<BusResetCoordinator>();
+    std::shared_ptr<AsyncControllerStub> async_ = std::make_shared<AsyncControllerStub>();
     std::shared_ptr<ControllerCore> core_;
 };
 
@@ -207,6 +210,25 @@ TEST_F(ControllerCoreInterruptLineTest, EventArrivingDuringTheHandlerIsServicedB
                        IntEventBits::kRQPkt}),
               0U);
 
+    EXPECT_EQ(Asserted(), 0U);
+}
+
+// A packet landing after the ring scan but before the acknowledge. With the
+// acknowledge last, its RQPkt was cleared unprocessed and, the output never
+// having deasserted, no MSI followed: the packet sat in the ring until an
+// unrelated interrupt (Hasselblad H camera, 2026-10-15: SBP-2 status blocks
+// serviced 10 s late). The handler must take a second pass for it.
+TEST_F(ControllerCoreInterruptLineTest, PacketArrivingDuringRingServiceIsServicedBeforeReturning) {
+    async_->onRxRequestInterrupt = [this] {
+        if (async_->rxRequestInterrupts == 1) {
+            Raise(IntEventBits::kRQPkt);
+        }
+    };
+    Raise(IntEventBits::kRQPkt);
+
+    EXPECT_EQ(Service(), 0U);
+
+    EXPECT_EQ(async_->rxRequestInterrupts, 2U);
     EXPECT_EQ(Asserted(), 0U);
 }
 
