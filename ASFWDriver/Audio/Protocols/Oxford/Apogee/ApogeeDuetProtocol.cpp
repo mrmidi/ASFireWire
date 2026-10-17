@@ -285,7 +285,8 @@ void ApogeeDuetProtocol::ReadControlGroup(DuetControlGroup group, VoidCallback d
             GetKnobState([self, finish](auto status, auto knob) { finish(status, [self, knob] {
                 self->controls_.knob = knob;
                 self->controls_.input.gains = knob.inputGains;
-                self->controls_.output.volume = knob.outputVolume;
+                // Same register as OutVolume: back to raw attenuation.
+                self->controls_.output.volume = static_cast<uint8_t>(KnobState::kOutputVolMax - knob.outputVolume);
                 self->controls_.output.mute = knob.outputMute;
             }); }); break;
         case DuetControlGroup::Action: done(kIOReturnSuccess); break;

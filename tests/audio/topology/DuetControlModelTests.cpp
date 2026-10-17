@@ -11,7 +11,7 @@ namespace AM = ASFW::AudioModel;
 DuetControlsState State() {
     DuetControlsState state;
     state.input.gains = {10, 75};
-    state.output.volume = 64;
+    state.output.volume = 0; // raw attenuation: loudest
     return state;
 }
 TEST(DuetControlModel, TopologyAndObservedStateValidate) {

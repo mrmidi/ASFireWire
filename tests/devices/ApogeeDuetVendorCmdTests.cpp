@@ -894,7 +894,10 @@ struct DuetControlDevice {
         OutputParams output; output.volume = 50;
         MixerParams mixer;
         DisplayParams display;
-        KnobState knob; knob.inputGains = input.gains; knob.outputVolume = output.volume;
+        // A real Duet holds one output value: OutVolume and HW_STATE byte 3
+        // carry the same raw attenuation, and the knob decode is 64 - raw.
+        KnobState knob; knob.inputGains = input.gains;
+        knob.outputVolume = static_cast<uint8_t>(KnobState::kOutputVolMax - output.volume);
         for (const auto& c : Serdes::BuildInputParamsControl(input)) Remember(c);
         for (const auto& c : Serdes::BuildOutputParamsControl(output)) Remember(c);
         for (const auto& c : Serdes::BuildMixerParamsControl(mixer)) Remember(c);
@@ -918,6 +921,10 @@ struct DuetControlDevice {
             values[key] = {command.begin() + 12, command.end()};
             if (command[9] == uint8_t(VendorCmdCode::InGain)) {
                 MoveGain(command[11], clampGain.value_or(command[12]));
+            }
+            // One output register: HW_STATE byte 3 follows OutVolume.
+            if (command[9] == uint8_t(VendorCmdCode::OutVolume)) {
+                values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][3] = command[12];
             }
             return AvcReply::Accepted();
         }
@@ -951,7 +958,7 @@ TEST(DuetControlProvider, ReadsEveryGroupBeforePublishingAndConfirmsHardwareValu
     DuetControlRig r; r.Prepare();
     auto snapshot = r.protocol->CopySnapshot();
     ASSERT_TRUE(snapshot);
-    EXPECT_EQ(std::get<double>(snapshot->state.parameters.at(ASFW::AudioModel::ParameterId{DuetControl::OutputVolume}).value), -14);
+    EXPECT_EQ(std::get<double>(snapshot->state.parameters.at(ASFW::AudioModel::ParameterId{DuetControl::OutputVolume}).value), -50);
     r.device.clampGain = 47;
     IOReturn status = kIOReturnNotReady;
     ASFW::AudioModel::ParameterValue confirmed = false;
@@ -995,6 +1002,24 @@ TEST(DuetControlProvider, SourceSwitchRecomputesGainRangeWithoutNewTopology) {
     const auto& gain = after.state.parameters.at(ASFW::AudioModel::ParameterId{DuetControl::Gain});
     EXPECT_EQ(std::get<double>(gain.value), 0);
     EXPECT_EQ(gain.domainOverride->max, 65);
+}
+// Found on hardware 2026-10-17: the knob poll and the output-group read
+// decoded the one output register in opposite senses, so CoreAudio's volume
+// flipped by 2*raw-64 dB on every poll. A written volume must read back the
+// same through both, and survive the next poll unchanged.
+TEST(DuetControlProvider, OutputVolumeSurvivesTheKnobPoll) {
+    DuetControlRig r; r.Prepare();
+    const ASFW::AudioModel::ParameterId volume{DuetControl::OutputVolume};
+    IOReturn status = kIOReturnNotReady;
+    ASFW::AudioModel::ParameterValue confirmed = false;
+    r.protocol->SetParameter(volume, -10.0, [&](auto result, auto value) { status = result; confirmed = value; });
+    r.rig.Drain(4096);
+    ASSERT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(std::get<double>(confirmed), -10);
+    // Raw attenuation 10 in the one output register.
+    EXPECT_EQ((r.device.values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][3]), 10);
+    for (int poll = 0; poll < 3; ++poll) { r.rig.Timers().Advance(500'000'000); r.rig.Drain(4096); }
+    EXPECT_EQ(std::get<double>(r.protocol->CopySnapshot()->state.parameters.at(volume).value), -10);
 }
 // A write that lands while the knob poll is reading must wait for it, not be
 // refused: the poll runs every 500 ms, so a refusal would fail a slider drag

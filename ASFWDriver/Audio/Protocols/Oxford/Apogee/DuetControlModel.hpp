@@ -103,7 +103,7 @@ inline Controls::ControlSnapshot BuildDuetControls(const DuetControlsState& nati
     source.legalBundles = {stream, mix}; source.constraints.maxActiveBundles = 1; source.constraints.maxSourcesPerOutput = 1;
     node(40, "Output Source", std::move(source)); node(41, "Output", std::move(output));
     s.routers.emplace(AM::NodeId{40}, AM::RouterState{{AM::RouteBundleId{native.output.source == OutputSource::MixerOutputPair0 ? 2u : 1u}}});
-    param(DuetControl::OutputVolume, AM::NodeId{41}, AM::ParameterSemantic::Level, AM::ScalarDomain{-64, 0, 1, AM::ScalarUnit::Decibels}, "Output Volume", double(native.output.volume) - 64);
+    param(DuetControl::OutputVolume, AM::NodeId{41}, AM::ParameterSemantic::Level, AM::ScalarDomain{-64, 0, 1, AM::ScalarUnit::Decibels}, "Output Volume", -double(native.output.volume));
     param(DuetControl::OutputMute, AM::NodeId{41}, AM::ParameterSemantic::Mute, AM::BooleanDomain{}, "Output Mute", native.output.mute);
     param(DuetControl::OutputSource, AM::NodeId{40}, AM::ParameterSemantic::Source, AM::EnumDomain{{{0, "Stream"}, {1, "Mixer"}}}, "Output Source", int64_t(native.output.source));
     param(DuetControl::OutputLevel, AM::NodeId{41}, AM::ParameterSemantic::NominalLevel, AM::EnumDomain{{{0, "Instrument"}, {1, "-10 dBV"}}}, "Output Level", int64_t(native.output.nominalLevel));
