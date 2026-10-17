@@ -200,7 +200,10 @@ bool ASFWMidiDevice::UnbindTransport() {
     //    cleared at its re-check or is counted below.
     ivars->bound.store(false, std::memory_order_release);
 
-    // 2. Detach the destination I/O blocks so CoreMIDI stops dispatching.
+    // 2. Swap each destination's I/O block for one that captures nothing, so a
+    //    block CoreMIDI invokes later never reaches these ivars. SetIOBlock
+    //    rejects nullptr (kIOReturnBadArgument, seen on hot-unplug), so an
+    //    inert block is the only way to detach.
     auto entities = GetEntities();
     if (entities) {
         entities->iterateObjects(^bool(OSObject* object) {
@@ -208,9 +211,12 @@ bool ASFWMidiDevice::UnbindTransport() {
             if (entity != nullptr) {
                 auto destination = entity->GetDestination(0);
                 if (destination) {
-                    const kern_return_t ret = destination->SetIOBlock(nullptr);
+                    const kern_return_t ret = destination->SetIOBlock(
+                        ^kern_return_t(IOUserMIDIUMPWord const*, size_t) {
+                            return kIOReturnNotReady;
+                        });
                     if (ret != kIOReturnSuccess) {
-                        ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: SetIOBlock(nullptr) failed 0x%x", ret);
+                        ASFW_LOG_ERROR(Midi, "ASFWMidiDevice: detaching I/O block failed 0x%x", ret);
                     }
                 }
             }
@@ -309,7 +315,12 @@ kern_return_t ASFWMidiDevice::StopIO() {
     __block kern_return_t error = kIOReturnSuccess;
     if (!ivars || !ivars->workQueue) return kIOReturnNotReady;
 
-    ivars->ioRunning.store(false, std::memory_order_release);
+    // Idempotent. Teardown reaches here twice: ASFWMIDIDriver::Stop stops the
+    // device itself, then the framework's StopIO does it again, and a second
+    // super::StopIO on a stopped device fails with kIOReturnError.
+    if (!ivars->ioRunning.exchange(false, std::memory_order_acq_rel)) {
+        return kIOReturnSuccess;
+    }
     auto offline = OSSharedPtr(OSNumber::withNumber(uint64_t{1}, 32), OSNoRetain);
     if (offline) SetProperty(IOUserMIDIProperty::Offline, offline.get());
 
