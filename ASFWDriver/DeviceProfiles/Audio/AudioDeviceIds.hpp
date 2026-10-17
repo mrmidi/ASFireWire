@@ -80,6 +80,16 @@ inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
 inline constexpr uint32_t kTerraTecVendorId     = 0x000aac;
 inline constexpr uint32_t kPhase88RackFwModelId = 0x000003;
 
+// ---- Prism Sound (BridgeCo / BeBoB family) ----
+// Linux sound/firewire/bebob/bebob.c lists both Prism entries with spec_normal
+// (no quirks): VEN_PRISMSOUND 0x00001198, Orpheus 0x00010048, ADA-8XR 0x0000ada8.
+// OUI 00:11:98 = Prism Media Products Limited. The ADA-8XR's FW card streams
+// 8-in/8-out AM824 (verified live: enumeration + 48 kHz playback via the
+// generic path); the Orpheus is catalogued from the Linux entry alone.
+inline constexpr uint32_t kPrismVendorId       = 0x001198;
+inline constexpr uint32_t kPrismOrpheusModelId = 0x00010048;
+inline constexpr uint32_t kPrismAda8XrModelId  = 0x0000ada8;
+
 // ---- Alesis (DICE / TCAT family) ----
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
@@ -205,6 +215,9 @@ inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
 inline constexpr const char* kTerraTecVendorName      = "TerraTec Electronic GmbH";
 inline constexpr const char* kPhase88RackFwModelName  = "PHASE 88 Rack FW";
+inline constexpr const char* kPrismVendorName         = "Prism Sound";
+inline constexpr const char* kPrismOrpheusModelName   = "Orpheus";
+inline constexpr const char* kPrismAda8XrModelName    = "ADA-8XR";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 inline constexpr const char* kAlesisIoModelName       = "iO14 / iO26";
