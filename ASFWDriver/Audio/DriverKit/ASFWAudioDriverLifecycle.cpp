@@ -55,7 +55,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
-        TearDownAudioGraph(*this, *ivars);
+        TearDownAudioGraph(*this, *ivars, ASFW::Audio::DriverKit::AudioGraphDetach::kStreamsThenDevice);
         (void)Stop(provider, SUPERDISPATCH);
         return result;
     };

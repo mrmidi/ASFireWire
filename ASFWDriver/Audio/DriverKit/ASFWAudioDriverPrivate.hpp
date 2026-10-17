@@ -468,11 +468,31 @@ void ReportMidiTx(ASFWAudioDriver_IVars& ivars) noexcept;
 [[nodiscard]] kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                             IOService* provider,
                                             ASFWAudioDriver_IVars& ivars) noexcept;
-/// Detach and release everything BuildAudioGraph created: streams off the
-/// device, the device off the driver, the device's link back to these ivars,
-/// the boolean controls, every buffer and map, and the work queue. Leaves the
+/// How TearDownAudioGraph detaches the graph from ADK.
+enum class AudioGraphDetach : uint8_t {
+    /// Streams off the device, then the device off the driver. Only for a
+    /// Start that failed: no CoreAudio client can be connected yet.
+    kStreamsThenDevice,
+    /// The device off the driver; its streams leave with it. For Stop and
+    /// free(). Stop can race CoreAudio's client disconnect, which ADK runs on
+    /// the driver work queue and which then waits for the device queue
+    /// (_UserClientDisconnected -> _UnregisterAllIOThreads).
+    /// IOUserAudioDevice::RemoveStream holds the device queue and waits for
+    /// the driver work queue (it calls IOUserAudioDriver::RemoveObject):
+    /// the opposite order, and the two deadlocked with ADK's IO thread
+    /// spinning at realtime priority (Duet unplug while playing, 2026-10-17).
+    /// RemoveObject on the device takes the driver queue first, as ADK does.
+    /// ADKVirtualAudioLab's VirtualAudioDriver::Stop_Impl also removes only
+    /// the device.
+    kDeviceOnly,
+};
+
+/// Detach and release everything BuildAudioGraph created: detach from ADK as
+/// `detach` says, clear the device's link back to these ivars, then drop the
+/// boolean controls, every buffer and map, and the work queue. Leaves the
 /// driver holding no ADK object, so a Stop that runs it lets the driver free.
-void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
+void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars,
+                        AudioGraphDetach detach) noexcept;
 /// What ASFWAudioDriver::Stop does before super::Stop: stop the nub's
 /// streaming, withdraw every action registered with it, drop the actions and
 /// their queues, then TearDownAudioGraph. Afterwards the driver holds no ADK

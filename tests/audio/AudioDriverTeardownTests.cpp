@@ -28,6 +28,7 @@
 namespace {
 
 using ASFW::Audio::DriverKit::StopAudioDriverGraph;
+using ASFW::Audio::DriverKit::AudioGraphDetach;
 using ASFW::Audio::DriverKit::TearDownAudioGraph;
 
 /// A device that holds its driver, as an ADK device created with
@@ -67,6 +68,8 @@ struct StartedGraph {
     }
 };
 
+// A failed Start unwinds stream by stream: no CoreAudio client can be
+// connected yet, so nothing can race ADK's queues.
 TEST(AudioDriverTeardownTests, TeardownDetachesAndReleasesTheWholeGraph) {
     OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
     auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
@@ -76,7 +79,7 @@ TEST(AudioDriverTeardownTests, TeardownDetachesAndReleasesTheWholeGraph) {
     ASSERT_EQ(device->GetRetainCount(), 2);
     ASSERT_EQ(graph.input->GetRetainCount(), 2);
 
-    TearDownAudioGraph(*driver, *ivars);
+    TearDownAudioGraph(*driver, *ivars, AudioGraphDetach::kStreamsThenDevice);
 
     // Detached in ADK first: both streams off the device, the device off the
     // driver, and the device no longer pointing at these ivars.
@@ -109,7 +112,7 @@ TEST(AudioDriverTeardownTests, ADeviceHoldingItsDriverNoLongerKeepsItAlive) {
     graph.AttachTo(*ivars, OSSharedPtr<ASFWAudioDevice>(new DeviceHoldingDriver(driver.get()), OSNoRetain));
     ASSERT_EQ(driver->GetRetainCount(), 2);  // The test's, and the device's.
 
-    TearDownAudioGraph(*driver, *ivars);
+    TearDownAudioGraph(*driver, *ivars, AudioGraphDetach::kDeviceOnly);
 
     // The ivars held the device's last reference: dropping it freed the
     // device, which let go of the driver.
@@ -225,12 +228,38 @@ TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
     StartedGraph graph;
     graph.AttachTo(*ivars, device);
 
-    TearDownAudioGraph(*driver, *ivars);
-    TearDownAudioGraph(*driver, *ivars);
+    TearDownAudioGraph(*driver, *ivars, AudioGraphDetach::kDeviceOnly);
+    TearDownAudioGraph(*driver, *ivars, AudioGraphDetach::kDeviceOnly);
 
     EXPECT_EQ(driver->removedObjects.size(), 1U);
-    EXPECT_EQ(device->removedStreams.size(), 2U);
+    EXPECT_TRUE(device->removedStreams.empty());
     EXPECT_EQ(device->GetRetainCount(), 1);
+}
+
+// Stop removes the device and never a stream. IOUserAudioDevice::RemoveStream
+// holds the device queue while it waits for the driver work queue; CoreAudio's
+// client disconnect, which an unplug while playing runs at the same moment,
+// holds the driver work queue while it waits for the device queue. The two
+// deadlocked, Stop never returned and ADK's IO thread spun at realtime
+// priority (Duet, 2026-10-17). The streams leave with the device, and Stop
+// still lets go of them.
+TEST(AudioDriverTeardownTests, StopRemovesTheDeviceButNoStream) {
+    OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
+    auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
+    OSSharedPtr<ASFWAudioDevice> device{new ASFWAudioDevice(), OSNoRetain};
+    StartedGraph graph;
+    graph.AttachTo(*ivars, device);
+    ivars->runtime.isRunning.store(true);
+
+    StopAudioDriverGraph(*driver, *ivars);
+
+    EXPECT_TRUE(device->removedStreams.empty());
+    ASSERT_EQ(driver->removedObjects.size(), 1U);
+    EXPECT_EQ(driver->removedObjects[0], device.get());
+    EXPECT_EQ(device->driverIvars, nullptr);
+    EXPECT_EQ(device->GetRetainCount(), 1);
+    EXPECT_EQ(graph.input->GetRetainCount(), 1);
+    EXPECT_EQ(graph.output->GetRetainCount(), 1);
 }
 
 TEST(AudioDriverTeardownTests, ConfirmedControlPushUpdatesHalWithoutAnotherHardwareWrite) {
@@ -317,7 +346,7 @@ TEST(AudioDriverTeardownTests, AvcStreamsDropOwnerBeforeGraphRemoval) {
     ivars->outputStream = OSSharedPtr<IOUserAudioStream>(output.get(), OSRetain);
     ivars->graphState = {.inputStreamAdded = true, .outputStreamAdded = true, .audioDeviceAdded = true};
     EXPECT_EQ(device->GetRetainCount(), 4);
-    TearDownAudioGraph(*driver, *ivars);
+    TearDownAudioGraph(*driver, *ivars, AudioGraphDetach::kDeviceOnly);
     EXPECT_FALSE(input->owner); EXPECT_FALSE(output->owner);
     EXPECT_EQ(device->GetRetainCount(), 1);
 }

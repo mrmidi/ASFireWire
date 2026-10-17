@@ -47,7 +47,8 @@ void ASFWAudioDriver::free()
                 nullptr);
         }
         // Stop already ran this; it only matters for a driver that never started.
-        ASFW::Audio::DriverKit::TearDownAudioGraph(*this, *ivars);
+        ASFW::Audio::DriverKit::TearDownAudioGraph(
+            *this, *ivars, ASFW::Audio::DriverKit::AudioGraphDetach::kDeviceOnly);
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();

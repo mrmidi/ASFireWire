@@ -549,7 +549,9 @@ void ASFWDriverUserClient::free() {
 kern_return_t IMPL(ASFWDriverUserClient, Start) {
     ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
     ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
-    ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ++ivars->startCount);
+    // Not inside ASFW_LOG: it evaluates its arguments twice (ring and os_log).
+    ++ivars->startCount;
+    ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ivars->startCount);
     kern_return_t ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         return ret;
@@ -589,8 +591,9 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
     IOLockLock(ivars->actionLock);
     const auto transactionHolds = ivars->transactionHolds;
     IOLockUnlock(ivars->actionLock);
+    ++ivars->stopCount;
     ASFW_LOG(UserClient, "[Lifecycle] Stop client=%p provider=%p starts=%u stops=%u transactionHolds=%u",
-             this, provider, ivars->startCount, ++ivars->stopCount, transactionHolds);
+             this, provider, ivars->startCount, ivars->stopCount, transactionHolds);
     if (ivars && ivars->actionLock) {
         IOLockLock(ivars->actionLock);
         ivars->stopping = true;
