@@ -53,7 +53,7 @@ IOReturn ApogeeDuetProtocol::Initialize() {
 }
 
 IOReturn ApogeeDuetProtocol::Shutdown() {
-    StopControlPoll(); controlsReady_ = false; controlBusy_ = false; ++controlsEpoch_;
+    StopControlPoll(); controlsReady_ = false; ++controlsEpoch_; ResetControlQueue();
     duplex_.Shutdown();
     return kIOReturnSuccess;
 }
@@ -305,7 +305,7 @@ void ApogeeDuetProtocol::Prepare(std::function<void(IOReturn)> done) {
             self->controlsReady_ = true;
             if (!self->CommitControls()) { self->controlsReady_ = false; status = kIOReturnError; }
         }
-        self->controlBusy_ = false;
+        self->ReleaseControl();
         if (status == kIOReturnSuccess) self->ScheduleControlPoll();
         done(status);
     };
@@ -363,6 +363,32 @@ bool ApogeeDuetProtocol::CommitControls() {
     for (const auto& event : events) C::ControlNotifications::Shared().Publish(event);
     return true;
 }
+void ApogeeDuetProtocol::QueueControl(std::function<void(ApogeeDuetProtocol&)> op, Completion refuse) {
+    if (controlWaiters_.size() >= kMaxControlWaiters) { refuse(kIOReturnBusy, false); return; }
+    controlWaiters_.push_back([weak = weak_from_this(), op = std::move(op), refuse = std::move(refuse)] {
+        const auto owner = weak.lock();
+        if (!owner) { refuse(kIOReturnAborted, false); return; }
+        op(*static_cast<ApogeeDuetProtocol*>(owner.get()));
+    });
+}
+void ApogeeDuetProtocol::ReleaseControl() {
+    controlBusy_ = false;
+    // A waiter can finish without starting I/O (a refused value): keep going
+    // until one holds the device or none is left.
+    while (!controlBusy_ && !controlWaiters_.empty()) {
+        auto next = std::move(controlWaiters_.front());
+        controlWaiters_.pop_front();
+        next();
+    }
+}
+void ApogeeDuetProtocol::ResetControlQueue() {
+    // Every waiter gets an answer: re-entered after controlsReady_ was cleared
+    // it is refused NotReady; once the protocol is gone, Aborted.
+    controlBusy_ = false;
+    auto waiters = std::move(controlWaiters_);
+    controlWaiters_.clear();
+    for (auto& waiter : waiters) waiter();
+}
 void ApogeeDuetProtocol::StopControlPoll() {
     if (runtime_.timerScheduler && controlPoll_ != Scheduling::kInvalidTimerToken)
         runtime_.timerScheduler->Cancel(controlPoll_);
@@ -390,19 +416,23 @@ void ApogeeDuetProtocol::PollControls() {
     ReadControlGroup(DuetControlGroup::Knob, [self, epoch](auto status) {
         if (epoch != self->controlsEpoch_) return;
         if (status == kIOReturnSuccess) (void)self->CommitControls();
-        self->controlBusy_ = false;
+        self->ReleaseControl();
         self->ScheduleControlPoll();
     });
 }
 void ApogeeDuetProtocol::FinishControlWrite(AudioModel::ParameterId id, Completion done) {
-    if (!CommitControls()) { controlBusy_ = false; done(kIOReturnError, false); return; }
-    controlBusy_ = false;
+    if (!CommitControls()) { ReleaseControl(); done(kIOReturnError, false); return; }
+    ReleaseControl();
     const auto found = controlSnapshot_->state.parameters.find(id);
     if (found == controlSnapshot_->state.parameters.end()) { done(kIOReturnError, false); return; }
     done(kIOReturnSuccess, found->second.value);
 }
 void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value, Completion done) {
-    if (!controlsReady_ || controlBusy_) { done(kIOReturnNotReady, false); return; }
+    if (!controlsReady_) { done(kIOReturnNotReady, false); return; }
+    if (controlBusy_) {
+        QueueControl([id, value, done](ApogeeDuetProtocol& self) { self.SetParameter(id, value, done); }, done);
+        return;
+    }
     auto self = std::static_pointer_cast<ApogeeDuetProtocol>(weak_from_this().lock());
     if (!self) { done(kIOReturnNotReady, false); return; }
     const auto write = BuildDuetParameterWrite(controls_, id, value);
@@ -411,7 +441,7 @@ void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioMod
     const auto epoch = controlsEpoch_;
     if (write->group == DuetControlGroup::Action) {
         ClearDisplay([self, epoch, done](auto status) {
-            if (epoch == self->controlsEpoch_) self->controlBusy_ = false;
+            if (epoch == self->controlsEpoch_) self->ReleaseControl();
             done(epoch == self->controlsEpoch_ ? status : kIOReturnAborted, AudioModel::ActionTrigger{});
         });
         return;
@@ -420,9 +450,9 @@ void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioMod
     // immediately before changing target so a knob movement is not overwritten.
     auto send = [self, epoch, id, value, done](IOReturn status) {
         if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
-        if (status != kIOReturnSuccess) { self->controlBusy_ = false; done(status, false); return; }
+        if (status != kIOReturnSuccess) { self->ReleaseControl(); done(status, false); return; }
         const auto plan = BuildDuetParameterWrite(self->controls_, id, value);
-        if (!plan) { self->controlBusy_ = false; done(kIOReturnBadArgument, false); return; }
+        if (!plan) { self->ReleaseControl(); done(kIOReturnBadArgument, false); return; }
         self->ExecuteVendorSequence(plan->commands, false, [self, epoch, id, done, group = plan->group](auto status, const auto&) {
             if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
             if (status != kIOReturnSuccess) {
@@ -431,13 +461,13 @@ void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioMod
                 self->ReadControlGroup(group, [self, epoch, done, status](auto readStatus) {
                     if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
                     if (readStatus == kIOReturnSuccess) (void)self->CommitControls();
-                    self->controlBusy_ = false; done(status, false);
+                    self->ReleaseControl(); done(status, false);
                 });
                 return;
             }
             self->ReadControlGroup(group, [self, epoch, id, done](auto status) {
                 if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
-                if (status != kIOReturnSuccess) { self->controlBusy_ = false; done(status, false); return; }
+                if (status != kIOReturnSuccess) { self->ReleaseControl(); done(status, false); return; }
                 self->FinishControlWrite(id, done);
             });
         });
@@ -447,7 +477,13 @@ void ApogeeDuetProtocol::SetParameter(AudioModel::ParameterId id, const AudioMod
 }
 void ApogeeDuetProtocol::SetRoute(AudioModel::NodeId router, AudioModel::PortId output,
     std::optional<AudioModel::PortId> input, Completion done) {
-    if (!controlsReady_ || controlBusy_ || !input) { done(kIOReturnNotReady, false); return; }
+    if (!controlsReady_ || !input) { done(kIOReturnNotReady, false); return; }
+    if (controlBusy_) {
+        QueueControl([router, output, input, done](ApogeeDuetProtocol& self) {
+            self.SetRoute(router, output, input, done);
+        }, done);
+        return;
+    }
     if (router.value < DuetControl::InputRouter || router.value >= DuetControl::InputRouter + 2) {
         done(kIOReturnUnsupported, false); return;
     }
@@ -468,7 +504,7 @@ void ApogeeDuetProtocol::SetRoute(AudioModel::NodeId router, AudioModel::PortId 
         self->ReadControlGroup(DuetControlGroup::Input, [self, epoch, router, input, done, status](auto readStatus) {
             if (epoch != self->controlsEpoch_) { done(kIOReturnAborted, false); return; }
             if (readStatus == kIOReturnSuccess && !self->CommitControls()) readStatus = kIOReturnError;
-            self->controlBusy_ = false;
+            self->ReleaseControl();
             if (status != kIOReturnSuccess || readStatus != kIOReturnSuccess) {
                 done(status != kIOReturnSuccess ? status : readStatus, false); return;
             }

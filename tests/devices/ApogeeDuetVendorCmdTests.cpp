@@ -996,6 +996,43 @@ TEST(DuetControlProvider, SourceSwitchRecomputesGainRangeWithoutNewTopology) {
     EXPECT_EQ(std::get<double>(gain.value), 0);
     EXPECT_EQ(gain.domainOverride->max, 65);
 }
+// A write that lands while the knob poll is reading must wait for it, not be
+// refused: the poll runs every 500 ms, so a refusal would fail a slider drag
+// at random. Writes queued behind it run in arrival order.
+TEST(DuetControlProvider, WriteDuringKnobPollWaitsForItInsteadOfFailing) {
+    DuetControlRig r; r.Prepare();
+    r.rig.Timers().Advance(500'000'000); // the poll is now in flight, undrained
+    std::vector<std::pair<IOReturn, double>> results;
+    for (const double gain : {30.0, 40.0}) {
+        r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Gain}, gain,
+            [&](auto status, auto value) {
+                results.emplace_back(status, std::holds_alternative<double>(value) ? std::get<double>(value) : -1);
+            });
+    }
+    EXPECT_TRUE(results.empty());
+    r.rig.Drain(4096);
+    ASSERT_EQ(results.size(), 2U);
+    EXPECT_EQ(results[0], std::make_pair(kIOReturnSuccess, 30.0));
+    EXPECT_EQ(results[1], std::make_pair(kIOReturnSuccess, 40.0));
+    EXPECT_EQ(std::count(r.device.controlCodes.begin(), r.device.controlCodes.end(),
+                         uint8_t(VendorCmdCode::InGain)), 2);
+}
+// A route change drops the device's state: a queued write is answered, never
+// left waiting, and is not sent to the device.
+TEST(DuetControlProvider, QueuedWriteIsAnsweredWhenTheRouteChanges) {
+    DuetControlRig r; r.Prepare();
+    r.rig.Timers().Advance(500'000'000);
+    std::optional<IOReturn> status;
+    r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Gain}, 30.0,
+        [&](auto result, auto) { status = result; });
+    auto moved = r.rig.Route();
+    moved.routeEpoch += 1;
+    r.protocol->UpdateRuntimeContext(moved, r.rig.Transport());
+    ASSERT_TRUE(status);
+    EXPECT_EQ(*status, kIOReturnNotReady);
+    r.rig.Drain(4096);
+    EXPECT_TRUE(r.device.controlCodes.empty());
+}
 TEST(DuetControlProvider, RejectedWriteNeverPublishesItsIntendedValueAndShutdownStopsPolls) {
     DuetControlRig r; r.Prepare();
     r.device.rejectNext = true;

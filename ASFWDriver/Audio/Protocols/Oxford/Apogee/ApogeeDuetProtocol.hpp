@@ -31,6 +31,7 @@
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IOReturn.h>
 #include <vector>
+#include <deque>
 #include <functional>
 #include <cstdint>
 #include <span>
@@ -76,7 +77,7 @@ public:
                        CMP::CMPClient* cmpClient = nullptr,
                        uint32_t formatSettleDelayMs = 100U,
                        Scheduling::ITimerScheduler* timerScheduler = nullptr);
-    ~ApogeeDuetProtocol() override { StopControlPoll(); }
+    ~ApogeeDuetProtocol() override { StopControlPoll(); ResetControlQueue(); }
 
     ASFW::Audio::Controls::IControlProvider* Controls() noexcept override { return this; }
     void Prepare(std::function<void(IOReturn)> done) override;
@@ -103,7 +104,7 @@ public:
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override {
-        if (runtime_.route != route) { StopControlPoll(); controlsReady_ = false; controlBusy_ = false; ++controlsEpoch_; }
+        if (runtime_.route != route) { StopControlPoll(); controlsReady_ = false; ++controlsEpoch_; ResetControlQueue(); }
         duplex_.UpdateRuntimeContext(route, std::move(avcUnit));
     }
 
@@ -164,6 +165,14 @@ private:
     void PollControls();
     DuetControlsState controls_{};
     std::optional<ASFW::Audio::Controls::ControlSnapshot> controlSnapshot_;
+    // Control I/O runs one operation at a time: the knob poll, a write and a
+    // source switch all read-modify-write the same device groups. A request
+    // that arrives meanwhile waits its turn (bounded) instead of being refused.
+    void QueueControl(std::function<void(ApogeeDuetProtocol&)> op, Completion refuse);
+    void ReleaseControl();
+    void ResetControlQueue();
+    static constexpr size_t kMaxControlWaiters = 16;
+    std::deque<std::function<void()>> controlWaiters_;
     bool controlsReady_{false}, controlBusy_{false};
     uint64_t controlsEpoch_{0};
     Scheduling::TimerToken controlPoll_{Scheduling::kInvalidTimerToken};
