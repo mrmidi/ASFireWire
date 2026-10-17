@@ -102,7 +102,7 @@ targets:
     platform: macOS
     sources:
       # Includes confirmed FeatureChangeNotifications and the AvcControlChange semantic event projection.
-      # Includes generic AvcControlMapping.hpp, graph-backed ASFWAvcLevelControl (IIG/CPP), volume limits, and
+      # Includes generic AvcControlMapping.hpp, the ASFWParameter* CoreAudio controls (IIG/CPP), volume limits, and
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,
       # OnceCompletion and bounded parsers.
       # Includes Audio/Runtime/Configuration and the shared multi-rate resolver.

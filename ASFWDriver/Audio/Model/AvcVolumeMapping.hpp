@@ -34,8 +34,6 @@ struct AvcPublishedControl {
     int16_t current{};
     AvcVolumeRange range{};
 };
-inline constexpr const char* kAvcControlsProperty = "ASFWAvcControls";
-inline constexpr uint32_t kMaxAvcControls = 128;
 [[nodiscard]] constexpr uint32_t AvcControlToken(uint8_t subunit, uint8_t block, uint8_t channel) noexcept {
     return (uint32_t{subunit} << 16) | (uint32_t{block} << 8) | channel;
 }

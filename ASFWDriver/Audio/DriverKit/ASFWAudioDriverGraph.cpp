@@ -9,7 +9,6 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
-#include "ASFWAvcLevelControl.h"
 #include "ASFWParameterLevelControl.h"
 #include "../Controls/CoreAudioControlProperties.hpp"
 #include "ASFWParameterBooleanControl.h"
@@ -57,9 +56,6 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     device.parameterControls.clear();
     for (const auto& descriptor : parsedConfig.parameterControls)
         device.parameterControls.push_back({descriptor});
-    device.avcControlCount = parsedConfig.avcControlCount;
-    std::copy_n(parsedConfig.avcControls, device.avcControlCount, device.avcControls);
-    device.boolControlCount = parsedConfig.boolControlCount;
 
     for (uint32_t index = 0; index < ASFW::Isoch::Audio::kMaxSampleRates; ++index) {
         device.sampleRates[index] = parsedConfig.sampleRates[index];
@@ -78,13 +74,6 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     for (uint32_t index = 0; index < ASFW::Isoch::Audio::kMaxConfiguredStreams; ++index) {
         device.playbackStreams[index] = parsedConfig.playbackStreams[index];
         device.captureStreams[index] = parsedConfig.captureStreams[index];
-    }
-
-    ASFW::Isoch::Audio::ResetBoolControlSlots(device.boolControls,
-                                              ASFW::Isoch::Audio::kMaxBoolControls);
-    for (uint32_t index = 0; index < device.boolControlCount; ++index) {
-        device.boolControls[index].descriptor = parsedConfig.boolControls[index];
-        device.boolControls[index].valid = true;
     }
 }
 
@@ -341,11 +330,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     };
 
     ASFW_LOG_V3(Audio,
-             "ASFWAudioDriver: Device GUID=0x%016llx vendor=0x%06x model=0x%06x boolControls=%u",
+             "ASFWAudioDriver: Device GUID=0x%016llx vendor=0x%06x model=0x%06x",
              ivars.device.guid,
              ivars.device.vendorId,
-             ivars.device.modelId,
-             ivars.device.boolControlCount);
+             ivars.device.modelId);
     ASFW_LOG_V3(Audio, "ASFWAudioDriver: Read device name from nub: %{public}s", ivars.device.deviceName);
     ASFW_LOG_V3(Audio,
              "ASFWAudioDriver: Read channel counts from nub: aggregate=%u input=%u output=%u",

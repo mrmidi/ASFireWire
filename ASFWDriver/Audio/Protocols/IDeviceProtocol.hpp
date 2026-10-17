@@ -152,37 +152,6 @@ public:
     // here; ordinary protocols have no reset registration work.
     virtual void RebindNotifications(VoidCallback callback) { callback(kIOReturnSuccess); }
 
-    /// Check if protocol can expose/control a boolean control.
-    // These virtuals intentionally match the host-facing `(class, element[, value])` contract.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual bool SupportsBooleanControl(uint32_t classIdFourCC,
-                                        uint32_t element) const {
-        (void)classIdFourCC;
-        (void)element;
-        return false;
-    }
-
-    /// Read protocol-backed boolean control value.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
-                                            uint32_t element,
-                                            bool& outValue) {
-        (void)classIdFourCC;
-        (void)element;
-        (void)outValue;
-        return kIOReturnUnsupported;
-    }
-
-    /// Write protocol-backed boolean control value.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
-                                            uint32_t element,
-                                            bool value) {
-        (void)classIdFourCC;
-        (void)element;
-        (void)value;
-        return kIOReturnUnsupported;
-    }
 };
 
 } // namespace ASFW::Audio

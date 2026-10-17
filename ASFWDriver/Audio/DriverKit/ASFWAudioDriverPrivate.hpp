@@ -5,7 +5,6 @@
 #include "Config/AudioDriverConfig.hpp"
 #include "Config/IAudioDeviceProfile.hpp"
 #include "Config/ProfileTimingGeometry.hpp"
-#include "Controls/AudioControlBuilder.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
@@ -68,17 +67,7 @@ struct AudioDriverDeviceState {
         uint64_t sequence{};
     };
     std::vector<ParameterControlSlot> parameterControls;
-    struct AvcControlSlot {
-        OSSharedPtr<IOUserAudioLevelControl> level;
-        OSSharedPtr<IOUserAudioBooleanControl> mute;
-        uint64_t levelSequence{0}, muteSequence{0};
-    };
-    AvcControlSlot avcControlSlots[ASFW::Audio::Model::kMaxAvcControls]{};
     uint64_t controlRevision{0};
-    uint32_t avcControlCount{0};
-    ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
-    uint32_t boolControlCount{0};
-    ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
