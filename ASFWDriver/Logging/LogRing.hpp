@@ -62,7 +62,11 @@ enum class LogCategory : uint8_t {
     // backend end to end. DICE (18) is the precedent; Oxfw covers the
     // OXFW-common layer and its device overlays (Apogee Duet).
     Oxfw = 22,
-    Count = 23,
+    // MIDI: capability projection, endpoint publication, UMP conversion and the
+    // byte seam. Its own category so a MIDI session can be filtered out of the
+    // audio traffic around it.
+    Midi = 23,
+    Count = 24,
 };
 
 /// Severity scale (smaller = more severe), used for filtering.
@@ -118,6 +122,7 @@ inline constexpr LogCategoryDefinition kLogCategoryDefinitions[] = {
     {LogCategory::TxSyt, "TxSyt"},
     {LogCategory::PayloadWriter, "PayloadWriter"},
     {LogCategory::Oxfw, "Oxfw"},
+    {LogCategory::Midi, "Midi"},
 };
 
 [[nodiscard]] constexpr uint32_t CategoryBit(LogCategory category) noexcept {

@@ -48,6 +48,11 @@ class IIsochReceiveConsumer {
     virtual void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept = 0;
     virtual void ConsumePacket(const IsochReceiveBatch& batch,
                                const IsochReceivePacket& packet) noexcept = 0;
+    // After the last packet of the drain, once per BeginReceiveBatch. A
+    // consumer that hands work to another queue does it here, so everything the
+    // batch carried is already published when that queue looks. Payload-opaque
+    // like the rest of this interface.
+    virtual void EndReceiveBatch(const IsochReceiveBatch&) noexcept {}
 
     // Off-hot-path observability hooks.  They are optional because content
     // formats decide which timing and payload facts are meaningful.

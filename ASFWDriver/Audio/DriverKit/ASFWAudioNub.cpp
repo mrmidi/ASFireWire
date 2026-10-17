@@ -753,6 +753,39 @@ kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
                                            outGeneration);
 }
 
+kern_return_t IMPL(ASFWAudioNub, CopyMidiTransportMemory)
+{
+    if (outMemory) { *outMemory = nullptr; }
+    if (outDestinationPorts) { *outDestinationPorts = 0; }
+    if (outDestinationSlotIndex) { *outDestinationSlotIndex = 0; }
+    if (outDestinationDbs) { *outDestinationDbs = 0; }
+    if (outDestinationPcmChannels) { *outDestinationPcmChannels = 0; }
+    if (outDbcAligned) { *outDbcAligned = 1; }
+    if (!ivars || !outMemory || !outDestinationPorts || !outDestinationSlotIndex ||
+        !outDestinationDbs || !outDestinationPcmChannels || !outDbcAligned) {
+        return kIOReturnBadArgument;
+    }
+
+    auto endpoint = FindEndpointRuntime(ivars);
+    if (!endpoint) {
+        return kIOReturnNotReady;
+    }
+    ASFW::Audio::MidiEndpointAttachment attachment{};
+    const kern_return_t kr = endpoint->CopyMidiTransportMemory(outMemory, attachment);
+    if (kr != kIOReturnSuccess) {
+        return kr;  // NotReady: this endpoint has no MIDI service
+    }
+    const auto& destination = attachment.destinations;
+    if (destination.Usable()) {
+        *outDestinationPorts = destination.portCount;
+        *outDestinationSlotIndex = destination.midiSlotIndex;
+        *outDestinationDbs = destination.dbs;
+        *outDestinationPcmChannels = destination.pcmChannels;
+        *outDbcAligned = destination.dbcAligned ? 1U : 0U;
+    }
+    return kIOReturnSuccess;
+}
+
 // Allocates the shared payload slab, metadata ring, and control block.
 kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
 {

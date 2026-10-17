@@ -23,6 +23,7 @@ void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
 
 void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    UnbindMidiTx(ivars);
     UnbindDirectAudioSkeleton(ivars);
 
     if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.inputStream.get())) stream->Bind(nullptr);

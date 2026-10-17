@@ -10,6 +10,7 @@
 #include <DriverKit/OSSharedPtr.h>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include "Audio/Model/AudioPropertyKeys.hpp"
 #include "Audio/Runtime/RemoteDeviceStopResult.hpp"
 
@@ -51,6 +52,18 @@ public:
         lastTxPreparationGeneration = generation;
     }
     void RequestTimingRecovery(uint64_t rxEpoch) { lastTimingRecoveryEpoch = rxEpoch; }
+
+    // The endpoint's MIDI seam, as the real nub forwards it from the endpoint
+    // runtime. No MIDI (kIOReturnNotReady) unless a test installs a provider.
+    std::function<kern_return_t(IOMemoryDescriptor**, uint32_t*, uint32_t*, uint32_t*,
+                                uint32_t*, uint32_t*)> midiTransportProvider{};
+    kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory, uint32_t* outPorts,
+                                          uint32_t* outSlotIndex, uint32_t* outDbs,
+                                          uint32_t* outPcmChannels, uint32_t* outDbcAligned) {
+        if (!midiTransportProvider) return kIOReturnNotReady;
+        return midiTransportProvider(outMemory, outPorts, outSlotIndex, outDbs, outPcmChannels,
+                                     outDbcAligned);
+    }
 
     kern_return_t rpcStopResult{kIOReturnSuccess};
     kern_return_t StopAudioStreamingOrRemoteResult() {

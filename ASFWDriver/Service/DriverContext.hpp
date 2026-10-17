@@ -28,6 +28,11 @@ namespace ASFW::Audio {
 class AudioCoordinator;
 }
 
+namespace ASFW::Midi {
+class MidiNubPublisher;
+class MidiEndpointPublication;
+}
+
 namespace ASFW::Protocols::SBP2 {
 class SBP2NubPublisher;
 class SBP2TargetBridge;
@@ -65,6 +70,11 @@ struct ServiceContext {
     ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
+    // MIDI rides audio endpoints: the coordinator tells midiPublication when a
+    // DICE endpoint is published or retired, and it asks midiNubPublisher for
+    // the MIDI nub. Created with the coordinator, gone with it (Reset).
+    std::shared_ptr<ASFW::Midi::MidiNubPublisher> midiNubPublisher;
+    std::shared_ptr<ASFW::Midi::MidiEndpointPublication> midiPublication;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2NubPublisher> sbp2NubPublisher;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2TargetBridge> sbp2Bridge;
 

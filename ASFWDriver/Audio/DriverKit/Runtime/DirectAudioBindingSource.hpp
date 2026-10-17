@@ -1,10 +1,34 @@
 #pragma once
 
 #include "AudioTransportControlBlock.hpp"
+#include "../../Ports/IMidiReceiveWake.hpp"
+#include "../../Wire/AM824/MpxMidiDemux.hpp"
+#include "../../../Midi/Transport/MidiTransportBlock.hpp"
 
 #include <cstdint>
 
 namespace ASFW::Audio::Runtime {
+
+/// Where the receive path puts MPX-MIDI bytes lifted off the wire.
+///
+/// A value snapshot like everything else here: the pointer is valid only for
+/// the batch it was copied for, because the endpoint owns the mapping and the
+/// consumer drops its copy when the transport quiesces.
+struct MidiReceiveBinding final {
+    /// Changes whenever the target, geometry or wake changes. Independent of
+    /// the audio binding's generation on purpose: attaching MIDI must never be
+    /// able to rebind (and so reset) the audio replay state.
+    uint64_t generation{0};
+    uint64_t endpointId{0};
+    ASFW::Midi::MidiTransportBlock* block{nullptr};
+    /// Device -> host: the slot index and port count of the capture stream.
+    ASFW::Encoding::MpxMidiGeometry geometry{};
+    ASFW::Audio::Ports::IMidiReceiveWake* wake{nullptr};
+
+    [[nodiscard]] bool Valid() const noexcept {
+        return block != nullptr && geometry.Valid();
+    }
+};
 
 struct DirectAudioBindingSnapshot {
     uint64_t generation{0};
@@ -22,6 +46,10 @@ struct DirectAudioBindingSnapshot {
     AudioTransportControlBlock* control{nullptr};
     uint32_t sampleRateHz{0};
     bool valid{false};
+
+    /// The endpoint's MIDI attachment, if it has one. Absent for every endpoint
+    /// that publishes no MIDI service.
+    MidiReceiveBinding midiRx{};
 
     [[nodiscard]] bool HasInput() const noexcept {
         return inputBase != nullptr && inputFrames > 0 && inputChannels > 0;

@@ -138,6 +138,11 @@ namespace {
 
 } // namespace
 
+uint64_t TxFirstWritablePacket(const ASFW::Isoch::IsochTxQueueControl& queue) noexcept {
+    return ProjectHardwarePacket(queue, TxHostNow()) +
+           ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
+}
+
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     const auto* queue = ivars.runtime.txSlotProvider.queueControl;
@@ -167,9 +172,7 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
         return;
     }
 
-    const uint64_t firstWritable =
-        ProjectHardwarePacket(*queue, TxHostNow()) +
-        ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
+    const uint64_t firstWritable = TxFirstWritablePacket(*queue);
 
     const uint64_t frames = end - filled;
     ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};

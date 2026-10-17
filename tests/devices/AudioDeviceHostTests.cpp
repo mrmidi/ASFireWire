@@ -26,6 +26,7 @@
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
+#include "Midi/Core/MidiEndpointPublication.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include <DriverKit/OSDictionary.h>
 
@@ -962,6 +963,149 @@ TEST(AudioDeviceHostTests, ToStringNamesEveryEventAndOutcome) {
         EXPECT_STRNE(name, "") << "outcome " << int{i};
         EXPECT_STRNE(name, "?") << "outcome " << int{i};
     }
+}
+
+// ---------------------------------------------------------------------------
+// MIDI rides publication: the host tells its observer after it publishes, and
+// MidiEndpointPublication gives a DICE endpoint a MIDI service only when the
+// device's stream table reports MIDI ports. No device is named.
+// ---------------------------------------------------------------------------
+
+struct RecordingMidiNubs final : ASFW::Midi::IMidiNubPublishing {
+    struct Ensure {
+        ASFW::Midi::MidiEndpointCapabilities caps;
+        uint64_t endpointId;
+    };
+    std::vector<Ensure> ensured;
+    std::vector<uint64_t> terminated;
+    bool EnsureNub(const ASFW::Midi::MidiEndpointCapabilities& caps, uint64_t endpointId,
+                   const char*, const char*, const char*) noexcept override {
+        ensured.push_back({caps, endpointId});
+        return true;
+    }
+    void TerminateNub(uint64_t endpointId) noexcept override { terminated.push_back(endpointId); }
+};
+
+struct NullMidiWake final : ASFW::Audio::Ports::IMidiReceiveWake {
+    void MidiReceived(uint64_t) noexcept override {}
+};
+
+struct MidiPublicationFixture {
+    HostFixture f{true};
+    RecordingMidiNubs nubs;
+    NullMidiWake wake;
+    ASFW::Midi::MidiEndpointPublication publication{f.runtime, nubs, wake};
+
+    MidiPublicationFixture() {
+        f.nubProvider.nub->keepPublished = true;
+        f.SeedDiceDevice(kGuid);
+        f.host.SetEndpointObserver(&publication);
+    }
+    ~MidiPublicationFixture() { f.host.SetEndpointObserver(nullptr); }
+
+    void Publish(uint32_t captureMidi, uint32_t playbackMidi) {
+        ASFWAudioDevice desc = MakeDescription("DICE", 8, 8);
+        desc.captureStreams = {{.pcmChannels = 8, .am824Slots = 8 + (captureMidi ? 1U : 0U),
+                                .midiPorts = captureMidi}};
+        desc.playbackStreams = {{.pcmChannels = 8, .am824Slots = 8 + (playbackMidi ? 1U : 0U),
+                                 .midiPorts = playbackMidi}};
+        f.adapter.onDescribe = [desc](const DescribeInput&, DescribeDone done) { done(desc); };
+        f.host.RefreshPublication(kGuid);
+    }
+};
+
+TEST(AudioDeviceHostTests, DiceEndpointReportingMidiPortsGetsAMidiService) {
+    MidiPublicationFixture m;
+    m.Publish(1, 1);
+    ASSERT_EQ(m.f.host.OutcomeCount(HostEvent::Publish, HostOutcome::Published), 1U);
+    ASSERT_EQ(m.nubs.ensured.size(), 1U);
+    const auto& caps = m.nubs.ensured[0].caps;
+    EXPECT_EQ(m.nubs.ensured[0].endpointId, kGuid);
+    EXPECT_EQ(caps.hostToDevice.portCount, 1U);
+    EXPECT_EQ(caps.hostToDevice.midiSlotIndex, 8U);  // after the PCM slots
+    EXPECT_EQ(caps.hostToDevice.dbs, 9U);
+    EXPECT_EQ(caps.deviceToHost.portCount, 1U);
+
+    // The endpoint owns the seam before the nub exists.
+    auto endpoint = m.f.runtime.FindEndpointRuntime(kGuid);
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_TRUE(endpoint->HasMidi());
+    IOMemoryDescriptor* memory = nullptr;
+    ASFW::Audio::MidiEndpointAttachment attachment{};
+    ASSERT_EQ(endpoint->CopyMidiTransportMemory(&memory, attachment), kIOReturnSuccess);
+    ASSERT_NE(memory, nullptr);
+    memory->release();
+    EXPECT_EQ(attachment.destinations.portCount, 1U);
+    EXPECT_EQ(attachment.sources.portCount, 1U);
+
+    // A refresh of the unchanged endpoint asks again; the publisher keeps one.
+    m.Publish(1, 1);
+    EXPECT_EQ(m.nubs.ensured.size(), 2U);
+}
+
+TEST(AudioDeviceHostTests, DiceEndpointWithoutMidiPortsGetsNoMidi) {
+    MidiPublicationFixture m;
+    m.Publish(0, 0);
+    ASSERT_EQ(m.f.host.OutcomeCount(HostEvent::Publish, HostOutcome::Published), 1U);
+    EXPECT_TRUE(m.nubs.ensured.empty());
+    auto endpoint = m.f.runtime.FindEndpointRuntime(kGuid);
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_FALSE(endpoint->HasMidi());
+}
+
+TEST(AudioDeviceHostTests, FailedAudioPublicationIsNotReportedToTheMidiObserver) {
+    HostFixture f;  // no provider: the audio nub cannot be created
+    RecordingMidiNubs nubs;
+    NullMidiWake wake;
+    ASFW::Midi::MidiEndpointPublication publication{f.runtime, nubs, wake};
+    f.host.SetEndpointObserver(&publication);
+    f.SeedDiceDevice(kGuid);
+    ASFWAudioDevice desc = MakeDescription("DICE", 8, 8);
+    desc.playbackStreams = {{.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1}};
+    f.adapter.onDescribe = [desc](const DescribeInput&, DescribeDone done) { done(desc); };
+    f.host.RefreshPublication(kGuid);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
+    EXPECT_TRUE(nubs.ensured.empty());
+    f.host.SetEndpointObserver(nullptr);
+}
+
+TEST(AudioDeviceHostTests, NonDiceFamiliesNeverGetMidiFromThisPath) {
+    HostFixture f;
+    RecordingMidiNubs nubs;
+    NullMidiWake wake;
+    ASFW::Midi::MidiEndpointPublication publication{f.runtime, nubs, wake};
+    ASFWAudioDevice desc = MakeDescription("AV/C", 8, 8);
+    desc.playbackStreams = {{.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1}};
+    desc.captureStreams = desc.playbackStreams;
+    for (const auto kind : {AudioBackendKind::Avc, AudioBackendKind::MotuRegister,
+                            AudioBackendKind::RmeRegister}) {
+        publication.OnEndpointPublished(kGuid, kind, desc);
+    }
+    EXPECT_TRUE(nubs.ensured.empty());
+    EXPECT_EQ(f.runtime.FindEndpointRuntime(kGuid), nullptr);
+}
+
+TEST(AudioDeviceHostTests, MidiGeometryThatWouldOverwriteAudioIsNotPublished) {
+    MidiPublicationFixture m;
+    // One MIDI port claimed, but DBS leaves no slot for it: MIDI would land on
+    // a PCM channel.
+    ASFWAudioDevice desc = MakeDescription("DICE", 8, 8);
+    desc.playbackStreams = {{.pcmChannels = 8, .am824Slots = 8, .midiPorts = 1}};
+    desc.captureStreams = desc.playbackStreams;
+    m.f.adapter.onDescribe = [desc](const DescribeInput&, DescribeDone done) { done(desc); };
+    m.f.host.RefreshPublication(kGuid);
+    EXPECT_TRUE(m.nubs.ensured.empty());
+    auto endpoint = m.f.runtime.FindEndpointRuntime(kGuid);
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_FALSE(endpoint->HasMidi());
+}
+
+TEST(AudioDeviceHostTests, RetiredEndpointTerminatesItsMidiService) {
+    MidiPublicationFixture m;
+    m.Publish(1, 1);
+    m.publication.OnEndpointRetired(kGuid);
+    ASSERT_EQ(m.nubs.terminated.size(), 1U);
+    EXPECT_EQ(m.nubs.terminated[0], kGuid);
 }
 
 } // namespace
