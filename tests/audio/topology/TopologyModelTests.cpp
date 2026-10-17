@@ -7,6 +7,7 @@
 #include "Audio/Model/Topology/Naming.hpp"
 #include "Audio/Model/Topology/Validate.hpp"
 #include "UserClient/WireFormats/ControlSnapshotDocument.hpp"
+#include "UserClient/WireFormats/JsonWriter.hpp"
 #include <limits>
 
 #include <gtest/gtest.h>
@@ -234,6 +235,22 @@ TEST(TopologyModel, RouteWriteResolvesTheWholeBundleAndChecksRevisionAndAccess) 
     router.legalBundles.push_back({RouteBundleId{3}, {{PortId{3}, PortId{5}}}});
     EXPECT_FALSE(validate(t));
     EXPECT_FALSE(prepareRouteWrite(t, s, NodeId{2}, PortId{5}, PortId{3}));
+}
+
+TEST(JsonWriter, Utf8NamesBecomeCodePointsAndOtherBytesStayLatin1) {
+    const auto quoted = [](std::string_view text) {
+        ASFW::UserClient::Wire::Json j;
+        j.String(text);
+        return j.Take();
+    };
+    EXPECT_EQ(quoted("Mixer 1 \u2192 2"), R"("Mixer 1 \u2192 2")");      // 3-byte UTF-8
+    EXPECT_EQ(quoted("Caf\xC3\xA9"), R"("Caf\u00e9")");                   // 2-byte UTF-8
+    EXPECT_EQ(quoted("\xF0\x9F\x8E\x9B"), R"("\ud83c\udf9b")");         // 4-byte: surrogate pair
+    EXPECT_EQ(quoted("Caf\xE9"), R"("Caf\u00e9")");                         // lone Latin-1 byte
+    EXPECT_EQ(quoted("\xE2\x86"), R"("\u00e2\u0086")");                    // truncated sequence
+    EXPECT_EQ(quoted("\xC0\xAF"), R"("\u00c0\u00af")");                    // overlong '/'
+    EXPECT_EQ(quoted("\xED\xA0\x80"), R"("\u00ed\u00a0\u0080")");         // encoded surrogate
+    EXPECT_EQ(quoted("a\"b\\c\n"), R"("a\"b\\c\u000a")");
 }
 
 } // namespace

@@ -2,6 +2,9 @@
 #include "Audio/Protocols/Oxford/Apogee/DuetControlModel.hpp"
 #include "Audio/Controls/CoreAudioProjection.hpp"
 #include "Audio/Model/Topology/Validate.hpp"
+#include "UserClient/WireFormats/ControlSnapshotDocument.hpp"
+#include <cstdio>
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <algorithm>
 namespace {
@@ -78,5 +81,21 @@ TEST(DuetControlModel, MixerDisplayAndKnobControlsAreAppOnly) {
     }
     const auto& volume = model.state.parameters.at(AM::ParameterId{DuetControl::OutputVolume});
     EXPECT_DOUBLE_EQ(std::get<double>(volume.value), 0);
+}
+TEST(DuetControlModel, DocumentMapsEveryMixerCrosspointToItsPorts) {
+    const auto model = BuildDuetControls(State(), 7, 0);
+    const auto doc = ASFW::UserClient::Wire::BuildControlSnapshotDocument(
+        0x0003db0a0000d112, model.family, model.topology, model.state, 0);
+    if (const char* path = std::getenv("ASFW_DUMP_DUET_CONTROLS")) {
+        if (FILE* out = std::fopen(path, "w")) { std::fputs(doc.c_str(), out); std::fclose(out); }
+    }
+    const auto& mixer = std::get<AM::MixerNode>(std::ranges::find(model.topology.nodes, AM::NodeId{30}, &AM::Node::id)->body);
+    ASSERT_EQ(mixer.crosspoints.size(), 8u);
+    for (const auto& crosspoint : mixer.crosspoints) {
+        const auto entry = "{\"id\":" + std::to_string(crosspoint.id.value) + ",\"in\":" + std::to_string(crosspoint.input.value) +
+                           ",\"out\":" + std::to_string(crosspoint.output.value) + "}";
+        EXPECT_NE(doc.find(entry), std::string::npos) << entry;
+    }
+    EXPECT_NE(doc.find("\"fixedLinks\":[["), std::string::npos);
 }
 }

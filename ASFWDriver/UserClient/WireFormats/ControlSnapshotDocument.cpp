@@ -149,6 +149,17 @@ std::string BuildControlSnapshotDocument(uint64_t guid, std::string_view family,
                         for (const auto bundle : found->second.activeBundles) j.Number(bundle.value);
                     j.Close(']');
                 }
+                if constexpr (std::is_same_v<T, AM::MixerNode>) {
+                    j.Key("crosspoints").Open('[');
+                    for (const auto& crosspoint : body.crosspoints) {
+                        j.Open('{');
+                        j.Key("id").Number(crosspoint.id.value);
+                        j.Key("in").Number(crosspoint.input.value);
+                        j.Key("out").Number(crosspoint.output.value);
+                        j.Close('}');
+                    }
+                    j.Close(']');
+                }
             }
         }, node.body);
         j.Close('}');

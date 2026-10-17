@@ -488,6 +488,7 @@ add_audio_test(CoreAudioProjectionTests
 
 add_audio_test(DuetControlModelTests
     topology/DuetControlModelTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )

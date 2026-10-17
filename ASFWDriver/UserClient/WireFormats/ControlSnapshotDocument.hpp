@@ -11,8 +11,11 @@
 //     "nodes":      [{ "id", "name", "kind": "endpoint|router|mixer|processor",
 //                      "inputs": [portId], "outputs": [portId],
 //                      "bundles": [{ "id", "routes": [[in, out]] }],   // routers
-//                      "activeBundles": [bundleId] }],                 // routers
-//     "ports":      [{ "id", "owner", "direction": "in|out", "channels", "name" }],
+//                      "activeBundles": [bundleId],                    // routers
+//                      "crosspoints": [{ "id", "in", "out" }] }],      // mixers
+//     "ports":      [{ "id", "owner", "direction": "in|out", "channels", "name",
+//                      "signalKind", "signalIndex" }],
+//     "fixedLinks": [[sourcePort, destinationPort]],
 //     "parameters": [{ "id", "name", "semantic", "target": {"node"|"port"|"crosspoint": id},
 //                      "domain": { "kind": "bool" } | { "kind": "scalar", "min", "max",
 //                                  "step"?, "unit" } | { "kind": "enum", "values": [{ "value", "name" }] },
