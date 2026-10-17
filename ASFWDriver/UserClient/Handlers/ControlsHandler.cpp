@@ -155,7 +155,7 @@ kern_return_t ControlsHandler::SetControlParameter(IOUserClientMethodArguments* 
     }
     const auto* binding = current->model.FindBinding(id);
     if (!binding) return kIOReturnNotFound;
-    if (const auto legal = AM::validateParameterValue(current->model.topology, id, *value); !legal) {
+    if (const auto legal = AM::validateParameterWrite(current->model.topology, current->model.state, id, *value); !legal) {
         ASFW_LOG(UserClient, "[Controls] refused value guid=0x%016llx parameter=%u: %{public}s",
                  guid, id.value, legal.error().message.c_str());
         return kIOReturnBadArgument;

@@ -29,11 +29,17 @@ enum class ParameterSemantic : uint8_t {
     Dim,
 };
 
+/// A transient command payload, never a remembered action result.
+struct ActionTrigger { constexpr auto operator<=>(const ActionTrigger&) const = default; };
+
+enum class ParameterAccess : uint8_t { ReadWrite, ReadOnly };
+
 using ParameterValue =
     std::variant<
         bool,
         double,
-        int64_t
+        int64_t,
+        ActionTrigger
     >;
 
 struct BooleanDomain {
@@ -70,11 +76,14 @@ struct EnumDomain {
     auto operator<=>(const EnumDomain&) const = default;
 };
 
+struct ActionDomain { constexpr auto operator<=>(const ActionDomain&) const = default; };
+
 using ParameterDomain =
     std::variant<
         BooleanDomain,
         ScalarDomain,
-        EnumDomain
+        EnumDomain,
+        ActionDomain
     >;
 
 using ParameterTarget =
@@ -92,6 +101,7 @@ struct Parameter {
     ParameterDomain domain;
 
     std::string name;
+    ParameterAccess access{ParameterAccess::ReadWrite};
 };
 
 } // namespace ASFW::AudioModel
