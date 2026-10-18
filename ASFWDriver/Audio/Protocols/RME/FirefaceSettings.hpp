@@ -108,8 +108,11 @@ struct StatusComparison {
                                                  uint32_t status1) noexcept;
 
 /// The status quadlets at 0x801c0000 (status0) and 0x801c0004 (status1),
-/// decoded. One layout for both models: Linux dump_sync_status serves the FF400
-/// and FF800 alike (ff-protocol-former.c:159-255).
+/// decoded. Linux dump_sync_status serves both models (ff-protocol-former.c:159-255).
+/// FF800 masks/labels cross-checked against RME 3.41 Settings x86_64:
+/// decoder 0x100005f52; awakeFromNib 0x1000035bc names No Lock / Lock / Sync,
+/// ADAT1 / ADAT2 / SPDIF / Word / LTC. ASFW uses none / word-clock / timecode.
+/// Provenance, exact masks and unresolved differences: documentation/ff800-vendor-status.md.
 enum class ClockSource : uint8_t { kInternal, kAdat1, kAdat2, kSpdif, kWordClock, kTimecode, kNone, kUnknown };
 enum class LockState : uint8_t { kNone, kLock, kSync };
 struct DecodedStatus {

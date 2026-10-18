@@ -320,6 +320,8 @@ uint32_t ConfiguredRate(uint32_t status1) noexcept {
 }
 // status0 bits 28:25: FFADO SR0_AUTOSYNC_FREQ_* (fireface_def.h:331-340), Linux
 // dump_sync_status rate_entries. Code n in 1..9 is 32k, 44.1k, 48k, ... 192k.
+// Cross-validated: RME 3.41 Settings x86_64 0x100006108-0x10000612f and
+// frequencyStatusStrings at 0x1000036dd; see documentation/ff800-vendor-status.md.
 uint32_t SyncRate(uint32_t status0) noexcept {
     constexpr uint32_t kRates[] = {32000, 44100, 48000, 64000, 88200, 96000, 128000, 176400, 192000};
     const uint32_t code = (status0 >> 25) & 0xfU;
@@ -339,6 +341,10 @@ ClockSource ConfiguredSource(uint32_t status1) noexcept {
     }
 }
 // status0 bits 24:22: FFADO SR0_AUTOSYNC_SRC_* (fireface_def.h:323-329).
+// RME 3.41 Settings x86_64 source table 0x100006fb0, lookup 0x1000060cb:
+// 0=ADAT1, 1=ADAT2, 3=SPDIF, 4=Word, 5=LTC; 2/6/7 display No Lock.
+// Unlike this helper, its UI also gates the label on a nonzero external rate.
+// See documentation/ff800-vendor-status.md; kTimecode corresponds to vendor LTC.
 ClockSource SyncReferenceSource(uint32_t status0) noexcept {
     switch (status0 & 0x01c00000U) {
         case 0x00000000U: return ClockSource::kAdat1;
@@ -350,9 +356,12 @@ ClockSource SyncReferenceSource(uint32_t status0) noexcept {
         default: return ClockSource::kUnknown;
     }
 }
-// Lock and sync bits: FFADO SR0_*_LOCK/_SYNC (fireface_def.h:270-289). Linux
-// dump_sync_status agrees except for S/PDIF lock, which it reads at 0x00080000
-// (FFADO: SR0_OVER). Followed: FFADO.
+// Lock and sync bits: FFADO SR0_*_LOCK/_SYNC (fireface_def.h:270-289), confirmed
+// by RME 3.41 Settings x86_64 decoder 0x100006014-0x100006067. Vendor labels
+// (awakeFromNib 0x100003647): No Lock / Lock / Sync; both bits are required for Sync.
+// Linux dump_sync_status uses 0x00080000 for SPDIF lock instead; the vendor uses
+// 0x00100000 as below. ALSA userspace ff800.rs:113-155 reverses some labels.
+// Exact masks and provenance: documentation/ff800-vendor-status.md.
 LockState Lock(uint32_t status0, uint32_t lock, uint32_t sync) noexcept {
     if ((status0 & lock) == 0) return LockState::kNone;
     return (status0 & sync) != 0 ? LockState::kSync : LockState::kLock;

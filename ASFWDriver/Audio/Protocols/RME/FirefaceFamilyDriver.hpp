@@ -68,13 +68,18 @@ public:
     /// The settings block read by the last Configure, for diagnostics.
     [[nodiscard]] const std::optional<FlashSettings>& LastFlashSettings() const noexcept { return lastDryRun_.flash; }
     [[nodiscard]] const SettingsDryRun& LastSettingsDryRun() const noexcept { return lastDryRun_; }
-    [[nodiscard]] std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return 5U; }
+    // FF800's callback operation owns the 5 ms wait; do not sleep again in the session.
+    [[nodiscard]] std::optional<uint32_t> PostEnableDelayMs() const noexcept override {
+        return model_ == FirefaceModel::kFF800 ? 0U : 5U;
+    }
     void SetLinkSpeed(bool s800) noexcept { s800_ = s800; }
 
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
         const AudioDuplexChannels& channels, const AudioClockConfig& clock) override {
         SyncGeneration();
         if (clock.sampleRateHz != 48000U) return std::unexpected(kIOReturnUnsupported);
+        if (model_ == FirefaceModel::kFF800 && (!scheduler_ || !startLock_))
+            return std::unexpected(kIOReturnNotReady);
         const IOReturn routeStatus = CheckRoute();
         if (routeStatus != kIOReturnSuccess) return std::unexpected(routeStatus);
         channels_ = channels;
@@ -97,6 +102,14 @@ public:
         if (IsExternalConfigured(status->configuredSource) && !status->externalLocked48k)
             return std::unexpected(kIOReturnNotReady);
 
+        if (model_ == FirefaceModel::kFF800) {
+            // RME 3.41 hwStart 0x3f05: fetching precedes host reservation/init.
+            // Mark the uncertain write for rollback even if its completion fails.
+            fetchOpened_ = true;
+            const auto fetched = RunFF800Stage(FF800TransmitStart::Create(io_, *scheduler_, {}, cancel_,
+                FF800TransmitStart::Phase::kFetch));
+            if (!fetched) return std::unexpected(fetched.error());
+        }
         configured_ = true;
         caps_ = MakeCaps();
         return DuplexPrepareResult{.generation = io_.Generation(), .channels = channels_,
@@ -118,31 +131,13 @@ public:
             if (!scheduler_ || !startLock_) return std::unexpected(kIOReturnNotReady);
             if (Cancelled()) return std::unexpected(kIOReturnAborted);
             const auto words = InitWords(model_, channels_.hostToDeviceIsoChannel, s800_);
-            auto operation = FF800TransmitStart::Create(io_, *scheduler_, words, cancel_);
-            IOLockLock(startLock_);
-            if (startsClosed_) {
-                IOLockUnlock(startLock_);
-                return std::unexpected(kIOReturnAborted);
-            }
             initialized_ = true; // A partial asynchronous init still needs rollback.
-            pendingStart_ = operation;
-            IOLockUnlock(startLock_);
-            // The only synchronous boundary: callbacks/timers advance the owned
-            // operation on Default while the session caller waits on another queue.
-            const auto result = AwaitStage<uint8_t>([operation](auto completion) {
-                operation->Begin(std::move(completion));
-            }, cancel_, kFamilyStageTimeoutMs, 1U);
-            operation->Cancel(); // Also closes the operation on an outer abort.
-            IOLockLock(startLock_);
-            pendingStart_.reset();
-            IOLockUnlock(startLock_);
+            const auto result = RunFF800Stage(FF800TransmitStart::Create(io_, *scheduler_, words, cancel_));
             if (!result) return std::unexpected(result.error());
-            if (Cancelled()) return std::unexpected(kIOReturnAborted);
-            if (const auto kr = CheckRoute(); kr != kIOReturnSuccess) return std::unexpected(kr);
             channels_.deviceToHostIsoChannel = *result;
             channels_.captureIsoChannels[0] = *result;
             caps_.deviceToHostIsoChannel = *result;
-            ASFW_LOG(Audio, "[RME] FF800 started: device transmits on channel %u, host transmits on channel %u",
+            ASFW_LOG(Audio, "[RME] FF800 assigned (device not yet enabled): device transmits on channel %u, host transmits on channel %u",
                      *result, channels_.hostToDeviceIsoChannel);
         } else {
             if (const IOReturn kr = InitializeStreamFormat(); kr != kIOReturnSuccess)
@@ -176,8 +171,13 @@ public:
         SyncGeneration();
         if (!initialized_ || enabled_) return std::unexpected(kIOReturnNotReady);
         const std::array<uint32_t, 1> word{StartWord(model_, channels_.deviceToHostIsoChannel, s800_)};
-        const IOReturn kr = WriteWords(StartAddress(), word);
-        if (kr != kIOReturnSuccess) return std::unexpected(kr);
+        if (model_ == FirefaceModel::kFF800) {
+            const auto enabled = RunFF800Stage(FF800TransmitStart::Create(io_, *scheduler_,
+                {word[0], 0, 0}, cancel_, FF800TransmitStart::Phase::kEnable));
+            if (!enabled) return std::unexpected(enabled.error());
+        } else if (const IOReturn kr = WriteWords(StartAddress(), word, "enable device transmit"); kr != kIOReturnSuccess) {
+            return std::unexpected(kr);
+        }
         enabled_ = true;
         return Stage(kIOReturnSuccess, DuplexRestartPhase::kDeviceTxArmed);
     }
@@ -185,15 +185,15 @@ public:
         SyncGeneration();
         auto h = ReadHealth(0);
         if (!h || !h->sourceLocked) return std::unexpected(h ? kIOReturnNotReady : h.error());
-        // Both host contexts run now. Let the device fetch PCM, as Linux does once
-        // its domain is ready (ff-stream.c:206-217) and FFADO right after start
-        // (fireface_hw.cpp:913). RME 3.41 instead writes this mask once before
-        // init (hwStart 0x3f05); a user's FF800 played only with this order.
-        if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[RME] fetch mask open failed kr=0x%08x", kr);
-            return std::unexpected(kr);
+        // FF800 fetching was opened before init, as RME 3.41 hwStart 0x3f05.
+        // FF400 keeps its established post-start fetch order (FFADO/Linux).
+        if (model_ == FirefaceModel::kFF400) {
+            if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess)
+                return std::unexpected(kr);
         }
-        ASFW_LOG(Audio, "[RME] streaming confirmed: fetch mask open, device plays host audio");
+        ASFW_LOG(Audio, "[RME][Choreo] guid=%016llx gen=%u streaming confirmed: host RX/TX running, "
+                 "PCM fetching enabled, clock ready at 48000 Hz",
+                 io_.Route().guid, io_.Generation().value);
         return DuplexConfirmResult{.generation = io_.Generation(), .channels = channels_,
             .appliedClock = {.sampleRateHz = 48000}, .runtimeCaps = caps_, .status = h->status,
             .extStatus = h->extStatus};
@@ -217,17 +217,26 @@ public:
     [[nodiscard]] IOReturn Stop() override {
         CancelPendingStart();
         SyncGeneration();
-        if (!initialized_) { configured_ = false; return kIOReturnSuccess; }
+        if (!initialized_) {
+            configured_ = false;
+            if (!fetchOpened_) return kIOReturnSuccess;
+            // Reservation/configuration failed after fetch opened but before init.
+            const IOReturn kr = WriteFetchMask(false);
+            if (kr == kIOReturnSuccess) fetchOpened_ = false;
+            return kr;
+        }
         const std::array<uint32_t, 3> ff800{};
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
-            ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
+            ? WriteWords(Register::kFF800Stop, ff800, "stop device stream") : WriteWords(Register::kFF400Stop, ff400, "stop device stream");
         if (kr != kIOReturnSuccess) { ASFW_LOG(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
         ASFW_LOG(Audio, "[RME] stopped");
         enabled_ = false; initialized_ = false; configured_ = false; lastHealthy_.reset();
         // Stop first, then mute every channel (Linux finish_session,
         // ff-stream.c:33-37; FFADO fireface_hw.cpp:949).
-        return WriteFetchMask(false);
+        const IOReturn muted = WriteFetchMask(false);
+        if (muted == kIOReturnSuccess) fetchOpened_ = false;
+        return muted;
     }
 
 private:
@@ -238,6 +247,30 @@ private:
         return now < deadline ? static_cast<uint32_t>(deadline - now) : 0U;
     }
 
+    // Family/session API remains synchronous on its own queue. All bus callbacks,
+    // channel polls and device-settle timing run on the driver timer queue.
+    [[nodiscard]] std::expected<uint8_t, IOReturn> RunFF800Stage(std::shared_ptr<FF800TransmitStart> operation) {
+        if (Cancelled()) return std::unexpected(kIOReturnAborted);
+        IOLockLock(startLock_);
+        if (startsClosed_) {
+            IOLockUnlock(startLock_);
+            return std::unexpected(kIOReturnAborted);
+        }
+        pendingStart_ = operation;
+        IOLockUnlock(startLock_);
+        const auto result = AwaitStage<uint8_t>([operation](auto completion) {
+            operation->Begin(std::move(completion));
+        }, cancel_, kFamilyStageTimeoutMs, 1U);
+        operation->Cancel();
+        IOLockLock(startLock_);
+        pendingStart_.reset();
+        IOLockUnlock(startLock_);
+        if (!result) return std::unexpected(result.error());
+        if (Cancelled()) return std::unexpected(kIOReturnAborted);
+        if (const auto kr = CheckRoute(); kr != kIOReturnSuccess) return std::unexpected(kr);
+        return result;
+    }
+
     void SyncGeneration() noexcept {
         const FW::Generation current = io_.Generation();
         if (current.value != stateGeneration_.value) {
@@ -246,6 +279,7 @@ private:
             configured_ = false;
             initialized_ = false;
             enabled_ = false;
+            fetchOpened_ = false;
             stateGeneration_ = current;
         }
     }
@@ -259,7 +293,7 @@ private:
         const auto words = InitWords(model_, channels_.hostToDeviceIsoChannel, s800_);
         if (Cancelled()) return kIOReturnAborted;
         initialized_ = true; // Rollback must stop even a partially completed init.
-        if (const IOReturn kr = WriteWords(InitAddress(), words); kr != kIOReturnSuccess) return kr;
+        if (const IOReturn kr = WriteWords(InitAddress(), words, "initialize stream (complete command)"); kr != kIOReturnSuccess) return kr;
         ASFW_LOG(Audio, "[RME] %{public}s init words: rate=%u format=0x%08x txsize=0x%08x hostChannel=%u",
                  model_ == FirefaceModel::kFF800 ? "FF800" : "FF400", words[0], words[1], words[2],
                  channels_.hostToDeviceIsoChannel);
@@ -303,7 +337,8 @@ private:
         std::array<uint32_t, 28> mask{};
         mask.fill(fetch ? 0U : 1U);
         const uint32_t count = model_ == FirefaceModel::kFF800 ? 28U : 18U;
-        return WriteWords(Register::kFetchMask, std::span<const uint32_t>(mask.data(), count));
+        return WriteWords(Register::kFetchMask, std::span<const uint32_t>(mask.data(), count),
+                          fetch ? "enable PCM fetching" : "mute PCM fetching");
     }
     [[nodiscard]] AudioStreamRuntimeCaps MakeCaps() const noexcept {
         const uint32_t count = model_ == FirefaceModel::kFF800 ? 28U : 18U;
@@ -338,8 +373,11 @@ private:
             (void)handle;
         }, timeoutMs);
     }
-    [[nodiscard]] IOReturn WriteWords(uint64_t address, std::span<const uint32_t> words) {
+    [[nodiscard]] IOReturn WriteWords(uint64_t address, std::span<const uint32_t> words,
+                                     const char* operation = "write register") {
         if (Cancelled()) return kIOReturnAborted;
+        TraceRmeBytes(io_, operation, address, words);
+        const uint64_t began = Session::UptimeMilliseconds();
         const IOReturn status = AwaitStageStatus([&](auto cb) {
             const auto handle = io_.WriteBlockLEQuadlets(Async::FWAddress{Async::FWAddress::AddressParts{
                 .addressHi = static_cast<uint16_t>(address >> 32), .addressLo = static_cast<uint32_t>(address)}}, words,
@@ -348,8 +386,11 @@ private:
                 });
             (void)handle;
         }, cancel_, kRegisterTimeoutMs);
-        if (status == kIOReturnSuccess && !io_.IsRouteCurrent()) return kIOReturnOffline;
-        return status;
+        const IOReturn result = status == kIOReturnSuccess && !io_.IsRouteCurrent() ? kIOReturnOffline : status;
+        ASFW_LOG(Audio, "[RME][Choreo] guid=%016llx gen=%u op=%{public}s write complete kr=0x%08x (%{public}s) elapsedMs=%llu",
+                 io_.Route().guid, io_.Generation().value, operation, result,
+                 Logging::IOReturnName(result), Session::UptimeMilliseconds() - began);
+        return result;
     }
     [[nodiscard]] std::expected<uint32_t, IOReturn> ReadFirmwareRevision() {
         if (model_ == FirefaceModel::kFF800) return Read(Register::kFF800Revision);
@@ -509,7 +550,7 @@ private:
         const bool forced = !s.clockMaster;
         s.clockMaster = true;
         const ConfigWords words = EncodeConfig(model_, s);
-        const IOReturn kr = WriteWords(ConfigAddress(), words);
+        const IOReturn kr = WriteWords(ConfigAddress(), words, "configure device clock and routing");
         ASFW_LOG(Audio, "[RME] config %{public}s: wrote 0x%llx <- %08x %08x %08x clock=master%{public}s kr=0x%08x",
                  model, ConfigAddress(), words[0], words[1], words[2],
                  forced ? " (forced; flash says autosync)" : "", kr);
@@ -541,6 +582,7 @@ private:
     bool startsClosed_{false}; // Protected by startLock_; protocol shutdown is terminal.
     const std::atomic<bool>* cancel_{nullptr};
     bool initialized_{false};
+    bool fetchOpened_{false};
     bool configured_{false};
     bool enabled_{false};
     AudioDuplexChannels channels_{};

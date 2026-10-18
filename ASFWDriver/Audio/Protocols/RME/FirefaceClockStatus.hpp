@@ -15,6 +15,12 @@ struct ClockStatus {
 };
 
 // Shared by synchronous health queries and the asynchronous FF800 start.
+// RE audit (behavior unchanged): RME 3.41 Settings x86_64 0x100006014-0x100006084
+// agrees with FirefaceSettings.cpp's lock/sync labels, not all labels below.
+// Both bits are required here, so swapping a pair leaves that boolean unchanged.
+// Its source table at 0x100006fb0 maps LTC to 0x01400000; this helper expects
+// 0x01800000 for FF800 TCO. See documentation/ff800-vendor-status.md before
+// changing external-clock admission; the vendor UI also gates on external rate.
 [[nodiscard]] inline ClockStatus DecodeClockStatus(FirefaceModel model, uint32_t q0, uint32_t q1) noexcept {
     ClockStatus s{.configuredSource = q1 & Register::kConfiguredSourceMask,
                   .activeSource = q0 & 0x01c00000U, .q0 = q0, .q1 = q1};
