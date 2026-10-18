@@ -15,6 +15,7 @@
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuProtocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
+#include "Prism/Orpheus/OrpheusProtocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
@@ -28,7 +29,7 @@ static_assert(
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::GenericAvc),
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::Orpheus),
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
@@ -214,6 +215,11 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case ProtocolImplementationId::GenericAvc:
             ASFW_LOG(Audio, "[AvcRuntime] generic CMP backend node=0x%04x", nodeId);
             return std::make_unique<GenericAvcProtocol>(
+                busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
+
+        case ProtocolImplementationId::Orpheus:
+            ASFW_LOG(Audio, "Creating OrpheusProtocol node=0x%04x", nodeId);
+            return std::make_unique<Prism::Orpheus::OrpheusProtocol>(
                 busOps, busInfo, route, irmClient, cmpClient, timerScheduler);
 
         case ProtocolImplementationId::None:

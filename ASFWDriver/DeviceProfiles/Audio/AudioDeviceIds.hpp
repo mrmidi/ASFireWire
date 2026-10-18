@@ -41,6 +41,13 @@ inline constexpr const char* kRmeVendorName = "RME";
 inline constexpr const char* kRmeFireface400ModelName = "Fireface 400";
 inline constexpr const char* kRmeFireface800ModelName = "Fireface 800";
 
+// ---- Prism Sound (BeBoB family) ----
+inline constexpr uint32_t kPrismSoundVendorId = 0x001198;
+inline constexpr uint32_t kOrpheusModelId     = 0x00010048;
+
+inline constexpr const char* kPrismSoundVendorName = "Prism Sound";
+inline constexpr const char* kOrpheusModelName     = "Orpheus";
+
 // ---- Focusrite (DICE / TCAT family) ----
 inline constexpr uint32_t kFocusriteVendorId    = 0x00130e;
 inline constexpr uint32_t kSPro40ModelId        = 0x000005;

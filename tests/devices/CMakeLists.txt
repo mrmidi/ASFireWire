@@ -662,3 +662,18 @@ add_device_test(DiceFamilyAdapterTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
 )
+
+# Prism Sound Orpheus protocol and control provider tests
+add_device_test(OrpheusProtocolTests
+    OrpheusProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Prism/Orpheus/OrpheusVendorCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Prism/Orpheus/OrpheusProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/BeBoB/BeBoBProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+)
+

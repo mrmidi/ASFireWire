@@ -155,6 +155,7 @@ enum ClauseConstraintBit : uint16_t {
             return family == AudioFamilyProviderId::Fireworks;
         case ProtocolImplementationId::BeBoBPhase88:
         case ProtocolImplementationId::BeBoBMAudioSpecial:
+        case ProtocolImplementationId::Orpheus:
             return family == AudioFamilyProviderId::BeBoB;
         case ProtocolImplementationId::MotuRegister:
             return family == AudioFamilyProviderId::MotuRegister;
@@ -248,6 +249,8 @@ enum ClauseConstraintBit : uint16_t {
             return ProtocolImplementationId::RmeFireface;
         case ProfileBuilderId::GenericAvc:
             return ProtocolImplementationId::GenericAvc;
+        case ProfileBuilderId::Orpheus:
+            return ProtocolImplementationId::Orpheus;
         case ProfileBuilderId::None:
             return ProtocolImplementationId::None;
     }

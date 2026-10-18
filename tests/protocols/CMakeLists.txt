@@ -454,3 +454,15 @@ target_sources(AvcAudioConfigTests PRIVATE
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
+
+add_protocols_test(OrpheusVendorCodecTests
+    OrpheusVendorCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Prism/Orpheus/OrpheusVendorCodec.cpp"
+)
+
+add_protocols_test(OrpheusControlWriteTests
+    OrpheusControlWriteTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/Prism/Orpheus/OrpheusVendorCodec.cpp"
+)
+
+

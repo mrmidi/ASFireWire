@@ -492,3 +492,11 @@ add_audio_test(DuetControlModelTests
     "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
+
+add_audio_test(OrpheusControlModelTests
+    topology/OrpheusControlModelTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+)
+

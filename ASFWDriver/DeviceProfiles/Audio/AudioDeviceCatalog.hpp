@@ -72,6 +72,7 @@ enum class DeviceDefinitionId : uint32_t {
     Motu828, Motu896, Motu828mk3, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
     MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
+    PrismSoundOrpheus,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -176,7 +177,8 @@ enum class ProfileBuilderId : uint16_t {
     Motu828mk3,
     Motu828, Motu896, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuTrack16,
-    kLastValid = MotuTrack16,
+    Orpheus,
+    kLastValid = Orpheus,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -197,7 +199,8 @@ enum class ProtocolImplementationId : uint8_t {
     MotuRegister,
     RmeFireface,
     GenericAvc,
-    kLastValid = GenericAvc,
+    Orpheus,
+    kLastValid = Orpheus,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.

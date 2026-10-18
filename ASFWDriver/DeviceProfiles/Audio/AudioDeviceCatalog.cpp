@@ -15,6 +15,7 @@
 #include "Definitions/RME.hpp"
 #include "Definitions/TerraTec.hpp"
 #include "Definitions/Weiss.hpp"
+#include "Definitions/Prism.hpp"
 
 #include <array>
 #include <span>
@@ -49,10 +50,11 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kMotuDefinitions,
     Definitions::kMackieDefinitions,
     Definitions::kRmeDefinitions,
-    Definitions::kAvidDefinitions
+    Definitions::kAvidDefinitions,
+    Definitions::kPrismDefinitions
 );
 
-static_assert(kDefinitions.size() == 59U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 60U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //

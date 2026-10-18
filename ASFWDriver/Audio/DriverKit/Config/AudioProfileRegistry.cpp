@@ -165,6 +165,7 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MotuTravelerMk3:
         case Builder::MotuTrack16:
         case Builder::GenericAvc:
+        case Builder::Orpheus:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
         case Builder::RmeFireface400:
@@ -196,6 +197,7 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
             return &gApogeeDuetProfile;
         case Builder::TerraTecPhase88:
         case Builder::MackieOnyxIOxfw:
+        case Builder::Orpheus:
         case Builder::GenericAvc:
             return &gGenericAvcProfile;
         // Static 10x10. FireworksProtocol logs the device's HWINFO counts and
