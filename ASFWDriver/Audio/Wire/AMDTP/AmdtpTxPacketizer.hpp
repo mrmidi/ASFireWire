@@ -31,6 +31,11 @@ public:
                            const TxPresentationPlan& plan,
                            PreparedTxPacket& outPacket) noexcept;
 
+    // Called only after timing and provider publication succeed. Before this
+    // step the RT writer cannot see the packet's mutable preparation bytes.
+    [[nodiscard]] bool ExposePreparedPacket(TxPacketSlotView slot,
+                                           const PreparedTxPacket& packet) noexcept;
+
     void RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept;
 
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;

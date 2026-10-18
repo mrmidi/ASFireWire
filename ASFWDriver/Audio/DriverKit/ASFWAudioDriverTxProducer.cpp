@@ -1009,7 +1009,7 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
         trace.Observe(raw, packet);
         if (trace.cursor == 1 || firstData || firstContent || firstFault) {
             const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(raw.packetIndex);
-            const bool timelineMatches = slot && slot->packetIndex == raw.packetIndex;
+            const bool timelineMatches = slot && slot->packetIndex.load(std::memory_order_relaxed) == raw.packetIndex;
             ASFW_LOG(DirectAudio,
                      "[TxStartupPacket] epoch=%llu pkt=%llu ct=%08x status=%08x h0=%08x len=%u meta=%u dma=%u dbs=%u dbc=%u fdf=%02x syt=%04x lead=%d",
                      ivars.runtime.txStartupEpoch, raw.packetIndex, raw.cycleTimestamp,
@@ -1020,7 +1020,7 @@ void DrainTxStartupDiagnostics(ASFWAudioDriver_IVars& ivars) noexcept {
                      "[TxStartupPcm] epoch=%llu pkt=%llu event0=%08x event1=%08x prefix=%u peak=%u frame=%llu timeline=%u",
                      ivars.runtime.txStartupEpoch, raw.packetIndex,
                      packet.firstEventWords[0], packet.firstEventWords[1], raw.prefixLength, packet.peakQ24,
-                     timelineMatches ? slot->firstAudioFrame : 0, timelineMatches ? 1U : 0U);
+                     timelineMatches ? slot->firstAudioFrame.load(std::memory_order_relaxed) : 0, timelineMatches ? 1U : 0U);
         }
         // First-block source and encoded words from the same packet, not an
         // unrelated writer peak. Lack of a match means no captured first-block
@@ -1115,8 +1115,8 @@ bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) no
     // the slot is read without the RT-side seqlock.
     const auto* slot =
         ivars.runtime.txStreamEngine.Timeline().SlotByIndex(static_cast<uint32_t>(packet));
-    if (slot == nullptr || slot->packetIndex != packet ||
-        !slot->isData || slot->framesInPacket == 0) {
+    if (slot == nullptr || slot->packetIndex.load(std::memory_order_relaxed) != packet ||
+        !slot->isData.load(std::memory_order_relaxed) || slot->framesInPacket.load(std::memory_order_relaxed) == 0) {
         return false;
     }
 
@@ -1151,12 +1151,12 @@ bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars, TxPlacementSample& out) no
         static_cast<__uint128_t>(hostNanos) * rate / 1'000'000'000ULL);
 
     out.packetIndex = packet;
-    out.firstAudioFrame = slot->firstAudioFrame;
+    out.firstAudioFrame = slot->firstAudioFrame.load(std::memory_order_relaxed);
     out.halSampleTime = static_cast<int64_t>(anchor.sampleFrame) + (after ? frames : -frames);
-    out.offsetFrames = static_cast<int64_t>(slot->firstAudioFrame) - out.halSampleTime;
+    out.offsetFrames = static_cast<int64_t>(slot->firstAudioFrame.load(std::memory_order_relaxed)) - out.halSampleTime;
     const int64_t measuredFrames = anchor.hostNanosPerSampleQ8 == 0 ? frames :
         static_cast<int64_t>(static_cast<__uint128_t>(hostNanos) * 256 / anchor.hostNanosPerSampleQ8);
-    out.measuredOffsetFrames = static_cast<int64_t>(slot->firstAudioFrame) -
+    out.measuredOffsetFrames = static_cast<int64_t>(slot->firstAudioFrame.load(std::memory_order_relaxed)) -
         (static_cast<int64_t>(anchor.sampleFrame) + (after ? measuredFrames : -measuredFrames));
     out.anchorDeltaNs = after ? static_cast<int64_t>(hostNanos) : -static_cast<int64_t>(hostNanos);
     out.pairDeltaTicks = busDelta;
@@ -1645,12 +1645,21 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // peakQ24 is this interval's largest written |sample| (24-bit),
             // word its encoded slot. Primary stream only.
             const auto& fill = ivars->runtime.txStreamEngine.PayloadWriterCounters();
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
             uint32_t peakWord = 0;
             const uint32_t peakQ24 = ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
+#endif
             ASFW_LOG(DirectAudio,
-                     "[TxContent] peakQ24=%u word=0x%08x written=%llu noPkt=%llu outside=%llu "
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
+                     "[TxContent] peakQ24=%u word=0x%08x "
+#else
+                     "[TxContent] peak=disabled "
+#endif
+                     "written=%llu noPkt=%llu outside=%llu "
                      "missed=%llu writeEnd=%llu filledEnd=%llu",
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
                      peakQ24, peakWord,
+#endif
                      fill.framesWritten.load(std::memory_order_relaxed),
                      fill.framesWithoutPacket.load(std::memory_order_relaxed),
                      fill.framesOutsidePacket.load(std::memory_order_relaxed),

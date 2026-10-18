@@ -162,21 +162,21 @@ public:
             if (slot == nullptr) break;  // not armed (or recycled): stop, retry later
 
             ++result.packetsExamined;
-            if (!slot->isData || slot->packetBytes == nullptr ||
-                slot->framesInPacket == 0) {
+            if (!slot->isData.load(std::memory_order_relaxed) || slot->packetBytes.load(std::memory_order_relaxed) == nullptr ||
+                slot->framesInPacket.load(std::memory_order_relaxed) == 0) {
                 continue;  // NO-DATA carries no data blocks, so no MIDI slot
             }
-            const uint32_t blocks = slot->framesInPacket;
-            const uint32_t dataBytes = blocks * slot->dbs * 4u;
-            if (slot->dbs != config_.geometry.dbs ||
-                slot->packetSizeBytes < kCipHeaderBytes + dataBytes) {
+            const uint32_t blocks = slot->framesInPacket.load(std::memory_order_relaxed);
+            const uint32_t dataBytes = blocks * slot->dbs.load(std::memory_order_relaxed) * 4u;
+            if (slot->dbs.load(std::memory_order_relaxed) != config_.geometry.dbs ||
+                slot->packetSizeBytes.load(std::memory_order_relaxed) < kCipHeaderBytes + dataBytes) {
                 ++counters_.geometryMismatches;
                 continue;
             }
 
             // CIP quadlet 0 carries the DBC in its low byte (big-endian), the
             // value the port rotation counts from.
-            const uint8_t dbc = slot->packetBytes[3];
+            const uint8_t dbc = slot->packetBytes.load(std::memory_order_relaxed)[3];
             ASFW::Midi::MidiPacketReservation reservation{};
             if (!scope_.Begin(*block, epoch, static_cast<uint32_t>(packet), reservation,
                               ASFW::Encoding::MpxMidiPortsInPacket(blocks, dbc, config_.geometry))) {
@@ -189,7 +189,7 @@ public:
                     bytes.byteForPort[port] = reservation.byteForPort[port];
                 }
                 ASFW::Encoding::WriteMpxMidiSlot(
-                    slot->packetBytes + kCipHeaderBytes, blocks, dbc,
+                    slot->packetBytes.load(std::memory_order_relaxed) + kCipHeaderBytes, blocks, dbc,
                     config_.geometry, bytes);
                 for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {
                     if (bytes.hasByteForPort[port]) ++result.bytesComposed;

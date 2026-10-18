@@ -82,11 +82,13 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t missedFinality = 0;
     int64_t minMarginPackets = INT64_MAX;
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
     float peak = 0.0f;
     uint32_t peakWord = 0;
+#endif
 
-    // Sequential frames share a packet. Avoid a full timeline scan for each
-    // sample on the HAL IO thread (16 identical scans per packet at 96 kHz).
+    // Sequential frames share a packet. Reuse the indexed snapshot for each
+    // sample on the HAL IO thread (16 frames per packet at 96 kHz).
     // Revalidate generation/state before reuse; a retired or re-armed slot
     // goes through the normal lookup and miss classification.
     PacketSlotSnapshot snap{};
@@ -164,11 +166,13 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const uint32_t word =
                 PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
             WriteBE32(dest + slot * kBytesPerSlot, word);
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
             const float magnitude = sample < 0.0f ? -sample : sample;
             if (magnitude > peak) {
                 peak = magnitude;
                 peakWord = word;
             }
+#endif
         }
         ++written;
     }
@@ -190,6 +194,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     }
     counters_.framesMissedFinality.fetch_add(missedFinality,
                                                     std::memory_order_relaxed);
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
     if (peak > 0.0f) {
         const uint32_t q24 = peak >= 1.0f ? 0x7FFFFFU
                                           : static_cast<uint32_t>(peak * 8388607.0f);
@@ -202,6 +207,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             counters_.intervalPeakWord.store(peakWord, std::memory_order_relaxed);
         }
     }
+#endif
 }
 
 const AmdtpPayloadWriterCounters& AmdtpPayloadWriter::Counters() const noexcept {

@@ -7,6 +7,12 @@
 #include <atomic>
 #include <cstdint>
 
+// Optional per-sample content diagnostics. Keep disabled in the audio hot path;
+// set to 1 when investigating whether non-silent samples reach packet memory.
+#ifndef ASFW_AUDIO_DEBUG_OUTPUT_PEAK
+#define ASFW_AUDIO_DEBUG_OUTPUT_PEAK 0
+#endif
+
 namespace ASFW::Protocols::Audio::AMDTP {
 
 struct AmdtpPayloadWriterCounters final {
@@ -25,7 +31,8 @@ struct AmdtpPayloadWriterCounters final {
     // took it, in 24-bit LSBs (0: only silence was written), and the slot
     // word that sample was encoded to (best effort, for checking the wire
     // encoding). Silence on the device with a non-zero peak here means the
-    // samples did reach packet memory.
+    // samples did reach packet memory. Populated only when
+    // ASFW_AUDIO_DEBUG_OUTPUT_PEAK is enabled; otherwise both remain zero.
     std::atomic<uint32_t> intervalPeakWrittenQ24{0};
     std::atomic<uint32_t> intervalPeakWord{0};
 };
@@ -49,6 +56,7 @@ public:
     }
 
     /// The interval's content peak and its encoded word; resets the peak.
+    /// Both are zero when ASFW_AUDIO_DEBUG_OUTPUT_PEAK is disabled.
     [[nodiscard]] uint32_t TakePeakWrittenQ24(uint32_t* word) noexcept {
         if (word) *word = counters_.intervalPeakWord.load(std::memory_order_relaxed);
         return counters_.intervalPeakWrittenQ24.exchange(0, std::memory_order_relaxed);

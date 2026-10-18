@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <utility>
+#include <thread>
 
 namespace {
 
@@ -409,6 +410,8 @@ TEST(AmdtpDirectTxTests, MAudioCadenceNoDataIsFullSizeButTimelineSaysNoData) {
     PreparedTxPacket data{};
     ASSERT_TRUE(packetizer.PrepareNextPacket(
         {0, bytes[0].data(), bytes[0].size()}, {}, plan, data));
+    ASSERT_TRUE(packetizer.ExposePreparedPacket(
+        {0, bytes[0].data(), bytes[0].size()}, data));
 
     plan.cycleOrdinal = 1;
     plan.frameCount = 0;
@@ -452,8 +455,10 @@ TEST(AmdtpDirectTxTests, MAudioRevertedDataKeepsFullSizeCadenceAndDbc) {
     PreparedTxPacket packet{};
     ASSERT_TRUE(packetizer.PrepareNextPacket(slot, {}, plan, packet));
     ASSERT_TRUE(packet.isData);
-    EXPECT_EQ(timeline.ExposedFrameEnd(), 8U);
+    // Framing is still private: timing may replace these bytes with NO-DATA.
+    EXPECT_EQ(timeline.ExposedFrameEnd(), 0U);
     packetizer.RevertToNoData(slot, packet);
+    ASSERT_TRUE(packetizer.ExposePreparedPacket(slot, packet));
     // The reverted frames belong to the next DATA packet: the fill must wait
     // for it instead of treating them as lost.
     EXPECT_EQ(timeline.ExposedFrameEnd(), 0U);
@@ -786,6 +791,7 @@ TEST(AmdtpDirectTxTests, ArmedDataPacketCarriesValidSilenceAndFillChangesOnlySam
     plan.disposition = AmdtpPacketDisposition::Data;
     PreparedTxPacket packet{};
     ASSERT_TRUE(packetizer.PrepareNextPacket({0, bytes.data(), bytes.size()}, timing, plan, packet));
+    ASSERT_TRUE(packetizer.ExposePreparedPacket({0, bytes.data(), bytes.size()}, packet));
     ASSERT_TRUE(packet.isData);
 
     const auto quadlet = [](const std::array<uint8_t, 128>& b, size_t offset) {
@@ -869,10 +875,9 @@ TEST(AmdtpDirectTxTests, PayloadWriter96kCrossesPacketsAndHostRingWrap) {
     }
 }
 
-// The content peak covers what reached packet memory only: frames below the
-// finality frontier keep their armed silence and do not count. Taking it
-// resets it, so a silent interval after a loud one reads zero.
-TEST(AmdtpDirectTxTests, PayloadWriterPeakCountsOnlyWrittenSamples) {
+// Optional content diagnostics must not change packet bytes or accounting.
+// When enabled, the peak covers written frames only and resets when taken.
+TEST(AmdtpDirectTxTests, PayloadWriterOptionalPeakPreservesWrittenSamples) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 4> slots{};
     ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
@@ -902,9 +907,22 @@ TEST(AmdtpDirectTxTests, PayloadWriterPeakCountsOnlyWrittenSamples) {
     ring[8 * 2 + 1] = -0.5f;
     writer.WriteFloat32Interleaved({ring.data(), 16, 32, 32, 2}, 11);
     ASSERT_EQ(writer.Counters().framesWritten.load(), 16U);
+    EXPECT_EQ(writer.Counters().framesMissedFinality.load(), 16U);
+    const uint32_t expectedWord =
+        PcmSlotCodec::EncodeFloat32(-0.5f, PcmSlotEncoding::Am824MBLA);
+    const size_t offset = 8 + (8 * 2 + 1) * 4;
+    const uint32_t actualWord = (uint32_t(bytes[1][offset]) << 24) |
+        (uint32_t(bytes[1][offset + 1]) << 16) |
+        (uint32_t(bytes[1][offset + 2]) << 8) | bytes[1][offset + 3];
+    EXPECT_EQ(actualWord, expectedWord);
     uint32_t word = 0;
+#if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
     EXPECT_EQ(writer.TakePeakWrittenQ24(&word), 4194303U);  // 0.5 of 2^23 - 1
-    EXPECT_EQ(word, PcmSlotCodec::EncodeFloat32(-0.5f, PcmSlotEncoding::Am824MBLA));
+    EXPECT_EQ(word, expectedWord);
+#else
+    EXPECT_EQ(writer.TakePeakWrittenQ24(&word), 0U);
+    EXPECT_EQ(word, 0U);
+#endif
 
     EXPECT_EQ(writer.TakePeakWrittenQ24(nullptr), 0U);
     std::array<float, 64> silence{};
@@ -979,12 +997,13 @@ TEST(AmdtpDirectTxTests, TxPresentationPlanSuppliedFrameRangeDeterminesPacketAnd
     PreparedTxPacket packet{};
     ASSERT_TRUE(packetizer.PrepareNextPacket(
         {0, bytes.data(), bytes.size()}, timing, plan, packet));
+    ASSERT_TRUE(packetizer.ExposePreparedPacket({0, bytes.data(), bytes.size()}, packet));
 
     EXPECT_TRUE(packet.isData);
     EXPECT_EQ(packet.firstAudioFrame, 12345U);
     EXPECT_EQ(packet.framesInPacket, 8U);
 
-    // Payload writer writes based on packetizer's timeline exposure
+    // Payload writer writes only after explicit final timeline exposure
     AmdtpPayloadWriter writer{};
     writer.Configure(config, AmdtpTxPolicy{});
     writer.BindTimeline(&timeline);
@@ -1188,4 +1207,220 @@ TEST(AmdtpDirectTxTests, RevertedEndEventPacketRestoresDbc) {
     ASSERT_TRUE(packetizer.PrepareNextPacket(slot, timing, plan, packet));
     EXPECT_EQ(packet.dbc, 2U);
     EXPECT_EQ(packet.firstAudioFrame, 100U);
+}
+
+
+// The RT writer must never see bytes which the timing stamper may still rewrite.
+TEST(AmdtpDirectTxTests, DataIsExposedOnlyAfterTimingAndSuccessfulPublication) {
+    using namespace ASFW::Audio;
+    ASFW::Isoch::Audio::AVC::Profiles::MAudioSpecialProfile profile(false);
+    ASFW::Isoch::Audio::AudioStreamConfig config{};
+    ASSERT_TRUE(profile.BuildDefaultTxStreamConfig(config));
+    DiceTxStreamEngine engine{};
+    ASSERT_TRUE(engine.Configure(profile, config));
+    TestTxSlotProvider provider{};
+    // This fixture's small slab is sufficient for a stereo resolved stream.
+    config.pcmChannels = 2;
+    config.midiSlots = 0;
+    config.dbs = 2;
+    ASSERT_TRUE(engine.Configure(profile, config));
+    provider.allowAcquire = true;
+    provider.allowPublish = true;
+    engine.BindSlotProvider(&provider);
+    engine.ResetForStart(0, 0);
+    struct Stamper final : ITxDeviceTimingStamper {
+        AmdtpPacketTimeline* timeline{};
+        TxTimingStampResult result{TxTimingStampResult::kTimingUnavailable};
+        TxTimingStampResult StampPacket(const TxPacketSlotView&,
+            const PreparedTxPacket& packet, const AmdtpTimingState&) noexcept override {
+            PacketSlotSnapshot snap{};
+            EXPECT_FALSE(timeline->SnapshotSlotForAudioFrame(packet.firstAudioFrame, snap));
+            EXPECT_EQ(timeline->ExposedFrameEnd(), 0U);
+            return result;
+        }
+        bool IsSytUnaware() const noexcept override { return false; }
+    } stamper;
+    stamper.timeline = &engine.Timeline();
+    engine.BindTimingStamper(&stamper);
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 8;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(0, timing), TxSlotPrepareResult::kPrepared);
+    EXPECT_FALSE(provider.publishedPacket.isData);
+    PacketSlotSnapshot snap{};
+    EXPECT_FALSE(engine.Timeline().SnapshotSlotForAudioFrame(0, snap));
+    EXPECT_EQ(engine.NextAudioFrame(), 0U);
+    stamper.result = TxTimingStampResult::kOk;
+    provider.allowPublish = false;
+    EXPECT_EQ(engine.PrepareNextTransmitSlot(1, timing), TxSlotPrepareResult::kSlotPublishFailed);
+    EXPECT_FALSE(engine.Timeline().SnapshotSlotForAudioFrame(0, snap));
+    EXPECT_EQ(engine.Timeline().ExposedFrameEnd(), 0U);
+    provider.allowPublish = true;
+    ASSERT_EQ(engine.PrepareNextTransmitSlot(2, timing), TxSlotPrepareResult::kPrepared);
+    ASSERT_TRUE(engine.Timeline().SnapshotSlotForAudioFrame(0, snap));
+    EXPECT_EQ(snap.packetIndex, 2U);
+    EXPECT_EQ(engine.NextAudioFrame(), 8U);
+}
+
+TEST(AmdtpDirectTxTests, TimelineLookupSurvivesMixedCadenceAndRepeatedRingWraps) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 3> slots{}; // deliberately not a power of two
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size()));
+    std::array<std::array<uint8_t, 136>, 3> bytes{};
+    struct Expected { uint64_t packet{}, first{}; uint32_t frames{}; };
+    std::array<Expected, 3> expected{};
+    uint64_t frame = 16380;
+    for (uint64_t packet = (uint64_t{1} << 32); packet < (uint64_t{1} << 32) + 99; ++packet) {
+        const uint32_t pos = packet % slots.size();
+        if (packet % 4 == 0) {
+            timeline.MarkNoDataPacket(packet);
+            expected[pos] = {};
+        } else {
+            const uint32_t frames = 1 + packet % 16;
+            PreparedTxPacket data{};
+            data.packetIndex = packet;
+            data.firstAudioFrame = frame;
+            data.framesInPacket = frames;
+            data.isData = true;
+            data.dbs = 2;
+            data.byteCount = 8 + frames * 8;
+            ASSERT_TRUE(timeline.ExposeDataPacket(data, bytes[pos].data(), bytes[pos].size()));
+            expected[pos] = {packet, frame, frames};
+            frame += frames;
+        }
+        // Independent range oracle: probe retained packets, retired prefix,
+        // future frames, and several direct-index aliases on every wrap.
+        for (uint64_t probe = 16000; probe <= frame + 256; ++probe) {
+            const Expected* match = nullptr;
+            for (const auto& live : expected) {
+                if (live.frames && probe >= live.first && probe - live.first < live.frames) match = &live;
+            }
+            PacketSlotSnapshot snap{};
+            ASSERT_EQ(timeline.SnapshotSlotForAudioFrame(probe, snap), match != nullptr)
+                << "packet=" << packet << " frame=" << probe;
+            if (match) EXPECT_EQ(snap.packetIndex, match->packet);
+        }
+    }
+    timeline.Reset();
+    PacketSlotSnapshot snap{};
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(frame - 1, snap));
+    EXPECT_EQ(timeline.ExposedFrameEnd(), 0U);
+}
+
+
+TEST(AmdtpDirectTxTests, TimelineEpochRejectsAliasesAndKeepsFinalPacketMetadata) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size(), 8));
+    std::array<std::array<uint8_t, 72>, 4> bytes{};
+    PreparedTxPacket packet{};
+    packet.isData = true;
+    packet.dbs = 2;
+    packet.byteCount = 72;
+    packet.framesInPacket = 8;
+    packet.firstAudioFrame = 28; // wraps the 32-entry index inside one packet
+    ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[0].data(), 72));
+    PacketSlotSnapshot before{};
+    ASSERT_TRUE(timeline.SnapshotSlotForAudioFrame(32, before));
+    const auto oldGeneration = before.generation;
+    PacketSlotSnapshot snap{};
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(0, snap)); // same index cell
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(64, snap));
+    timeline.BeginFrameEpoch();
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(32, snap));
+    EXPECT_NE(before.slot->generation.load(), oldGeneration);
+    ASSERT_NE(timeline.SlotByIndex(0), nullptr);
+    EXPECT_TRUE(timeline.SlotByIndex(0)->isData); // MIDI/commit verdict survives
+    packet.packetIndex = 1;
+    packet.firstAudioFrame = 0; // backward realignment to an aliased window
+    ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[1].data(), 72));
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(32, snap));
+    ASSERT_TRUE(timeline.SnapshotSlotForAudioFrame(0, snap));
+    EXPECT_EQ(snap.packetIndex, 1U);
+    packet.packetIndex = 2;
+    packet.firstAudioFrame = 1024; // forward jump starts another frame epoch
+    ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[2].data(), 72));
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(0, snap));
+    ASSERT_TRUE(timeline.SnapshotSlotForAudioFrame(1024, snap));
+    EXPECT_EQ(snap.packetIndex, 2U);
+    timeline.MarkNoDataPacket(2);
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(1024, snap));
+    // Restart with the same absolute packet ID and a different frame origin.
+    timeline.Reset();
+    packet.packetIndex = 0;
+    packet.firstAudioFrame = 8192;
+    ASSERT_TRUE(timeline.ExposeDataPacket(packet, bytes[0].data(), 72));
+    EXPECT_FALSE(timeline.SnapshotSlotForAudioFrame(28, snap));
+    ASSERT_TRUE(timeline.SnapshotSlotForAudioFrame(8192, snap));
+    EXPECT_EQ(snap.packetIndex, 0U);
+}
+
+TEST(AmdtpDirectTxTests, TimelineRejectsInvalidIndexGeometryAndUnrepresentableTokens) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 2> slots{};
+    EXPECT_FALSE(timeline.AttachSlots(nullptr, 2, 8));
+    EXPECT_FALSE(timeline.AttachSlots(slots.data(), 0, 8));
+    EXPECT_FALSE(timeline.AttachSlots(slots.data(), 2, 0));
+    EXPECT_FALSE(timeline.AttachSlots(slots.data(), UINT32_MAX, UINT8_MAX));
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), 2, 8));
+    std::array<uint8_t, 80> bytes{};
+    PreparedTxPacket packet{};
+    packet.isData = true;
+    packet.dbs = 2;
+    packet.framesInPacket = 9;
+    EXPECT_FALSE(timeline.ExposeDataPacket(packet, bytes.data(), bytes.size()));
+    packet.framesInPacket = 8;
+    packet.packetIndex = UINT64_MAX;
+    EXPECT_FALSE(timeline.ExposeDataPacket(packet, bytes.data(), bytes.size()));
+    packet.packetIndex = 0;
+    packet.firstAudioFrame = UINT64_MAX - 7;
+    EXPECT_FALSE(timeline.ExposeDataPacket(packet, bytes.data(), bytes.size()));
+    EXPECT_EQ(timeline.ExposedFrameEnd(), 0U);
+}
+
+TEST(AmdtpDirectTxTests, ConcurrentIndexedSnapshotsNeverReturnMixedPacketMetadata) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 3> slots{};
+    ASSERT_TRUE(timeline.AttachSlots(slots.data(), slots.size(), 8));
+    std::array<std::array<uint8_t, 72>, 3> bytes{};
+    std::atomic<bool> done{false};
+    std::atomic<uint32_t> invalid{0}, successful{0};
+    std::atomic<uint64_t> publishedEnd{0};
+    std::thread reader([&] {
+        do {
+            const uint64_t end = publishedEnd.load(std::memory_order_acquire);
+            // Include old, current and future frame-index aliases.
+            for (uint64_t frame = end > 64 ? end - 64 : 0; frame < end + 32; ++frame) {
+                PacketSlotSnapshot snap{};
+                if (!timeline.SnapshotSlotForAudioFrame(frame, snap)) continue;
+                successful.fetch_add(1, std::memory_order_relaxed);
+                const uint64_t expectedPacket = frame / 8;
+                if (snap.packetIndex != expectedPacket || snap.firstAudioFrame != expectedPacket * 8 ||
+                    snap.framesInPacket != 8 || snap.dbs != 2 || snap.packetSizeBytes != 72 ||
+                    snap.packetBytes != bytes[expectedPacket % 3].data()) {
+                    invalid.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        } while (!done.load(std::memory_order_acquire));
+    });
+    for (uint64_t packet = 0; packet < 20000; ++packet) {
+        PreparedTxPacket data{};
+        data.packetIndex = packet;
+        data.firstAudioFrame = packet * 8;
+        data.framesInPacket = 8;
+        data.dbs = 2;
+        data.byteCount = 72;
+        data.isData = true;
+        if (!timeline.ExposeDataPacket(data, bytes[packet % 3].data(), 72)) ++invalid;
+        publishedEnd.store((packet + 1) * 8, std::memory_order_release);
+    }
+    // Ensure the reader actually obtains snapshots even under serialized scheduling.
+    for (uint32_t attempt = 0; attempt < 10000 && successful.load(std::memory_order_relaxed) == 0; ++attempt) {
+        std::this_thread::yield();
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+    EXPECT_GT(successful.load(), 0U);
+    EXPECT_EQ(invalid.load(), 0U);
 }
