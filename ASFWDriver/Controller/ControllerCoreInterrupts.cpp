@@ -184,8 +184,12 @@ void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
     ASFW_LOG_V3(Controller, "HandleInterrupt: events=0x%08x AsyncSubsystem=%p", events,
                 deps_.asyncController.get());
 
-    const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
-    ASFW_LOG_V3(Controller, "%{public}s", eventDecode.c_str());
+    // Keep decoding inside the verbosity gate: hidden IRQ logs must not
+    // allocate or format strings on every interrupt.
+    if (ASFW_GET_VERBOSITY(Controller) >= 3) {
+        const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
+        ASFW_LOG(Controller, "%{public}s", eventDecode.c_str());
+    }
 }
 
 void ControllerCore::HandleFaultInterrupts(uint32_t events) {
