@@ -6,6 +6,7 @@
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/IEEE1394.hpp"
 #include "Hardware/RegisterMap.hpp"
+#include "Hardware/InterruptDrain.hpp"
 #include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include <gtest/gtest.h>
@@ -149,46 +150,140 @@ TEST_F(HardwareInterfaceOrderTests, WriteLocalIRMResource_WritesDataCompareContr
     EXPECT_EQ(result.status, LocalCSRLockResult::Status::Success);
 }
 
-// Linux ohci.c irq_handler (:2203-2268): after the global acknowledgement,
-// read each signalled direction's masked per-context events from the Clear
-// address and clear exactly those bits, once. A direction the global event does not signal is not touched.
-TEST_F(HardwareInterfaceOrderTests, TakeIsochContextEvents_ReadsAndClearsEachSignalledMaskOnce) {
+// Cross-validated with Linux ohci.c:2219-2268,2309-2313: global then
+// per-direction acknowledgements, with one completion readback for the batch.
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_FlushOnceAfterGlobalRxAndTx) {
     InSequence seq;
-
+    const uint32_t global = IntEventBits::kIsochRx | IntEventBits::kIsochTx;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), global));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
         .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0x3; });
-    EXPECT_CALL(*mockDevice_,
-                MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), 0x3u));
-    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), 0x3u));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
         .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0x1; });
-    EXPECT_CALL(*mockDevice_,
-                MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), 0x1u));
-    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), 0x1u));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(1);
 
-    const IsochContextEvents events =
-        hardware_.TakeIsochContextEvents(IntEventBits::kIsochRx | IntEventBits::kIsochTx);
+    const auto events = hardware_.AcknowledgeInterruptEvents(global, global);
     EXPECT_EQ(events.receive, 0x3u);
     EXPECT_EQ(events.transmit, 0x1u);
 }
 
-TEST_F(HardwareInterfaceOrderTests, TakeIsochContextEvents_LeavesUnsignalledDirectionsAlone) {
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_SingleDirectionSharesGlobalFlush) {
+    for (const bool receive : {false, true}) {
+        SCOPED_TRACE(receive);
+        InSequence seq;
+        const uint32_t global = receive ? IntEventBits::kIsochRx : IntEventBits::kIsochTx;
+        const auto reg = receive ? Register32::kIsoRecvIntEventClear : Register32::kIsoXmitIntEventClear;
+        const auto other = receive ? Register32::kIsoXmitIntEventClear : Register32::kIsoRecvIntEventClear;
+        EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(other), _)).Times(0);
+        EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(other), _)).Times(0);
+        EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), global));
+        EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(reg), _))
+            .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0x5; });
+        EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(reg), 0x5u));
+        EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(1);
+        const auto events = hardware_.AcknowledgeInterruptEvents(global, global);
+        EXPECT_EQ(events.receive, receive ? 0x5u : 0u);
+        EXPECT_EQ(events.transmit, receive ? 0u : 0x5u);
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mockDevice_));
+    }
+}
+
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_GlobalOnlyStillFlushes) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), IntEventBits::kRQPkt));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(1);
+    const auto events = hardware_.AcknowledgeInterruptEvents(IntEventBits::kRQPkt, IntEventBits::kRQPkt);
+    EXPECT_EQ(events.receive | events.transmit, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_EmptyContextsStillCompleteGlobalWrite) {
+    InSequence seq;
+    const uint32_t global = IntEventBits::kIsochRx | IntEventBits::kIsochTx;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), global));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
-        .Times(0);
-    EXPECT_CALL(*mockDevice_,
-                MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
-        .Times(0);
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0; });
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
         .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0; });
-    // An empty mask needs no clear.
-    EXPECT_CALL(*mockDevice_,
-                MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
-        .Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(1);
+    const auto events = hardware_.AcknowledgeInterruptEvents(global, global);
+    EXPECT_EQ(events.receive | events.transmit, 0u);
+}
 
-    const IsochContextEvents events = hardware_.TakeIsochContextEvents(IntEventBits::kIsochTx);
-    EXPECT_EQ(events.receive, 0u);
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_NoWritesNeedNoFlush) {
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoXmitIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0; });
+    EXPECT_EQ(hardware_.AcknowledgeInterruptEvents(0, IntEventBits::kIsochRx | IntEventBits::kIsochTx).receive, 0u);
+    EXPECT_EQ(hardware_.AcknowledgeInterruptEvents(0, 0).transmit, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_ContextWriteAloneStillFlushes) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 1; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), 1u));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(1);
+    const auto events = hardware_.AcknowledgeInterruptEvents(0, IntEventBits::kIsochRx);
+    EXPECT_EQ(events.receive, 1u);
     EXPECT_EQ(events.transmit, 0u);
-    EXPECT_EQ(hardware_.TakeIsochContextEvents(IntEventBits::kBusReset).transmit, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_RemovalReadbackSuppressesDispatchAndLaterMmio) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), IntEventBits::kIsochRx));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 1; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), 1u));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) { *val = 0xFFFFFFFFu; });
+    const auto events = hardware_.AcknowledgeInterruptEvents(IntEventBits::kIsochRx, IntEventBits::kIsochRx);
+    EXPECT_EQ(events.receive | events.transmit, 0u);
+    EXPECT_TRUE(hardware_.HardwareGone());
+    ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mockDevice_));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_EQ(hardware_.CaptureInterruptSnapshot(0).intEvent, 0u);
+    EXPECT_EQ(hardware_.AcknowledgeInterruptEvents(IntEventBits::kIsochRx, IntEventBits::kIsochRx).receive, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, InterruptAcknowledgements_DrainServicesContextArrivingDuringBatch) {
+    uint32_t pendingRx = 1;
+    bool inject = true;
+    std::vector<uint32_t> serviced;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIntEvent), _))
+        .Times(3).WillRepeatedly([&](uint8_t, uint64_t, uint32_t* val) {
+            *val = pendingRx ? IntEventBits::kIsochRx : 0;
+        });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIntEventClear), IntEventBits::kIsochRx))
+        .Times(2);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .Times(2).WillRepeatedly([&](uint8_t, uint64_t, uint32_t* val) {
+            *val = pendingRx;
+            // A different context finishes after the snapshot of this bitmap.
+            if (inject) { pendingRx |= 2; inject = false; }
+        });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kIsoRecvIntEventClear), _))
+        .Times(2).WillRepeatedly([&](uint8_t, uint64_t, uint32_t mask) { pendingRx &= ~mask; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _)).Times(2);
+    const auto remaining = ServiceUntilDeasserted(
+        [&] { return hardware_.CaptureInterruptSnapshot(0); },
+        [] { return IntEventBits::kIsochRx; },
+        [&](const InterruptSnapshot& snap) {
+            serviced.push_back(hardware_.AcknowledgeInterruptEvents(snap.intEvent, snap.intEvent).receive);
+        });
+    EXPECT_EQ(remaining, 0u);
+    EXPECT_EQ(pendingRx, 0u);
+    EXPECT_EQ(serviced, (std::vector<uint32_t>{1, 2}));
 }
 
 TEST_F(HardwareInterfaceOrderTests, SetLocalCycleMasterEnabled_InOrder) {
@@ -228,6 +323,7 @@ TEST_F(HardwareInterfaceOrderTests, RevokeBlocksAllFurtherBarAccess) {
     auto access = hardware_.TryBeginAccess();
     EXPECT_FALSE(access);
     hardware_.SetInterruptMask(0xFFFFFFFFu, false);
+    EXPECT_EQ(hardware_.AcknowledgeInterruptEvents(IntEventBits::kIsochTx, IntEventBits::kIsochTx).transmit, 0u);
 }
 
 TEST_F(HardwareInterfaceOrderTests, ProviderRevocationLatchesHardwareGoneAndBlocksAllBarAccess) {

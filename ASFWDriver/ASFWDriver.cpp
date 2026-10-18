@@ -970,7 +970,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
         [&](const ASFW::Driver::InterruptSnapshot& snap) {
             ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
                         snap.intEvent);
-            ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, hardware,
+            ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller,
                                                    *ctx.workQueue, ctx.isoch,
                                                    ctx.statusPublisher,
                                                    ctx.deps.asyncController.get());

@@ -40,14 +40,14 @@
 
 namespace ASFW::Driver {
 
-void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
+IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     const auto state = StateMachine().CurrentState();
     const bool admitted = state == ControllerState::kStarting || state == ControllerState::kRunning;
     if (!admitted || !deps_.hardware) {
         ASFW_LOG(Controller, "HandleInterrupt early return (state=%{public}s hw=%p)",
                  ToString(state).data(),
                  deps_.hardware.get());
-        return;
+        return {};
     }
 
     auto& hw = *deps_.hardware;
@@ -61,7 +61,7 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
         auto access = hw.TryBeginAccess();
-        if (!access) return;
+        if (!access) return {};
         const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
@@ -141,16 +141,15 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     // they are already latched: left set and enabled, they kept the interrupt
     // asserted, and an MSI controller then sends no message for anything that
     // follows. Linux clears the same set in its handler (ohci.c:2219-2224).
-    uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
-    if (toAck != 0U) {
-        hw.ClearIntEvents(toAck);
-    }
-    // The per-context isoch events are read and cleared after this, by
-    // InterruptDispatcher (HardwareInterface::TakeIsochContextEvents).
+    const uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
+    // Complete the global and per-context acknowledgements with one readback,
+    // before cycle policy or the dispatcher services any returned contexts.
+    const IsochContextEvents isochEvents = hw.AcknowledgeInterruptEvents(toAck, rawEvents);
 
     if ((events & IntEventBits::kCycleTooLong) != 0U) {
         HandleCycleTooLong();
     }
+    return isochEvents;
 }
 
 // A cycle ran past 115-120 us while this node was root and cycle master, and
