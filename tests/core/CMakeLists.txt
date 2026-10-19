@@ -50,6 +50,10 @@ add_core_test(SelfIDSequenceTests
 )
 
 # SelfID Capture Tests
+add_core_test(PhysicalRequestFilterTests
+    PhysicalRequestFilterTests.cpp
+)
+
 add_core_test(SelfIDCaptureTests
     SelfIDCaptureTests.cpp
     "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"

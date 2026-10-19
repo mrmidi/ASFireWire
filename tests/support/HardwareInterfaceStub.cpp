@@ -223,6 +223,14 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
 
 void HardwareInterface::SetLinkControlBits(uint32_t bits) { WriteScoped(Register32::kLinkControlSet, bits); }
 
+void HardwareInterface::SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept {
+    node &= 0x3Fu;
+    const bool hi = node >= 32;
+    const Register32 reg = hi ? (enable ? Register32::kPhyReqFilterHiSet : Register32::kPhyReqFilterHiClear)
+                              : (enable ? Register32::kPhyReqFilterLoSet : Register32::kPhyReqFilterLoClear);
+    WriteScoped(reg, 1u << (hi ? node - 32 : node));
+}
+
 void HardwareInterface::ClearLinkControlBits(uint32_t bits) {
     WriteScoped(Register32::kLinkControlClear, bits);
 }

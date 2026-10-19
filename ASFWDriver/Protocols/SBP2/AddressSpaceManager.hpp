@@ -152,6 +152,55 @@ public:
         return kr;
     }
 
+    // A DMA buffer the target reaches through the OHCI physical response unit:
+    // its 1394 offset is the buffer's bus address (below 4 GB, addressHi 0), so
+    // the controller serves the target's reads and writes with DMA and no
+    // software in the path. Apple (IOFireWireSBP2ORB.cpp:1002-1041) and Linux
+    // (ohci_enable_phys_dma) carry SBP-2 data this way; the software AR path
+    // bounded throughput to one block write per CPU round trip. The range stays
+    // in the lookup table so a request that arrives in software (filter not yet
+    // armed) lands in the same memory.
+    kern_return_t AllocatePhysicalRange(void* owner,
+                                        uint32_t length,
+                                        uint64_t* outHandle,
+                                        AddressRangeMeta* outMeta = nullptr) {
+        if (!lock_ || !outHandle || length == 0) {
+            return kIOReturnBadArgument;
+        }
+
+        AddressRange range{};
+        range.owner = owner;
+        range.physical = true;
+        range.meta.length = length;
+
+        IOLockLock(lock_);
+        const kern_return_t kr = AllocateBacking(range);
+        if (kr != kIOReturnSuccess) {
+            IOLockUnlock(lock_);
+            return kr;
+        }
+        uint64_t address = range.deviceAddress;
+        if (!range.hasBacking) {
+            // Host tests have no DMA: stand in with a unique sub-4 GB offset.
+            address = kHostTestPhysicalBase + hostTestPhysicalCursor_;
+            hostTestPhysicalCursor_ += AlignUp(length, 4096);
+            range.buffer.resize(length, 0);
+        }
+        range.meta.handle = nextHandle_++;
+        range.meta.address = address;
+        range.meta.addressHi = static_cast<uint16_t>(address >> 32);
+        range.meta.addressLo = static_cast<uint32_t>(address & 0xFFFF'FFFFULL);
+
+        const uint64_t handle = range.meta.handle;
+        if (outMeta) {
+            *outMeta = range.meta;
+        }
+        ranges_.emplace(handle, std::move(range));
+        IOLockUnlock(lock_);
+        *outHandle = handle;
+        return kIOReturnSuccess;
+    }
+
     kern_return_t DeallocateAddressRange(void* owner, uint64_t handle) {
         if (!lock_ || handle == 0) {
             return kIOReturnBadArgument;
@@ -216,8 +265,8 @@ public:
             return kIOReturnNoSpace;
         }
 
-        outData->assign(range.buffer.begin() + static_cast<std::size_t>(offset),
-                        range.buffer.begin() + static_cast<std::size_t>(offset + length));
+        const uint8_t* storage = StorageBytes(range) + static_cast<std::size_t>(offset);
+        outData->assign(storage, storage + length);
         IOLockUnlock(lock_);
         return kIOReturnSuccess;
     }
@@ -349,8 +398,7 @@ public:
         }
 
         const uint32_t offset = static_cast<uint32_t>(address - range->meta.address);
-        std::memcpy(outValue,
-                    range->buffer.data() + static_cast<std::size_t>(offset),
+        std::memcpy(outValue, StorageBytes(*range) + static_cast<std::size_t>(offset),
                     sizeof(uint32_t));
 
         IOLockUnlock(lock_);
@@ -429,6 +477,7 @@ private:
     static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
+    static constexpr uint64_t kHostTestPhysicalBase = 0x4000'0000ULL;
 
     static constexpr std::size_t kDebugLabelCapacity = 32;
 
@@ -445,7 +494,14 @@ private:
         uint8_t* mappedBytes{nullptr};
         uint64_t deviceAddress{0};
         bool hasBacking{false};
+        bool physical{false};
     };
+
+    // A physical range with DMA backing has no shadow copy: the device writes
+    // the (cacheable) mapping directly and the CPU reads it there.
+    static const uint8_t* StorageBytes(const AddressRange& range) {
+        return (range.physical && range.hasBacking) ? range.mappedBytes : range.buffer.data();
+    }
 
     static void CopyDebugLabel(AddressRange& range, const char* label) {
         range.debugLabel.fill('\0');
@@ -606,9 +662,11 @@ private:
 #endif
         }
 
+        // Physical ranges are DMA targets like the AT payload and AR ring
+        // buffers: cacheable mapping, the PCIe fabric keeps it coherent.
         IOMemoryMap* mapping = nullptr;
         const kern_return_t kr = dma->descriptor->CreateMapping(
-            kIOMemoryMapCacheModeInhibit,
+            range.physical ? 0 : kIOMemoryMapCacheModeInhibit,
             0,
             0,
             size,
@@ -744,7 +802,9 @@ private:
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(data.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.buffer.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.mappedBytes) & 0x7ULL));
-        CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
+        if (!(range.physical && range.hasBacking)) {
+            CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
+        }
 
         if (range.hasBacking && range.mappedBytes) {
             CopyPayloadBytes(range.mappedBytes + static_cast<std::size_t>(offset), data);
@@ -756,6 +816,7 @@ private:
     ASFW::Driver::HardwareInterface* hardware_{nullptr};
     IOLock* lock_{nullptr};
     uint64_t nextHandle_{1};
+    uint64_t hostTestPhysicalCursor_{0};
     std::unordered_map<uint64_t, AddressRange> ranges_;
 };
 

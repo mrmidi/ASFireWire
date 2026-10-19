@@ -110,6 +110,11 @@ class HardwareInterface {
     [[nodiscard]] PciInterruptState ReadPciInterruptState() const noexcept;
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
+    /// Lets (or stops letting) the OHCI serve `node`'s requests to the physical
+    /// address space with DMA, no software in the path. A bus reset clears the
+    /// filter, so the owner re-arms it once it knows the node's new ID.
+    /// Cross-validated with Linux ohci.c:2600-2631 (ohci_enable_phys_dma).
+    void SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept;
     void ClearIntEvents(uint32_t mask);
     // Reads and clears the per-context isoch event masks, once, for each
     // direction `intEvent` signals. Call after the global events are

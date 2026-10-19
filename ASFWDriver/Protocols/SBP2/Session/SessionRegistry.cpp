@@ -161,6 +161,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     record.route = *route;
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
+    record.session->SetPhysicalAccessControl(physicalAccess_);
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
@@ -350,6 +351,16 @@ void SessionRegistry::ReleaseOwner(void* owner) {
         if (!session->Logout()) {
             IOLockGuard lock(lock_);
             EraseRetiredSessionLocked(session);
+        }
+    }
+}
+
+void SessionRegistry::SetPhysicalAccessControl(LoginSession::PhysicalAccessControl control) {
+    IOLockGuard lock(lock_);
+    physicalAccess_ = std::move(control);
+    for (auto& [handle, record] : sessions_) {
+        if (record.session) {
+            record.session->SetPhysicalAccessControl(physicalAccess_);
         }
     }
 }

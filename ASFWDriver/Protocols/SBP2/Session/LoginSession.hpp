@@ -123,6 +123,11 @@ public:
     using LoginCallback = std::function<void(const LoginCompleteParams&)>;
     using LogoutCallback = std::function<void(const LogoutCompleteParams&)>;
     using StatusCallback = std::function<void(const Wire::StatusBlock&, uint32_t length)>;
+    // Arms (true) or drops (false) the controller's physical request filter for
+    // the target node. Armed while LoggedIn, since command data buffers live in
+    // the physical address space; Apple does the same per unit
+    // (IOFireWireSBP2Target::configurePhysicalFilter).
+    using PhysicalAccessControl = std::function<void(uint16_t node, bool enable)>;
 
     LoginSession(Async::IFireWireBus& bus,
                  Async::IFireWireBusInfo& busInfo,
@@ -141,6 +146,9 @@ public:
     void SetLoginCallback(LoginCallback cb) noexcept { loginCallback_ = std::move(cb); }
     void SetLogoutCallback(LogoutCallback cb) noexcept { logoutCallback_ = std::move(cb); }
     void SetStatusCallback(StatusCallback cb) noexcept { statusCallback_ = std::move(cb); }
+    void SetPhysicalAccessControl(PhysicalAccessControl cb) noexcept {
+        physicalAccess_ = std::move(cb);
+    }
 
     // -----------------------------------------------------------------------
     // Session operations
@@ -265,6 +273,7 @@ private:
 
     // Configuration
     SBP2TargetInfo targetInfo_{};
+    PhysicalAccessControl physicalAccess_;
     bool configured_{false};
     uint16_t maxPayloadSize_{4096};  // default, clipped by login response
 

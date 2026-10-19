@@ -276,6 +276,9 @@ TEST(SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(write.data);
     const uint64_t dataBufferAddress = ReadDataBufferAddress(rig.addressManager, commandOrbAddress);
+    // Command data is carried by OHCI physical DMA: the descriptor names a
+    // sub-4 GB bus address, not a slot in the software-served 0xFFFF window.
+    EXPECT_LT(dataBufferAddress, 1ULL << 32);
 
     const std::vector<uint8_t> sensePayload{
         0x70, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x0A,

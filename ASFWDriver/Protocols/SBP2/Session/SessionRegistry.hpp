@@ -107,6 +107,8 @@ public:
     // CommandExecutor::SetBusResetRequester). Set once during driver wiring,
     // before any session exists.
     void SetBusResetRequester(std::function<void()> requester);
+    // Handed to every LoginSession (LoginSession::SetPhysicalAccessControl).
+    void SetPhysicalAccessControl(LoginSession::PhysicalAccessControl control);
 
     // Push channel for login state. Fires observer(guid, true) when a session
     // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
@@ -148,6 +150,7 @@ private:
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
+    LoginSession::PhysicalAccessControl physicalAccess_;
     std::function<void(uint64_t, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {

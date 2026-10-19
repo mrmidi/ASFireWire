@@ -1026,6 +1026,11 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
 void LoginSession::SetState(LoginState newState) noexcept {
     if (state_ != newState) {
         ASFW_LOG_SBP2( "LoginSession: state %{public}s -> %{public}s", ToString(state_), ToString(newState));
+        // A bus reset already cleared the filter in hardware; the explicit drop
+        // on the way out of LoggedIn covers logout and lost sessions.
+        if (physicalAccess_ && (newState == LoginState::LoggedIn || state_ == LoginState::LoggedIn)) {
+            physicalAccess_(TargetNodeShort(), newState == LoginState::LoggedIn);
+        }
         state_ = newState;
     }
 }

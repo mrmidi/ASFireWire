@@ -106,8 +106,10 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     uint64_t bufferHandle = 0;
     AddressSpaceManager::AddressRangeMeta bufferMeta{};
     if (request.transferLength > 0) {
-        const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
-            owner_, 0xFFFF, request.transferLength, &bufferHandle, &bufferMeta);
+        // Data moves by OHCI physical DMA; the target's node has the physical
+        // request filter armed for the life of the login (LoginSession).
+        const kern_return_t kr = addrSpaceMgr_.AllocatePhysicalRange(
+            owner_, request.transferLength, &bufferHandle, &bufferMeta);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Async, "CommandExecutor: failed to allocate command buffer: 0x%08x", kr);
             return false;

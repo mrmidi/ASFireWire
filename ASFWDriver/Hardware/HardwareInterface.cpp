@@ -340,6 +340,15 @@ void HardwareInterface::ClearLinkControlBits(uint32_t bits) {
     if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kLinkControlClear, bits);
 }
 
+void HardwareInterface::SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept {
+    node &= 0x3Fu;
+    const bool hi = node >= 32;
+    const Register32 reg = hi ? (enable ? Register32::kPhyReqFilterHiSet : Register32::kPhyReqFilterHiClear)
+                              : (enable ? Register32::kPhyReqFilterLoSet : Register32::kPhyReqFilterLoClear);
+    const uint32_t bit = 1u << (hi ? node - 32 : node);
+    if (auto access = TryBeginAccess()) access.WriteAndFlush(reg, bit);
+}
+
 void HardwareInterface::ClearIntEvents(uint32_t mask) {
     if (!mask) {
         return;

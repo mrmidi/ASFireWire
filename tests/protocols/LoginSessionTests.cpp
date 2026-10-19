@@ -724,3 +724,47 @@ TEST(LoginSessionTests,
 }
 
 } // namespace
+
+// The physical request filter follows LoggedIn: armed on login and on a
+// successful reconnect (new generation), dropped on bus reset and logout.
+TEST(LoginSessionTests, PhysicalAccessFollowsLoggedInState) {
+    SessionRig rig;
+    std::vector<std::pair<uint16_t, bool>> calls;
+    rig.session.SetPhysicalAccessControl([&](uint16_t node, bool enable) {
+        calls.emplace_back(node, enable);
+    });
+
+    rig.LoginSuccessfully();
+    ASSERT_EQ(1u, calls.size());
+    EXPECT_EQ(std::make_pair(kTargetNodeID, true), calls[0]);
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_EQ(2u, calls.size());
+    EXPECT_EQ(std::make_pair(kTargetNodeID, false), calls[1]);
+
+    ASSERT_TRUE(rig.session.Reconnect());
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t reconnectOrbAddress =
+        DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data);
+    const uint64_t reconnectStatusAddress =
+        ReadORBAddress(rig.addressManager, reconnectOrbAddress,
+                       offsetof(ReconnectORB, statusFIFOAddressHi),
+                       offsetof(ReconnectORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    StatusBlock status{};
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+    ASSERT_EQ(LoginState::LoggedIn, rig.session.State());
+    ASSERT_EQ(3u, calls.size());
+    EXPECT_EQ(std::make_pair(kTargetNodeID, true), calls[2]);
+
+    while (rig.bus.PendingWriteCount() > 0U) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    ASSERT_TRUE(rig.session.Logout());
+    ASSERT_EQ(4u, calls.size());
+    EXPECT_EQ(std::make_pair(kTargetNodeID, false), calls[3]);
+}

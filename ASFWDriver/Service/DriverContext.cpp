@@ -335,6 +335,15 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
                 }
             });
         }
+        if (d.hardware) {
+            std::weak_ptr<HardwareInterface> weakHardware = d.hardware;
+            d.sbp2SessionRegistry->SetPhysicalAccessControl(
+                [weakHardware](uint16_t node, bool enable) {
+                    if (auto hardware = weakHardware.lock()) {
+                        hardware->SetPhysicalRequestFilter(static_cast<uint8_t>(node), enable);
+                    }
+                });
+        }
         ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
     }
 
