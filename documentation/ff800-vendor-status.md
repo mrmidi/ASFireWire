@@ -242,3 +242,30 @@ process name; DriverKit messages can surface under `kernel`.
   human clock/channel meaning, bounded log volume and absence of record truncation.
 
 These results do not establish FF800 firmware acceptance or audible playback.
+
+## Remote hardware result — 2026-10-19
+
+The hardware owner reported working playback and returned
+`ASFW_Driver_Logs_2026-10-19.txt`. This is hardware evidence for the combined
+choreography on FF800 GUID `000a3500efafcd8a`, at 48 kHz, 28 channels and S800;
+it does not isolate which ordering change was necessary.
+
+- Both starts identify `recipe=vendor341-full-init-v1` (records #390 and #625).
+- First start submits the complete 12-byte init command with payload
+  `80 bb 00 00 00 e0 00 00 1c 08 00 00` (#415). The first status read has
+  q2/q3=`ffffffff`; the second, 5 ms later, has q2/q3=`00000001` (#425).
+  Channel 1 and the configured 48 kHz clock are accepted after two polls.
+- The post-enable timer completes (#474), then streaming is confirmed (#493).
+- After stop/restart, channel 1 is ready on the first poll (#656); the timer
+  completes (#673) and streaming is confirmed again (#692).
+- The second stream runs from approximately 162.911 to 245.263 seconds of host
+  monotonic time (about 82 seconds). Its TX preparation heartbeats report
+  `forcedNoData=0` and `missedFinality=0`; the device subsequently stops.
+- The export contains 941 records, reports complete coverage at snapshot, and
+  reports zero dropped records. It is a bounded run on one device, not evidence
+  for other rates, models, hot-unplug recovery, or transport ring-wrap coverage.
+
+q3 still cannot be named from this run: it transitions together with q2, but
+the only allocated channel observed is 1, leaving mirror versus state semantics
+unresolved. Playback success is the owner's report; startup, timing and telemetry
+above are directly visible in the returned log.
