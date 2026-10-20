@@ -430,7 +430,9 @@ public:
         // The mapping should reflect descriptor's buffer + offset.
         // We can just reuse buffer_ pointer as the "virtual address".
         uint64_t base = reinterpret_cast<uint64_t>(buffer_) + offset;
-        m->SetMockData(base, length);
+        // As in DriverKit, a length of 0 maps the rest of the descriptor.
+        const uint64_t mapped = length != 0 ? length : (offset < length_ ? length_ - offset : 0);
+        m->SetMockData(base, mapped);
         *map = m;
         return kIOReturnSuccess; 
     }

@@ -556,7 +556,9 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // 7. Start the host contexts the recipe has not started yet, after the
     //    device's settling interval. A recipe may start receive first so the
     //    device already transmits before host transmit begins.
-    IOSleep(profile.startOrder.postDeviceEnableDelayMs);
+    // A family may complete its own callback/timer-driven settling stage.
+    if (profile.startOrder.postDeviceEnableDelayMs != 0)
+        IOSleep(profile.startOrder.postDeviceEnableDelayMs);
     if (TeardownRequested()) {
         return aborted("PostEnableDelay");
     }

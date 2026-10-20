@@ -6,6 +6,9 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <optional>
+#include <map>
+#include <array>
+#include "Audio/Controls/ControlNotifications.hpp"
 #include <span>
 #include <type_traits>
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
@@ -877,4 +880,198 @@ TEST(ApogeeDuetFamilyDriver, TeardownAbortsAStepWaitingOnTheBus) {
     // The late completion lands in the abandoned wait harmlessly.
     rig.Bus().DrainLocks();
     family.SetTeardownCancelToken(nullptr);
+}
+
+namespace {
+struct DuetControlDevice {
+    using Key = std::array<uint8_t, 3>;
+    std::map<Key, std::vector<uint8_t>> values;
+    std::vector<uint8_t> controlCodes;
+    bool rejectNext{false};
+    std::optional<uint8_t> clampGain;
+    DuetControlDevice() {
+        InputParams input; input.gains = {10, 20};
+        OutputParams output; output.volume = 50;
+        MixerParams mixer;
+        DisplayParams display;
+        // A real Duet holds one output value: OutVolume and HW_STATE byte 3
+        // carry the same raw attenuation, and the knob decode is 64 - raw.
+        KnobState knob; knob.inputGains = input.gains;
+        knob.outputVolume = static_cast<uint8_t>(KnobState::kOutputVolMax - output.volume);
+        for (const auto& c : Serdes::BuildInputParamsControl(input)) Remember(c);
+        for (const auto& c : Serdes::BuildOutputParamsControl(output)) Remember(c);
+        for (const auto& c : Serdes::BuildMixerParamsControl(mixer)) Remember(c);
+        for (const auto& c : Serdes::BuildDisplayParamsControl(display)) Remember(c);
+        Remember(Serdes::BuildKnobStateControl(knob));
+    }
+    void Remember(const VendorCmd& c) {
+        auto bytes = BuildOperands(c);
+        values[{bytes[6], bytes[7], bytes[8]}] = {bytes.begin() + 9, bytes.end()};
+    }
+    void MoveGain(uint8_t channel, uint8_t gain) {
+        values[{uint8_t(VendorCmdCode::InGain), 0x80, channel}] = {gain};
+        values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][4 + channel] = gain;
+    }
+    std::optional<AvcReply> operator()(std::span<const uint8_t> command) {
+        if (command.size() < 12 || command[2] != 0) return {};
+        const Key key{command[9], command[10], command[11]};
+        if (command[0] == 0) {
+            controlCodes.push_back(command[9]);
+            if (rejectNext) { rejectNext = false; return AvcReply::Rejected(); }
+            values[key] = {command.begin() + 12, command.end()};
+            if (command[9] == uint8_t(VendorCmdCode::InGain)) {
+                MoveGain(command[11], clampGain.value_or(command[12]));
+            }
+            // One output register: HW_STATE byte 3 follows OutVolume.
+            if (command[9] == uint8_t(VendorCmdCode::OutVolume)) {
+                values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][3] = command[12];
+            }
+            return AvcReply::Accepted();
+        }
+        const auto found = values.find(key);
+        if (found == values.end()) return AvcReply::NotImplemented();
+        std::vector<uint8_t> reply(command.begin(), command.begin() + 12);
+        reply[0] = 0x0c; reply.insert(reply.end(), found->second.begin(), found->second.end());
+        return AvcReply::RawBytes(std::move(reply));
+    }
+};
+struct DuetControlRig {
+    AvcTestRig rig;
+    DuetControlDevice device;
+    std::shared_ptr<ApogeeDuetProtocol> protocol;
+    DuetControlRig() {
+        rig.Target().SetDeviceModel(std::ref(device));
+        protocol = std::make_shared<ApogeeDuetProtocol>(rig.Bus(), rig.Bus(), rig.Route(), &rig.Routes(),
+            nullptr, nullptr, 100, &rig.Timers());
+        protocol->UpdateRuntimeContext(rig.Route(), rig.Transport());
+    }
+    void Prepare() {
+        IOReturn status = kIOReturnNotReady;
+        protocol->Prepare([&](auto result) { status = result; });
+        rig.Drain(2048);
+        ASSERT_EQ(status, kIOReturnSuccess);
+        ASSERT_TRUE(protocol->CopySnapshot());
+    }
+    ~DuetControlRig() { protocol->Shutdown(); }
+};
+TEST(DuetControlProvider, ReadsEveryGroupBeforePublishingAndConfirmsHardwareValue) {
+    DuetControlRig r; r.Prepare();
+    auto snapshot = r.protocol->CopySnapshot();
+    ASSERT_TRUE(snapshot);
+    EXPECT_EQ(std::get<double>(snapshot->state.parameters.at(ASFW::AudioModel::ParameterId{DuetControl::OutputVolume}).value), -50);
+    r.device.clampGain = 47;
+    IOReturn status = kIOReturnNotReady;
+    ASFW::AudioModel::ParameterValue confirmed = false;
+    r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Gain}, 50.0,
+        [&](auto result, auto value) { status = result; confirmed = value; });
+    r.rig.Drain(2048);
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(std::get<double>(confirmed), 47);
+    ASSERT_EQ(r.device.controlCodes.size(), 1);
+    EXPECT_EQ(r.device.controlCodes.front(), uint8_t(VendorCmdCode::InGain));
+}
+TEST(DuetControlProvider, KnobPollUpdatesTheSnapshotAndEmitsOnlyChanges) {
+    DuetControlRig r; r.Prepare();
+    std::vector<ASFW::Audio::Controls::ParameterChanged> changes;
+    auto& notifications = ASFW::Audio::Controls::ControlNotifications::Shared();
+    ASSERT_TRUE(notifications.Register(&changes, [](void* owner, const auto& event) {
+        static_cast<std::vector<ASFW::Audio::Controls::ParameterChanged>*>(owner)->push_back(event);
+    }));
+    r.device.MoveGain(0, 35);
+    r.rig.Timers().Advance(500'000'000); r.rig.Drain(2048);
+    ASSERT_EQ(changes.size(), 1);
+    EXPECT_EQ(changes.front().parameterId, DuetControl::Gain);
+    const auto sequence = changes.front().sequence;
+    r.rig.Timers().Advance(500'000'000); r.rig.Drain(2048);
+    EXPECT_EQ(changes.size(), 1);
+    EXPECT_EQ(r.protocol->CopySnapshot()->sequence, sequence);
+    notifications.Unregister(&changes);
+}
+TEST(DuetControlProvider, SourceSwitchRecomputesGainRangeWithoutNewTopology) {
+    DuetControlRig r; r.Prepare();
+    const auto before = *r.protocol->CopySnapshot();
+    const auto router = ASFW::AudioModel::NodeId{DuetControl::InputRouter};
+    const auto node = std::ranges::find(before.topology.nodes, router, &ASFW::AudioModel::Node::id);
+    const auto& body = std::get<ASFW::AudioModel::RouterNode>(node->body);
+    IOReturn status = kIOReturnNotReady;
+    r.protocol->SetRoute(router, body.outputs.front(), body.inputs[1], [&](auto result, auto) { status = result; });
+    r.rig.Drain(2048);
+    EXPECT_EQ(status, kIOReturnSuccess);
+    const auto after = *r.protocol->CopySnapshot();
+    EXPECT_EQ(after.topology.revision, before.topology.revision);
+    const auto& gain = after.state.parameters.at(ASFW::AudioModel::ParameterId{DuetControl::Gain});
+    EXPECT_EQ(std::get<double>(gain.value), 0);
+    EXPECT_EQ(gain.domainOverride->max, 65);
+}
+// Found on hardware 2026-10-17: the knob poll and the output-group read
+// decoded the one output register in opposite senses, so CoreAudio's volume
+// flipped by 2*raw-64 dB on every poll. A written volume must read back the
+// same through both, and survive the next poll unchanged.
+TEST(DuetControlProvider, OutputVolumeSurvivesTheKnobPoll) {
+    DuetControlRig r; r.Prepare();
+    const ASFW::AudioModel::ParameterId volume{DuetControl::OutputVolume};
+    IOReturn status = kIOReturnNotReady;
+    ASFW::AudioModel::ParameterValue confirmed = false;
+    r.protocol->SetParameter(volume, -10.0, [&](auto result, auto value) { status = result; confirmed = value; });
+    r.rig.Drain(4096);
+    ASSERT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(std::get<double>(confirmed), -10);
+    // Raw attenuation 10 in the one output register.
+    EXPECT_EQ((r.device.values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][3]), 10);
+    for (int poll = 0; poll < 3; ++poll) { r.rig.Timers().Advance(500'000'000); r.rig.Drain(4096); }
+    EXPECT_EQ(std::get<double>(r.protocol->CopySnapshot()->state.parameters.at(volume).value), -10);
+}
+// A write that lands while the knob poll is reading must wait for it, not be
+// refused: the poll runs every 500 ms, so a refusal would fail a slider drag
+// at random. Writes queued behind it run in arrival order.
+TEST(DuetControlProvider, WriteDuringKnobPollWaitsForItInsteadOfFailing) {
+    DuetControlRig r; r.Prepare();
+    r.rig.Timers().Advance(500'000'000); // the poll is now in flight, undrained
+    std::vector<std::pair<IOReturn, double>> results;
+    for (const double gain : {30.0, 40.0}) {
+        r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Gain}, gain,
+            [&](auto status, auto value) {
+                results.emplace_back(status, std::holds_alternative<double>(value) ? std::get<double>(value) : -1);
+            });
+    }
+    EXPECT_TRUE(results.empty());
+    r.rig.Drain(4096);
+    ASSERT_EQ(results.size(), 2U);
+    EXPECT_EQ(results[0], std::make_pair(kIOReturnSuccess, 30.0));
+    EXPECT_EQ(results[1], std::make_pair(kIOReturnSuccess, 40.0));
+    EXPECT_EQ(std::count(r.device.controlCodes.begin(), r.device.controlCodes.end(),
+                         uint8_t(VendorCmdCode::InGain)), 2);
+}
+// A route change drops the device's state: a queued write is answered, never
+// left waiting, and is not sent to the device.
+TEST(DuetControlProvider, QueuedWriteIsAnsweredWhenTheRouteChanges) {
+    DuetControlRig r; r.Prepare();
+    r.rig.Timers().Advance(500'000'000);
+    std::optional<IOReturn> status;
+    r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Gain}, 30.0,
+        [&](auto result, auto) { status = result; });
+    auto moved = r.rig.Route();
+    moved.routeEpoch += 1;
+    r.protocol->UpdateRuntimeContext(moved, r.rig.Transport());
+    ASSERT_TRUE(status);
+    EXPECT_EQ(*status, kIOReturnNotReady);
+    r.rig.Drain(4096);
+    EXPECT_TRUE(r.device.controlCodes.empty());
+}
+TEST(DuetControlProvider, RejectedWriteNeverPublishesItsIntendedValueAndShutdownStopsPolls) {
+    DuetControlRig r; r.Prepare();
+    r.device.rejectNext = true;
+    IOReturn status = kIOReturnSuccess;
+    r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::Phantom}, true,
+        [&](auto result, auto) { status = result; });
+    r.rig.Drain(2048);
+    EXPECT_NE(status, kIOReturnSuccess);
+    EXPECT_FALSE(std::get<bool>(r.protocol->CopySnapshot()->state.parameters.at(
+        ASFW::AudioModel::ParameterId{DuetControl::Phantom}).value));
+    r.protocol->Shutdown();
+    const auto count = r.rig.Target().Commands().size();
+    r.rig.Timers().Advance(1'000'000'000); r.rig.Drain(2048);
+    EXPECT_EQ(r.rig.Target().Commands().size(), count);
+    EXPECT_FALSE(r.protocol->CopySnapshot());
+}
 }

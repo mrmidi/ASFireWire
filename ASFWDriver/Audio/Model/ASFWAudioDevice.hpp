@@ -6,6 +6,7 @@
 //
 
 #pragma once
+#include "../Controls/CoreAudioControlProperties.hpp"
 
 #include "AudioPropertyKeys.hpp"
 #include "AvcVolumeMapping.hpp"
@@ -88,6 +89,7 @@ struct ASFWAudioDevice {
     /// publishing (DICE); see PropertyKeys::kResolvedGeometryRequired.
     bool resolvedGeometryRequired{false};
     bool graphResolved{false};
+    std::vector<Controls::CoreAudioControl> parameterControls;
     std::vector<AvcPublishedControl> avcControls;
 
     /// `sampleRates` came from the device (DICE CLOCK_CAPABILITIES) and the
@@ -243,28 +245,10 @@ struct ASFWAudioDevice {
             properties->setObject(PropertyKeys::kDeviceSampleRates, fromDevice.get());
         }
 
-        auto controls = OSSharedPtr(OSArray::withCapacity(static_cast<uint32_t>(avcControls.size())), OSNoRetain);
-        if (!controls) return false;
-        for (const auto& control : avcControls) {
-            auto entry = OSSharedPtr(OSDictionary::withCapacity(10), OSNoRetain);
-            if (!entry) return false;
-            const auto add = [&](const char* key, uint32_t value) {
-                auto number = OSSharedPtr(OSNumber::withNumber(value, 32), OSNoRetain);
-                if (!number) return false;
-                entry->setObject(key, number.get()); return true;
-            };
-            if (!add("Token", control.token) || !add("Scope", control.scope) || !add("Element", control.element) ||
-                !add("HasMute", control.hasMute) || !add("Muted", control.muted) || !add("HasVolume", control.hasVolume) ||
-                !add("Current", static_cast<uint16_t>(control.current)) ||
-                !add("Minimum", static_cast<uint16_t>(control.range.minimum)) ||
-                !add("Maximum", static_cast<uint16_t>(control.range.maximum)) ||
-                !add("Resolution", static_cast<uint16_t>(control.range.resolution))) return false;
-            auto name = OSSharedPtr(OSString::withCString(control.name), OSNoRetain);
-            if (!name) return false;
-            entry->setObject("Name", name.get());
-            controls->setObject(entry.get());
-        }
-        properties->setObject(kAvcControlsProperty, controls.get());
+        auto parameterProperties = Controls::EncodeControls(parameterControls);
+        if (!parameterProperties) return false;
+        properties->setObject(Controls::kControlsProperty, parameterProperties.get());
+
         return true;
     }
 

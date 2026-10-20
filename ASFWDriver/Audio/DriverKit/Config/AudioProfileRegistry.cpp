@@ -8,6 +8,7 @@
 #include "MOTU/MotuProfile.hpp"
 #include "AVC/MackieOnyx400FProfile.hpp"
 #include "AVC/GenericAvcProfile.hpp"
+#include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
 #include "RME/FirefaceProfile.hpp"
 
@@ -95,6 +96,7 @@ DiceProfile gGenericDiceProfile{{.name = "Generic DICE"}};
 // all of them. Device-specific code is controls only, and lives in the
 // protocol (the Duet's knob, params and meters).
 AVC::Profiles::GenericAvcProfile gGenericAvcProfile{};
+AVC::Profiles::ApogeeDuetProfile gApogeeDuetProfile{};
 AVC::Profiles::MackieOnyx400FProfile gMackieOnyx400FProfile{};
 AVC::Profiles::MAudioSpecialProfile gMAudio1814Profile{false};
 AVC::Profiles::MAudioSpecialProfile gMAudioProjectMixProfile{true};
@@ -104,6 +106,7 @@ MOTU::Profiles::MotuProfile gMotu896Profile{2};
 MOTU::Profiles::MotuProfile gMotu896mk3Profile{23};
 MOTU::Profiles::MotuProfile gMotuUltraliteMk3Profile{25};
 MOTU::Profiles::MotuProfile gMotuTravelerMk3Profile{27};
+MOTU::Profiles::MotuProfile gMotuTrack16Profile{57};
 MOTU::Profiles::MotuProfile gMotu896hdProfile{5};
 MOTU::Profiles::MotuProfile gMotuTravelerProfile{9};
 MOTU::Profiles::MotuProfile gMotu8preProfile{15};
@@ -160,7 +163,9 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::Motu896mk3:
         case Builder::MotuUltraliteMk3:
         case Builder::MotuTravelerMk3:
+        case Builder::MotuTrack16:
         case Builder::GenericAvc:
+        case Builder::Orpheus:
         case Builder::MAudioFireWire1814:
         case Builder::MAudioProjectMix:
         case Builder::RmeFireface400:
@@ -187,9 +192,12 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MAudioProjectMix:
             return &gMAudioProjectMixProfile;
         // Its controls are the Duet protocol's; its streams are discovered.
+        // Timing is Apogee's own table (ApogeeDuetProfile.hpp).
         case Builder::ApogeeDuet:
+            return &gApogeeDuetProfile;
         case Builder::TerraTecPhase88:
         case Builder::MackieOnyxIOxfw:
+        case Builder::Orpheus:
         case Builder::GenericAvc:
             return &gGenericAvcProfile;
         // Static 10x10. FireworksProtocol logs the device's HWINFO counts and
@@ -214,6 +222,7 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::Motu896mk3: return &gMotu896mk3Profile;
         case Builder::MotuUltraliteMk3: return &gMotuUltraliteMk3Profile;
         case Builder::MotuTravelerMk3: return &gMotuTravelerMk3Profile;
+        case Builder::MotuTrack16: return &gMotuTrack16Profile;
         case Builder::RmeFireface400:
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:

@@ -91,6 +91,11 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     uint16_t vendorId = 0, deviceId = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
+    uint8_t revisionId = 0;
+    pci->ConfigurationRead8(kIOPCIConfigurationOffsetRevisionID, &revisionId);
+    // Revision matters for quirks: Linux disables MSI on FW643 rev 6 (ohci.c:344).
+    ASFW_LOG(Hardware, "PCI controller vendor=0x%04x device=0x%04x revision=0x%02x",
+             vendorId, deviceId, revisionId);
 
     quirk_agere_lsi_ = (vendorId == 0x11c1 && (deviceId == 0x5901 || deviceId == 0x5900));
     if (quirk_agere_lsi_) {
@@ -357,36 +362,49 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
 }
 
 // Global events first, then each signalled direction's context mask, read and
-// cleared once (Linux ohci.c irq_handler, cross-validated at :2203-2268).
+// cleared once; share one completion readback across those writes (Linux
+// ohci.c irq_handler:2219-2268,2309-2313). Retain HCControl as our readback
+// register so a removed provider still revokes the MMIO access gate.
 // IntEvent.isochTx and isochRx are not latched: each is the OR of
 // (isoXmitIntEvent & isoXmitIntMask), or of the isoRecv pair (OHCI 1.1
 // Table 6-1), so it deasserts only when those context bits are cleared.
 // Reading the Clear address returns the masked events (OHCI 1.1 §6.3.1,
 // §6.4.1), as Linux reads it, so a context whose interrupt is masked is left
-// alone. Only the bits read are cleared: a completion that lands after the
-// read keeps its bit and raises a new interrupt.
-IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+// alone. Only the bits read are cleared: a newly signalled context absent from
+// that bitmap keeps its bit for the next interrupt/drain pass.
+IsochContextEvents HardwareInterface::AcknowledgeInterruptEvents(
+    uint32_t globalEventsToClear, uint32_t intEvent) noexcept {
     IsochContextEvents events{};
-    if ((intEvent & (IntEventBits::kIsochTx | IntEventBits::kIsochRx)) == 0) {
+    if (globalEventsToClear == 0 &&
+        (intEvent & (IntEventBits::kIsochTx | IntEventBits::kIsochRx)) == 0) {
         return events;
     }
     auto access = TryBeginAccess();
     if (!access) {
         return events;
     }
+    bool wrote = globalEventsToClear != 0;
+    if (wrote) {
+        access.Write(Register32::kIntEventClear, globalEventsToClear);
+    }
     if ((intEvent & IntEventBits::kIsochRx) != 0) {
         events.receive = access.Read(Register32::kIsoRecvIntEventClear);
         if (events.receive != 0) {
-            access.WriteAndFlush(Register32::kIsoRecvIntEventClear, events.receive);
+            access.Write(Register32::kIsoRecvIntEventClear, events.receive);
+            wrote = true;
         }
     }
     if ((intEvent & IntEventBits::kIsochTx) != 0) {
         events.transmit = access.Read(Register32::kIsoXmitIntEventClear);
         if (events.transmit != 0) {
-            access.WriteAndFlush(Register32::kIsoXmitIntEventClear, events.transmit);
+            access.Write(Register32::kIsoXmitIntEventClear, events.transmit);
+            wrote = true;
         }
     }
-    return events;
+    if (wrote) {
+        access.FlushPostedWrites();
+    }
+    return HardwareGone() ? IsochContextEvents{} : events;
 }
 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {

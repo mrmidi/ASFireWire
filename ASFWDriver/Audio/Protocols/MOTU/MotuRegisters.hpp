@@ -247,10 +247,16 @@ struct V2PcmChunks {
     if (model->protocol != Encoding::Motu::ProtocolVersion::V3 || (model->unresolvedModes & (1U << mode))) return {};
     V2PcmChunks chunks{.tx = model->captureChunks[mode], .rx = model->playbackChunks[mode], .opticalDecoded = true};
     if (!chunks.tx || !chunks.rx) return {};
-    if (model->optical == Encoding::Motu::OpticalLayout::V3Banks && mode < 2) {
+    const bool bankA = model->optical == Encoding::Motu::OpticalLayout::V3Banks ||
+                       model->optical == Encoding::Motu::OpticalLayout::V3BankA;
+    if (bankA && mode < 2) {
         const auto extra = [mode](bool enabled, bool spdif) { return !enabled ? 0U : (spdif ? 4U : (mode == 0 ? 8U : 4U)); };
-        chunks.tx += extra(raw & 1, raw & 0x10000) + extra(raw & 2, raw & 0x100000);
-        chunks.rx += extra(raw & 0x100, raw & 0x40000) + extra(raw & 0x200, raw & 0x400000);
+        chunks.tx += extra(raw & 1, raw & 0x10000);
+        chunks.rx += extra(raw & 0x100, raw & 0x40000);
+        if (model->optical == Encoding::Motu::OpticalLayout::V3Banks) {
+            chunks.tx += extra(raw & 2, raw & 0x100000);
+            chunks.rx += extra(raw & 0x200, raw & 0x400000);
+        }
         // Vendor hybrid S/PDIF counts differ from Linux. Withhold this shape.
         if (version == 0x35 && (((raw & 1) && (raw & 0x10000)) || ((raw & 2) && (raw & 0x100000)) ||
             ((raw & 0x100) && (raw & 0x40000)) || ((raw & 0x200) && (raw & 0x400000)))) return {};

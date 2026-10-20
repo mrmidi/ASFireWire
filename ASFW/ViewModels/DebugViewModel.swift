@@ -27,6 +27,10 @@ class DebugViewModel: ObservableObject {
     private let statusFetchQueue = DispatchQueue(label: "net.asfw.app.debug.fetch", qos: .userInitiated)
     private var inventoryRequestID = UUID()
     private var isRefreshingInventory = false
+    /// True while a timing measurement owns an audio device. Reading the driver
+    /// perturbs the timing being measured, so periodic and event-driven fetches
+    /// are skipped until the measurement ends.
+    private(set) var isDriverPollingPaused = false
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -101,6 +105,14 @@ class DebugViewModel: ObservableObject {
         fetchLatestSnapshots()
     }
 
+    /// Pauses (or resumes) the app's own reads of the driver. Resuming fetches once
+    /// to catch up on anything that was skipped.
+    func setDriverPollingPaused(_ paused: Bool) {
+        guard paused != isDriverPollingPaused else { return }
+        isDriverPollingPaused = paused
+        if !paused { fetchLatestSnapshots() }
+    }
+
     private func handleStatusUpdate(_ status: DriverStatus) {
         sharedStatus = status
         fetchLatestSnapshots()
@@ -113,6 +125,7 @@ class DebugViewModel: ObservableObject {
     }
 
     private func fetchLatestSnapshots() {
+        guard !isDriverPollingPaused else { return }
         refreshDiscovery()
         statusFetchQueue.async { [weak self] in
             guard let self = self else { return }
@@ -138,15 +151,6 @@ class DebugViewModel: ObservableObject {
         guard isConnected else { return false }
         return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices)
             .contains { $0.isDICEDevice }
-    }
-
-    var hasDuetDevice: Bool {
-        guard isConnected else { return false }
-        return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices).contains { item in
-            guard let device = item.device else { return false }
-            return device.vendorId == ASFWDriverConnector.duetVendorID &&
-                device.modelId == ASFWDriverConnector.duetModelID
-        }
     }
 
     func fetchTopology() {
@@ -180,7 +184,7 @@ class DebugViewModel: ObservableObject {
 
     /// One cache-only inventory refresh for navigation and the bus inspector.
     func refreshDiscovery() {
-        guard isConnected, !isRefreshingInventory else { return }
+        guard isConnected, !isRefreshingInventory, !isDriverPollingPaused else { return }
         isRefreshingInventory = true
         let request = UUID()
         inventoryRequestID = request

@@ -101,6 +101,15 @@ inline const std::vector<Group> groups = [] {
     pair(0x19,false,"Main L","Main R",{0,0,0});
     pair(0x19,false,"Phones L","Phones R",{10,10,10});
     pair(0x19,false,"S/PDIF 1","S/PDIF 2",{12,12,-1});
+    // Track16: vendor BoxTrack16::SetupStrmFwIds 0x51330 / SetupStreams 0x515a0.
+    pair(0x39,false,"Main L","Main R",{0,0,0});
+    pair(0x39,false,"Phones L","Phones R",{2,2,2});
+    pair(0x39,false,"Analog 1","Analog 2",{4,4,4});
+    pair(0x39,true,"Mic 1","Mic 2",{0,0,0});
+    pair(0x39,true,"Guitar 1","Guitar 2",{2,2,2});
+    result.push_back({0x39,true,{"Analog 1","Analog 2","Analog 3","Analog 4"},{4,4,4}});
+    pair(0x39,true,"Return L","Return R",{8,8,8});
+    pair(0x39,true,"Reverb L","Reverb R",{12,12,-1});
     return result;
 }();
 

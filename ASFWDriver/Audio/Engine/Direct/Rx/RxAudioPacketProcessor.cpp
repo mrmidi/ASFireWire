@@ -12,6 +12,26 @@ namespace ASFW::AudioEngine::Direct::Rx {
 
 static constexpr size_t kIsochHeaderSize = 8; // Timestamp (4) + 1394 Isoch Header (4)
 
+namespace {
+
+// IEC 61883-6: AM824 is FMT 0x10, and a packet whose FDF is 0xFF is NO-DATA
+// (data-block count zero) even when payload bytes follow the header. Linux
+// treats it the same way (amdtp-stream.c:768-770: payload_length == 0 or
+// fmt == AM and fdf == NO_DATA -> data_blocks = 0). Reading MIDI out of what
+// trails a NO-DATA header would be reading leftover buffer.
+constexpr uint8_t kFormatAm824 = 0x10;
+constexpr uint8_t kAm824NoDataFdf = 0xFF;
+
+void MarkMidiGap(const RxMidiExtraction& midi, RxAudioPacketProcessorResult& result) noexcept {
+    if (!midi.Enabled()) return;
+    for (uint8_t port = 0; port < midi.geometry.portCount; ++port) {
+        midi.sink->MarkMidiDiscontinuity(port);
+    }
+    result.midiGap = true;
+}
+
+} // namespace
+
 RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     const uint8_t* payload,
     size_t length,
@@ -22,12 +42,14 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     bool publishTimeline,
     const RxCaptureChannelMap& captureMap,
     bool primeDelayLine,
-    const ::ASFW::Encoding::AudioPacketFraming framing) noexcept {
+    const ::ASFW::Encoding::AudioPacketFraming framing,
+    const RxMidiExtraction& midi) noexcept {
     RxAudioPacketProcessorResult result{};
 
     const bool headerless = framing == ::ASFW::Encoding::AudioPacketFraming::kHeaderless;
     if (length < kIsochHeaderSize + (headerless ? 0U : 8U)) {
         result.status = DirectRxWriteStatus::kShortPacket;
+        MarkMidiGap(midi, result);
         return result;
     }
 
@@ -38,14 +60,17 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     const uint8_t* data = payload + kIsochHeaderSize;
     size_t payloadBytes = length - kIsochHeaderSize;
     uint8_t cipDBS = 0;
+    uint8_t cipFormat = 0;
     if (!headerless) {
         uint32_t quadlets[2]{};
         std::memcpy(quadlets, data, sizeof(quadlets));
         const auto cip = codec.DecodeHeader(quadlets[0], quadlets[1]);
         if (!cip) {
             result.status = DirectRxWriteStatus::kInvalidCipHeader;
+            MarkMidiGap(midi, result);
             return result;
         }
+        cipFormat = cip->format;
         result.hasValidCip = true;
         result.syt = cip->syt;
         result.fdf = cip->fdf;
@@ -71,6 +96,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     const size_t strideBytes = static_cast<size_t>(strideQuadlets) * 4u;
     if (strideBytes == 0) {
         result.status = DirectRxWriteStatus::kZeroDataBlockSize;
+        MarkMidiGap(midi, result);
         return result;
     }
 
@@ -87,6 +113,45 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     if (eventCount == 0) {
         result.status = DirectRxWriteStatus::kAvailable;
         return result;
+    }
+
+    // MIDI comes off the wire BEFORE the PCM binding check below: the writer is
+    // legitimately unbound whenever no CoreAudio client holds the capture buffer,
+    // and extracting after that early return would make MIDI work only while an
+    // audio client happened to be open. The event count is the wire payload's,
+    // never the number of PCM frames that were written.
+    //
+    // Everything is validated before the first byte is read: a CIP-framed
+    // AM824 packet that is not NO-DATA, whose data-block size is the one the
+    // MIDI slot was projected for, and whose payload is whole data blocks. A
+    // packet that fails any of these other than for being NO-DATA lost its
+    // bytes, so the sink is told the stream is discontinuous.
+    if (midi.Enabled() && !headerless) {
+        const bool noData = cipFormat == kFormatAm824 && result.fdf == kAm824NoDataFdf;
+        if (!noData) {
+            const bool whole = (payloadBytes % strideBytes) == 0;
+            if (cipFormat == kFormatAm824 && whole &&
+                strideQuadlets == midi.geometry.dbs &&
+                cipDBS == midi.geometry.dbs) {
+                ASFW::Encoding::MpxMidiDemuxCounters discard{};
+                ASFW::Encoding::MpxMidiDemuxCounters& counters =
+                    midi.counters != nullptr ? *midi.counters : discard;
+                const uint64_t before = counters.bytesDelivered;
+                const uint64_t packetHostTicks =
+                    result.hasReceiveCycleTimestamp
+                        ? ASFW::Isoch::Rx::PacketHostTicks(
+                              result.receiveCycleTimestamp, midi.drainCycleTimer,
+                              midi.drainHostTicks)
+                        : midi.drainHostTicks;
+                ASFW::Encoding::DemuxMpxMidi(data, static_cast<uint32_t>(eventCount),
+                                             result.dbc, midi.geometry, packetHostTicks,
+                                             *midi.sink, counters);
+                result.midiBytesDelivered =
+                    static_cast<uint32_t>(counters.bytesDelivered - before);
+            } else {
+                MarkMidiGap(midi, result);
+            }
+        }
     }
 
     // If unarmed: parse timing/counters, and drop PCM

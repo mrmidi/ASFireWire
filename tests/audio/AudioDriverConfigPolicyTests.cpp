@@ -6,7 +6,6 @@
 
 namespace {
 
-using ASFW::Isoch::Audio::BoolControlDescriptor;
 using ASFW::Isoch::Audio::ParsedAudioDriverConfig;
 using ASFW::Isoch::Audio::StreamMode;
 

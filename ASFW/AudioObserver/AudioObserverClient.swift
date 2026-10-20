@@ -843,7 +843,7 @@ final class ASFWAudioObserverClient {
 }
 
 extension ASFWAudioObserverClient {
-    static func guid(fromDeviceUID uid: String) -> UInt64? {
+    nonisolated static func guid(fromDeviceUID uid: String) -> UInt64? {
         guard uid.hasPrefix("ASFW-") else { return nil }
         return UInt64(uid.dropFirst(5), radix: 16)
     }

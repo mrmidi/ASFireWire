@@ -4,6 +4,7 @@
 #include <DriverKit/IOLib.h>
 #include "ASFWAvcAudioStream.h"
 #include "ASFWAudioDevice.h"
+#include "../../Logging/Logging.hpp"
 
 struct ASFWAvcAudioStream_IVars {
     IOLock* lock{nullptr};
@@ -19,6 +20,7 @@ bool ASFWAvcAudioStream::init(IOUserAudioDriver* driver, IOUserAudioStreamDirect
     return ivars->lock != nullptr;
 }
 void ASFWAvcAudioStream::free() {
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAvcAudioStream free obj=%p", this);
     if (ivars) {
         if (ivars->lock) IOLockFree(ivars->lock);
         ivars->~ASFWAvcAudioStream_IVars();

@@ -6,6 +6,7 @@
 //
 
 #include "AVCUnit.hpp"
+#include "FeatureChangeNotifications.hpp"
 #include "Graph/DiscoveryGraph.hpp"
 #include "Discovery/DiscoveryLog.hpp"
 #include <algorithm>
@@ -286,14 +287,27 @@ void AVCUnit::RememberConfirmedDuplexRate(const Discovery::DeviceRouteToken& rou
 void AVCUnit::RememberConfirmedFeature(const Discovery::DeviceRouteToken& route, uint8_t subunit,
                                        const ASFW::AVC::Cmd::FeatureReply& reply) {
     if (!IsCurrentRoute(route) || !snapshot_ || snapshot_->route != route || !discoveredGraph_) return;
+    const bool mute = reply.control == ASFW::AVC::Cmd::FeatureControl::kMute;
+    if (!mute && reply.control != ASFW::AVC::Cmd::FeatureControl::kVolume) return;
+    const int32_t value = mute ? static_cast<int32_t>(reply.AsMute()) : reply.AsVolume().Raw();
     auto updated = std::make_shared<Graph::DeviceGraph>(*discoveredGraph_);
+    bool changed = false;
+    bool found = false;
     for (auto& channel : updated->featureChannels) {
         if (channel.subunit != subunit || channel.block != reply.functionBlockId || channel.channel != reply.channel) continue;
+        found = true;
         channel.userPreference = true;
-        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kMute) channel.mute = reply.AsMute();
-        if (reply.control == ASFW::AVC::Cmd::FeatureControl::kVolume) channel.volume = reply.AsVolume().Raw();
+        if (mute) { changed |= channel.mute != reply.AsMute(); channel.mute = reply.AsMute(); }
+        else { changed |= channel.volume != reply.AsVolume().Raw(); channel.volume = reply.AsVolume().Raw(); }
     }
+    if (!found) return;
+    if (changed) updated->featureChangeSequence = FeatureChangeNotifications::Shared().NextSequence();
+    const uint64_t sequence = updated->featureChangeSequence;
     discoveredGraph_ = std::move(updated);
+    if (changed) FeatureChangeNotifications::Shared().Publish({
+        .route = route, .revision = snapshot_->session.value, .sequence = sequence,
+        .subunit = subunit, .block = reply.functionBlockId, .channel = reply.channel,
+        .mute = mute, .value = value});
 }
 
 bool AVCUnit::HasUserFeaturePreference(uint8_t subunit, uint8_t block) const noexcept {

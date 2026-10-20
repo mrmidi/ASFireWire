@@ -59,15 +59,14 @@ public:
                                    uint32_t reason)
         TYPE(ASFWAudioNub::IoRestartRequired);
 
-    kern_return_t ApplyAvcFeatureControl(uint32_t token, bool muteControl,
-                                        int32_t value, int32_t* outConfirmedValue) LOCALONLY;
-    // Protocol-backed boolean control bridge (used by custom control subclass).
-    kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
-                                              uint32_t element,
-                                              bool value) LOCALONLY;
-    kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
-                                             uint32_t element,
-                                             bool* outValue) LOCALONLY;
+    virtual void ControlParameterChanged(OSAction* action,
+        uint64_t guid, uint64_t revision, uint64_t sequence,
+        uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin)
+        TYPE(ASFWAudioNub::ControlParameterChanged);
+
+    kern_return_t ApplyControlParameter(uint32_t parameterId, uint64_t kind, uint64_t bits,
+        uint64_t* confirmedKind, uint64_t* confirmedBits) LOCALONLY;
+
 };
 
 #endif /* ASFWAudioDriver_h */

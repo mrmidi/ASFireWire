@@ -16,6 +16,7 @@ class DriverViewModel: ObservableObject {
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
     @Published private(set) var isDriverConnected: Bool = false
+    @Published private(set) var driverUpdateState: DriverExtensionUpdateState = .unknown
 
     var displayedStatus: String {
         isDriverConnected ? "Driver is loaded and connected" : activationStatus
@@ -87,6 +88,22 @@ class DriverViewModel: ObservableObject {
             driverVersion = nil
             log(activationStatus, source: .userClient, level: .warning)
         }
+        if changed {
+            refreshDriverUpdateState()
+        }
+    }
+
+    /// Asks macOS which driver build is installed and compares it with the
+    /// build bundled in this app.
+    func refreshDriverUpdateState() {
+        DriverExtensionPropertiesProbe.check { [weak self] state in
+            guard let self, state != self.driverUpdateState else { return }
+            self.driverUpdateState = state
+            if case .installedOlder(let installed, let bundled) = state {
+                self.log("Installed driver build \(installed.bundleVersion) is older than the bundled build \(bundled.bundleVersion)",
+                         source: .app, level: .warning)
+            }
+        }
     }
     
     func installDriver(requireNewerBuild: Bool = DriverInstallSettings.defaultRequireNewerBuild) {
@@ -113,6 +130,7 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = "Error: \(message)"
                     self.log(message, source: .app, level: .error)
                 }
+                self.refreshDriverUpdateState()
             }
         }
     }
@@ -140,6 +158,7 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = "Error: \(message)"
                     self.log(message, source: .app, level: .error)
                 }
+                self.refreshDriverUpdateState()
             }
         }
     }

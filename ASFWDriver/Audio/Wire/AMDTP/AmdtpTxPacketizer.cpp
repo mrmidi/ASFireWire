@@ -162,6 +162,10 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         return false; // no state advanced; caller may retry
     }
 
+    // Invalidate the previous occupant before rewriting any shared bytes.
+    // DATA exposure is deferred until timing preparation is final.
+    timeline_->MarkNoDataPacket(slot.packetIndex);
+
     // For an end-event family the header carries the count after this packet's blocks
     // (amdtp-stream.c:1040-1046). A NO-DATA packet carries no blocks, so both
     // conventions write the same value for it.
@@ -194,21 +198,12 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         }
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
 
-        if (!timeline_->ExposeDataPacket(outPacket, slot.bytes,
-                                         slot.capacityBytes)) {
-            return false; // bytes written but no counters advanced
-        }
-
         dbcCounter_.AdvanceDataBlocks(frames);
     } else {
         outPacket.syt = IEC61883::SytFormatter::kNoInfo;
 
-        if (isSkipCycle || isEmptyPacket) {
-            // A headerless skip transmits no packet; a CIP empty packet carries
-            // its immediate isoch header with a zero-byte payload. Neither has
-            // a content header or payload in the shared buffer.
-            timeline_->MarkNoDataPacket(slot.packetIndex);
-        } else {
+        // Headerless skips and CIP empty packets carry no content bytes.
+        if (!isSkipCycle && !isEmptyPacket) {
             // Some endpoints require a full-size cadence packet whose audio
             // slots carry the AM824 no-audio label. Other profiles retain the
             // header-only packet form.
@@ -217,12 +212,17 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                 WriteCadencePacketFill(slot.bytes, payloadBytes);
                 dbcCounter_.AdvanceDataBlocks(cadenceBlocks);
             }
-            timeline_->MarkNoDataPacket(slot.packetIndex);
         }
     }
 
     cadence_->AdvanceCycle();
     return true;
+}
+
+bool AmdtpTxPacketizer::ExposePreparedPacket(TxPacketSlotView slot,
+                                           const PreparedTxPacket& packet) noexcept {
+    return timeline_ != nullptr && (!packet.isData ||
+        timeline_->ExposeDataPacket(packet, slot.bytes, slot.capacityBytes));
 }
 
 void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept {
@@ -241,13 +241,11 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
         packet.dbc = dbc;
         packet.framesInPacket = 0;
         packet.syt = IEC61883::SytFormatter::kNoInfo;
-        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
         return;
     }
     const bool isEmptyPacket = txPolicy_.emptyPacketsDuringIdle;
     if (isEmptyPacket) {
         packet.byteCount = 0;
-        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
     } else {
         const uint8_t cadenceBlocks =
             (txPolicy_.cadencePacketsCarryDataBlocks &&
@@ -265,7 +263,6 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
             WriteCadencePacketFill(slot.bytes, payloadBytes);
             dbcCounter_.AdvanceDataBlocks(cadenceBlocks);
         }
-        timeline_->RetractNewestDataPacket(packet.packetIndex, packet.firstAudioFrame);
     }
     packet.isData = false;
     packet.dbc = dbc;

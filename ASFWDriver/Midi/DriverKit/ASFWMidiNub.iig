@@ -1,0 +1,71 @@
+//
+// ASFWMidiNub.iig
+// ASFWDriver
+//
+// Nub published by ASFWDriver for an audio endpoint whose DICE streams carry
+// MPX-MIDI. ASFWMIDIDriver matches it on ASFWNubType == "MIDI", mirroring how
+// ASFWAudioDriver matches ASFWAudioNub on ASFWNubType == "Audio".
+//
+// Everything the MIDI service needs to know about its endpoint (names, port
+// counts) is set as registry properties BEFORE the nub registers (see
+// Midi/Core/MidiNubProperties.hpp). That ordering is the publisher's job and is
+// explicit here: IOService::Create runs Start before the publisher can set
+// anything, so Start must not read the endpoint from its own properties (the
+// midi branch did, cached endpoint 0, and crashed the dext through
+// MIDIDriverKit's null I/O buffer). The publisher calls SetEndpointId, exactly
+// as the audio publisher calls SetGuid, and only then Publish.
+//
+// Byte transport is not a nub call: it is one retained descriptor the endpoint
+// owns, handed out here for the MIDI service to map.
+//
+
+#ifndef ASFWMidiNub_h
+#define ASFWMidiNub_h
+
+#include <DriverKit/IOService.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+#include <DriverKit/OSAction.iig>
+
+class ASFWMidiNub: public IOService
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    /// Hand the MIDI byte seam to the MIDI service.
+    ///
+    /// A retained descriptor owned by the endpoint runtime; the MIDI service
+    /// maps it for itself and drops that mapping once its own queue is
+    /// quiescent. Nothing but this descriptor crosses the seam -- raw pointers
+    /// between services on different queues is the FW-60 shape.
+    /// kIOReturnNotReady until the endpoint has configured its MIDI seam.
+    virtual kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory);
+
+    /// Delivered on the MIDI service's queue when the core driver's receive
+    /// path queued device -> host bytes. One-way: the receive queue never waits
+    /// on a CoreMIDI client.
+    virtual void MidiReceiveReady(OSAction* action TARGET);
+
+    /// The MIDI service registers its handler here during Start.
+    virtual kern_return_t RegisterMidiReceiveAction(
+        OSAction* action TYPE(MidiReceiveReady));
+
+    /// Core-driver side, same process. The publisher sets the endpoint id
+    /// explicitly (see the note above); nothing reads it from properties.
+    void SetEndpointId(uint64_t endpointId) LOCALONLY;
+    uint64_t GetEndpointId() const LOCALONLY;
+
+    /// Register with IOKit so ASFWMIDIDriver can match. Called by the publisher
+    /// once the endpoint id and every property are in place, never from Start,
+    /// so the MIDI service can never start against a half-configured nub.
+    kern_return_t Publish() LOCALONLY;
+
+    /// Wake the MIDI service to drain the device -> host rings. Fires the
+    /// registered action and returns; false when no MIDI service listens yet
+    /// (the bytes stay queued and the next wake drains them).
+    bool NotifyMidiReceived() LOCALONLY;
+};
+
+#endif /* ASFWMidiNub_h */

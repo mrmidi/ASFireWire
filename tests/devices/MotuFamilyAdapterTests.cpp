@@ -565,7 +565,7 @@ TEST(MotuFamilyAdapterTests, UnsolicitedClockChangeRaisesClockStatusOnly) {
 }
 
 TEST(MotuFamilyAdapterTests, V1AndV3ReadFailureRefusesGuessedInitialGeometry) {
-    for (uint32_t version : {1U,2U,0x15U,0x17U,0x19U,0x1bU}) {
+    for (uint32_t version : {1U,2U,0x15U,0x17U,0x19U,0x1bU,0x39U}) {
         MotuRig rig;
         rig.record.unitSwVersion = version;
         const auto route = rig.registry.CurrentRoute(kMotuGuid);

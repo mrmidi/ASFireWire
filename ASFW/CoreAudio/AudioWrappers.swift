@@ -461,3 +461,45 @@ class AudioSystem {
         devices.first { $0.uid == uid || $0.name.contains(uid) }
     }
 }
+
+// MARK: - AudioPropertyObserver
+
+/// Calls `handler` on the main queue whenever one of `selectors` changes on
+/// `objectID` (any scope, any element). Pass `kAudioObjectSystemObject` with
+/// `kAudioHardwarePropertyDevices` to follow devices appearing and disappearing.
+/// Observation ends at `invalidate()` or when the observer is released.
+nonisolated final class AudioPropertyObserver: @unchecked Sendable {
+    private let objectID: AudioObjectID
+    private let addresses: [AudioObjectPropertyAddress]
+    private var listener: AudioObjectPropertyListenerBlock?
+
+    init(objectID: AudioObjectID,
+         selectors: [AudioObjectPropertySelector],
+         handler: @escaping @MainActor @Sendable () -> Void) {
+        self.objectID = objectID
+        self.addresses = selectors.map {
+            AudioObjectPropertyAddress(
+                mSelector: $0,
+                mScope: kAudioObjectPropertyScopeWildcard,
+                mElement: kAudioObjectPropertyElementWildcard)
+        }
+        // Delivered on the main queue (below), which is the main actor's executor.
+        let block: AudioObjectPropertyListenerBlock = { _, _ in
+            MainActor.assumeIsolated { handler() }
+        }
+        listener = block
+        for var address in addresses {
+            AudioObjectAddPropertyListenerBlock(objectID, &address, DispatchQueue.main, block)
+        }
+    }
+
+    func invalidate() {
+        guard let block = listener else { return }
+        listener = nil
+        for var address in addresses {
+            AudioObjectRemovePropertyListenerBlock(objectID, &address, DispatchQueue.main, block)
+        }
+    }
+
+    deinit { invalidate() }
+}

@@ -713,7 +713,10 @@ void ROMScanSession::StartRootDirRead(ROMScanNodeStateMachine& node) {
         return;
     }
 
-    node.SetRetriesLeft(params_.perStepRetries);
+    // Give the root step its own initial budget, but preserve it across BIB
+    // rereads. Only RetryBackoffPolicy replenishes it after a speed fallback.
+    // Linux core-device.c:1020-1024 likewise retains ROM retries across scans.
+    node.InitializeRootDirRetries(params_.perStepRetries);
     ++inflight_;
 
     auto weakSelf = weak_from_this();

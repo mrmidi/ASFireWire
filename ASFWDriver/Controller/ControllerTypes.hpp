@@ -12,7 +12,7 @@ namespace ASFW::Driver {
 // Snapshot of the OHCI global interrupt events captured in the ISR before
 // routing onto the single-threaded controller queue. The per-context isoch
 // masks are not part of it: they are read and cleared after the global
-// acknowledgement (HardwareInterface::TakeIsochContextEvents).
+// acknowledgement (HardwareInterface::AcknowledgeInterruptEvents).
 struct InterruptSnapshot {
     uint32_t intEvent{0};
     uint32_t intMask{0};

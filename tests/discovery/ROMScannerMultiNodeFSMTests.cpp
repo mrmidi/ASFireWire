@@ -142,9 +142,11 @@ protected:
         if (scanner) scanner->Abort(Generation{1});
         scanner.reset();
     }
-    void Start(uint8_t pathSpeed, uint8_t linkSpeed, bool betaRepeaters = false, bool expectProbe = true) {
+    void Start(uint8_t pathSpeed, uint8_t linkSpeed, bool betaRepeaters = false,
+               bool expectProbe = true, uint8_t perStepRetries = 0,
+               bool failInitialBIB = false) {
         ROMScannerParams params{};
-        params.perStepRetries = 0;
+        params.perStepRetries = perStepRetries;
         params.configROMReadyRetries = 0;
         scanner = std::make_unique<ROMScanner>(bus, policy, params);
         TopologySnapshot topology{};
@@ -175,10 +177,13 @@ protected:
             ++completions;
             completed = std::move(roms);
         }));
-        bus.SimulateFullBIBSuccess(0, bib);
-        bus.WaitForPendingReads(5);
-        ASSERT_GE(bus.pendingReads_.size(), 5U);
-        for (size_t i = 0; i < 4; ++i) EXPECT_EQ(bus.pendingReads_[i].speed, FwSpeed::S100);
+        const size_t bibStart = failInitialBIB ? 1 : 0;
+        if (failInitialBIB) bus.FailRead(0);
+        bus.SimulateFullBIBSuccess(bibStart, bib);
+        bus.WaitForPendingReads(bibStart + 5);
+        ASSERT_GE(bus.pendingReads_.size(), bibStart + 5);
+        for (size_t i = 0; i < bibStart + 4; ++i)
+            EXPECT_EQ(bus.pendingReads_[i].speed, FwSpeed::S100);
         if (expectProbe) EXPECT_FALSE(policy.ObservedSpeed(ASFW::FW::NodeId{1}));
     }
     void ExpectRead(size_t index, FwSpeed speed, uint32_t address) {
@@ -266,6 +271,71 @@ TEST_F(ROMSpeedProbeTests, MatchingLegacyLinkSkipsProbeAndReadsRootAtPathSpeed) 
     EXPECT_EQ(policy.ObservedSpeed(ASFW::FW::NodeId{1}), FwSpeed::S400);
     bus.SimulateReadSuccess(4, {0});
     EXPECT_EQ(completions, 1U);
+}
+
+TEST_F(ROMSpeedProbeTests, RootDirectoryRetriesExhaustBeforeFallingBackToS200) {
+    Start(2, 2, false, false, 2);
+    size_t rootRead = 4;
+    for (size_t attempt = 0; attempt < 3; ++attempt) {
+        ExpectRead(rootRead, FwSpeed::S400, 0xf0000414);
+        bus.FailRead(rootRead);
+        ExpectRead(rootRead + 1, FwSpeed::S100, 0xf0000400);
+        bus.SimulateFullBIBSuccess(rootRead + 1, bib);
+        rootRead += 5;
+    }
+    ExpectRead(rootRead, FwSpeed::S200, 0xf0000414);
+    EXPECT_EQ(policy.ObservedSpeed(ASFW::FW::NodeId{1}), FwSpeed::S200);
+    bus.SimulateReadSuccess(rootRead, {0});
+    EXPECT_EQ(completions, 1U);
+    ASSERT_EQ(completed.size(), 1U);
+    EXPECT_EQ(completed.front().bib.guid, 0x000a9204050839aeULL);
+    EXPECT_EQ(bus.pendingReads_.size(), 20U);
+}
+
+TEST_F(ROMSpeedProbeTests, RootDirectoryFailureAtEverySpeedTerminatesAtS100) {
+    Start(2, 2, false, false, 2);
+    size_t rootRead = 4;
+    for (const auto speed : {FwSpeed::S400, FwSpeed::S200, FwSpeed::S100}) {
+        for (size_t attempt = 0; attempt < 3; ++attempt) {
+            ExpectRead(rootRead, speed, 0xf0000414);
+            bus.FailRead(rootRead);
+            if (speed == FwSpeed::S100 && attempt == 2) break;
+            ExpectRead(rootRead + 1, FwSpeed::S100, 0xf0000400);
+            bus.SimulateFullBIBSuccess(rootRead + 1, bib);
+            rootRead += 5;
+        }
+    }
+    EXPECT_EQ(completions, 1U);
+    EXPECT_TRUE(completed.empty());
+    EXPECT_EQ(policy.ObservedSpeed(ASFW::FW::NodeId{1}), FwSpeed::S100);
+    EXPECT_EQ(bus.pendingReads_.size(), 45U);
+}
+
+TEST_F(ROMSpeedProbeTests, TransientRootDirectoryFailureKeepsOperationalSpeed) {
+    Start(2, 2, false, false, 2);
+    bus.FailRead(4);
+    bus.SimulateFullBIBSuccess(5, bib);
+    ExpectRead(9, FwSpeed::S400, 0xf0000414);
+    bus.SimulateReadSuccess(9, {0});
+    EXPECT_EQ(completions, 1U);
+    EXPECT_EQ(completed.size(), 1U);
+    EXPECT_EQ(policy.ObservedSpeed(ASFW::FW::NodeId{1}), FwSpeed::S400);
+}
+
+TEST_F(ROMSpeedProbeTests, InitialBIBFailureDoesNotConsumeRootDirectoryRetryBudget) {
+    Start(2, 2, false, false, 2, true);
+    size_t rootRead = 5;
+    for (size_t attempt = 0; attempt < 2; ++attempt) {
+        ExpectRead(rootRead, FwSpeed::S400, 0xf0000414);
+        bus.FailRead(rootRead);
+        bus.SimulateFullBIBSuccess(rootRead + 1, bib);
+        rootRead += 5;
+    }
+    ExpectRead(rootRead, FwSpeed::S400, 0xf0000414);
+    bus.SimulateReadSuccess(rootRead, {0});
+    EXPECT_EQ(completions, 1U);
+    EXPECT_EQ(completed.size(), 1U);
+    EXPECT_EQ(policy.ObservedSpeed(ASFW::FW::NodeId{1}), FwSpeed::S400);
 }
 
 TEST_F(ROMSpeedProbeTests, FailedFastProbesUseTheAlreadyVerifiedS100Floor) {

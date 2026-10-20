@@ -5,6 +5,7 @@
 
 #include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
+#include "MidiRunBracket.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
@@ -198,6 +199,13 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
             it->second = hostStatus;
         IOLockUnlock(lock_);
     }
+    // The streams are down (or the device is gone): the MIDI seam stops being
+    // used before the endpoint, and with it the mapping this side owns, goes.
+    if (auto endpoint = runtime_.FindEndpointRuntime(guid)) endpoint->EndMidiRun();
+    // Observers (the MIDI service) retire before the runtime they borrow from.
+    if (auto* observer = endpointObserver_.load(std::memory_order_acquire)) {
+        observer->OnEndpointRetired(guid);
+    }
     runtime_.Remove(guid);
     publisher_.TerminateNub(guid, "remote-device-lost", hostStatus);
     sessions_.Erase(guid);
@@ -274,7 +282,12 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
     // Ownership can survive a failed stop after host transport has quiesced.
     // Only the session knows whether this is an idempotent running start or
     // whether retained device connections must be cleaned up before restarting.
-    const IOReturn kr = sessions_.Attach(guid, clock);
+    // MIDI is carried by the streams this start brings up and holds nothing of
+    // the session: see MidiRunBracket.hpp.
+    const auto endpoint = runtime_.FindEndpointRuntime(guid);
+    const IOReturn kr = StartWithMidiRun(endpoint.get(), sessions_.IsStreaming(guid), [&] {
+        return sessions_.Attach(guid, clock);
+    });
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
@@ -316,7 +329,8 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    const IOReturn kr = sessions_.Detach(guid);
+    const auto endpoint = runtime_.FindEndpointRuntime(guid);
+    const IOReturn kr = StopWithMidiRun(endpoint.get(), [&] { return sessions_.Detach(guid); });
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,
                        "AudioCoordinator: StopStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
@@ -414,6 +428,15 @@ void AudioCoordinator::BeginTeardown() noexcept {
     // queue. The coordinator owns this one subscription for every family.
     hostTransport_.SetTimingLossCallback({});
     host_.BeginTeardown();
+    uint64_t midiGuid = 0;
+    if (lock_) {
+        IOLockLock(lock_);
+        midiGuid = activeGuid_;
+        IOLockUnlock(lock_);
+    }
+    if (midiGuid != 0) {
+        if (auto endpoint = runtime_.FindEndpointRuntime(midiGuid)) endpoint->EndMidiRun();
+    }
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio,

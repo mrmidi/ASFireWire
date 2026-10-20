@@ -21,22 +21,41 @@ void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
 }
 
-void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
+void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars,
+                        AudioGraphDetach detach) noexcept {
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    UnbindMidiTx(ivars);
     UnbindDirectAudioSkeleton(ivars);
 
     if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.inputStream.get())) stream->Bind(nullptr);
     if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.outputStream.get())) stream->Bind(nullptr);
     auto& state = ivars.graphState;
+    const char* const mode = detach == AudioGraphDetach::kDeviceOnly ? "device-only" : "streams-then-device";
     if (ivars.audioDevice) {
-        if (state.outputStreamAdded && ivars.outputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.outputStream.get());
-        }
-        if (state.inputStreamAdded && ivars.inputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.inputStream.get());
+        // One line before each ADK call: a call that never returns is the
+        // last line logged.
+        ASFW_LOG(Audio,
+                 "[Lifecycle] ASFWAudioDriver graph detach begin mode=%{public}s device=%p in=%d out=%d added=%d",
+                 mode, ivars.audioDevice.get(), state.inputStreamAdded, state.outputStreamAdded,
+                 state.audioDeviceAdded);
+        if (detach == AudioGraphDetach::kStreamsThenDevice) {
+            if (state.outputStreamAdded && ivars.outputStream) {
+                ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveStream output stream=%p",
+                         ivars.outputStream.get());
+                const kern_return_t kr = ivars.audioDevice->RemoveStream(ivars.outputStream.get());
+                ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveStream output kr=0x%x", kr);
+            }
+            if (state.inputStreamAdded && ivars.inputStream) {
+                ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveStream input stream=%p",
+                         ivars.inputStream.get());
+                const kern_return_t kr = ivars.audioDevice->RemoveStream(ivars.inputStream.get());
+                ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveStream input kr=0x%x", kr);
+            }
         }
         if (state.audioDeviceAdded) {
-            (void)driver.RemoveObject(ivars.audioDevice.get());
+            ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveObject device=%p", ivars.audioDevice.get());
+            const kern_return_t kr = driver.RemoveObject(ivars.audioDevice.get());
+            ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver RemoveObject device kr=0x%x", kr);
         }
         // ADK may keep the device past this driver; it must not reach these
         // ivars after they are gone.
@@ -44,10 +63,8 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     }
     state = {};
 
-    ivars.device.avcControlCount = 0;
-    ivars.device.boolControlCount = 0;
-    ASFW::Isoch::Audio::ResetBoolControlSlots(ivars.device.boolControls,
-                                              ASFW::Isoch::Audio::kMaxBoolControls);
+    ivars.device.parameterControls.clear();
+    ivars.device.controlRevision = 0;
     ivars.outputStream.reset();
     ivars.inputStream.reset();
     ivars.outputMap.reset();
@@ -59,6 +76,7 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     ivars.audioDevice.reset();
     ivars.workQueue.reset();
     ivars.device.audioNub = nullptr;
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver graph released mode=%{public}s", mode);
 }
 
 void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept {
@@ -72,7 +90,8 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
         const uint32_t deviceId = ivars.audioDevice->GetObjectID();
         ASFW_LOG(Audio, "ASFWAudioDriver: Stop() with IO running; stopping device %u first",
                  deviceId);
-        (void)driver.StopDevice(deviceId, IOUserAudioStartStopFlags::None);
+        const kern_return_t kr = driver.StopDevice(deviceId, IOUserAudioStartStopFlags::None);
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver StopDevice returned device=%u kr=0x%x", deviceId, kr);
     }
     // A wire kept across StopIO (including by the stop just above) gets no
     // StopIO on unplug: release it the way StopIO does, or the TX isoch
@@ -88,7 +107,9 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
     // stopped it.
     ivars.runtime.txActive.store(false, std::memory_order_release);
     if (ivars.txPreparationQueue) {
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver TX preparation queue drain begin");
         ivars.txPreparationQueue->DispatchSync(^{ });
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver TX preparation queue drained");
     }
     if (auto* nub = ivars.device.audioNub) {
         const kern_return_t stopKr = nub->StopAudioStreamingOrRemoteResult();
@@ -99,18 +120,21 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
         (void)nub->RegisterZtsAnchorAction(nullptr);
         (void)nub->RegisterDeviceClockChangedAction(nullptr);
         (void)nub->RegisterIoRestartRequiredAction(nullptr);
+        (void)nub->RegisterControlChangeAction(nullptr);
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver nub actions withdrawn nub=%p", nub);
     }
     ivars.txPreparationAction.reset();
     ivars.txPreparationQueue.reset();
     ivars.deviceClockChangedAction.reset();
     ivars.ioRestartRequiredAction.reset();
+    ivars.controlChangeAction.reset();
     ivars.ztsAnchorAction.reset();
     ivars.ztsQueue.reset();
     // Detach and drop the whole ADK graph here, not in free(). The device is
     // created with this driver (ASFWAudioDevice::init(&driver)), so a device
     // still held by the ivars can keep the driver from ever being freed, and
     // with it the dext process alive after an unplug (2026-10-02).
-    TearDownAudioGraph(driver, ivars);
+    TearDownAudioGraph(driver, ivars, AudioGraphDetach::kDeviceOnly);
 }
 
 } // namespace ASFW::Audio::DriverKit

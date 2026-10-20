@@ -243,7 +243,7 @@ private:
         source->retain();
         source_.reset();
         source->SetEnable(false);
-        auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+        auto done = teardownCompletion_ ? teardownCompletion_->Begin("completion queue") : std::function<void()>{};
         ASFW_LOG(Async, "[Teardown] completion queue source cancel requested source=%p", source);
         auto kr = source->Cancel(^{
             ASFW_LOG(Async, "[Teardown] completion queue source cancel completed source=%p", source);

@@ -15,6 +15,7 @@
 #include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24Upper24In32LEPayloadCodec.hpp"
 #include "../../../Ports/IWirePayloadCodec.hpp"
+#include "../../../../Midi/Transport/MidiRingByteSink.hpp"
 
 #include <functional>
 
@@ -68,6 +69,16 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     void BeginReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
     void ConsumePacket(const ::ASFW::Isoch::IsochReceiveBatch& batch,
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
+    // One wake for the MIDI service per batch that carried MIDI, after every
+    // packet's bytes are in the rings (reviews/midi-2026-09-13, finding 4).
+    void EndReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
+
+    /// MPX-MIDI extraction counters for this stream (zero without a MIDI
+    /// attachment).
+    [[nodiscard]] const ::ASFW::Encoding::MpxMidiDemuxCounters& MidiCounters() const noexcept {
+        return midiCounters_;
+    }
+    [[nodiscard]] bool MidiBound() const noexcept { return midiBound_; }
 
     void DrainReceiveTelemetry(uint32_t maxRecords) override;
     // Reports IO-callback errors recorded by the real-time path.
@@ -110,6 +121,21 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool AnchorCursorToTransmitClock(const ::ASFW::Isoch::IsochReceivePacket& packet,
                                      const RxAudioPacketProcessorResult& result,
                                      uint64_t packetHostTicks) noexcept;
+
+    // The endpoint's MIDI attachment, kept independent of the audio binding: a
+    // MIDI change must never be able to rebind (and so reset) audio replay.
+    void RefreshMidiBinding(
+        const ::ASFW::Audio::Runtime::MidiReceiveBinding& binding) noexcept;
+    void UnbindMidi() noexcept;
+    void MarkMidiGapAllPorts() noexcept;
+
+    ::ASFW::Audio::Runtime::MidiReceiveBinding midiBinding_{};
+    uint64_t lastMidiBindingGeneration_{0};
+    uint64_t midiBoundEpoch_{0};
+    bool midiBound_{false};
+    bool midiBytesThisBatch_{false};
+    ::ASFW::Midi::MidiRingByteSink midiSink_{};
+    ::ASFW::Encoding::MpxMidiDemuxCounters midiCounters_{};
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};

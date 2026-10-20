@@ -227,7 +227,8 @@ TEST(DiceProfileTests, WeissIntProfileSendsTheDiceWireFormat) {
 }
 
 // The Duet, the PHASE 88, the Onyx-i and any unlisted AV/C unit are published from
-// generic discovery, so they share one host-side profile. It states no
+// generic discovery, so they share one host-side profile (the Duet only adds
+// its vendor timing table). It states no
 // channels and no rates: those travel on the nub from discovery and the
 // catalog row. A per-device copy of either is a second source of truth.
 TEST(DiceProfileTests, DiscoveredAvcUnitsShareOneGeometryFreeProfile) {
@@ -240,7 +241,18 @@ TEST(DiceProfileTests, DiscoveredAvcUnitsShareOneGeometryFreeProfile) {
     EXPECT_EQ(AudioProfileRegistry::ProfileForBuilderId(
                   static_cast<uint32_t>(ProfileBuilderId::MackieOnyxIOxfw)), generic);
     EXPECT_EQ(FindAvcProfile(0x000AAC, 0x000003, 0x000AAC0300B1D1F7ULL), generic);
-    EXPECT_EQ(FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL), generic);
+    // The Duet keeps this framing and policy and adds only Apogee's published
+    // timing table (ApogeeDuetProfile.hpp); it states no geometry either.
+    const auto* duet = FindAvcProfile(0x0003DB, 0x01DDDD, 0x0003DB0A0000D112ULL);
+    ASSERT_NE(duet, nullptr);
+    EXPECT_STREQ(duet->Name(), "Apogee Duet");
+    EXPECT_EQ(duet->TxChannelCount(), 0U);
+    EXPECT_EQ(duet->RxChannelCount(), 0U);
+    EXPECT_TRUE(duet->SupportedSampleRates().empty());
+    AudioStreamConfig duetTx{};
+    ASSERT_TRUE(static_cast<const IAudioStreamProfile*>(duet)->BuildDefaultTxStreamConfig(duetTx));
+    EXPECT_EQ(duetTx.streamMode, ASFW::Encoding::StreamMode::kBlocking);
+    EXPECT_TRUE(static_cast<const IAudioStreamProfile*>(duet)->TxStreamPolicy().emptyPacketsDuringIdle);
 
     EXPECT_EQ(generic->TxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);
     EXPECT_EQ(generic->RxWireFormat(), ASFW::Encoding::AudioWireFormat::kAM824);

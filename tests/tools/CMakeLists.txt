@@ -8,7 +8,8 @@ enable_language(C)
 set(ASFW_TOOLS_DIR "${ASFW_ROOT_DIR}/tools")
 
 add_library(asfw_rtl_core_host STATIC "${ASFW_TOOLS_DIR}/rtl/rtl_core.c"
-                                       "${ASFW_TOOLS_DIR}/rtl/tone_core.c")
+                                       "${ASFW_TOOLS_DIR}/rtl/tone_core.c"
+                                       "${ASFW_TOOLS_DIR}/rtl/tone_io.c")
 set_target_properties(asfw_rtl_core_host PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 target_include_directories(asfw_rtl_core_host PUBLIC "${ASFW_TOOLS_DIR}/rtl")
 target_compile_options(asfw_rtl_core_host PRIVATE -Wall -Wextra)
@@ -31,6 +32,14 @@ target_link_libraries(ToneCoreTests PRIVATE
     GTest::gtest_main
 )
 gtest_discover_tests(ToneCoreTests)
+
+add_executable(ToneIoTests ToneIoTests.cpp)
+target_link_libraries(ToneIoTests PRIVATE
+    asfw_rtl_core_host
+    asfw_test_common_interface
+    GTest::gtest_main
+)
+gtest_discover_tests(ToneIoTests)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)

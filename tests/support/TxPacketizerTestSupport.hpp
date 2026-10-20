@@ -34,6 +34,7 @@ inline bool PrepareCadencePacket(ASFW::Protocols::Audio::AMDTP::AmdtpTxPacketize
     if (!packetizer.PrepareNextPacket(slot, timing, plan, out)) {
         return false;
     }
+    if (!packetizer.ExposePreparedPacket(slot, out)) return false;
     if (out.isData) {
         nextAudioFrame += out.framesInPacket;
     }

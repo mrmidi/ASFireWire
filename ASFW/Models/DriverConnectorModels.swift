@@ -523,6 +523,7 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
     let deviceKind: UInt8  // DeviceKind enum value from driver
 
     var stateString: String { state.description }
+    var isAudio: Bool { (1...3).contains(deviceKind) }
     var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
     var hasSBP2Unit: Bool { units.contains(where: \.isSBP2Unit) }
     var sbp2Units: [DriverConnectorFWUnitInfo] { units.filter(\.isSBP2Unit) }

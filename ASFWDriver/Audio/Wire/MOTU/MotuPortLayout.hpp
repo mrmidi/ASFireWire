@@ -230,6 +230,20 @@ inline constexpr const char* kOpticalNames[] = {
         if (capture) { mix(0); if (mode == 0) reverb(16); }
         else if (mode == 0) phones(14);
         optical(fixed);
+    } else if (version == 0x39) {
+        // Vendor BoxTrack16::SetupStrmFwIds 0x51330 and SetupStreams 0x515a0.
+        if (capture) {
+            pair("Mic 1", "Mic 2", 0); pair("Guitar 1", "Guitar 2", 2);
+            for (uint32_t i = 0; i < 4; ++i) add(kAnalogNames[i], 4 + i);
+            mix(8);
+            // A gap precedes Reverb; Reverb is enabled at 1x and 2x only.
+            if (mode < 2) reverb(12);
+            padding = mode < 2 ? uint64_t{3} << 10 : uint64_t{0xf} << 10;
+            optical(fixed);
+        } else {
+            main(0); phones(2); pair("Analog 1", "Analog 2", 4);
+            optical(fixed);
+        }
     }
     // Preserve unclassified slots; unlike known padding these remain host channels.
     uint64_t used = padding;
@@ -246,8 +260,13 @@ inline constexpr const char* kOpticalNames[] = {
 
 // Only retain formations supported by the model, with optical widths 0/4/8/12/16.
 // The corpus supplies lifetime-safe maps without allocations on RX/TX hot paths.
+inline constexpr uint32_t kEnabledModelCount = [] {
+    uint32_t count = 0;
+    for (const auto& model : kModels) count += FireWireOnly(model.unitVersion) ? 1U : 0U;
+    return count;
+}();
 inline constexpr auto kPortLayouts = [] {
-    std::array<PortLayout, 11 * 3 * 2 * 5> result{};
+    std::array<PortLayout, kEnabledModelCount * 3 * 2 * 5> result{};
     uint32_t i = 0;
     for (const auto& model : kModels) {
         if (!FireWireOnly(model.unitVersion)) continue;

@@ -38,7 +38,8 @@ RxPath::RxPath(ARRequestContext& arReqContext,
 }
 
 void RxPath::ProcessARInterrupts(bool isRunning,
-                                  Debug::BusResetPacketCapture* busResetCapture) {
+                                  Debug::BusResetPacketCapture* busResetCapture,
+                                  bool quiet) {
     if (!isRunning) {
         return;
     }
@@ -53,7 +54,7 @@ void RxPath::ProcessARInterrupts(bool isRunning,
     // ignored after they are drained. Cross-validated with Linux
     // firewire-ohci/ohci.c:2241-2245, which schedules both AR contexts while
     // processing the reset interrupt.
-    ProcessResponseInterrupts(busResetCapture);
+    ProcessResponseInterrupts(busResetCapture, quiet);
     currentBusResetCapture_ = nullptr;
 }
 
@@ -77,12 +78,16 @@ void RxPath::ProcessRequestInterrupts() {
             packetRouter_.RouteParsedPacket(ARContextType::Request, packet, currentGen);
         });
 
-    ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Request",
-                stats.packetsFound, stats.buffersProcessed);
+    if (stats.packetsFound > 0) {
+        ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Request",
+                    stats.packetsFound, stats.buffersProcessed);
+    }
 }
 
-void RxPath::ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture) {
-    DumpResponseInterruptState(arResponseContext_);
+void RxPath::ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture, bool quiet) {
+    if (!quiet) {
+        DumpResponseInterruptState(arResponseContext_);
+    }
 
     // Note: the walker keeps descriptors live and relies on BufferRing::Dequeue()
     // to auto-advance once the next buffer gains data. Eager recycling after each
@@ -101,10 +106,12 @@ void RxPath::ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCap
             ProcessReceivedPacket(ARContextType::Response, packet, busResetCapture);
         });
 
-    ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Response",
-                stats.packetsFound, stats.buffersProcessed);
+    if (stats.packetsFound > 0) {
+        ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from AR Response",
+                    stats.packetsFound, stats.buffersProcessed);
+    }
 
-    if (stats.buffersProcessed == 0 && stats.packetsFound == 0) {
+    if (!quiet && stats.buffersProcessed == 0 && stats.packetsFound == 0) {
         ASFW_LOG_V3(Async, "AR Response: No packets read for this interrupt");
         DumpEmptyResponseBuffer(arResponseContext_);
     }

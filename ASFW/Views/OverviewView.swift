@@ -54,6 +54,10 @@ struct OverviewView: View {
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
+                    if case .installedOlder(let installed, let bundled) = viewModel.driverUpdateState {
+                        outdatedDriverBanner(installed: installed, bundled: bundled)
+                    }
+
                     HStack(spacing: 12) {
                         Button {
                             viewModel.installDriver(requireNewerBuild: requireNewerBuild)
@@ -135,6 +139,26 @@ struct OverviewView: View {
             .padding()
         }
         .navigationTitle("Overview")
+        .task { viewModel.refreshDriverUpdateState() }
+    }
+
+    private func outdatedDriverBanner(installed: InstalledDriverExtension,
+                                      bundled: BundledDriverExtension) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Installed driver is older than this app's")
+                    .font(.callout.bold())
+                Text("Installed: build \(installed.bundleVersion) (\(installed.bundleShortVersion)). Bundled: build \(bundled.bundleVersion) (\(bundled.bundleShortVersion)). Click Install to update.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
     
     @ViewBuilder

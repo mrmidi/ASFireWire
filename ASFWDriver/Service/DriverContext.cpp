@@ -31,6 +31,8 @@
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Hardware/InterruptManager.hpp"
 #include "../Logging/Logging.hpp"
+#include "../Midi/Core/MidiEndpointPublication.hpp"
+#include "../Midi/Core/MidiNubPublisher.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
@@ -49,7 +51,7 @@ void ServiceContext::DisarmProviderNotifications() {
         auto* source = providerNotifications.detach();
         auto* action = providerNotificationAction.detach();
         ASFW_LOG(Controller, "[Teardown] provider notifications cancel requested source=%p action=%p", source, action);
-        auto done = teardownCompletion->Begin();
+        auto done = teardownCompletion->Begin("provider notifications");
         const kern_return_t kr = source->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] provider notifications cancel completed source=%p action=%p", source, action);
             source->release();
@@ -84,6 +86,14 @@ void ServiceContext::Reset(ResetMode mode) {
     // The registry is co-owned by the controller's own deps_ copy, which must be dropped
     // explicitly: ~ControllerCore destroys busImpl_ before deps_, so letting the registry
     // die with the controller would call through a dangling bus.
+    // MIDI goes before the audio it rides. Detach the observer first so no
+    // publication can reach a MIDI object that is going away, then terminate
+    // the MIDI nubs: their services hold a retained view of a seam that the
+    // endpoints below are about to drop, and a rebuild (wake) publishes the
+    // endpoints again with a fresh seam, which needs fresh nubs.
+    if (audioCoordinator) audioCoordinator->SetEndpointObserver(nullptr);
+    if (midiNubPublisher) midiNubPublisher->TerminateAll();
+    midiPublication.reset();
     ASFW_LOG(Controller, "[Teardown] release audio coordinator begin");
     audioCoordinator.reset();
     ASFW_LOG(Controller, "[Teardown] release audio coordinator complete");
@@ -94,6 +104,8 @@ void ServiceContext::Reset(ResetMode mode) {
         controller->AttachROMScanner(nullptr);
     }
     deps.audioRuntimeRegistry.reset();
+    // The endpoints named the publisher as their receive wake; it outlives them.
+    midiNubPublisher.reset();
     // Same hazard for SBP-2: SessionRegistry and every LoginSession borrow the
     // controller-owned bus (EnsureSbp2Deps passes controller->Bus()).
     // ~SessionRegistry logs out still-logged-in sessions and ~LoginSession
@@ -266,6 +278,13 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
             driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
             *d.hardware, *d.diceNotifications);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
+    }
+
+    if (ctx.audioCoordinator && d.audioRuntimeRegistry && !ctx.midiPublication) {
+        ctx.midiNubPublisher = std::make_shared<ASFW::Midi::MidiNubPublisher>(driver);
+        ctx.midiPublication = std::make_shared<ASFW::Midi::MidiEndpointPublication>(
+            *d.audioRuntimeRegistry, *ctx.midiNubPublisher, *ctx.midiNubPublisher);
+        ctx.audioCoordinator->SetEndpointObserver(ctx.midiPublication.get());
     }
 
     if (ctx.audioCoordinator) {

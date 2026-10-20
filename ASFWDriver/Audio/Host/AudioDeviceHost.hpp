@@ -23,6 +23,7 @@
 #pragma once
 
 #include "FamilyAdapter.hpp"
+#include "IAudioEndpointObserver.hpp"
 #include "PublicationGate.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
 
@@ -116,6 +117,12 @@ public:
     /// device callback. The adapter must outlive the host's teardown.
     void Install(AudioBackendKind kind, FamilyAdapter& adapter) noexcept;
 
+    /// Told after an endpoint is published or confirmed unchanged. Composition
+    /// time only; the observer must outlive the host's teardown. Null detaches.
+    void SetEndpointObserver(IAudioEndpointObserver* observer) noexcept {
+        endpointObserver_.store(observer, std::memory_order_release);
+    }
+
     /// Which family serves `guid` now, if its current policy names one.
     [[nodiscard]] std::optional<AudioBackendKind> KindForGuid(uint64_t guid) const noexcept;
 
@@ -175,6 +182,8 @@ private:
                 const char* detail = nullptr) noexcept;
 
     [[nodiscard]] FamilyAdapter* AdapterFor(AudioBackendKind kind) const noexcept;
+    void NotifyEndpointPublished(uint64_t guid, AudioBackendKind kind,
+                                 const Model::ASFWAudioDevice& description) noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
     void Dispatch(std::function<void()> work) noexcept;
@@ -191,6 +200,7 @@ private:
     IIsochDuplexHostTransport& hostTransport_;
 
     std::array<FamilyAdapter*, 4> adapters_{};
+    std::atomic<IAudioEndpointObserver*> endpointObserver_{nullptr};
 
     OSSharedPtr<IODispatchQueue> workQueue_{};
     PublicationGate gate_{};
