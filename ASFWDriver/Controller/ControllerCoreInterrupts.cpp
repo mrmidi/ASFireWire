@@ -119,6 +119,22 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
             deps_.sbp2SessionRegistry->OnBusReset(static_cast<uint16_t>(generation));
         }
     }
+    // Acknowledge before servicing the rings, as Linux does (ohci.c:2223-2235).
+    // The MSI is one message per 0->1 edge of IntEvent & IntMask. A packet that
+    // lands after the ring scan but before the acknowledge would have its RQPkt
+    // cleared here and sit in the ring until an unrelated interrupt (Hasselblad
+    // H camera, 2026-10-15: status blocks serviced 10 s late). Acknowledged
+    // first, it keeps its bit and ServiceUntilDeasserted's re-read runs another
+    // pass. busReset stays set until the reset FSM has quiesced AT (OHCI 1.1
+    // §7.2.3.2); the fault bits are acknowledged after their handling below.
+    // selfIDComplete/selfIDComplete2 are latched: left set and enabled they
+    // keep the output asserted and silence every later MSI.
+    const uint32_t faultAcks = FaultAckMask(events);
+    const uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
+    // Capture and acknowledge isoch context events in the same flushed access
+    // before any async ring service; return the captured masks to the dispatcher.
+    const IsochContextEvents isochEvents = hw.AcknowledgeInterruptEvents(toAck, rawEvents);
+
     DispatchAsyncInterrupts(events);
     if ((events & IntEventBits::kBusReset) != 0U &&
         deps_.busResetStartedCallback) {
@@ -129,22 +145,9 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
     }
     LogBusResetCompletionEvents(events, snapshot.timestamp);
 
-    const uint32_t faultAcks = FaultAckMask(events);
-
     if (faultAcks != 0U) {
         hw.ClearIntEvents(faultAcks);
     }
-
-    // Acknowledge everything read except busReset, which must stay set until
-    // the reset FSM has quiesced AT (OHCI 1.1 §7.2.3.2) and which OnIrq has
-    // masked. selfIDComplete/selfIDComplete2 are acknowledged here because
-    // they are already latched: left set and enabled, they kept the interrupt
-    // asserted, and an MSI controller then sends no message for anything that
-    // follows. Linux clears the same set in its handler (ohci.c:2219-2224).
-    const uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
-    // Complete the global and per-context acknowledgements with one readback,
-    // before cycle policy or the dispatcher services any returned contexts.
-    const IsochContextEvents isochEvents = hw.AcknowledgeInterruptEvents(toAck, rawEvents);
 
     if ((events & IntEventBits::kCycleTooLong) != 0U) {
         HandleCycleTooLong();

@@ -616,6 +616,92 @@ void DICETcatProtocol::WriteStartupMixerCells(const ExtensionSections& ext) {
              runtimePolicy_.startupMixerCellCount);
 }
 
+// --- Firmware monitor cells ---------------------------------------------------
+//
+// The firmware does not put these back while the device stays powered (watched
+// for 70 s) but restores all of them on the next power-on, which builds a new
+// protocol instance; so this runs once per instance.
+//
+// A write that reports success is not proof the cell is clear, the same way a
+// router commit is not proof the table is there: read them back and retry the
+// set once. A leak that survives both passes is logged and left, because a loop
+// here would fight the firmware on every bring-up.
+void DICETcatProtocol::ClearFirmwareMonitorCells() {
+    const uint16_t* cells = runtimePolicy_.postStartMixerZeros;
+    const uint32_t count = runtimePolicy_.postStartMixerZeroCount;
+    if (cells == nullptr || count == 0 || firmwareMonitorCellsCleared_) {
+        return;
+    }
+    const auto ext = deviceIo_.ReadExtensionSections();
+    if (!ext) {
+        ASFW_LOG(DICE, "Monitor cells: extension sections unreadable (0x%08x)", ext.error());
+        return;
+    }
+    const uint32_t mixerBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext->mixer);
+    if (mixerBase == kDICEExtensionOffset) {
+        return;
+    }
+
+    for (uint32_t attempt = 0; attempt < 2U; ++attempt) {
+        // Coefficients start one quadlet past the section base.
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!deviceIo_.WriteQuad(mixerBase + 4U + cells[i] * 4U, 0U)) {
+                ASFW_LOG(DICE, "Monitor-cell clear %u failed", cells[i]);
+            }
+        }
+        uint32_t stillSet = 0;
+        uint32_t unread = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto gain = deviceIo_.ReadQuad(mixerBase + 4U + cells[i] * 4U);
+            if (!gain) {
+                ++unread;
+            } else if ((*gain & 0xFFFFU) != 0) {
+                ++stillSet;
+            }
+        }
+        if (stillSet == 0 && unread == 0) {
+            ASFW_LOG(DICE, "Monitor cells cleared: %u of %u", count, count);
+            firmwareMonitorCellsCleared_ = true;
+            return;
+        }
+        ASFW_LOG(DICE, "Monitor cells: %u still set, %u unread (of %u)%{public}s",
+                 stillSet, unread, count, attempt == 0U ? "; retrying once" : "; leaving them");
+    }
+}
+
+// --- Front-panel LED ----------------------------------------------------------
+//
+// The Mbox Pro powers up with UILEDState (application section +0x14) already
+// holding its value - 0x121, the speaker LED on green - but the LED stays dark
+// until a host writes the register. Writing the very value it holds back lights
+// it, without choosing a speaker set on the user's behalf. Once per instance,
+// like the monitor cells: the firmware keeps it lit until the next power-on.
+void DICETcatProtocol::RewriteFrontPanelLed() {
+    const uint32_t offset = runtimePolicy_.frontPanelLedRewriteOffset;
+    if (offset == 0 || frontPanelLedRewritten_) {
+        return;
+    }
+    const auto ext = deviceIo_.ReadExtensionSections();
+    if (!ext) {
+        return;
+    }
+    const uint32_t appBase = ASFW::Audio::DICE::ExtensionAbsoluteOffset(ext->application);
+    if (appBase == kDICEExtensionOffset) {
+        return;
+    }
+    const auto value = deviceIo_.ReadQuad(appBase + offset);
+    if (!value) {
+        ASFW_LOG(DICE, "Front-panel LED: read failed (0x%08x)", value.error());
+        return;
+    }
+    if (!deviceIo_.WriteQuad(appBase + offset, *value)) {
+        ASFW_LOG(DICE, "Front-panel LED: write failed (value=0x%08x)", *value);
+        return;
+    }
+    frontPanelLedRewritten_ = true;
+    ASFW_LOG(DICE, "Front-panel LED rewritten (value=0x%08x)", *value);
+}
+
 void DICETcatProtocol::BeforeClockSelectWrite(DiceDeviceIo& io) noexcept {
     if (runtimePolicy_.clockChangeObserver != nullptr) {
         runtimePolicy_.clockChangeObserver->BeforeClockSelectWrite(io);
@@ -815,6 +901,10 @@ std::expected<DuplexConfirmResult, IOReturn> DICETcatProtocol::Confirm() {
     const auto result = driver_->Confirm();
     if (result) {
         CacheRuntimeCaps(result->runtimeCaps);
+        // The device has its clock and the stream is confirmed: the earliest
+        // moment its own monitor matrix is safe to clear.
+        ClearFirmwareMonitorCells();
+        RewriteFrontPanelLed();
     }
     return result;
 }

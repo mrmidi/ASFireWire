@@ -22,6 +22,16 @@ inline constexpr uint64_t kBridgedTargetID = 0;
 // every task to it, so it never probes.
 inline constexpr uint64_t kReportedHighestTargetID = 1;
 
+// Largest data transfer one task may carry: Apple's SBP-2 transport ceiling,
+// kFWSBP2DefaultPageTableEntriesCount (512) page-table entries of
+// kFWSBP2MaxPageClusterSize (0xF000) bytes (IOFireWireSerialBusProtocolTransport.cpp:193,
+// :411-415; IOFireWireSBP2ORB.h:61). The earlier 1 MiB cap, sized for scanner
+// reads (~510 KB), was silently clipped: a Hasselblad H4D calibration READ of
+// 1,966,080 bytes went out as a 1 MiB page table and came back all zeros.
+inline constexpr uint64_t kMaxPageTableEntries = 512;
+inline constexpr uint64_t kMaxPageClusterBytes = 0xF000;
+inline constexpr uint64_t kMaxTransferBytes = kMaxPageTableEntries * kMaxPageClusterBytes;
+
 enum class Disposition {
     NotPresent,     // SERVICE_DELIVERY_OR_TARGET_FAILURE / DeviceNotPresent
     SyntheticGood,  // GOOD without touching the wire
