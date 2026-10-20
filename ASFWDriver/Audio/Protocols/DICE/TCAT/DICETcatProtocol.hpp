@@ -75,6 +75,12 @@ struct DICETcatRuntimePolicy final {
     const uint16_t* postStartMixerZeros{nullptr};
     uint32_t postStartMixerZeroCount{0};
 
+    // Offset in the application section of a front-panel LED register that
+    // the firmware only lights once a host writes it. The Mbox Pro's
+    // UILEDState (+0x14) powers up holding its value but leaves the speaker
+    // LED dark; writing that same value back lights it. 0 = none.
+    uint32_t frontPanelLedRewriteOffset{0};
+
     // Passed to DiceFamilyDriver (DICEBringupPolicy): device steps around a
     // clock change. Off by default.
     DiceClockChangeObserver* clockChangeObserver{nullptr};
@@ -223,6 +229,7 @@ private:
     std::optional<Discovery::DeviceRouteToken> initializedRoute_;
     bool startupProgramApplied_{false};
     bool firmwareMonitorCellsCleared_{false};
+    bool frontPanelLedRewritten_{false};
 
     // Writes the startup router program and mixer coefficients when the policy
     // carries them. Device configuration, not a bring-up gate: a failure is
@@ -234,6 +241,7 @@ private:
         const ExtensionSections& ext);
     void WriteStartupMixerCells(const ExtensionSections& ext);
     void ClearFirmwareMonitorCells();
+    void RewriteFrontPanelLed();
 
     // DiceClockChangeObserver: the policy's observer first, then the router
     // reload when the policy asks for it.
