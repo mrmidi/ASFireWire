@@ -1,0 +1,67 @@
+//
+// ASFWMidiDevice.iig
+// ASFWDriver
+//
+// One CoreMIDI device for one FireWire endpoint.
+//
+// Subclassed rather than created through IOUserMIDIDevice::Create, which the
+// header reserves for the un-subclassed case: the device owns the entity
+// layout, the I/O blocks and the Offline property.
+//
+// It owns no stream. MIDI is carried by the audio streams while they run, and
+// StartIO/StopIO here only mark the device online and offline for CoreMIDI; they
+// never ask the core driver to start or hold anything (MIDI taking a lease on
+// the stream session is what broke audio restart on the midi branch).
+//
+
+#ifndef ASFWMidiDevice_h
+#define ASFWMidiDevice_h
+
+#include <MIDIDriverKit/IOUserMIDIDevice.iig>
+
+using namespace MIDIDriverKit;
+
+class ASFWMidiDevice: public IOUserMIDIDevice
+{
+public:
+    /// Build the device and its entities.
+    ///
+    /// `sourcePorts` is device -> host (CoreMIDI sources) and
+    /// `destinationPorts` host -> device (CoreMIDI destinations). One entity
+    /// per physical jack pair; asymmetric counts create the side that exists
+    /// and omit the one that does not, rather than publishing a phantom
+    /// endpoint that would accept bytes with nowhere to send them.
+    virtual bool init(IOUserMIDIDriver* driver,
+                      OSString* deviceUID,
+                      OSString* modelUID,
+                      OSString* manufacturerUID,
+                      uint32_t sourcePorts,
+                      uint32_t destinationPorts) LOCALONLY;
+
+    virtual void free() override;
+
+    virtual kern_return_t StartIO() override;
+    virtual kern_return_t StopIO() override;
+
+    /// Bind the device's entities to the shared byte rings.
+    ///
+    /// `block` is the mapped MidiTransportBlock, owned by the endpoint and kept
+    /// mapped by the driver until this service's queue is quiescent. Each
+    /// destination's I/O block converts UMP to MIDI 1.0 bytes and enqueues
+    /// them; DrainReceiveRings goes the other way.
+    void BindTransport(void* block) LOCALONLY;
+
+    /// Stop using the rings. Must run before the mapping is dropped.
+    /// Returns true if every in-flight writer quiesced; false if it timed out,
+    /// in which case the caller must keep the mapping.
+    bool UnbindTransport() LOCALONLY;
+
+    /// Convert everything queued device -> host into UMP and Send it.
+    ///
+    /// Runs on this service's work queue, never on the core driver's receive
+    /// queue: a CoreMIDI client must not be served while the receive path is
+    /// held.
+    void DrainReceiveRings() LOCALONLY;
+};
+
+#endif /* ASFWMidiDevice_h */

@@ -28,6 +28,14 @@ kern_return_t IMPL(ASFWSBP2Nub, Start)
 
 kern_return_t IMPL(ASFWSBP2Nub, Stop)
 {
-    ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub::Stop");
-    return Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSBP2Nub Stop enter obj=%p provider=%p", this, provider);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSBP2Nub Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
+}
+
+void ASFWSBP2Nub::free()
+{
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSBP2Nub free obj=%p", this);
+    super::free();
 }

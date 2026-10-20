@@ -179,7 +179,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     kern_return_t Start(IOService* provider);
     void Stop();
 
-    void HandleInterrupt(const InterruptSnapshot& snapshot);
+    [[nodiscard]] IsochContextEvents HandleInterrupt(const InterruptSnapshot& snapshot);
 
     const ControllerStateMachine& StateMachine() const;
     MetricsSink& Metrics() const;

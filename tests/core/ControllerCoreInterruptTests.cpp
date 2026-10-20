@@ -88,7 +88,7 @@ protected:
         hardware_->SetTestRegister(
             Register32::kLinkControl,
             hardware_->GetTestRegister(Register32::kLinkControl) & ~LinkControlBits::kCycleMaster);
-        core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kCycleTooLong});
+        (void)core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kCycleTooLong});
     }
 
     static constexpr uint32_t kGeneration = 7;
@@ -99,6 +99,32 @@ protected:
 };
 
 } // namespace
+
+TEST_F(ControllerCoreInterruptTest, ReturnsAcknowledgedContextMasksForDispatch) {
+    const uint32_t events = IntEventBits::kIsochRx | IntEventBits::kIsochTx | IntEventBits::kRQPkt;
+    hardware_->SetTestRegister(Register32::kIntEvent, events);
+    hardware_->SetTestRegister(Register32::kIsoRecvIntEventClear, 3);
+    hardware_->SetTestRegister(Register32::kIsoXmitIntEventClear, 5);
+    const auto acknowledged = core_->HandleInterrupt(InterruptSnapshot{.intEvent = events});
+    EXPECT_EQ(acknowledged.receive, 3u);
+    EXPECT_EQ(acknowledged.transmit, 5u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIntEvent), 0u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIsoRecvIntEventClear), 0u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIsoXmitIntEventClear), 0u);
+    const auto operations = hardware_->CopyTestOperations();
+    ASSERT_GE(operations.size(), 2u);
+    EXPECT_EQ(operations[operations.size() - 2], HardwareInterface::TestOperation::AcknowledgeInterruptEvents);
+    EXPECT_EQ(operations.back(), HardwareInterface::TestOperation::WriteAndFlush);
+}
+
+TEST_F(ControllerCoreInterruptTest, RevokedProviderReturnsNoContextsForDispatch) {
+    hardware_->SetTestRegister(Register32::kIsoRecvIntEventClear, 3);
+    hardware_->RevokeAndDrain();
+    const auto before = hardware_->CopyTestOperations();
+    const auto acknowledged = core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kIsochRx});
+    EXPECT_EQ(acknowledged.receive | acknowledged.transmit, 0u);
+    EXPECT_EQ(hardware_->CopyTestOperations(), before);
+}
 
 // Root: the cycle policy made this node cycle master. After cycleTooLong the
 // controller has cleared cycleMaster; it must be set again, and only after
@@ -172,7 +198,7 @@ protected:
                     Raise(arrivals[pass]);
                 }
                 ++pass;
-                core_->HandleInterrupt(snap);
+                (void)core_->HandleInterrupt(snap);
             });
     }
 

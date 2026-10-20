@@ -271,6 +271,10 @@ uint32_t IsochReceiveContext::Poll() {
         }
     });
 
+    if (receiveConsumer_) {
+        receiveConsumer_->EndReceiveBatch(receiveBatch);
+    }
+
     rxLock_.clear(std::memory_order_release);
     return processed;
 }

@@ -44,7 +44,7 @@ inline constexpr std::array kMotuDefinitions{
     MotuDefinition(DeviceDefinitionId::MotuAudioExpress, 51, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Audio Express"),
     MotuDefinition(DeviceDefinitionId::Motu828mk3Hybrid, 53, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "828mk3 Hybrid"),
     MotuDefinition(DeviceDefinitionId::Motu896mk3Hybrid, 55, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "896mk3 Hybrid"),
-    MotuDefinition(DeviceDefinitionId::MotuTrack16, 57, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "Track16"),
+    MotuDefinition(DeviceDefinitionId::MotuTrack16, 57, ProfileBuilderId::MotuTrack16, ProtocolImplementationId::MotuRegister, SupportDisposition::Supported, "Track16"),
     MotuDefinition(DeviceDefinitionId::Motu4pre, 69, ProfileBuilderId::None, ProtocolImplementationId::None, SupportDisposition::RecognizedUnsupported, "4pre"),
     // FFADO src/motu/motu_avdevice.cpp:81-84 identifies these FireWire units,
     // but supplies no audio model. Recognize each without choosing an audio protocol.

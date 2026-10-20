@@ -193,5 +193,39 @@ TEST(MotuPortLayoutTests, EverySupportedModelNamesTheVendorPhysicalGroupsAtEvery
             const auto it = std::ranges::find_if(kModels,[&](const auto& item) { return item.unitVersion == model.unitVersion; });
             covered[static_cast<size_t>(it-kModels.begin())] = true;
         });
-    EXPECT_EQ(std::ranges::count(covered,true),11);
+    EXPECT_EQ(std::ranges::count(covered,true),12);
+}
+
+// Vendor BoxTrack16::SetupStrmFwIds 0x51330: one optical bank (bank-B bits ignored),
+// a two-chunk gap before Reverb, and no Reverb or optical at 4x.
+TEST(MotuPortLayoutTests, Track16UsesVendorGroupsAndOnlyOpticalBankA) {
+    using namespace ASFW::Encoding::Motu;
+    using ASFW::Audio::Motu::ResolvePcmChunks;
+    EXPECT_EQ(ResolvePcmChunks(0x101, 0, 0x39).tx, 22U);
+    EXPECT_EQ(ResolvePcmChunks(0x101, 0, 0x39).rx, 14U);
+    EXPECT_EQ(ResolvePcmChunks(0x10101 | 0x40000, 0, 0x39).tx, 18U); // TOSLINK: 2 + 2 padding
+    EXPECT_EQ(ResolvePcmChunks(0x10101 | 0x40000, 0, 0x39).rx, 10U);
+    EXPECT_EQ(ResolvePcmChunks(0x101, 1, 0x39).tx, 18U);
+    EXPECT_EQ(ResolvePcmChunks(0x202, 0, 0x39).tx, 14U);
+    EXPECT_EQ(ResolvePcmChunks(0x303, 2, 0x39).tx, 14U);
+
+    const auto* capture = PortLayoutFor(0x39, 48000, 14, true);
+    ASSERT_NE(capture, nullptr);
+    EXPECT_EQ(capture->hostChannels, 12U);
+    EXPECT_EQ(std::string_view(capture->ports[10].name), "Reverb L");
+    EXPECT_EQ(capture->ports[10].chunk, 12U);
+    EXPECT_EQ(capture->ports[12].chunk, 10U); // gap, hidden
+    EXPECT_EQ(capture->ports[13].chunk, 11U);
+
+    const auto* quad = PortLayoutFor(0x39, 192000, 14, true);
+    ASSERT_NE(quad, nullptr);
+    EXPECT_EQ(quad->hostChannels, 10U);
+    EXPECT_TRUE(IsChunkPermutation(quad->Map()));
+
+    const auto* playback = PortLayoutFor(0x39, 48000, 14, false);
+    ASSERT_NE(playback, nullptr);
+    EXPECT_EQ(playback->hostChannels, 14U);
+    EXPECT_EQ(std::string_view(playback->ports[0].name), "Main L");
+    EXPECT_EQ(std::string_view(playback->ports[6].name), "Optical 1");
+    EXPECT_EQ(playback->ports[6].chunk, 6U);
 }

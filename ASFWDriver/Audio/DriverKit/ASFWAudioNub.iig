@@ -52,6 +52,19 @@ public:
                                                 uint32_t* outSampleRateHz,
                                                 uint64_t* outGeneration);
 
+    // The endpoint's MIDI byte seam, for the audio driver's TX composition: a
+    // retained descriptor to map, plus the host -> device geometry (the MPX
+    // slot's place in the playback data block). kIOReturnNotReady when the
+    // endpoint publishes no MIDI service, which is the ordinary case. The audio
+    // driver maps it for the life of one TX run and drops the mapping with the
+    // TX slabs; the endpoint keeps the memory alive (retained descriptor).
+    virtual kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory,
+                                                  uint32_t* outDestinationPorts,
+                                                  uint32_t* outDestinationSlotIndex,
+                                                  uint32_t* outDestinationDbs,
+                                                  uint32_t* outDestinationPcmChannels,
+                                                  uint32_t* outDbcAligned);
+
     virtual kern_return_t StartAudioStreaming(uint32_t sampleRateHz);
     virtual kern_return_t StopAudioStreaming();
 
@@ -119,6 +132,14 @@ public:
     virtual kern_return_t RegisterIoRestartRequiredAction(
         OSAction* action TYPE(IoRestartRequired));
 
+    // Confirmed controls: one-way to the audio driver's Default queue. Never
+    // wait on the nub control queue from the controller completion callback.
+    virtual void ControlParameterChanged(OSAction* action TARGET,
+        uint64_t guid, uint64_t revision, uint64_t sequence,
+        uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin);
+    virtual kern_return_t RegisterControlChangeAction(
+        OSAction* action TYPE(ControlParameterChanged));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
     void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
@@ -181,26 +202,12 @@ public:
         uint64_t expectedIncarnation, uint64_t expectedRouteEpoch,
         uint32_t expectedBusGeneration);
 
-    // Confirmed graph-backed controls. token encodes subunit/block/channel;
-    // the nub validates it against the current graph before sending traffic.
-    virtual kern_return_t SetAvcFeatureControl(uint32_t token, bool muteControl,
-                                               int32_t value, int32_t* outConfirmedValue);
+    virtual kern_return_t CopyParameterControls(OSDictionary** properties);
+    virtual kern_return_t SetControlParameter(uint32_t parameterId, uint64_t kind, uint64_t bits,
+        uint64_t* confirmedKind, uint64_t* confirmedBits);
+    virtual kern_return_t ReadControlParameter(uint32_t parameterId, bool normalized,
+        uint64_t* kind, uint64_t* bits);
 
-    // Protocol-backed boolean control bridge. Same process as above - this
-    // crosses dispatch queues, not processes. No device currently answers these:
-    // the phantom/polarity path they served was removed with the CoreAudio
-    // control policy decision (FW-132), so IDeviceProtocol's defaults report
-    // kIOReturnUnsupported. Phantom and polarity move to the ASFW app over the
-    // user client instead.
-    virtual kern_return_t GetProtocolBooleanControl(
-        uint32_t classIdFourCC,
-        uint32_t element,
-        bool* outValue);
-
-    virtual kern_return_t SetProtocolBooleanControl(
-        uint32_t classIdFourCC,
-        uint32_t element,
-        bool value);
 };
 
 struct ASFWAudioNub_IVars {
@@ -225,6 +232,7 @@ struct ASFWAudioNub_IVars {
     OSAction* ztsAnchorAction{nullptr};
     OSAction* deviceClockChangedAction{nullptr};
     OSAction* ioRestartRequiredAction{nullptr};
+    OSAction* controlChangeAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

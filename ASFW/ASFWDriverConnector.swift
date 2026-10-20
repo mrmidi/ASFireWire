@@ -64,6 +64,13 @@ final class ASFWDriverConnector: ObservableObject {
         // One unit's FCP exchange log, paged (UserClient/WireFormats/AVCExchangeLogWire.hpp).
         case getFCPExchangeLog = 65
         case getAVCDiscoveryDocument = 68
+        // Device controls (UserClient/Handlers/ControlsHandler.hpp): the
+        // "asfw.controls.v1" snapshot, paged; an asynchronous write and its
+        // hardware-confirmed result.
+        case getControlSnapshot = 80
+        case setControlParameter = 81
+        case getControlWriteResult = 82
+        case setControlRoute = 83
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.
@@ -96,6 +103,11 @@ final class ASFWDriverConnector: ObservableObject {
     @Published var latestStatus: DriverStatus?
 
     // MARK: - Public Publishers
+
+    let controlChangeSubject = PassthroughSubject<ControlParameterChange, Never>()
+    var controlChanges: AnyPublisher<ControlParameterChange, Never> {
+        controlChangeSubject.eraseToAnyPublisher()
+    }
 
     let statusSubject = PassthroughSubject<DriverStatus, Never>()
     var statusPublisher: AnyPublisher<DriverStatus, Never> {

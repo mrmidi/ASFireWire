@@ -29,6 +29,8 @@ struct DiceLockSnapshot;
 struct DiceReceiverDumpSnapshot;
 }
 
+namespace ASFW::Audio::Controls { class IControlProvider; }
+
 namespace ASFW::Audio {
 class FamilyDriver;
 }
@@ -40,7 +42,7 @@ namespace ASFW::Audio {
 /// Device protocols are instantiated by CreateFamilyDeviceProtocol when a
 /// audio endpoint is resolved during discovery. Each protocol handler
 /// encapsulates vendor-specific control logic (DSP, routing, etc.).
-class IDeviceProtocol {
+class IDeviceProtocol : public std::enable_shared_from_this<IDeviceProtocol> {
 public:
     virtual ~IDeviceProtocol() = default;
     
@@ -142,42 +144,14 @@ public:
         (void)avcUnit;
     }
 
+    /// Optional semantic control provider, owned by this protocol.
+    virtual Controls::IControlProvider* Controls() noexcept { return nullptr; }
+
     // Explicit discovery/reset hook, including idle devices. The caller retains
     // the protocol until completion. Register protocols restore notification IO
     // here; ordinary protocols have no reset registration work.
     virtual void RebindNotifications(VoidCallback callback) { callback(kIOReturnSuccess); }
 
-    /// Check if protocol can expose/control a boolean control.
-    // These virtuals intentionally match the host-facing `(class, element[, value])` contract.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual bool SupportsBooleanControl(uint32_t classIdFourCC,
-                                        uint32_t element) const {
-        (void)classIdFourCC;
-        (void)element;
-        return false;
-    }
-
-    /// Read protocol-backed boolean control value.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
-                                            uint32_t element,
-                                            bool& outValue) {
-        (void)classIdFourCC;
-        (void)element;
-        (void)outValue;
-        return kIOReturnUnsupported;
-    }
-
-    /// Write protocol-backed boolean control value.
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    virtual IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
-                                            uint32_t element,
-                                            bool value) {
-        (void)classIdFourCC;
-        (void)element;
-        (void)value;
-        return kIOReturnUnsupported;
-    }
 };
 
 } // namespace ASFW::Audio

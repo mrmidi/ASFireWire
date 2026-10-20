@@ -116,4 +116,27 @@ struct ExpandedReceiveTimestamp final {
         scaled / ASFW::Timing::kTicksPerSecond);
 }
 
+/// The host-time instant of one received packet: its descriptor timestamp
+/// expanded against the drain's (cycle timer, host ticks) pair, the same
+/// arithmetic the clock anchor uses. Falls back to the drain's own host time
+/// when the timestamp cannot be expanded, so a caller always gets a usable,
+/// never-zero-by-accident answer. Used to date MIDI bytes lifted off the wire.
+[[nodiscard]] inline uint64_t PacketHostTicks(uint16_t timestamp,
+                                              uint32_t drainCycleTimer,
+                                              uint64_t drainHostTicks) noexcept {
+    ExpandedReceiveTimestamp expanded{};
+    if (!ExpandReceiveTimestamp(timestamp, drainCycleTimer, expanded)) {
+        return drainHostTicks;
+    }
+    if (expanded.ageTicks >= 0) {
+        const uint64_t age = ASFW::Timing::nanosToHostTicks(
+            FireWireTicksToNanos(static_cast<uint64_t>(expanded.ageTicks)));
+        return drainHostTicks > age ? drainHostTicks - age : drainHostTicks;
+    }
+    // Negative age: the hardware completed the packet after the reference was
+    // sampled, so the packet instant is later than the drain read.
+    return drainHostTicks + ASFW::Timing::nanosToHostTicks(
+        FireWireTicksToNanos(static_cast<uint64_t>(-expanded.ageTicks)));
+}
+
 } // namespace ASFW::Isoch::Rx

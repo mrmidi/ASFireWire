@@ -46,14 +46,16 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
             (void)ivars->device.audioNub->RegisterDeviceClockChangedAction(nullptr);
             (void)ivars->device.audioNub->RegisterIoRestartRequiredAction(nullptr);
+            (void)ivars->device.audioNub->RegisterControlChangeAction(nullptr);
         }
         ivars->deviceClockChangedAction.reset();
         ivars->ioRestartRequiredAction.reset();
+        ivars->controlChangeAction.reset();
         ivars->ztsAnchorAction.reset();
         ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
         ivars->txPreparationQueue.reset();
-        TearDownAudioGraph(*this, *ivars);
+        TearDownAudioGraph(*this, *ivars, ASFW::Audio::DriverKit::AudioGraphDetach::kStreamsThenDevice);
         (void)Stop(provider, SUPERDISPATCH);
         return result;
     };
@@ -164,6 +166,16 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return failStart(error, "RegisterIoRestartRequiredAction");
     }
 
+    if (!ivars->device.parameterControls.empty()) {
+        OSAction* rawControlChangeAction = nullptr;
+        error = CreateActionControlParameterChanged(0, &rawControlChangeAction);
+        if (error != kIOReturnSuccess || !rawControlChangeAction)
+            return failStart(error == kIOReturnSuccess ? kIOReturnNoMemory : error, "CreateActionControlParameterChanged");
+        ivars->controlChangeAction = ASFW::Common::AdoptRetained(rawControlChangeAction);
+        error = ivars->device.audioNub->RegisterControlChangeAction(ivars->controlChangeAction.get());
+        if (error != kIOReturnSuccess) return failStart(error, "RegisterControlChangeAction");
+    }
+
     // Saffire/PreSonus TCAT: wire ready before CoreAudio can join it. All
     // producer/timestamp actions must be registered before preparing the wire.
     error = ivars->audioDevice->PrepareWire();
@@ -209,13 +221,16 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
 
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver Stop enter obj=%p provider=%p", this, provider);
 
     if (ivars) {
         ASFW::Audio::DriverKit::StopAudioDriverGraph(*this, *ivars);
+        ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver graph stopped obj=%p", this);
     }
 
-    return Stop(provider, SUPERDISPATCH);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Audio, "[Lifecycle] ASFWAudioDriver Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
 }
 
 kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,

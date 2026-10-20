@@ -47,13 +47,13 @@
     {6, 96000, 59, 59, 128, 288},  // Weiss INT (DICE)
     {6, 176400, 119, 119, 320, 640},  // Weiss INT (DICE)
     {6, 192000, 119, 119, 320, 640},  // Weiss INT (DICE)
-    {7, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 88200, 256, 256, 353, 471},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 96000, 256, 256, 384, 512},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 176400, 256, 256, 706, 941},  // Generic AV/C (one profile for every discovered AV/C unit)
-    {7, 192000, 256, 256, 768, 1024},  // Generic AV/C (one profile for every discovered AV/C unit)
+    {7, 32000, 256, 256, 48, 80},  // Apogee Duet
+    {7, 44100, 55, 46, 48, 80},  // Apogee Duet
+    {7, 48000, 67, 40, 48, 80},  // Apogee Duet
+    {7, 88200, 57, 108, 128, 192},  // Apogee Duet
+    {7, 96000, 59, 119, 128, 192},  // Apogee Duet
+    {7, 176400, 256, 256, 320, 448},  // Apogee Duet
+    {7, 192000, 256, 256, 320, 448},  // Apogee Duet
     {8, 32000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {8, 44100, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
     {8, 48000, 256, 256, 192, 256},  // Generic AV/C (one profile for every discovered AV/C unit)
@@ -246,3 +246,17 @@
     {36, 96000, 128, 128, 64, 64},  // Traveler mk3
     {36, 176400, 128, 128, 64, 64},  // Traveler mk3
     {36, 192000, 128, 128, 64, 64},  // Traveler mk3
+    {37, 32000, 128, 128, 64, 64},  // Track16
+    {37, 44100, 128, 128, 64, 64},  // Track16
+    {37, 48000, 128, 128, 64, 64},  // Track16
+    {37, 88200, 128, 128, 64, 64},  // Track16
+    {37, 96000, 128, 128, 64, 64},  // Track16
+    {37, 176400, 128, 128, 64, 64},  // Track16
+    {37, 192000, 128, 128, 64, 64},  // Track16
+    {38, 32000, 256, 256, 192, 256},  // Generic AV/C (Orpheus)
+    {38, 44100, 256, 256, 192, 256},  // Generic AV/C (Orpheus)
+    {38, 48000, 256, 256, 192, 256},  // Generic AV/C (Orpheus)
+    {38, 88200, 256, 256, 353, 471},  // Generic AV/C (Orpheus)
+    {38, 96000, 256, 256, 384, 512},  // Generic AV/C (Orpheus)
+    {38, 176400, 256, 256, 706, 941},  // Generic AV/C (Orpheus)
+    {38, 192000, 256, 256, 768, 1024},  // Generic AV/C (Orpheus)

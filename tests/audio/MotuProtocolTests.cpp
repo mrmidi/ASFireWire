@@ -1264,7 +1264,7 @@ TEST(MotuV1Protocol, Original896WithholdsUnresolvedDoubleRateAndPreservesOutputO
     EXPECT_EQ(bus.writes.back().addressLo, LowOf(Reg::IsocCommControl));
 }
 TEST(MotuV3Protocol, AllFireWireModelsPublishSixRatesAndOtherModelsRefuseInitialization) {
-    for (uint32_t version : {0x15U, 0x17U, 0x19U, 0x1bU}) {
+    for (uint32_t version : {0x15U, 0x17U, 0x19U, 0x1bU, 0x39U}) {
         RecordingBus bus; RouteState routes;
         bus.readValues[LowOf(Reg::IsocCommControl)] = 0x1234;
         bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x300; // current 96k
@@ -1281,7 +1281,7 @@ TEST(MotuV3Protocol, AllFireWireModelsPublishSixRatesAndOtherModelsRefuseInitial
         // The observed 828mk3 48k-only word must not leak to other models/rates.
         for (const auto& write : bus.writes) EXPECT_NE(write.addressLo, LowOf(Reg::StreamConfigV3));
     }
-    for (uint32_t version : {0x30U, 0x33U, 0x35U, 0x37U, 0x39U, 0x45U}) {
+    for (uint32_t version : {0x30U, 0x33U, 0x35U, 0x37U, 0x45U}) {
         RecordingBus bus; RouteState routes;
         MotuProtocol protocol(bus, bus, routes.registry, routes.route, version);
         EXPECT_EQ(protocol.Initialize(), kIOReturnUnsupported); EXPECT_TRUE(bus.writes.empty());
@@ -1825,5 +1825,5 @@ TEST(MotuProtocolChannelLabelTests, EverySupportedModelPublishesConsistentNamesA
             EXPECT_EQ(active->playback[0].packedPcmChunks,caps->hostToDevicePcmChunks);
         }
     }
-    EXPECT_EQ(models,11U);
+    EXPECT_EQ(models,12U);
 }

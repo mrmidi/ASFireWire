@@ -19,7 +19,6 @@ class IAsyncSubsystemPort;
 namespace ASFW::Driver {
 
 class ControllerCore;
-class HardwareInterface;
 class IsochService;
 class StatusPublisher;
 
@@ -29,7 +28,7 @@ class InterruptDispatcher {
     ~InterruptDispatcher() = default;
 
     void HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
-                        HardwareInterface& hardware, IODispatchQueue& workQueue,
+                        IODispatchQueue& workQueue,
                         IsochService& isoch, StatusPublisher& statusPublisher,
                         ASFW::Async::IAsyncSubsystemPort* asyncSubsystem);
 };

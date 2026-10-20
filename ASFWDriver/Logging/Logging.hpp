@@ -109,6 +109,7 @@ os_log_t Zts();
 os_log_t TxSyt();
 os_log_t PayloadWriter();
 os_log_t Oxfw();
+os_log_t Midi();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----

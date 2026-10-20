@@ -81,6 +81,51 @@ struct DriverExtensionVersionPolicy {
     }
 }
 
+/// One registered copy of the driver extension, as a SystemExtensions
+/// properties request reports it. Several copies can coexist: the active one,
+/// one awaiting approval, and replaced ones that stay uninstalling until reboot.
+struct InstalledDriverExtension: Equatable, Sendable {
+    var bundleVersion: String
+    var bundleShortVersion: String
+    var isEnabled: Bool
+    var isAwaitingUserApproval: Bool
+    var isUninstalling: Bool
+}
+
+/// The driver extension carried inside this app bundle.
+struct BundledDriverExtension: Equatable, Sendable {
+    var bundleVersion: String
+    var bundleShortVersion: String
+}
+
+enum DriverExtensionUpdateState: Equatable, Sendable {
+    /// The query failed, or this app carries no driver to compare against.
+    case unknown
+    case notInstalled
+    /// The installed build is the bundled one or newer.
+    case current
+    case installedOlder(installed: InstalledDriverExtension,
+                        bundled: BundledDriverExtension)
+}
+
+enum DriverExtensionUpdatePolicy {
+    /// Compares the copy macOS runs (or is waiting to run) with the bundled
+    /// one by CFBundleVersion, the same number the replacement policy uses.
+    static func state(installed: [InstalledDriverExtension]?,
+                      bundled: BundledDriverExtension?) -> DriverExtensionUpdateState {
+        guard let installed, let bundled else { return .unknown }
+        let live = installed.filter { !$0.isUninstalling }
+        guard let active = live.first(where: \.isEnabled)
+                ?? live.first(where: \.isAwaitingUserApproval) else {
+            return .notInstalled
+        }
+        return DriverExtensionVersionPolicy.replacementIsNewer(
+            existing: active.bundleVersion,
+            replacement: bundled.bundleVersion
+        ) ? .installedOlder(installed: active, bundled: bundled) : .current
+    }
+}
+
 enum DriverInstallSettings {
     static let requireNewerBuildKey = "asfw.driver.require-newer-build"
     #if DEBUG

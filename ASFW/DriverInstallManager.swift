@@ -72,7 +72,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
-    private let extensionIdentifier = "net.asfw.driver"
+    static let extensionIdentifier = "net.asfw.driver"
     private let verificationTimeout: TimeInterval = 10
     private var pending: PendingOperation?
     private var verificationTimer: DispatchSourceTimer?
@@ -84,7 +84,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
                   progress: ProgressHandler? = nil,
                   completion: @escaping CompletionHandler) {
         let request = OSSystemExtensionRequest.activationRequest(
-            forExtensionWithIdentifier: extensionIdentifier,
+            forExtensionWithIdentifier: Self.extensionIdentifier,
             queue: .main
         )
         submit(kind: .activation,
@@ -98,7 +98,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     func deactivate(progress: ProgressHandler? = nil,
                     completion: @escaping CompletionHandler) {
         let request = OSSystemExtensionRequest.deactivationRequest(
-            forExtensionWithIdentifier: extensionIdentifier,
+            forExtensionWithIdentifier: Self.extensionIdentifier,
             queue: .main
         )
         submit(kind: .deactivation,
@@ -290,6 +290,6 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         } else {
             print("[DriverInstall] No SystemExtensions directory present")
         }
-        print("[DriverInstall] Activation target identifier: \(extensionIdentifier)")
+        print("[DriverInstall] Activation target identifier: \(Self.extensionIdentifier)")
     }
 }

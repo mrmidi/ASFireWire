@@ -52,7 +52,7 @@ bool DiceTxStreamEngine::Configure(const ASFW::Isoch::Audio::IAudioStreamProfile
 
     const uint32_t slotCount =
         static_cast<uint32_t>(sizeof(timelineSlots_) / sizeof(timelineSlots_[0]));
-    if (!timeline_.AttachSlots(timelineSlots_, slotCount)) {
+    if (!timeline_.AttachSlots(timelineSlots_, slotCount, amdtpConfig.framesPerDataPacket)) {
         return false;
     }
 
@@ -89,6 +89,7 @@ bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     if (frameCursorAligned_) {
         return false;
     }
+    timeline_.BeginFrameEpoch();
     nextAudioFrame_ = frameIndex;
     frameCursorAligned_ = true;
     ++cursorEpoch_;
@@ -161,6 +162,10 @@ TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
 
     if (!slotProvider_->PublishSlot(packet)) {
         return TxSlotPrepareResult::kSlotPublishFailed;
+    }
+
+    if (!packetizer_.ExposePreparedPacket(slot, packet)) {
+        return TxSlotPrepareResult::kPacketizerRejected;
     }
 
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);

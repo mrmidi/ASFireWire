@@ -189,15 +189,15 @@ void ObserveMAudioTxClock(ASFWAudioDriver_IVars& ivars,
         correlationBusTicks = correlationTicks;
 
         const auto* slot = ivars.runtime.txStreamEngine.Timeline().SlotByIndex(packetIndex);
-        if (!slot || !slot->isData || slot->framesInPacket == 0 ||
+        if (!slot || !slot->isData.load(std::memory_order_relaxed) || slot->framesInPacket.load(std::memory_order_relaxed) == 0 ||
             dataPacketCount == dataPackets.size()) {
             continue;
         }
         dataPackets[dataPacketCount++] = {
             .completionBusTicks = completionTicks,
             .correlationBusTicks = correlationTicks,
-            .sampleFrame = slot->firstAudioFrame,
-            .frameCount = slot->framesInPacket,
+            .sampleFrame = slot->firstAudioFrame.load(std::memory_order_relaxed),
+            .frameCount = slot->framesInPacket.load(std::memory_order_relaxed),
             .sytOffsetTicks =
                 ASFW::Audio::Families::BeBoB::MAudio::
                     SytOffsetTicksForPacketIndex(packetIndex),

@@ -21,7 +21,9 @@
 
 namespace ASFW::Isoch::Audio::AVC::Profiles {
 
-class GenericAvcProfile final : public IAudioStreamProfile {
+// Not final: a device with its own published timing table (ApogeeDuetProfile)
+// keeps this framing and policy and overrides only the declarations.
+class GenericAvcProfile : public IAudioStreamProfile {
 public:
     [[nodiscard]] const char* Name() const noexcept override { return "Generic AV/C"; }
 

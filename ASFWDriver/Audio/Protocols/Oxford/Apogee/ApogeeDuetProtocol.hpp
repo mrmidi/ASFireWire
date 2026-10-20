@@ -22,6 +22,8 @@
 
 #include "ApogeeDuetDuplex.hpp"
 #include "ApogeeTypes.hpp"
+#include "DuetControlModel.hpp"
+#include "DuetControlWrite.hpp"
 #include "ApogeeVendorCodec.hpp"
 #include "../OxfordCsr.hpp"
 #include "../../IDeviceProtocol.hpp"
@@ -29,6 +31,7 @@
 #include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <DriverKit/IOReturn.h>
 #include <vector>
+#include <deque>
 #include <functional>
 #include <cstdint>
 #include <span>
@@ -48,7 +51,7 @@ struct CMPDevice;
 
 namespace ASFW::Audio::Oxford::Apogee {
 
-class ApogeeDuetProtocol final : public IDeviceProtocol {
+class ApogeeDuetProtocol final : public IDeviceProtocol, public ASFW::Audio::Controls::IControlProvider {
 public:
     // The command table and operand encoding moved to ApogeeVendorCodec (FW-126);
     // this alias keeps every existing ApogeeDuetProtocol::VendorCommand use valid.
@@ -74,7 +77,13 @@ public:
                        CMP::CMPClient* cmpClient = nullptr,
                        uint32_t formatSettleDelayMs = 100U,
                        Scheduling::ITimerScheduler* timerScheduler = nullptr);
-    ~ApogeeDuetProtocol() override = default;
+    ~ApogeeDuetProtocol() override { StopControlPoll(); ResetControlQueue(); }
+
+    ASFW::Audio::Controls::IControlProvider* Controls() noexcept override { return this; }
+    void Prepare(std::function<void(IOReturn)> done) override;
+    std::optional<ASFW::Audio::Controls::ControlSnapshot> CopySnapshot() const override;
+    void SetParameter(AudioModel::ParameterId, const AudioModel::ParameterValue&, Completion) override;
+    void SetRoute(AudioModel::NodeId, AudioModel::PortId, std::optional<AudioModel::PortId>, Completion) override;
 
     // IDeviceProtocol implementation
     IOReturn Initialize() override;
@@ -95,6 +104,7 @@ public:
 
     void UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                               std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) override {
+        if (runtime_.route != route) { StopControlPoll(); controlsReady_ = false; ++controlsEpoch_; ResetControlQueue(); }
         duplex_.UpdateRuntimeContext(route, std::move(avcUnit));
     }
 
@@ -147,6 +157,26 @@ public:
     void GetHardwareId(ResultCallback<uint32_t> callback);
 
 private:
+    void ReadControlGroup(DuetControlGroup group, VoidCallback done);
+    void FinishControlWrite(AudioModel::ParameterId id, Completion done);
+    bool CommitControls();
+    void ScheduleControlPoll();
+    void StopControlPoll();
+    void PollControls();
+    DuetControlsState controls_{};
+    std::optional<ASFW::Audio::Controls::ControlSnapshot> controlSnapshot_;
+    // Control I/O runs one operation at a time: the knob poll, a write and a
+    // source switch all read-modify-write the same device groups. A request
+    // that arrives meanwhile waits its turn (bounded) instead of being refused.
+    void QueueControl(std::function<void(ApogeeDuetProtocol&)> op, Completion refuse);
+    void ReleaseControl();
+    void ResetControlQueue();
+    static constexpr size_t kMaxControlWaiters = 16;
+    std::deque<std::function<void()>> controlWaiters_;
+    bool controlsReady_{false}, controlBusy_{false};
+    uint64_t controlsEpoch_{0};
+    Scheduling::TimerToken controlPoll_{Scheduling::kInvalidTimerToken};
+
     // Helpers
     using VendorResultCallback = std::function<void(IOReturn, const VendorCommand&)>;
     using VendorSequenceCallback =

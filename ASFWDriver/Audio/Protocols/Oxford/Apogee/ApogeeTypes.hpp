@@ -27,7 +27,7 @@ enum class KnobTarget : uint8_t {
 struct KnobState {
     bool outputMute{false};
     KnobTarget target{KnobTarget::OutputPair0};
-    uint8_t outputVolume{0};      // 0-64
+    uint8_t outputVolume{0};      // loudness 0-64: 64 - HW_STATE byte 3
     std::array<uint8_t, 2> inputGains{}; // 10-75
 
     // Every range resolves to the device spec (FW-130); these are views on it.
@@ -62,8 +62,11 @@ enum class OutputMuteMode : uint8_t {
 
 struct OutputParams {
     bool mute{false};
-    uint8_t volume{0}; // 0-64
-    OutputSource source{OutputSource::StreamInputPair0};
+    // Raw OutVolume: ATTENUATION in 1 dB steps, 0 = loudest, 64 = quietest.
+    // HW_STATE byte 3 carries the same raw value (KnobState::outputVolume is
+    // its loudness, 64 - raw). Verified on a Duet 2026-10-17: a quiet setting
+    // read 44 from both registers. ALSA apogee_model.rs mixes the two senses.
+    uint8_t volume{0};    OutputSource source{OutputSource::StreamInputPair0};
     OutputNominalLevel nominalLevel{OutputNominalLevel::Instrument};
     OutputMuteMode lineMuteMode{OutputMuteMode::Never};
     OutputMuteMode hpMuteMode{OutputMuteMode::Never};

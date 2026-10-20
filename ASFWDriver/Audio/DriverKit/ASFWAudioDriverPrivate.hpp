@@ -5,7 +5,6 @@
 #include "Config/AudioDriverConfig.hpp"
 #include "Config/IAudioDeviceProfile.hpp"
 #include "Config/ProfileTimingGeometry.hpp"
-#include "Controls/AudioControlBuilder.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
@@ -16,6 +15,7 @@
 #include "../Runtime/TxCompletionStampDrain.hpp"
 #include "../Runtime/TxStartupTrace.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "../Engine/Direct/Tx/MidiTxComposer.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
@@ -59,10 +59,15 @@ struct AudioDriverDeviceState {
     std::atomic<uint32_t> pendingSampleRateHz{0};
     uint32_t streamModeRaw{0};
     std::vector<ASFW::Audio::Runtime::RateFormation> rateFormationCandidates;
-    uint32_t avcControlCount{0};
-    ASFW::Audio::Model::AvcPublishedControl avcControls[ASFW::Audio::Model::kMaxAvcControls]{};
-    uint32_t boolControlCount{0};
-    ASFW::Isoch::Audio::BoolControlSlot boolControls[ASFW::Isoch::Audio::kMaxBoolControls]{};
+    struct ParameterControlSlot {
+        ASFW::Audio::Controls::CoreAudioControl descriptor;
+        OSSharedPtr<IOUserAudioLevelControl> level;
+        OSSharedPtr<IOUserAudioBooleanControl> boolean;
+        OSSharedPtr<IOUserAudioSelectorControl> selector;
+        uint64_t sequence{};
+    };
+    std::vector<ParameterControlSlot> parameterControls;
+    uint64_t controlRevision{0};
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
@@ -252,6 +257,20 @@ struct AudioDriverRuntimeState {
     uint64_t txMissedFinalityAtStart{0};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
+
+    // MIDI TX composition into the primary stream's MPX slot (see
+    // Engine/Direct/Tx/MidiTxComposer.hpp). Entirely inert unless the endpoint
+    // published a MIDI service: `midiTxBlock` is null and nothing below runs.
+    // `midiTxBlock` points into ivars.midiMap and is cleared, behind the TX
+    // preparation queue's drain, before that mapping is released.
+    // TX preparation queue only, except the bind/unbind in StartIO/StopIO,
+    // which run while that queue is quiesced.
+    ASFW::AudioEngine::Direct::Tx::MidiTxComposer midiTxComposer;
+    ASFW::Midi::MidiTransportBlock* midiTxBlock{nullptr};
+    // Counters last reported, so [MidiTx] speaks only when something changed.
+    uint64_t midiTxReportedBytes{0};
+    uint64_t midiTxReportedAnomalies{0};
+
     ASFW::Audio::BeBoB::MAudioInternalTxTiming mAudioInternalTxTiming;
     std::atomic<bool> mAudioInternalTxActive{false};
     std::atomic<bool> rxReplayAfterBootstrap{false};
@@ -324,12 +343,18 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txPayloadMapSecondary;
     OSSharedPtr<IOMemoryMap> txMetadataMapSecondary;
     OSSharedPtr<IOMemoryMap> txControlMapSecondary;
+
+    // The endpoint's MIDI byte seam, mapped for the life of one TX run (the
+    // retained descriptor keeps the memory alive past the endpoint's own map).
+    OSSharedPtr<IOMemoryDescriptor> midiBuffer;
+    OSSharedPtr<IOMemoryMap> midiMap;
     OSSharedPtr<OSAction> txPreparationAction;
     OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
     OSSharedPtr<OSAction> ioRestartRequiredAction;
+    OSSharedPtr<OSAction> controlChangeAction;
 
 
 
@@ -396,6 +421,38 @@ struct TxPlacementSample final {
 // WriteEnd on CoreAudio's IO thread, its only owner; RT-safe.
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 
+// The first packet a writer may still change: the projected hardware position
+// plus the finality guard. The PCM fill and the MIDI composer share this one
+// frontier, so a packet one considers taken the other does too.
+[[nodiscard]] uint64_t TxFirstWritablePacket(
+    const ASFW::Isoch::IsochTxQueueControl& queue) noexcept;
+
+// MIDI TX (ASFWAudioDriverMidi.cpp). All three are no-ops for an endpoint
+// without a MIDI service.
+//
+// BindMidiTx maps the endpoint's MIDI seam and configures MPX composition for
+// the primary playback stream; any mismatch or failure leaves MIDI TX off and
+// the audio path exactly as it was. Called by StartIO once the TX queue is
+// armed, before txActive.
+void BindMidiTx(ASFWAudioDriver_IVars& ivars,
+                const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept;
+// Drops the view and the mapping. Only after the TX preparation queue was
+// quiesced (QuiesceTxPreparation), the same rule as the TX slabs. Inline so the
+// teardown path needs nothing else linked.
+inline void UnbindMidiTx(ASFWAudioDriver_IVars& ivars) noexcept {
+    // The view first: after this nothing on the TX preparation queue can reach
+    // the mapping the next two lines release.
+    ivars.runtime.midiTxBlock = nullptr;
+    ivars.midiMap.reset();
+    ivars.midiBuffer.reset();
+}
+// One composition pass over the primary timeline. TX preparation queue only,
+// after the pass that arms packets.
+void ComposeMidiTx(ASFWAudioDriver_IVars& ivars) noexcept;
+// Anomaly-and-activity line for the [TxPrep] heartbeat: silent on a clean idle
+// stream, one line when bytes moved or something was dropped.
+void ReportMidiTx(ASFWAudioDriver_IVars& ivars) noexcept;
+
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
 // when the span exceeds the output ring, which the IO handler reports as
 // kIOReturnBadArgument.
@@ -411,11 +468,31 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 [[nodiscard]] kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                             IOService* provider,
                                             ASFWAudioDriver_IVars& ivars) noexcept;
-/// Detach and release everything BuildAudioGraph created: streams off the
-/// device, the device off the driver, the device's link back to these ivars,
-/// the boolean controls, every buffer and map, and the work queue. Leaves the
+/// How TearDownAudioGraph detaches the graph from ADK.
+enum class AudioGraphDetach : uint8_t {
+    /// Streams off the device, then the device off the driver. Only for a
+    /// Start that failed: no CoreAudio client can be connected yet.
+    kStreamsThenDevice,
+    /// The device off the driver; its streams leave with it. For Stop and
+    /// free(). Stop can race CoreAudio's client disconnect, which ADK runs on
+    /// the driver work queue and which then waits for the device queue
+    /// (_UserClientDisconnected -> _UnregisterAllIOThreads).
+    /// IOUserAudioDevice::RemoveStream holds the device queue and waits for
+    /// the driver work queue (it calls IOUserAudioDriver::RemoveObject):
+    /// the opposite order, and the two deadlocked with ADK's IO thread
+    /// spinning at realtime priority (Duet unplug while playing, 2026-10-17).
+    /// RemoveObject on the device takes the driver queue first, as ADK does.
+    /// ADKVirtualAudioLab's VirtualAudioDriver::Stop_Impl also removes only
+    /// the device.
+    kDeviceOnly,
+};
+
+/// Detach and release everything BuildAudioGraph created: detach from ADK as
+/// `detach` says, clear the device's link back to these ivars, then drop the
+/// boolean controls, every buffer and map, and the work queue. Leaves the
 /// driver holding no ADK object, so a Stop that runs it lets the driver free.
-void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
+void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars,
+                        AudioGraphDetach detach) noexcept;
 /// What ASFWAudioDriver::Stop does before super::Stop: stop the nub's
 /// streaming, withdraw every action registered with it, drop the actions and
 /// their queues, then TearDownAudioGraph. Afterwards the driver holds no ADK

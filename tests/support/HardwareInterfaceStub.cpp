@@ -235,8 +235,12 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
     });
 }
 
-IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+IsochContextEvents HardwareInterface::AcknowledgeInterruptEvents(
+    uint32_t globalEventsToClear, uint32_t intEvent) noexcept {
     IsochContextEvents events{};
+    auto access = TryBeginAccess();
+    if (!access) return events;
+    if (globalEventsToClear != 0) ClearIntEvents(globalEventsToClear);
     WithState(this, [intEvent, &events](HardwareTestState& state) {
         if ((intEvent & IntEventBits::kIsochRx) != 0) {
             events.receive = state.registers[KeyFor(Register32::kIsoRecvIntEventClear)];
@@ -246,8 +250,11 @@ IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) 
             events.transmit = state.registers[KeyFor(Register32::kIsoXmitIntEventClear)];
             state.registers[KeyFor(Register32::kIsoXmitIntEventClear)] &= ~events.transmit;
         }
-        state.operations.push_back(TestOperation::TakeIsochContextEvents);
+        state.operations.push_back(TestOperation::AcknowledgeInterruptEvents);
     });
+    if (globalEventsToClear != 0 || events.receive != 0 || events.transmit != 0) {
+        access.FlushPostedWrites();
+    }
     return events;
 }
 

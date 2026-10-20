@@ -92,7 +92,7 @@ void InterruptManager::Teardown() {
     IOInterruptDispatchSource* source = source_.detach();
     OSAction* handler = handler_.detach();
     ASFW_LOG(Controller, "[Teardown] interrupt cancel requested source=%p action=%p", source, handler);
-    auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+    auto done = teardownCompletion_ ? teardownCompletion_->Begin("interrupt") : std::function<void()>{};
     const kern_return_t kr = source->Cancel(^{
         ASFW_LOG(Controller, "[Teardown] interrupt cancel completed source=%p action=%p", source, handler);
         source->release();

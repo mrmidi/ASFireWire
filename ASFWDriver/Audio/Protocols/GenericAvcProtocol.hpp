@@ -11,7 +11,7 @@ namespace ASFW::Audio {
 // and sound/firewire/bebob/bebob_stream.c. Stream geometry is the discovered
 // one (AdoptDiscoveredGeometry); a device row may add a startup mixer map,
 // its only device-specific behaviour.
-class GenericAvcProtocol final : public BeBoB::BeBoBProtocol {
+class GenericAvcProtocol : public BeBoB::BeBoBProtocol {
 public:
     GenericAvcProtocol(Protocols::Ports::FireWireBusOps& busOps,
                        Protocols::Ports::FireWireBusInfo& busInfo,

@@ -25,7 +25,7 @@ struct BusInspectorTests {
 
     @Test func everydayFeaturesAndReportsStayOutsideAdvancedTools() {
         let sections: [ModernContentView.SidebarSection] = [
-            .dvCapture, .busInspector, .avcUnits, .duet, .audioAnalyzer,
+            .dvCapture, .busInspector, .avcUnits, .deviceControls, .audioAnalyzer,
             .diagnostics, .diceReport, .avcReport, .logs, .loggingSettings
         ]
         #expect(sections.allSatisfy { !$0.requiresAdvancedTools })
@@ -33,6 +33,8 @@ struct BusInspectorTests {
         #expect(ModernContentView.SidebarSection.avcCommands.requiresAdvancedTools)
         #expect(ModernContentView.SidebarSection.busReset.requiresAdvancedTools)
         #expect(!ModernContentView.SidebarSection.allCases.contains { $0.rawValue == "Saffire" })
+        // Duet controls live in Device Controls, drawn from the driver's model.
+        #expect(!ModernContentView.SidebarSection.allCases.contains { $0.rawValue == "Duet" })
         #if DEBUG
         #expect(AdvancedToolsSettings.defaultEnabled)
         #else

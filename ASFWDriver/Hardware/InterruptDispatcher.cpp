@@ -5,20 +5,18 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochService.hpp"
 #include "../Logging/Logging.hpp"
-#include "HardwareInterface.hpp"
 #include "OHCIConstants.hpp"
 #include "RegisterMap.hpp"
 
 namespace ASFW::Driver {
 
 void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
-                                         HardwareInterface& hardware, IODispatchQueue& workQueue,
+                                         IODispatchQueue& workQueue,
                                          IsochService& isoch, StatusPublisher& statusPublisher,
                                          ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
-    controller.HandleInterrupt(snap);
-    // After the global acknowledgement: which contexts completed, read and
-    // cleared once.
-    const IsochContextEvents isochEvents = hardware.TakeIsochContextEvents(snap.intEvent);
+    // The controller returns context masks only after the acknowledgement
+    // batch's completion readback. Do not read or acknowledge them again here.
+    const IsochContextEvents isochEvents = controller.HandleInterrupt(snap);
 
     // ===== ISOCHRONOUS RECEIVE INTERRUPT =====
     // Per OHCI §9.1: kIsochRx (bit 7) indicates one or more IR contexts have completed descriptors.

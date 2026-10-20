@@ -157,7 +157,7 @@ bool ASFWSCSIController::init()
 
 void ASFWSCSIController::free()
 {
-    ASFW_LOG(Controller, "[SCSIHBA] free()");
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSCSIController free obj=%p", this);
     if (ivars != nullptr) {
         // Queues are released here, not in Stop: lifecycle blocks retain the
         // controller, so free() only runs once every queued block has finished
@@ -245,7 +245,7 @@ kern_return_t IMPL(ASFWSCSIController, Start)
 
 kern_return_t IMPL(ASFWSCSIController, Stop)
 {
-    ASFW_LOG(Controller, "[SCSIHBA] Stop");
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSCSIController Stop enter obj=%p provider=%p", this, provider);
     // Gate lifecycle blocks first: anything still queued sees stopping and
     // skips create/destroy, so it cannot race the framework's own child-target
     // termination (see the no-destroy comment below).
@@ -265,6 +265,7 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
     // objects are released in free(), which cannot run until every block (each
     // holds a controller retain) has finished.
     SBP2::SBP2BridgeHub::ClearTargetObserver();
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSCSIController target observer cleared obj=%p", this);
     // No UserDestroyTargetForID here — not even for a target this HBA created
     // at login: on HBA teardown the framework terminates the target as a child
     // of the stopping controller, and an explicit destroy re-enters that
@@ -272,7 +273,9 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
     // registry busy-times out at 60s → panic (IOSCSITargetDevice (1,1) +
     // IOThunderboltPort, IOService.cpp:5986). Logout-driven destroys run on the
     // lifecycle queue BEFORE Stop and are gated off by the stopping flag above.
-    return Stop(provider, SUPERDISPATCH);
+    const kern_return_t kr = Stop(provider, SUPERDISPATCH);
+    ASFW_LOG(Controller, "[Lifecycle] ASFWSCSIController Stop done obj=%p kr=0x%x", this, kr);
+    return kr;
 }
 
 // ---------------------------------------------------------------------------

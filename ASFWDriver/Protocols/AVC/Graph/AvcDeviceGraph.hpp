@@ -201,6 +201,9 @@ struct AudioSourcePlugConnection {
 
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
+    /// Host notification watermark belonging to these exact immutable values.
+    /// Not a wire field or a topology revision.
+    uint64_t featureChangeSequence{0};
     std::string modelName;
     bool supportsBlockingTransmit{false};
     std::optional<uint8_t> transmitModes, receiveModes;

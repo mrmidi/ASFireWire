@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+#ifndef ASFWParameterLevelControl_h
+#define ASFWParameterLevelControl_h
+#include <AudioDriverKit/IOUserAudioLevelControl.iig>
+#include "CoreAudioProjection.hpp"
+class ASFWAudioDriver;
+class ASFWParameterLevelControl : public IOUserAudioLevelControl {
+public:
+    static OSSharedPtr<ASFWParameterLevelControl> Create(ASFWAudioDriver* driver,
+        ASFW::Audio::Controls::CoreAudioControl descriptor) LOCALONLY;
+    bool init(ASFWAudioDriver* driver, ASFW::Audio::Controls::CoreAudioControl descriptor) LOCALONLY;
+    void free() override;
+    virtual kern_return_t _GetPropertyData(const IOUserAudioObjectPropertyAddress* address,
+        OSData* qualifier, OSData** data) LOCALONLY;
+    kern_return_t HandleChangeDecibelValue(float value) override;
+    kern_return_t HandleChangeScalarValue(float value) override;
+};
+struct ASFWParameterLevelControl_IVars {
+    ASFWAudioDriver* driver;
+    ASFW::Audio::Controls::CoreAudioControl descriptor;
+};
+#endif

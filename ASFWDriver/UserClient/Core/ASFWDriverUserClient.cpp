@@ -6,7 +6,9 @@
 //  Refactored into handler-based architecture for maintainability
 //
 
+#include "../../Audio/Controls/ControlNotifications.hpp"
 #include "ASFWDriverUserClient.h"
+#include "../../Audio/Controls/AvcControlChange.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
@@ -80,6 +82,11 @@ enum {
     kMethodSelectAudioObserver = 66,
     kMethodGetAudioObserverState = 67,
     kMethodGetAVCDiscoveryDocument = 68,
+    // Device controls (FW-206): topology + state document, async confirmed writes.
+    kMethodGetControlSnapshot = 80,
+    kMethodSetControlParameter = 81,
+    kMethodGetControlWriteResult = 82,
+    kMethodSetControlRoute = 83,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -222,6 +229,14 @@ MethodDispatchResult DispatchAVCMethods(ASFW::UserClient::UserClientRuntimeState
         return runtimeState.AVC().GetFCPExchangeLog(arguments);
     case kMethodGetAVCDiscoveryDocument:
         return runtimeState.AVC().GetAVCDiscoveryDocument(arguments);
+    case kMethodGetControlSnapshot:
+        return runtimeState.Controls().GetControlSnapshot(arguments);
+    case kMethodSetControlParameter:
+        return runtimeState.Controls().SetControlParameter(arguments);
+    case kMethodSetControlRoute:
+        return runtimeState.Controls().SetControlRoute(arguments);
+    case kMethodGetControlWriteResult:
+        return runtimeState.Controls().GetControlWriteResult(arguments);
     default:
         return std::nullopt;
     }
@@ -496,7 +511,9 @@ bool ASFWDriverUserClient::init() {
 }
 
 void ASFWDriverUserClient::free() {
-    ASFW_LOG(UserClient, "[Teardown] ASFWDriverUserClient free() client=%p", this);
+    ASFW_LOG(UserClient, "[Lifecycle] ASFWDriverUserClient free obj=%p", this);
+    ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     if (ivars) {
         if (ivars->driver && ivars->statusRegistered) {
             ivars->driver->UnregisterStatusListener(this);
@@ -530,7 +547,11 @@ void ASFWDriverUserClient::free() {
 }
 
 kern_return_t IMPL(ASFWDriverUserClient, Start) {
-    ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ++ivars->startCount);
+    ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
+    // Not inside ASFW_LOG: it evaluates its arguments twice (ring and os_log).
+    ++ivars->startCount;
+    ASFW_LOG(UserClient, "[Lifecycle] Start client=%p provider=%p count=%u", this, provider, ivars->startCount);
     kern_return_t ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
         return ret;
@@ -565,11 +586,14 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
 }
 
 kern_return_t IMPL(ASFWDriverUserClient, Stop) {
+    ASFW::Protocols::AVC::FeatureChangeNotifications::Shared().Unregister(this);
+    ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(this);
     IOLockLock(ivars->actionLock);
     const auto transactionHolds = ivars->transactionHolds;
     IOLockUnlock(ivars->actionLock);
+    ++ivars->stopCount;
     ASFW_LOG(UserClient, "[Lifecycle] Stop client=%p provider=%p starts=%u stops=%u transactionHolds=%u",
-             this, provider, ivars->startCount, ++ivars->stopCount, transactionHolds);
+             this, provider, ivars->startCount, ivars->stopCount, transactionHolds);
     if (ivars && ivars->actionLock) {
         IOLockLock(ivars->actionLock);
         ivars->stopping = true;
@@ -814,6 +838,27 @@ void ASFWDriverUserClient::NotifyStatus(uint64_t sequence, uint32_t reason) {
     data[0] = sequence;
     data[1] = reason;
     AsyncCompletion(action, kIOReturnSuccess, data, 2);
+    action->release();
+}
+
+// Shares the existing status action, but carries the confirmed value rather
+// than asking the app to poll a snapshot. 0x4354524c = "CTRL" discriminant.
+void ASFWDriverUserClient::NotifyControlParameterChanged(uint64_t guid, uint64_t revision,
+    uint64_t sequence, uint32_t parameterId, uint64_t kind, uint64_t bits, uint32_t origin) {
+    if (!ivars || !ivars->actionLock) return;
+    OSAction* action = nullptr;
+    IOLockLock(ivars->actionLock);
+    if (!ivars->stopping && ivars->statusRegistered && ivars->statusAction) {
+        action = ivars->statusAction;
+        action->retain();
+    }
+    IOLockUnlock(ivars->actionLock);
+    if (!action) return;
+    IOUserClientAsyncArgumentsArray data{};
+    data[0] = sequence; data[1] = 0x4354524c;
+    data[2] = guid; data[3] = revision; data[4] = parameterId;
+    data[5] = kind; data[6] = bits; data[7] = origin;
+    AsyncCompletion(action, kIOReturnSuccess, data, 8);
     action->release();
 }
 
