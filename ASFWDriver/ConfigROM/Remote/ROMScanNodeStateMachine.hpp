@@ -40,6 +40,12 @@ class ROMScanNodeStateMachine {
 
     void SetCurrentSpeed(FwSpeed speed) { currentSpeed_ = speed; }
     void SetRetriesLeft(uint8_t retries) { retriesLeft_ = retries; }
+    void InitializeRootDirRetries(uint8_t retries) {
+        if (!rootDirRetriesInitialized_) {
+            retriesLeft_ = retries;
+            rootDirRetriesInitialized_ = true;
+        }
+    }
     void SetConfigROMReadyRetriesLeft(uint8_t retries) { configROMReadyRetriesLeft_ = retries; }
     void DecrementRetries() {
         if (retriesLeft_ > 0) {
@@ -120,6 +126,7 @@ class ROMScanNodeStateMachine {
         state_ = State::Idle;
         currentSpeed_ = speed;
         retriesLeft_ = retries;
+        rootDirRetriesInitialized_ = false;
         partialROM_ = ConfigROM{};
         partialROM_.gen = generation;
         partialROM_.nodeId = nodeIdIn;
@@ -137,6 +144,7 @@ class ROMScanNodeStateMachine {
     State state_{State::Idle};
     FwSpeed currentSpeed_{FwSpeed::S100};
     uint8_t retriesLeft_{0};
+    bool rootDirRetriesInitialized_{false};
     ConfigROM partialROM_{};
 
     bool needsIRMCheck_{false};
