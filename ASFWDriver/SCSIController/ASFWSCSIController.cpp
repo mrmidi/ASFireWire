@@ -58,11 +58,9 @@ namespace SBP2 = ASFW::Protocols::SBP2;
 
 namespace {
 
-// Must match UserGetDMASpecification's maxTransferSize. Sized as a permissive
-// ceiling for any single-LUN SBP-2 scanner, not a per-model value: the LS-9000's
-// largest observed READ(10) (VueScan reads whole line groups, ~510 KB) sits well
-// under 1 MB, and no scanner in this class is expected to exceed it.
-constexpr uint64_t kMaxTransferPerTask = 1u * 1024u * 1024u;
+// Reported to the kernel both as HBA constraints and as UserGetDMASpecification's
+// maxTransferSize; a task above it is failed, never clipped.
+constexpr uint64_t kMaxTransferPerTask = ASFW::Protocols::SBP2::HbaTaskPolicy::kMaxTransferBytes;
 // SAM timeout 0 = infinite; the SBP-2 ORB timer needs a real bound. Sized for
 // scanner mechanics in general (SCAN, autofocus run tens of seconds) — not tuned
 // to a specific model.
@@ -284,17 +282,11 @@ kern_return_t IMPL(ASFWSCSIController, Stop)
 kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
 {
     ASFW_LOG(Controller, "[SCSIHBA] UserInitializeController");
-    // Tag the HBA as a FireWire, external interconnect (mirrors the removed
-    // IOFireWireSerialBusProtocolTransport bridge's Protocol Characteristics).
-    OSDictionary* props = OSDictionary::withCapacity(2);
-    if (props != nullptr) {
-        OSString* interconnect = OSString::withCString("FireWire");
-        OSString* location = OSString::withCString("External");
-        if (interconnect != nullptr) { props->setObject("Physical Interconnect", interconnect); interconnect->release(); }
-        if (location != nullptr)     { props->setObject("Physical Interconnect Location", location); location->release(); }
-        UserSetHBAProperties(props);
-        props->release();
-    }
+    // "Physical Interconnect" = "FireWire" lives in the Info.plist personality:
+    // the kernel family builds Protocol Characteristics from the service's own
+    // properties in start(), before this runs, and UserSetHBAProperties does
+    // not accept that key (IOSCSIParallelInterfaceController.cpp:268-306).
+    // SCSITaskLib clients such as Phocus require "FireWire" there.
 
     // All seven keys are required and must be reported before this method
     // returns (IOUserSCSIParallelInterfaceController.h contract). Without this
@@ -305,14 +297,14 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
     // constraint applies to any scanner in this class). The dext never touches
     // fBufferIOVMAddr segments (data is copied via UserGetDataBuffer), so the
     // values only need to be permissive and consistent with
-    // UserGetDMASpecification (1 MB max transfer, 64-bit, 4-byte alignment).
+    // UserGetDMASpecification (Apple's ~30 MB SBP-2 ceiling, 64-bit, 4-byte alignment).
     OSDictionary* constraints = OSDictionary::withCapacity(7);
     if (constraints == nullptr) {
         return kIOReturnNoMemory;
     }
     struct { const char* key; uint64_t value; } entries[] = {
-        { kIOMaximumSegmentCountReadKey,           256 },
-        { kIOMaximumSegmentCountWriteKey,          256 },
+        { kIOMaximumSegmentCountReadKey,           SBP2::HbaTaskPolicy::kMaxPageTableEntries },
+        { kIOMaximumSegmentCountWriteKey,          SBP2::HbaTaskPolicy::kMaxPageTableEntries },
         { kIOMaximumSegmentByteCountReadKey,       kMaxTransferPerTask },
         { kIOMaximumSegmentByteCountWriteKey,      kMaxTransferPerTask },
         { kIOMinimumSegmentAlignmentByteCountKey,  4 },
@@ -450,7 +442,7 @@ kern_return_t IMPL(ASFWSCSIController, UserGetDMASpecification)
     // the first data-carrying command (INQUIRY) died in kernel DMA prep and
     // never reached the dext ("InitializeDeviceSupport error"). Wire endianness
     // is irrelevant here; SBP-2 data movement uses our own DMA path anyway.
-    *maxTransferSize = 1u * 1024u * 1024u; // 1 MB per task (generous for scans)
+    *maxTransferSize = kMaxTransferPerTask;
     *alignment = 4;
     *numAddressBits = 64;
     *segmentType = kDMAOutputSegmentHost64;
@@ -552,8 +544,17 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     request.cdb.assign(parallelRequest.fCommandDescriptorBlock,
                        parallelRequest.fCommandDescriptorBlock + cdbLength);
 
-    const uint32_t transferLength = static_cast<uint32_t>(
-        std::min<uint64_t>(parallelRequest.fRequestedTransferCount, kMaxTransferPerTask));
+    if (parallelRequest.fRequestedTransferCount > kMaxTransferPerTask) {
+        ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x transfer %llu B exceeds cap %llu B",
+                 opcode, (uint64_t)parallelRequest.fRequestedTransferCount, kMaxTransferPerTask);
+        resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
+    }
+    const auto transferLength = static_cast<uint32_t>(parallelRequest.fRequestedTransferCount);
     switch (parallelRequest.fTransferDirection) {
     case kSCSIDataTransfer_FromInitiatorToTarget:
         request.direction = SBP2::SCSI::DataDirection::ToTarget;

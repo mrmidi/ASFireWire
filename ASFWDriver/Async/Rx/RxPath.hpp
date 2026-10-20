@@ -26,12 +26,14 @@ public:
            PacketRouter& packetRouter);
 
     // This single method will be called by the engine on an RX interrupt.
+    // quiet: watchdog poll; no per-call ring dumps, logs only when a packet is found.
     void ProcessARInterrupts(bool isRunning,
-                             Debug::BusResetPacketCapture* busResetCapture);
+                             Debug::BusResetPacketCapture* busResetCapture,
+                             bool quiet = false);
 
 private:
     void ProcessRequestInterrupts();
-    void ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture);
+    void ProcessResponseInterrupts(Debug::BusResetPacketCapture* busResetCapture, bool quiet);
     void DumpRequestBuffer(uint32_t buffersProcessed,
                            const uint8_t* bufferStart,
                            size_t bufferSize) const;
