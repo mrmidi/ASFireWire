@@ -64,7 +64,6 @@ uint64_t GetCurrentMonotonicTimeUsec() {
 }
 
 constexpr uint32_t kAsyncInterruptMask = 0x0000000Du;
-constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 // TODO(ASFW-Topology): Replace the compatibility S100 default with topology-driven speed
 // selection once the async startup path can query the negotiated link speed.
 // Replace with topology-based speed queries when TopologyManager is available.
@@ -345,7 +344,7 @@ void AsyncSubsystem::FinalizeStart() {
     busResetCapture_ = std::make_unique<Debug::BusResetPacketCapture>();
 
     hardware_->SetInterruptMask(kAsyncInterruptMask, true);
-    hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
+    hardware_->SetLinkControlBits(Driver::LinkControlBits::kRcvPhyPkt);
 
     // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
     ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
@@ -472,7 +471,7 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
     acceptingSubmissions_.store(false, std::memory_order_release);
     if (disableHardware && hardware_) {
         hardware_->SetInterruptMask(0xFFFFFFFFu, false);
-        hardware_->ClearLinkControlBits(kLinkControlRcvPhyPktBit);
+        hardware_->ClearLinkControlBits(Driver::LinkControlBits::kRcvPhyPkt);
     }
 
     // CRITICAL: Deactivate completion queue BEFORE stopping contexts

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <optional>
 #include <utility> // for std::pair
 
@@ -31,6 +32,8 @@ class IAsyncControllerPort;
 } // namespace ASFW::Async
 
 namespace ASFW::Driver {
+
+enum class PhysicalRequestAccess { Acquire, Release, Revoke, Check };
 
 /// Result of a local autonomous IRM CSR compare-swap operation (OHCI §5.5).
 struct LocalCSRLockResult {
@@ -110,11 +113,9 @@ class HardwareInterface {
     [[nodiscard]] PciInterruptState ReadPciInterruptState() const noexcept;
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
-    /// Lets (or stops letting) the OHCI serve `node`'s requests to the physical
-    /// address space with DMA, no software in the path. A bus reset clears the
-    /// filter, so the owner re-arms it once it knows the node's new ID.
-    /// Cross-validated with Linux ohci.c:2600-2631 (ohci_enable_phys_dma).
-    void SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept;
+    [[nodiscard]] bool ControlPhysicalRequests(uint16_t node, uint16_t generation,
+                                             PhysicalRequestAccess action) noexcept;
+    void ClearPhysicalRequestFilters() noexcept;
     void ClearIntEvents(uint32_t mask);
     // Acknowledges the caller-selected global bits, then reads and clears each
     // signalled isoch direction. One readback completes the entire batch before
@@ -270,6 +271,10 @@ class HardwareInterface {
 #endif
 
   private:
+    void ClearPhysicalRequestFilters(HardwareAccessScope& access) noexcept;
+    std::array<uint32_t, 63> physicalRequestUsers_{};
+    uint64_t physicalRequestBlocked_{0};
+    uint16_t physicalRequestGeneration_{0xFFFF};
     friend class HardwareAccessScope;
     [[nodiscard]] uint32_t ReadScoped(Register32 reg) const noexcept;
     void WriteScoped(Register32 reg, uint32_t value) const noexcept;

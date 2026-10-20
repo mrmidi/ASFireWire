@@ -101,6 +101,7 @@ targets:
     productName: net.asfw.driver
     platform: macOS
     sources:
+      # Includes Hardware/PhysicalRequestAccess.cpp for generation-scoped physical DMA access.
       # Includes confirmed FeatureChangeNotifications and the AvcControlChange semantic event projection.
       # Includes generic AvcControlMapping.hpp, the ASFWParameter* CoreAudio controls (IIG/CPP), volume limits, and
       # the owned descriptor FSM, discovery reducer/session, snapshot graph,

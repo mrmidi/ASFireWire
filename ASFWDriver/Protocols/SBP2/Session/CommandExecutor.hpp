@@ -106,6 +106,7 @@ private:
     void FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept;
     void NotifyResultCallback();
     void RetireCommand();
+    void FinishRecovery(bool quiesced);
     void CleanupCommandResources();
     void CleanupManagementResources();
 
@@ -132,6 +133,9 @@ private:
     std::unique_ptr<SBP2ManagementORB> managementORB_;
 
     std::function<void()> busResetRequester_;
+
+    bool recovering_{false};
+    bool commandDMAQuiesced_{true};
 
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };

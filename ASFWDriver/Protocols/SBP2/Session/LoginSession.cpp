@@ -36,6 +36,7 @@ LoginSession::LoginSession(Async::IFireWireBus& bus,
     , fetchAgent_(bus, busInfo, scheduler) {}
 
 LoginSession::~LoginSession() {
+    if (state_ == LoginState::LoggedIn) SetState(LoginState::Failed);
     CancelManagementTimer();
     if (loginWriteHandle_) {
         bus_.Cancel(loginWriteHandle_);
@@ -242,8 +243,8 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             loginGeneration_ = newGeneration;
             fetchAgent_.Unbind();
             DeallocateResources();
-            SetState(LoginState::Idle);
-            ArmManagementTimer(100, [this]() { (void)Login(); });
+            loginID_ = 0;
+            SetState(LoginState::Suspended);
             break;
 
         case LoginState::LoggedIn:
@@ -260,7 +261,6 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             DeallocateResources();
             loginGeneration_ = newGeneration;
             SetState(LoginState::Suspended);
-            ArmManagementTimer(100, [this]() { (void)Reconnect(); });
             break;
 
         case LoginState::LoggingOut:
@@ -347,6 +347,10 @@ bool LoginSession::AllocateResources() noexcept {
 }
 
 void LoginSession::RegisterStatusBlockCallback() noexcept {
+    for (const auto& meta : {loginORBMeta_, loginResponseMeta_, statusBlockMeta_,
+                             reconnectORBMeta_, logoutORBMeta_}) {
+        addrSpaceMgr_.RestrictRemoteAccess(meta.address, targetInfo_.targetNodeId);
+    }
     if (statusBlockHandle_ == 0) {
         return;
     }
@@ -830,6 +834,10 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
 
     loginRetryCount_ = 0;
     SetState(LoginState::LoggedIn);
+    if (state_ != LoginState::LoggedIn) {
+        NotifySessionLost();
+        return;
+    }
     BindFetchAgent();
 
     // If unsolicited status was requested before login, enable it now (before the
@@ -867,6 +875,10 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
     }
 
     SetState(LoginState::LoggedIn);
+    if (state_ != LoginState::LoggedIn) {
+        NotifySessionLost();
+        return;
+    }
     BindFetchAgent();
     ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", loginID_.load());
 
@@ -923,8 +935,20 @@ void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t l
 // Command plane (delegates to FetchAgent)
 // ---------------------------------------------------------------------------
 
+bool LoginSession::HasPhysicalAccess() const noexcept {
+    return !physicalAccess_ || physicalAccess_(loginNodeID_, physicalGeneration_,
+                                               Driver::PhysicalRequestAccess::Check);
+}
+
+void LoginSession::RevokePhysicalAccess() noexcept {
+    if (physicalAccess_) {
+        (void)physicalAccess_(loginNodeID_, physicalGeneration_,
+                              Driver::PhysicalRequestAccess::Revoke);
+    }
+}
+
 bool LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
-    if (state_ != LoginState::LoggedIn) {
+    if (state_ != LoginState::LoggedIn || !HasPhysicalAccess()) {
         ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state_));
         return false;
     }
@@ -1026,10 +1050,17 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
 void LoginSession::SetState(LoginState newState) noexcept {
     if (state_ != newState) {
         ASFW_LOG_SBP2( "LoginSession: state %{public}s -> %{public}s", ToString(state_), ToString(newState));
-        // A bus reset already cleared the filter in hardware; the explicit drop
-        // on the way out of LoggedIn covers logout and lost sessions.
-        if (physicalAccess_ && (newState == LoginState::LoggedIn || state_ == LoginState::LoggedIn)) {
-            physicalAccess_(TargetNodeShort(), newState == LoginState::LoggedIn);
+        if (physicalAccess_ && newState == LoginState::LoggedIn) {
+            physicalGeneration_ = loginGeneration_;
+            if (!physicalAccess_(loginNodeID_, physicalGeneration_,
+                                 Driver::PhysicalRequestAccess::Acquire)) {
+                ASFW_LOG(Async, "LoginSession: physical DMA unavailable node=0x%04x gen=%u",
+                         loginNodeID_, physicalGeneration_);
+                newState = LoginState::Failed;
+            }
+        } else if (physicalAccess_ && state_ == LoginState::LoggedIn) {
+            (void)physicalAccess_(loginNodeID_, physicalGeneration_,
+                                  Driver::PhysicalRequestAccess::Release);
         }
         state_ = newState;
     }

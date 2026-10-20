@@ -62,6 +62,9 @@ bool SBP2ManagementORB::AllocateResources() noexcept {
         return false;
     }
 
+    addrMgr_.RestrictRemoteAccess(orbMeta_.address, nodeID_);
+    addrMgr_.RestrictRemoteAccess(statusBlockMeta_.address, nodeID_);
+
     // Register remote-write callback for the per-ORB status block
     // AddressSpaceManager invokes a copy of this callback outside its lock, so
     // it can run after DeallocateResources unregistered it: guard on lifetime.

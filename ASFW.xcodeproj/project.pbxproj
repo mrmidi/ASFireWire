@@ -466,6 +466,7 @@
 		C9DEE8C6C159F576AEA8338E /* PacketRouter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 87A636BF87B26D494F771DA2 /* PacketRouter.cpp */; };
 		CA69F50B06136DEBD7F2EA52 /* ASFWMCPToolDispatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B644C7B7FE0269C2B618741 /* ASFWMCPToolDispatch.swift */; };
 		CA821C57D2E47EC3EF1EF8F6 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582D5F842C386CB0E1695C0F /* AboutView.swift */; };
+		CAACAAC8E382AE138049DB70 /* PhysicalRequestAccess.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 761D15A75E32C43592B27AD5 /* PhysicalRequestAccess.cpp */; };
 		CB1690BE35AE11A346AA9086 /* AnalyzerTimingStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11961DC2923BEDC3982A12C /* AnalyzerTimingStatisticsTests.swift */; };
 		CB8257DAF7764AEA3E05061D /* IsochService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C2160D5ABD13DF14A6FBA1E3 /* IsochService.cpp */; };
 		CBB34DBF08EA78876CD02FB6 /* DriverConnector+DVCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9908FBA7D8EDB1785B713E0 /* DriverConnector+DVCapture.swift */; };
@@ -1158,6 +1159,7 @@
 		757EC74289724A098B1A039B /* SignalSourceCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SignalSourceCommand.hpp; sourceTree = "<group>"; };
 		75BF1539474CBA7AFB67A769 /* RxTelemetrySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RxTelemetrySection.swift; sourceTree = "<group>"; };
 		75FA4BD49A436757DB447E83 /* RawPcm24In32Decoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RawPcm24In32Decoder.hpp; sourceTree = "<group>"; };
+		761D15A75E32C43592B27AD5 /* PhysicalRequestAccess.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhysicalRequestAccess.cpp; sourceTree = "<group>"; };
 		76574F961A8705D1667DDBD3 /* DICETcatProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICETcatProtocol.hpp; sourceTree = "<group>"; };
 		76B0E21D7030C5536C28D271 /* IAsyncControllerPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAsyncControllerPort.hpp; sourceTree = "<group>"; };
 		76B69B4F0AB736B03BF63BBF /* AVCUnit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCUnit.hpp; sourceTree = "<group>"; };
@@ -3554,6 +3556,7 @@
 				A418B8B548743D3952A8089B /* OHCIConstants.hpp */,
 				C197F16F4A4D565C13DA4286 /* OHCIDescriptors.hpp */,
 				2AEC69885AF2551714DE1936 /* OHCIEventCodes.hpp */,
+				761D15A75E32C43592B27AD5 /* PhysicalRequestAccess.cpp */,
 				E90F7A6B5C08D9C94CD93034 /* RegisterMap.hpp */,
 			);
 			path = Hardware;
@@ -4562,6 +4565,7 @@
 				E8E793E5929460B3A42C034D /* PayloadRegistry.cpp in Sources */,
 				3C130CEE2A5FE017326B568E /* PcmSlotCodec.cpp in Sources */,
 				836FE3225BA2D368808EFC48 /* PhyCommand.cpp in Sources */,
+				CAACAAC8E382AE138049DB70 /* PhysicalRequestAccess.cpp in Sources */,
 				3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */,
 				270027C27155433C83E72998 /* PowerLinkPolicyCoordinator.cpp in Sources */,
 				3455F76072D6ED0ED7E7B77E /* ROMReader.cpp in Sources */,

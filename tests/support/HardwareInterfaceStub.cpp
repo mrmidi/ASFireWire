@@ -70,14 +70,18 @@ kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
 }
 
 void HardwareInterface::RevokeAndDrain() noexcept {
+    if (auto access = TryBeginAccess()) {
+        ClearPhysicalRequestFilters(access);
+        accessGate_.RevokeFromAdmittedScope();
+    }
     WithState(this, [](HardwareTestState& state) { state.available = false; });
-    accessGate_.RevokeAndDrain();
 }
 
 void HardwareInterface::LatchProviderRevokedAndDrain() noexcept {
     hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kProviderRevoked),
                               std::memory_order_release);
-    RevokeAndDrain();
+    WithState(this, [](HardwareTestState& state) { state.available = false; });
+    accessGate_.RevokeAndDrain();
 }
 
 void HardwareInterface::Detach() { RevokeAndDrain(); }
@@ -169,10 +173,17 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
         if (!state.available) {
             return;
         }
-        state.registers[KeyFor(reg)] = value;
+        if (reg != Register32::kPhyReqFilterHiSet && reg != Register32::kPhyReqFilterLoSet)
+            state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::Write);
 
-        if (reg == Register32::kIntEventClear) {
+        if (reg == Register32::kPhyReqFilterHiSet || reg == Register32::kPhyReqFilterLoSet) {
+            state.registers[KeyFor(reg)] |= value;
+        } else if (reg == Register32::kPhyReqFilterHiClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterHiSet)] &= ~value;
+        } else if (reg == Register32::kPhyReqFilterLoClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterLoSet)] &= ~value;
+        } else if (reg == Register32::kIntEventClear) {
             state.registers[KeyFor(Register32::kIntEvent)] &= ~value;
         } else if (reg == Register32::kIntMaskSet) {
             state.registers[KeyFor(Register32::kIntMaskSet)] |= value;
@@ -223,13 +234,6 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
 
 void HardwareInterface::SetLinkControlBits(uint32_t bits) { WriteScoped(Register32::kLinkControlSet, bits); }
 
-void HardwareInterface::SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept {
-    node &= 0x3Fu;
-    const bool hi = node >= 32;
-    const Register32 reg = hi ? (enable ? Register32::kPhyReqFilterHiSet : Register32::kPhyReqFilterHiClear)
-                              : (enable ? Register32::kPhyReqFilterLoSet : Register32::kPhyReqFilterLoClear);
-    WriteScoped(reg, 1u << (hi ? node - 32 : node));
-}
 
 void HardwareInterface::ClearLinkControlBits(uint32_t bits) {
     WriteScoped(Register32::kLinkControlClear, bits);
@@ -363,6 +367,7 @@ bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, ui
 std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_t length,
                                                                            uint64_t options,
                                                                            size_t alignment) {
+    if (!IsAvailable()) return std::nullopt;
     IOBufferMemoryDescriptor* buffer = nullptr;
     if (IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer) != kIOReturnSuccess) {
         return std::nullopt;

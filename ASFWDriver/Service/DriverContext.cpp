@@ -1,6 +1,8 @@
 #include "../Common/ActionTeardown.hpp"
 #include "DriverContext.hpp"
 
+#include <algorithm>
+
 #include <net.asfw.driver/ASFWDriver.h>
 
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
@@ -338,10 +340,18 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
     if (!d.sbp2SessionRegistry && ctx.controller && d.sbp2AddressSpaceManager &&
         d.deviceRegistry && d.deviceManager && d.sbp2SessionScheduler) {
         auto& bus = ctx.controller->Bus();
+        uint16_t maxPayload = 512;
+        if (d.hardware) {
+            if (auto access = d.hardware->TryBeginAccess()) {
+                const auto options = FW::DecodeBusOptions(access.Read(Register32::kBusOptions));
+                maxPayload = static_cast<uint16_t>(std::min(
+                    FW::MaxAsyncPayloadBytesFromMaxRec(options.maxRec), 4096u));
+            }
+        }
         d.sbp2SessionRegistry = std::make_shared<ASFW::Protocols::SBP2::SessionRegistry>(
             bus, bus, *d.sbp2AddressSpaceManager, *d.deviceRegistry, *d.deviceManager,
             *d.sbp2SessionScheduler,
-            ctx.workQueue.get());
+            ctx.workQueue.get(), maxPayload);
         if (d.busReset) {
             // Last-resort recovery for targets whose fetch engine wedges so hard
             // that even the LUN-reset management ORB is never fetched (LS-9000).
@@ -357,10 +367,12 @@ kern_return_t DriverWiring::EnsureSbp2Deps(ASFWDriver& service, ::ServiceContext
         if (d.hardware) {
             std::weak_ptr<HardwareInterface> weakHardware = d.hardware;
             d.sbp2SessionRegistry->SetPhysicalAccessControl(
-                [weakHardware](uint16_t node, bool enable) {
+                [weakHardware](uint16_t node, uint16_t generation,
+                               PhysicalRequestAccess action) {
                     if (auto hardware = weakHardware.lock()) {
-                        hardware->SetPhysicalRequestFilter(static_cast<uint8_t>(node), enable);
+                        return hardware->ControlPhysicalRequests(node, generation, action);
                     }
+                    return false;
                 });
         }
         ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");

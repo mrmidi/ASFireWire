@@ -58,6 +58,8 @@ protected:
     }
 
     void TearDown() override {
+        testing::Mock::VerifyAndClearExpectations(mockDevice_);
+        hardware_.Detach();
         // This fixture stands in for IOKit, which owns the provider in
         // production. Attach() takes its OWN reference (OSRetain), so the
         // reference created by `new` here is ours to drop -- otherwise the mock
@@ -481,3 +483,40 @@ TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffTrueSetsRhbPreservingGap) {
 }
 
 } // namespace
+
+TEST_F(HardwareInterfaceOrderTests, PhysicalDmaProgramsUpperBoundFlushesAndVerifiesFilter) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillRepeatedly([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillRepeatedly([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyUpperBound), 0x10000u));
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterHiSet), 1u << 8));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kPhyReqFilterHiSet), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 1u << 8; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_TRUE(hardware_.ControlPhysicalRequests(40, 7, PhysicalRequestAccess::Acquire));
+}
+
+TEST_F(HardwareInterfaceOrderTests, PhysicalDmaRejectsUnappliedFilterAndDoesNotAccessAfterDetach) {
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillRepeatedly([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillRepeatedly([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyUpperBound), 0x10000u));
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterLoSet), 1u << 5));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kPhyReqFilterLoSet), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_FALSE(hardware_.ControlPhysicalRequests(5, 7, PhysicalRequestAccess::Acquire));
+    testing::Mock::VerifyAndClearExpectations(mockDevice_);
+    hardware_.Detach();
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(_, _, _)).Times(0);
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_FALSE(hardware_.ControlPhysicalRequests(5, 7, PhysicalRequestAccess::Acquire));
+    hardware_.ClearPhysicalRequestFilters();
+}

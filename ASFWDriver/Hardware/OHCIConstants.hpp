@@ -12,6 +12,8 @@ namespace ASFW::Driver {
 // AR Filter Constants (OHCI §7.4)
 // Bit 31 in AsReqFilterHiSet = accept all async requests
 constexpr uint32_t kAsReqAcceptAllMask = 0x80000000u;
+// Linux core.h:289 and ohci.c:2348 restrict physical responses to below 4 GiB.
+constexpr uint32_t kPhysicalUpperBound = 0x00010000u;
 
 // Default link control configuration used during controller initialization.
 // Keep the local cycle timer running for cycleLost/cycleSynch accounting, but

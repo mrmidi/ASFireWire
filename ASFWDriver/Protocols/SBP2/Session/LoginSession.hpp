@@ -123,11 +123,9 @@ public:
     using LoginCallback = std::function<void(const LoginCompleteParams&)>;
     using LogoutCallback = std::function<void(const LogoutCompleteParams&)>;
     using StatusCallback = std::function<void(const Wire::StatusBlock&, uint32_t length)>;
-    // Arms (true) or drops (false) the controller's physical request filter for
-    // the target node. Armed while LoggedIn, since command data buffers live in
-    // the physical address space; Apple does the same per unit
-    // (IOFireWireSBP2Target::configurePhysicalFilter).
-    using PhysicalAccessControl = std::function<void(uint16_t node, bool enable)>;
+    // Generation-scoped node access shared by every LUN on that node.
+    using PhysicalAccessControl = std::function<bool(
+        uint16_t node, uint16_t generation, Driver::PhysicalRequestAccess action)>;
 
     LoginSession(Async::IFireWireBus& bus,
                  Async::IFireWireBusInfo& busInfo,
@@ -175,6 +173,9 @@ public:
     [[nodiscard]] uint32_t ReconnectHoldSeconds() const noexcept;
     [[nodiscard]] uint16_t MaxPayloadSize() const noexcept { return maxPayloadSize_; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
+
+    [[nodiscard]] bool HasPhysicalAccess() const noexcept;
+    void RevokePhysicalAccess() noexcept;
 
     // -----------------------------------------------------------------------
     // Command plane (delegates to FetchAgent)
@@ -274,6 +275,7 @@ private:
     // Configuration
     SBP2TargetInfo targetInfo_{};
     PhysicalAccessControl physicalAccess_;
+    uint16_t physicalGeneration_{0};
     bool configured_{false};
     uint16_t maxPayloadSize_{4096};  // default, clipped by login response
 

@@ -158,8 +158,7 @@ public:
     // software in the path. Apple (IOFireWireSBP2ORB.cpp:1002-1041) and Linux
     // (ohci_enable_phys_dma) carry SBP-2 data this way; the software AR path
     // bounded throughput to one block write per CPU round trip. The range stays
-    // in the lookup table so a request that arrives in software (filter not yet
-    // armed) lands in the same memory.
+    // in the lookup table for CPU access; remote software requests are rejected.
     kern_return_t AllocatePhysicalRange(void* owner,
                                         uint32_t length,
                                         uint64_t* outHandle,
@@ -186,6 +185,13 @@ public:
             hostTestPhysicalCursor_ += AlignUp(length, 4096);
             range.buffer.resize(length, 0);
         }
+        for (const auto& [handle, existing] : ranges_) {
+            if (RangesOverlap(address, length, existing.meta.address, existing.meta.length)) {
+                CleanupBacking(range);
+                IOLockUnlock(lock_);
+                return kIOReturnNoSpace;
+            }
+        }
         range.meta.handle = nextHandle_++;
         range.meta.address = address;
         range.meta.addressHi = static_cast<uint16_t>(address >> 32);
@@ -199,6 +205,34 @@ public:
         IOLockUnlock(lock_);
         *outHandle = handle;
         return kIOReturnSuccess;
+    }
+
+    void RestrictRemoteAccess(uint64_t address, uint16_t node) {
+        IOLockLock(lock_);
+        if (auto* range = FindRangeByAddressLocked(address, 1)) {
+            range->remoteNode = node & 0x3Fu;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    [[nodiscard]] Async::ResponseCode CheckRemoteAccess(uint64_t address, uint32_t length, uint16_t source) {
+        IOLockLock(lock_);
+        if (address < (uint64_t{1} << 32)) {
+            const uint64_t count = ++physicalSoftwareRequests_;
+            IOLockUnlock(lock_);
+            // Linux core-transaction.c:1414-1431 rejects low-memory software requests.
+            if ((count & (count - 1)) == 0) {
+                ASFW_LOG(Async, "[PhysicalDMA] rejected software request source=0x%04x addr=0x%012llx count=%llu",
+                         source, address, count);
+            }
+            return Async::ResponseCode::TypeError;
+        }
+        const auto* range = FindRangeByAddressLocked(address, length);
+        const auto result = !range ? Async::ResponseCode::AddressError
+            : SourceMatches(*range, source) ? Async::ResponseCode::Complete
+                                           : Async::ResponseCode::TypeError;
+        IOLockUnlock(lock_);
+        return result;
     }
 
     kern_return_t DeallocateAddressRange(void* owner, uint64_t handle) {
@@ -301,7 +335,8 @@ public:
     }
 
     Async::ResponseCode ApplyRemoteWrite(uint64_t address,
-                                         std::span<const uint8_t> payload) {
+                                         std::span<const uint8_t> payload,
+                                         std::optional<uint16_t> source = std::nullopt) {
         if (!lock_ || payload.empty()) {
             return Async::ResponseCode::AddressError;
         }
@@ -319,6 +354,10 @@ public:
                 return Async::ResponseCode::AddressError;
             }
 
+            if (!SourceMatches(*range, source)) {
+                IOLockUnlock(lock_);
+                return Async::ResponseCode::TypeError;
+            }
             offset = static_cast<uint32_t>(address - range->meta.address);
             ASFW_ADDRSPACE_LOG(
                 "AddressSpaceManager[%p] remote write addr=0x%012llx len=%zu src=%p "
@@ -349,7 +388,8 @@ public:
 
     Async::ResponseCode ResolveReadSlice(uint64_t address,
                                          uint32_t length,
-                                         ReadSlice* outSlice) {
+                                         ReadSlice* outSlice,
+                                         std::optional<uint16_t> source = std::nullopt) {
         if (!lock_ || !outSlice || length == 0) {
             return Async::ResponseCode::AddressError;
         }
@@ -362,6 +402,10 @@ public:
             return Async::ResponseCode::AddressError;
         }
 
+        if (!SourceMatches(*range, source)) {
+            IOLockUnlock(lock_);
+            return Async::ResponseCode::TypeError;
+        }
         if (!range->hasBacking || range->deviceAddress == 0) {
             IOLockUnlock(lock_);
             return Async::ResponseCode::DataError;
@@ -385,7 +429,8 @@ public:
         return Async::ResponseCode::Complete;
     }
 
-    Async::ResponseCode ReadQuadlet(uint64_t address, uint32_t* outValue) {
+    Async::ResponseCode ReadQuadlet(uint64_t address, uint32_t* outValue,
+                                     std::optional<uint16_t> source = std::nullopt) {
         if (!lock_ || !outValue) {
             return Async::ResponseCode::AddressError;
         }
@@ -397,6 +442,10 @@ public:
             return Async::ResponseCode::AddressError;
         }
 
+        if (!SourceMatches(*range, source)) {
+            IOLockUnlock(lock_);
+            return Async::ResponseCode::TypeError;
+        }
         const uint32_t offset = static_cast<uint32_t>(address - range->meta.address);
         std::memcpy(outValue, StorageBytes(*range) + static_cast<std::size_t>(offset),
                     sizeof(uint32_t));
@@ -473,6 +522,7 @@ public:
     }
 
 private:
+    uint64_t physicalSoftwareRequests_{0};
     static constexpr uint16_t kAutoAddressHi = 0xFFFFu;
     static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
@@ -495,7 +545,15 @@ private:
         uint64_t deviceAddress{0};
         bool hasBacking{false};
         bool physical{false};
+        std::optional<uint16_t> remoteNode;
     };
+
+    static bool SourceMatches(const AddressRange& range, std::optional<uint16_t> source) {
+        if (!source) return true;
+        const uint16_t bus = *source & 0xFFC0u;
+        return !range.physical && (!range.remoteNode ||
+            ((bus == 0 || bus == 0xFFC0u) && *range.remoteNode == (*source & 0x3Fu)));
+    }
 
     // A physical range with DMA backing has no shadow copy: the device writes
     // the (cacheable) mapping directly and the CPU reads it there.
@@ -652,18 +710,18 @@ private:
 
         if (!dma.has_value()) {
 #ifdef ASFW_HOST_TEST
-            range.hasBacking = false;
-            return kIOReturnSuccess;
-#else
+            if (!hardware_) {
+                range.hasBacking = false;
+                return kIOReturnSuccess;
+            }
+#endif
             ASFW_LOG(UserClient,
                      "AddressSpaceManager: DMA allocation failed for len=%u",
                      range.meta.length);
             return kIOReturnNoMemory;
-#endif
         }
 
-        // Physical ranges are DMA targets like the AT payload and AR ring
-        // buffers: cacheable mapping, the PCIe fabric keeps it coherent.
+        // Cacheable like SelfIDCapture.cpp; software response mappings stay uncached.
         IOMemoryMap* mapping = nullptr;
         const kern_return_t kr = dma->descriptor->CreateMapping(
             range.physical ? 0 : kIOMemoryMapCacheModeInhibit,
@@ -690,7 +748,8 @@ private:
             return kIOReturnNoMemory;
         }
 
-        ZeroMappedBytes(mapped, size);
+        if (range.physical) std::memset(mapped, 0, size);
+        else ZeroMappedBytes(mapped, size);
         OSSynchronizeIO();
 
         range.descriptor = std::move(dma->descriptor);

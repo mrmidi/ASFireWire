@@ -234,19 +234,27 @@ public:
         if (mgr_ == nullptr) {
             return LocalRequestResult::NotMine();
         }
+        const uint32_t length = (ctx.tCode == AReq::kTcodeWriteQuad ||
+                                 ctx.tCode == AReq::kTcodeWriteBlock)
+                                    ? static_cast<uint32_t>(ctx.writePayload.size())
+                                    : ctx.tCode == AReq::kTcodeReadQuad ? 4 : ctx.dataLength;
+        const auto permission = mgr_->CheckRemoteAccess(ctx.destOffset, length, ctx.sourceID);
+        if (permission == ResponseCode::TypeError) {
+            return LocalRequestResult{.claimed = true, .rcode = permission};
+        }
         switch (ctx.tCode) {
         case AReq::kTcodeWriteQuad:
         case AReq::kTcodeWriteBlock: {
             if (ctx.writePayload.empty()) {
                 return LocalRequestResult::NotMine();
             }
-            const auto rc = mgr_->ApplyRemoteWrite(ctx.destOffset, ctx.writePayload);
+            const auto rc = mgr_->ApplyRemoteWrite(ctx.destOffset, ctx.writePayload, ctx.sourceID);
             return rc == ResponseCode::AddressError ? LocalRequestResult::NotMine()
                                                     : LocalRequestResult::Write(rc);
         }
         case AReq::kTcodeReadQuad: {
             uint32_t value = 0;
-            const auto rc = mgr_->ReadQuadlet(ctx.destOffset, &value);
+            const auto rc = mgr_->ReadQuadlet(ctx.destOffset, &value, ctx.sourceID);
             return rc == ResponseCode::AddressError ? LocalRequestResult::NotMine()
                                                     : LocalRequestResult::Quadlet(rc, value);
         }
@@ -255,7 +263,7 @@ public:
                 return LocalRequestResult::NotMine();
             }
             ASFW::Protocols::SBP2::AddressSpaceManager::ReadSlice slice{};
-            const auto rc = mgr_->ResolveReadSlice(ctx.destOffset, ctx.dataLength, &slice);
+            const auto rc = mgr_->ResolveReadSlice(ctx.destOffset, ctx.dataLength, &slice, ctx.sourceID);
             if (rc == ResponseCode::AddressError) {
                 return LocalRequestResult::NotMine();
             }

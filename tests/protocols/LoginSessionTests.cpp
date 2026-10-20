@@ -477,61 +477,40 @@ TEST(LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
     ExpectBusyTimeoutWrite(rig.bus.WriteAt(reconnectWriteIndex + 1), kTargetNodeID);
 }
 
-TEST(LoginSessionTests, BusResetWhileLoggingInRetriesLoginAfterDelay) {
+TEST(LoginSessionTests, BusResetWhileLoggingInWaitsForDiscoveryBeforeRetry) {
     SessionRig rig;
-
     ASSERT_TRUE(rig.session.Login());
-    ASSERT_EQ(LoginState::LoggingIn, rig.session.State());
-    ASSERT_EQ(1u, rig.bus.WriteCount());
-
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    EXPECT_EQ(LoginState::Idle, rig.session.State());
-
-    rig.AdvanceMs(99);
+    EXPECT_EQ(LoginState::Suspended, rig.session.State());
+    rig.AdvanceMs(1000);
     EXPECT_EQ(1u, rig.bus.WriteCount());
-
-    rig.AdvanceMs(1);
-    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    auto info = rig.session.TargetInfo();
+    info.targetNodeId = 3;
+    rig.session.Configure(info);
+    ASSERT_TRUE(rig.session.Login());
     EXPECT_EQ(2u, rig.bus.WriteCount());
+    EXPECT_EQ(3u, rig.bus.WriteAt(1).nodeId.value);
     EXPECT_EQ(2u, rig.session.Generation());
 }
 
-TEST(LoginSessionTests, BusResetWhileLoggingInDefersRetryOnScheduler) {
-    SessionRig rig;
-
-    ASSERT_TRUE(rig.session.Login());
-    rig.bus.SetGeneration(ASFW::FW::Generation{2});
-    rig.session.HandleBusReset(2);
-
-    // The retry is deferred on the scheduler, not run inline.
-    EXPECT_GT(rig.scheduler.PendingCount(), 0u);
-    EXPECT_EQ(LoginState::Idle, rig.session.State());
-    EXPECT_EQ(1u, rig.bus.WriteCount());
-}
-
-TEST(LoginSessionTests, BusResetWhileReconnectingRetriesReconnectAfterDelay) {
+TEST(LoginSessionTests, BusResetWhileReconnectingWaitsForFreshNodeBeforeRetry) {
     SessionRig rig;
     rig.LoginSuccessfully();
-
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_EQ(LoginState::Suspended, rig.session.State());
     ASSERT_TRUE(rig.session.Reconnect());
-    ASSERT_EQ(LoginState::Reconnecting, rig.session.State());
-    ASSERT_EQ(2u, rig.session.Generation());
-    ASSERT_EQ(3u, rig.bus.WriteCount());
-
     rig.bus.SetGeneration(ASFW::FW::Generation{3});
     rig.session.HandleBusReset(3);
     EXPECT_EQ(LoginState::Suspended, rig.session.State());
-
-    rig.AdvanceMs(99);
+    rig.AdvanceMs(1000);
     EXPECT_EQ(3u, rig.bus.WriteCount());
-
-    rig.AdvanceMs(1);
-    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
+    auto info = rig.session.TargetInfo();
+    info.targetNodeId = 3;
+    rig.session.Configure(info);
+    ASSERT_TRUE(rig.session.Reconnect());
     EXPECT_EQ(4u, rig.bus.WriteCount());
+    EXPECT_EQ(3u, rig.bus.WriteAt(3).nodeId.value);
     EXPECT_EQ(3u, rig.session.Generation());
 }
 
@@ -730,8 +709,11 @@ TEST(LoginSessionTests,
 TEST(LoginSessionTests, PhysicalAccessFollowsLoggedInState) {
     SessionRig rig;
     std::vector<std::pair<uint16_t, bool>> calls;
-    rig.session.SetPhysicalAccessControl([&](uint16_t node, bool enable) {
-        calls.emplace_back(node, enable);
+    rig.session.SetPhysicalAccessControl([&](uint16_t node, uint16_t generation,
+                                            ASFW::Driver::PhysicalRequestAccess action) {
+        EXPECT_EQ(rig.session.Generation(), generation);
+        calls.emplace_back(node & 0x3Fu, action == ASFW::Driver::PhysicalRequestAccess::Acquire);
+        return true;
     });
 
     rig.LoginSuccessfully();
@@ -743,6 +725,9 @@ TEST(LoginSessionTests, PhysicalAccessFollowsLoggedInState) {
     ASSERT_EQ(2u, calls.size());
     EXPECT_EQ(std::make_pair(kTargetNodeID, false), calls[1]);
 
+    auto refreshed = rig.session.TargetInfo();
+    refreshed.targetNodeId = kTargetNodeID + 1;
+    rig.session.Configure(refreshed);
     ASSERT_TRUE(rig.session.Reconnect());
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     const uint64_t reconnectOrbAddress =
@@ -759,12 +744,12 @@ TEST(LoginSessionTests, PhysicalAccessFollowsLoggedInState) {
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
     ASSERT_EQ(LoginState::LoggedIn, rig.session.State());
     ASSERT_EQ(3u, calls.size());
-    EXPECT_EQ(std::make_pair(kTargetNodeID, true), calls[2]);
+    EXPECT_EQ(std::make_pair(uint16_t(kTargetNodeID + 1), true), calls[2]);
 
     while (rig.bus.PendingWriteCount() > 0U) {
         ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     }
     ASSERT_TRUE(rig.session.Logout());
     ASSERT_EQ(4u, calls.size());
-    EXPECT_EQ(std::make_pair(kTargetNodeID, false), calls[3]);
+    EXPECT_EQ(std::make_pair(uint16_t(kTargetNodeID + 1), false), calls[3]);
 }

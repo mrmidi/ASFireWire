@@ -75,14 +75,16 @@ SessionRegistry::SessionRegistry(Async::IFireWireBus& bus,
                                  Discovery::DeviceRegistry& deviceRegistry,
                                  Discovery::IDeviceManager& deviceManager,
                                  ISessionScheduler& scheduler,
-                                 IODispatchQueue* workQueue)
+                                 IODispatchQueue* workQueue,
+                                 uint16_t maxPayloadSize)
     : bus_(bus)
     , busInfo_(busInfo)
     , addrSpaceMgr_(addrSpaceMgr)
     , deviceRegistry_(deviceRegistry)
     , deviceManager_(deviceManager)
     , scheduler_(scheduler)
-    , workQueue_(workQueue) {
+    , workQueue_(workQueue)
+    , maxPayloadSize_(maxPayloadSize) {
     lock_ = IOLockAlloc();
 }
 
@@ -161,6 +163,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     record.route = *route;
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
+    record.session->SetMaxPayloadSize(maxPayloadSize_);
     record.session->SetPhysicalAccessControl(physicalAccess_);
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
@@ -464,7 +467,8 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
         session->AbandonSuspended();
     }
     for (auto& session : toReconnect) {
-        (void)session->Reconnect();
+        if (session->LoginID() == 0) (void)session->Login();
+        else (void)session->Reconnect();
     }
 }
 

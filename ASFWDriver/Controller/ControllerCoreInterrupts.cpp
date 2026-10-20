@@ -62,7 +62,11 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
     if ((events & IntEventBits::kBusReset) != 0U) {
         auto access = hw.TryBeginAccess();
         if (!access) return {};
-        const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
+        const uint32_t generation =
+            (access.Read(Register32::kSelfIDCount) & SelfIDCountBits::kGenerationMask) >>
+            SelfIDCountBits::kGenerationShift;
+        access = {};
+        hw.ClearPhysicalRequestFilters();
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
         // in flight. This matches the legacy IOFireWireFamily policy of
@@ -238,10 +242,12 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     }
 
     if ((events & IntEventBits::kPostedWriteErr) != 0U) {
-        ASFW_LOG(Controller,
-                 "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
-        ASFW_LOG(Controller, "This indicates IOMMU mapping error or invalid DMA target address");
-        ASFW_LOG(Controller, "Common causes: Self-ID buffer DMA, Config ROM shadow update");
+        if (auto access = deps_.hardware->TryBeginAccess()) {
+            // Linux ohci.c:2121-2125 reads the fault address before acknowledging.
+            const uint32_t hi = access.Read(Register32::kPostedWriteAddressHi);
+            const uint32_t lo = access.Read(Register32::kPostedWriteAddressLo);
+            ASFW_LOG(Controller, "Posted write error: addressHi=0x%08x addressLo=0x%08x", hi, lo);
+        }
     }
 
     if ((events & IntEventBits::kCycle64Seconds) != 0U) {

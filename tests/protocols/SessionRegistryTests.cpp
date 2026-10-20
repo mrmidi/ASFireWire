@@ -410,14 +410,10 @@ TEST(SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion)
     ASSERT_TRUE(rig.bus.CompleteWrite(fetchAgentWrite.handle, ASFW::Async::AsyncStatus::kTimeout));
     rig.AdvanceMs(1000);
 
-    const auto commandResult = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
-    ASSERT_TRUE(commandResult.has_value());
-    EXPECT_EQ(-1, commandResult->transportStatus);
-    EXPECT_EQ(SBPStatus::kUnspecifiedError, commandResult->sbpStatus);
-
-    const auto stateAfterFailure = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
-    ASSERT_TRUE(stateAfterFailure.has_value());
-    EXPECT_EQ(-1, stateAfterFailure->lastError);
+    EXPECT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
+    uint32_t retained = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(commandOrbAddress, &retained));
 
     ASSERT_GT(rig.bus.WriteCount(), 1u);
     const auto agentResetWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
@@ -430,8 +426,17 @@ TEST(SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion)
 
     ASSERT_TRUE(rig.bus.CompleteWrite(agentResetWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
     // Fail the management write so the LUN-reset ORB retires and frees its
-    // allocation (it may have reused the command ORB's freed address slot).
+    // allocation. The command mapping remains alive until this completes.
     ASSERT_TRUE(rig.bus.CompleteWrite(lunResetWrite.handle, ASFW::Async::AsyncStatus::kTimeout));
+
+    const auto commandResult = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(commandResult.has_value());
+    EXPECT_EQ(-1, commandResult->transportStatus);
+    EXPECT_EQ(SBPStatus::kUnspecifiedError, commandResult->sbpStatus);
+
+    const auto stateAfterFailure = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(stateAfterFailure.has_value());
+    EXPECT_EQ(-1, stateAfterFailure->lastError);
 
     uint32_t ignored = 0;
     EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
@@ -1069,7 +1074,7 @@ TEST_P(LunResetAgentResetTest, OrbTimeoutResetsFetchAgentAfterLunResetBeforeDeli
         ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     }
 
-    auto request = SCSI::BuildTestUnitReadyRequest();
+    auto request = SCSI::BuildInquiryRequest(36);
     request.timeoutMs = 1000;
     int callbacks = 0;
     ASSERT_TRUE(rig.registry.SubmitCommand(
@@ -1080,6 +1085,9 @@ TEST_P(LunResetAgentResetTest, OrbTimeoutResetsFetchAgentAfterLunResetBeforeDeli
     ASSERT_TRUE(rig.bus.CompleteWrite(orbPointerWrite.handle,
                                       ASFW::Async::AsyncStatus::kSuccess));
 
+    const uint64_t originalORB = DecodeAddressFromWritePayload(orbPointerWrite.data);
+    const uint64_t bufferAddress = ReadDataBufferAddress(rig.addressManager, originalORB);
+    uint32_t retained = 0;
     rig.AdvanceMs(1001);  // ORB timeout → AGENT_RESET (no-wait) + LUN-reset mgmt write
     ASSERT_EQ(2u, rig.bus.PendingWriteCount());
     auto mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
@@ -1106,6 +1114,9 @@ TEST_P(LunResetAgentResetTest, OrbTimeoutResetsFetchAgentAfterLunResetBeforeDeli
     EXPECT_EQ(4u, agentResetWrite.data.size());
     EXPECT_EQ(0x0020'0004u, agentResetWrite.address.addressLo);
     EXPECT_EQ(0, callbacks) << "task completes only once the fetch agent is reset";
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(bufferAddress, &retained));
+    EXPECT_FALSE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
 
     if (GetParam()) {
         // A bus reset while the AGENT_RESET is in flight flushes the result;
@@ -1117,6 +1128,8 @@ TEST_P(LunResetAgentResetTest, OrbTimeoutResetsFetchAgentAfterLunResetBeforeDeli
     rig.AdvanceMs(0);
     EXPECT_EQ(1, callbacks);
     EXPECT_EQ(0, busResets);
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(bufferAddress, &retained));
 }
 
 INSTANTIATE_TEST_SUITE_P(BusResetDuringAgentReset, LunResetAgentResetTest, ::testing::Bool());
@@ -1289,3 +1302,130 @@ TEST(SessionRegistryTests, LoginStateObserverStaysSilentOnBusResetSuspend) {
 }
 
 } // namespace
+
+TEST(SessionRegistryTests, FailedRecoveryRevokesDmaBeforeFreeingBuffer) {
+    uint64_t dataAddress = 0;
+    bool revoked = false;
+    int resets = 0;
+    SessionRegistryRig rig;
+    rig.registry.SetBusResetRequester([&]() { ++resets; });
+    rig.registry.SetPhysicalAccessControl([&](uint16_t node, uint16_t generation,
+                                             ASFW::Driver::PhysicalRequestAccess action) {
+        EXPECT_EQ(0x32u, node & 0x3Fu);
+        EXPECT_EQ(1u, generation);
+        if (action == ASFW::Driver::PhysicalRequestAccess::Revoke) {
+            uint32_t value = 0;
+            EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+                      rig.addressManager.ReadQuadlet(dataAddress, &value));
+            revoked = true;
+        }
+        return !revoked || action == ASFW::Driver::PhysicalRequestAccess::Revoke ||
+               action == ASFW::Driver::PhysicalRequestAccess::Release;
+    });
+    const auto handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount())
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    auto request = SCSI::BuildInquiryRequest(36);
+    request.timeoutMs = 10;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    dataAddress = ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
+    ASSERT_TRUE(rig.bus.CompleteWrite(write.handle, ASFW::Async::AsyncStatus::kSuccess));
+    rig.AdvanceMs(11);
+    EXPECT_FALSE(revoked);
+    while (rig.bus.PendingWriteCount())
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.AdvanceMs(3001);
+    EXPECT_TRUE(revoked);
+    EXPECT_EQ(1, resets);
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+    EXPECT_FALSE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+}
+
+class PhysicalDmaReleaseTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(PhysicalDmaReleaseTest, ReleaseRevokesDmaBeforeReleasingActiveCommand) {
+    uint64_t dataAddress = 0;
+    bool revoked = false;
+    int callbacks = 0;
+    SessionRegistryRig rig;
+    rig.registry.SetPhysicalAccessControl([&](uint16_t, uint16_t,
+                                             ASFW::Driver::PhysicalRequestAccess action) {
+        if (action == ASFW::Driver::PhysicalRequestAccess::Revoke) {
+            uint32_t value = 0;
+            EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+                      rig.addressManager.ReadQuadlet(dataAddress, &value));
+            revoked = true;
+        }
+        return true;
+    });
+    const auto handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle,
+        SCSI::BuildInquiryRequest(36), [&](const auto&) { ++callbacks; }));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    dataAddress = ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
+    if (GetParam()) rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
+    else ASSERT_TRUE(rig.registry.ReleaseSession(SessionRegistryRig::Owner(), handle));
+    EXPECT_TRUE(revoked);
+    EXPECT_EQ(1, callbacks);
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+}
+
+INSTANTIATE_TEST_SUITE_P(SessionAndOwner, PhysicalDmaReleaseTest, ::testing::Bool());
+
+class PhysicalDmaSizeTest : public ::testing::TestWithParam<uint32_t> {};
+
+TEST_P(PhysicalDmaSizeTest, PublishesCompleteDataRangeAndRestrictsPageTableToTarget) {
+    SessionRegistryRig rig;
+    const auto handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x28;
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = GetParam();
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(write.data);
+    const uint64_t descriptor = ReadDataBufferAddress(rig.addressManager, orbAddress);
+    const uint32_t options = OSSwapBigToHostInt32(
+        ReadQuadlet(rig.addressManager, orbAddress + offsetof(NormalORB, options)));
+    if (GetParam() <= 0xF000) {
+        EXPECT_EQ(GetParam(), options & 0xFFFFu);
+        EXPECT_LT(descriptor, uint64_t{1} << 32);
+    } else {
+        const uint32_t entries = options & 0xFFFFu;
+        EXPECT_EQ((GetParam() + 0xEFFFu) / 0xF000u, entries);
+        EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+                  rig.addressManager.CheckRemoteAccess(descriptor, entries * 8, 0x32));
+        EXPECT_EQ(ASFW::Async::ResponseCode::TypeError,
+                  rig.addressManager.CheckRemoteAccess(descriptor, entries * 8, 0x31));
+        uint64_t expectedAddress = 0;
+        uint32_t total = 0;
+        for (uint32_t index = 0; index < entries; ++index) {
+            const uint32_t hi = OSSwapBigToHostInt32(
+                ReadQuadlet(rig.addressManager, descriptor + index * 8));
+            const uint32_t lo = OSSwapBigToHostInt32(
+                ReadQuadlet(rig.addressManager, descriptor + index * 8 + 4));
+            const uint64_t address = ComposeAddress(hi & 0xFFFFu, lo);
+            const uint32_t length = hi >> 16;
+            if (index != 0) EXPECT_EQ(expectedAddress, address);
+            EXPECT_GT(length, 0u);
+            EXPECT_LE(length, 0xF000u);
+            EXPECT_LE(address + length, uint64_t{1} << 32);
+            expectedAddress = address + length;
+            total += length;
+        }
+        EXPECT_EQ(GetParam(), total);
+    }
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
+}
+
+INSTANTIATE_TEST_SUITE_P(DescriptorBoundaries, PhysicalDmaSizeTest,
+    ::testing::Values(0xF000u, 0xF001u, 1024u * 1024u, 30u * 1024u * 1024u));

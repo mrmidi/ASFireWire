@@ -519,6 +519,7 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         ASFW_LOG(Controller, "❌ Final enable sequence failed: 0x%08x", kr);
         deps_.interrupts->Disable();
         running_ = false;
+    if (deps_.hardware) deps_.hardware->ClearPhysicalRequestFilters();
         hardwareAttached_ = false;
         return kr;
     }
@@ -725,8 +726,6 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
         return configRomStatus;
     }
 
-    // Step 7: Set Physical Upper Bound (256MB CSR address range)
-    // TODO(ASFW-DMA): Confirm whether remote DMA still requires this register programming.
     // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);

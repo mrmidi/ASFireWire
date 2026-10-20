@@ -332,8 +332,9 @@ TEST(AddressSpaceManagerTests, PhysicalRangeLivesBelow4GBAndRoundTrips) {
     ASSERT_EQ(kIOReturnSuccess, manager.AllocatePhysicalRange(owner, 32, &handle2, &meta2));
     EXPECT_NE(meta.address, meta2.address);
 
-    // Filter not yet armed: the target's write still arrives in software and
-    // lands in the same buffer.
+    // Remote software access is rejected; local CPU access remains available.
+    EXPECT_EQ(ASFW::Async::ResponseCode::TypeError,
+              manager.CheckRemoteAccess(meta.address + 8, 4, 5));
     const std::array<uint8_t, 4> payload{0xDE, 0xAD, 0xBE, 0xEF};
     EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
               manager.ApplyRemoteWrite(meta.address + 8,
@@ -351,4 +352,49 @@ TEST(AddressSpaceManagerTests, PhysicalRangeLivesBelow4GBAndRoundTrips) {
               manager.ApplyRemoteWrite(meta.address + 8,
                                        std::span<const uint8_t>(payload.data(), payload.size())));
     EXPECT_EQ(kIOReturnSuccess, manager.DeallocateAddressRange(owner, handle2));
+}
+
+TEST(AddressSpaceManagerTests, BackedPhysicalRangeUsesOneMappingAndRejectsSoftwareAccess) {
+    ASFW::Driver::HardwareInterface hardware;
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(&hardware);
+    auto* owner = reinterpret_cast<void*>(0x42);
+    uint64_t handle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta{};
+    ASSERT_EQ(kIOReturnSuccess, manager.AllocatePhysicalRange(owner, 70000, &handle, &meta));
+    EXPECT_EQ(0u, meta.addressHi);
+    const std::array<uint8_t, 4> bytes{1, 2, 3, 4};
+    ASSERT_EQ(kIOReturnSuccess, manager.WriteLocalData(owner, handle, 69996, bytes));
+    std::vector<uint8_t> readback;
+    ASSERT_EQ(kIOReturnSuccess, manager.ReadIncomingData(owner, handle, 69996, 4, &readback));
+    EXPECT_EQ(std::vector<uint8_t>(bytes.begin(), bytes.end()), readback);
+    EXPECT_EQ(ASFW::Async::ResponseCode::TypeError,
+              manager.CheckRemoteAccess(meta.address + 69996, 4, 5));
+    uint64_t overlapping = 0;
+    EXPECT_EQ(kIOReturnNoSpace,
+              manager.AllocateAddressRange(owner, 0, meta.addressLo, 4, &overlapping));
+    EXPECT_EQ(kIOReturnSuccess, manager.DeallocateAddressRange(owner, handle));
+}
+
+TEST(AddressSpaceManagerTests, RemoteStatusIsRestrictedToTargetNode) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+    uint64_t handle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta{};
+    ASSERT_EQ(kIOReturnSuccess, manager.AllocateAddressRangeAuto(nullptr, 0xFFFF, 32, &handle, &meta));
+    manager.RestrictRemoteAccess(meta.address, 5);
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete, manager.CheckRemoteAccess(meta.address, 32, 0xFFC5));
+    EXPECT_EQ(ASFW::Async::ResponseCode::TypeError, manager.CheckRemoteAccess(meta.address, 32, 6));
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete, manager.ReadQuadlet(meta.address, &value, 5));
+    EXPECT_EQ(ASFW::Async::ResponseCode::TypeError, manager.ReadQuadlet(meta.address, &value, 6));
+    const std::array<uint8_t, 4> bytes{1, 2, 3, 4};
+    EXPECT_EQ(ASFW::Async::ResponseCode::TypeError, manager.ApplyRemoteWrite(meta.address, bytes, 6));
+}
+
+TEST(AddressSpaceManagerTests, UnavailableHardwareFailsWithoutSoftwareBufferFallback) {
+    ASFW::Driver::HardwareInterface hardware;
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(&hardware);
+    hardware.Detach();
+    uint64_t handle = 0;
+    EXPECT_EQ(kIOReturnNoMemory, manager.AllocatePhysicalRange(nullptr, 4096, &handle));
+    EXPECT_EQ(0u, handle);
 }

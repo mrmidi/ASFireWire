@@ -158,7 +158,10 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
 }
 
 void HardwareInterface::RevokeAndDrain() noexcept {
-    accessGate_.RevokeAndDrain();
+    if (auto access = TryBeginAccess()) {
+        ClearPhysicalRequestFilters(access);
+        accessGate_.RevokeFromAdmittedScope();
+    }
 }
 
 void HardwareInterface::LatchProviderRevokedAndDrain() noexcept {
@@ -343,15 +346,6 @@ void HardwareInterface::SetLinkControlBits(uint32_t bits) {
 
 void HardwareInterface::ClearLinkControlBits(uint32_t bits) {
     if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kLinkControlClear, bits);
-}
-
-void HardwareInterface::SetPhysicalRequestFilter(uint8_t node, bool enable) noexcept {
-    node &= 0x3Fu;
-    const bool hi = node >= 32;
-    const Register32 reg = hi ? (enable ? Register32::kPhyReqFilterHiSet : Register32::kPhyReqFilterHiClear)
-                              : (enable ? Register32::kPhyReqFilterLoSet : Register32::kPhyReqFilterLoClear);
-    const uint32_t bit = 1u << (hi ? node - 32 : node);
-    if (auto access = TryBeginAccess()) access.WriteAndFlush(reg, bit);
 }
 
 void HardwareInterface::ClearIntEvents(uint32_t mask) {
@@ -852,7 +846,8 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
 
     const uint64_t mappedAddress = segments[0].address;
 
-    if (mappedAddress > 0xFFFFFFFFULL) {
+    if (mappedAddress > 0xFFFFFFFFULL || length == 0 ||
+        length - 1 > 0xFFFFFFFFULL - mappedAddress) {
         ASFW_LOG_V0(Hardware, "DMA IOVA 0x%llx exceeds 32-bit range", mappedAddress);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
