@@ -40,8 +40,6 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void Start(ROMScanRequest request, ScanCompletionCallback completion);
     void Abort();
 
-    [[nodiscard]] Generation GetGeneration() const noexcept { return gen_; }
-
   private:
     struct DetailsDiscovery;
 
@@ -51,6 +49,12 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void MaybeFinish();
 
     [[nodiscard]] ROMScanNodeStateMachine* FindNode(uint8_t nodeId);
+
+    // Generation 0 is a real bus generation (the 8-bit counter wraps, OHCI 1.2
+    // Table 11-2), so "no scan running" is scanActive_, never a gen_ value.
+    [[nodiscard]] bool IsCurrentScan(Generation gen) const noexcept {
+        return scanActive_ && gen == gen_;
+    }
 
     [[nodiscard]] static bool TransitionNodeState(ROMScanNodeStateMachine& node,
                                                   ROMScanNodeStateMachine::State next,
@@ -103,6 +107,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
 
     std::atomic<bool> aborted_{false};
 
+    bool scanActive_{false};
     Generation gen_{0};
     Driver::TopologySnapshot topology_{};
     uint8_t localNodeId_{0xFF};

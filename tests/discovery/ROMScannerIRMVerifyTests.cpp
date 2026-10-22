@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <string>
 
 #include <array>
 #include <condition_variable>
@@ -176,7 +177,11 @@ std::vector<uint32_t> CreateMinimalIRMCapableBIB() {
 
 } // namespace
 
-TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
+// Generation 0 is a real bus generation after the 8-bit counter wraps (OHCI 1.2
+// Table 11-2), so the IRM verify path must complete there exactly as at 7.
+class ROMScannerIRMVerify : public ::testing::TestWithParam<uint8_t> {};
+
+TEST_P(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -185,6 +190,7 @@ TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
     int callbackCount = 0;
     bool hadBusyNodes = false;
     std::vector<ConfigROM> completedROMs;
+    Generation completedGen{0xFF};
 
     ROMScannerParams params{};
     params.doIRMCheck = true;
@@ -192,7 +198,7 @@ TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
-    topology.generation = 7;
+    topology.generation = GetParam();
     topology.busBase16 = 0xFFC0;
     topology.irmNodeId = 1;
     topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
@@ -205,9 +211,10 @@ TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
 
     ASSERT_TRUE(scanner.Start(
         request,
-        [&](Generation /*gen*/, std::vector<ConfigROM> roms, bool busy) {
+        [&](Generation gen, std::vector<ConfigROM> roms, bool busy) {
             std::lock_guard lock(mtx);
             ++callbackCount;
+            completedGen = gen;
             hadBusyNodes = busy;
             completedROMs = std::move(roms);
             cv.notify_all();
@@ -260,6 +267,12 @@ TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
     }
 
     EXPECT_EQ(callbackCount, 1);
+    EXPECT_EQ(completedGen.value, GetParam());
     EXPECT_FALSE(hadBusyNodes);
     EXPECT_EQ(completedROMs.size(), 1u);
 }
+
+INSTANTIATE_TEST_SUITE_P(Generations, ROMScannerIRMVerify, ::testing::Values(uint8_t{7}, uint8_t{0}),
+                         [](const ::testing::TestParamInfo<uint8_t>& info) {
+                             return "Gen" + std::to_string(info.param);
+                         });

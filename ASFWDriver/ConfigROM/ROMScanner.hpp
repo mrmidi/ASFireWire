@@ -113,6 +113,9 @@ class ROMScanner {
 
     std::shared_ptr<ROMReader> reader_;
     std::shared_ptr<ROMScanSession> session_;
+    // Generation of session_, recorded here at Start. The session itself only
+    // learns its generation once its start task runs on the dispatch queue.
+    Generation sessionGen_{0};
 };
 
 } // namespace ASFW::Discovery

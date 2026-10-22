@@ -90,6 +90,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         }
 
         session->gen_ = request.gen;
+        session->scanActive_ = true;
         session->topology_ = std::move(request.topology);
         session->localNodeId_ = request.localNodeId;
         session->completion_ = std::move(completion);
@@ -160,7 +161,7 @@ void ROMScanSession::Abort() {
         session->nodeScans_.clear();
         session->completedROMs_.clear();
         session->inflight_ = 0;
-        session->gen_ = Generation{0};
+        session->scanActive_ = false;
         session->hadBusyNodes_ = false;
     });
 }
@@ -464,7 +465,7 @@ Driver::Role::RootBibReadStatus ROMScanSession::MapBIBFailureStatus(
 }
 
 void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result) {
-    if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) {
+    if (aborted_.load(std::memory_order_relaxed) || !IsCurrentScan(result.generation)) {
         return;
     }
 
@@ -587,7 +588,7 @@ void ROMScanSession::StartSpeedProbe(ROMScanNodeStateMachine& node) {
 }
 
 void ROMScanSession::HandleSpeedProbeComplete(uint8_t nodeId, ROMReader::ReadResult result) {
-    if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) return;
+    if (aborted_.load(std::memory_order_relaxed) || !IsCurrentScan(result.generation)) return;
     if (inflight_ > 0) --inflight_;
     auto* node = FindNode(nodeId);
     if (!node || node->CurrentState() != ROMScanNodeStateMachine::State::ProbingSpeed) { Pump(); return; }
@@ -736,7 +737,7 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (result.generation != gen_) {
+    if (!IsCurrentScan(result.generation)) {
         return;
     }
 
@@ -850,7 +851,7 @@ void ROMScanSession::EnsurePrefix(uint8_t nodeId,
                     if (self->aborted_.load(std::memory_order_relaxed)) {
                         return;
                     }
-                    if (res.generation != self->gen_) {
+                    if (!self->IsCurrentScan(res.generation)) {
                         return;
                     }
 
@@ -905,7 +906,7 @@ void ROMScanSession::MaybeFinish() {
     if (completionNotified_ || completion_ == nullptr) {
         return;
     }
-    if (gen_ == Generation{0}) {
+    if (!scanActive_) {
         return;
     }
     if (!nodeScans_.empty() && inflight_ > 0) {
@@ -929,7 +930,7 @@ void ROMScanSession::MaybeFinish() {
     nodeScans_.clear();
     completedROMs_.clear();
     inflight_ = 0;
-    gen_ = Generation{0};
+    scanActive_ = false;
     hadBusyNodes_ = false;
 
     if (completion) {

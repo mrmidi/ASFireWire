@@ -254,6 +254,42 @@ TEST(ROMScannerAbort, GenerationZeroScanIsBusyAndAbortable) {
     EXPECT_EQ(callbackCount, 0);
 }
 
+// A session learns its generation only when its start task runs on the
+// dispatch queue. Until then the scanner must still know which generation the
+// running scan is for: a fresh scan at generation 5 must not make a request for
+// generation 0 look like a duplicate.
+TEST(ROMScannerAbort, BusyCheckUsesRequestedGenerationBeforeSessionStartRuns) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
+    queue->SetManualDispatchForTesting(true);
+
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params, queue);
+
+    TopologySnapshot topology;
+    topology.busBase16 = 0xFFC0;
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    const auto ignore = [](Generation, std::vector<ConfigROM>, bool) {};
+
+    request.gen = Generation{5};
+    ASSERT_TRUE(scanner.Start(request, ignore));
+    ASSERT_GT(queue->PendingTaskCountForTesting(), 0u) << "start task must still be queued";
+
+    request.gen = Generation{0};
+    EXPECT_TRUE(scanner.Start(request, ignore));
+    EXPECT_FALSE(scanner.Start(request, ignore));
+
+    queue->DrainReadyForTesting();
+}
+
 TEST(ROMScannerEnsurePrefix, EnsurePrefixCapExceeded_CompletesDeterministically) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;

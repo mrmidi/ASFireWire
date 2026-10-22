@@ -59,7 +59,7 @@ void ROMScanSession::HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (gen_ == Generation{0}) {
+    if (!scanActive_) {
         return;
     }
 
@@ -140,7 +140,7 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (gen_ == Generation{0}) {
+    if (!scanActive_) {
         return;
     }
 

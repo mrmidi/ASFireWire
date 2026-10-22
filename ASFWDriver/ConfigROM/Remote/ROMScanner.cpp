@@ -28,7 +28,7 @@ void ROMScanner::SetTopologyManager(Driver::TopologyManager* topologyManager) {
 
 bool ROMScanner::IsBusyFor(Generation gen) const {
     // Generation 0 is a real hardware value after the 8-bit counter wraps.
-    return session_ && session_->GetGeneration() == gen;
+    return session_ && sessionGen_ == gen;
 }
 
 bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback completion) {
@@ -50,6 +50,7 @@ bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback com
     auto session = std::make_shared<ROMScanSession>(bus_, speedPolicy_, params_, reader_,
                                                     dispatchQueue_, topologyManager_);
     session_ = session;
+    sessionGen_ = request.gen;
 
     const std::weak_ptr<ROMScanSession> weakSession = session;
     ScanCompletionCallback wrapped = [this, weakSession, completion = std::move(completion)](
