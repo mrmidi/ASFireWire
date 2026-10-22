@@ -143,31 +143,34 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     }
 }
 
-const ConfigROM* ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId) const {
+std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId) const {
     LockGuard guard(lock_);
 
     const GenNodeKey key = MakeKey(gen, nodeId);
     auto it = romsByGenNode_.find(key);
-    return (it != romsByGenNode_.end()) ? &it->second : nullptr;
+    if (it == romsByGenNode_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
-const ConfigROM* ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId,
-                                            bool allowSuspended) const {
+std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId,
+                                                    bool allowSuspended) const {
     LockGuard guard(lock_);
 
     const auto key = MakeKey(gen, nodeId);
     if (auto it = romsByGenNode_.find(key); it != romsByGenNode_.end()) {
         const auto& rom = it->second;
         if (!allowSuspended && rom.state == ROMState::Suspended) {
-            return nullptr;
+            return std::nullopt;
         }
-        return &rom;
+        return rom;
     }
 
-    return nullptr;
+    return std::nullopt;
 }
 
-const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
+std::optional<ConfigROM> ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
     LockGuard guard(lock_);
 
     const ConfigROM* latest = nullptr;
@@ -192,17 +195,23 @@ const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
                     "ConfigROMStore::FindLatestForNode: node=%u using gen=%u with unit profile "
                     "instead of partial gen=%u",
                     nodeId, latestWithUnitProfile->gen.value, latest ? latest->gen.value : 0);
-        return latestWithUnitProfile;
+        return *latestWithUnitProfile;
     }
 
-    return latest;
+    if (latest == nullptr) {
+        return std::nullopt;
+    }
+    return *latest;
 }
 
-const ConfigROM* ConfigROMStore::FindByGuid(Guid64 guid) const {
+std::optional<ConfigROM> ConfigROMStore::FindByGuid(Guid64 guid) const {
     LockGuard guard(lock_);
 
     auto it = romsByGuid_.find(guid);
-    return (it != romsByGuid_.end()) ? &it->second : nullptr;
+    if (it == romsByGuid_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 std::vector<ConfigROM> ConfigROMStore::Snapshot(Generation gen) const {

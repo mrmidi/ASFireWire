@@ -39,6 +39,11 @@ class ConfigROMStore {
      */
     void Insert(const ConfigROM& rom);
 
+    // Lookups return a copy taken under the store lock. The store is shared by
+    // the driver queue (Insert, SuspendAll on the bus-reset edge) and the
+    // user-client queue (ExportConfigROM, TriggerROMRead), and SuspendAll erases
+    // entries; a pointer into the map would dangle once the lock is released.
+
     /**
      * @brief Looks up a Config ROM by generation and node ID.
      *
@@ -46,9 +51,9 @@ class ConfigROMStore {
      *
      * @param gen The IEEE 1394 bus generation.
      * @param nodeId The target node ID.
-     * @return Pointer to the ConfigROM, or nullptr if not found.
+     * @return A copy of the ConfigROM, or std::nullopt if not found.
      */
-    const ConfigROM* FindByNode(Generation gen, uint8_t nodeId) const;
+    [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId) const;
 
     /**
      * @brief Enhanced lookup by generation and node ID, with state filtering.
@@ -56,17 +61,18 @@ class ConfigROMStore {
      * @param gen The IEEE 1394 bus generation.
      * @param nodeId The target node ID.
      * @param allowSuspended If false, ignores ROMs in the Suspended state.
-     * @return Pointer to the ConfigROM, or nullptr if not found/filtered out.
+     * @return A copy of the ConfigROM, or std::nullopt if not found/filtered out.
      */
-    const ConfigROM* FindByNode(Generation gen, uint8_t nodeId, bool allowSuspended) const;
+    [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId,
+                                                      bool allowSuspended) const;
 
     /**
      * @brief Looks up the most recently cached ROM for a node across any generation.
      *
      * @param nodeId The target node ID.
-     * @return Pointer to the ConfigROM, or nullptr if not found.
+     * @return A copy of the ConfigROM, or std::nullopt if not found.
      */
-    const ConfigROM* FindLatestForNode(uint8_t nodeId) const;
+    [[nodiscard]] std::optional<ConfigROM> FindLatestForNode(uint8_t nodeId) const;
 
     /**
      * @brief Looks up a Config ROM by its 64-bit GUID.
@@ -74,9 +80,9 @@ class ConfigROMStore {
      * Returns the most recent ROM across all generations for this EUI-64.
      *
      * @param guid The 64-bit GUID (EUI-64).
-     * @return Pointer to the ConfigROM, or nullptr if not found.
+     * @return A copy of the ConfigROM, or std::nullopt if not found.
      */
-    const ConfigROM* FindByGuid(Guid64 guid) const;
+    [[nodiscard]] std::optional<ConfigROM> FindByGuid(Guid64 guid) const;
 
     /**
      * @brief Exports an immutable snapshot of all ROMs for a given generation.

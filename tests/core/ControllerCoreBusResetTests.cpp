@@ -165,7 +165,7 @@ TEST(ControllerCoreBusResetTests, InterruptSuspendsCachedROMBeforeRediscovery) {
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
 
     romStore->Insert(MakeROM(kCachedGeneration, kNodeId, kGuid));
-    ASSERT_NE(romStore->FindByNode(kCachedGeneration, kNodeId, false), nullptr);
+    ASSERT_TRUE(romStore->FindByNode(kCachedGeneration, kNodeId, false).has_value());
 
     hardware->SetTestRegister(ASFW::Driver::Register32::kSelfIDGeneration,
                               kResetGeneration);
@@ -183,6 +183,6 @@ TEST(ControllerCoreBusResetTests, InterruptSuspendsCachedROMBeforeRediscovery) {
 
     // The unfiltered lookup remains available to rediscovery lifecycle code,
     // while selector 14's filtered lookup cannot export stale ROM bytes.
-    ASSERT_NE(romStore->FindByNode(kCachedGeneration, kNodeId, true), nullptr);
-    EXPECT_EQ(romStore->FindByNode(kCachedGeneration, kNodeId, false), nullptr);
+    ASSERT_TRUE(romStore->FindByNode(kCachedGeneration, kNodeId, true).has_value());
+    EXPECT_FALSE(romStore->FindByNode(kCachedGeneration, kNodeId, false).has_value());
 }
