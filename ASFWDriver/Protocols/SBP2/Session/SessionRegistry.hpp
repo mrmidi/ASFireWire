@@ -135,6 +135,7 @@ private:
     void RetireSessionLocked(const SessionRecord& record,
                              std::optional<ParkedCommand> parked = std::nullopt);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
+    void OnLogoutFailedLocked(const std::shared_ptr<LoginSession>& session, const char* reason);
     void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
                                         const std::shared_ptr<LoginSession>& session);
 

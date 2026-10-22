@@ -314,7 +314,7 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
     // when the device vanished during teardown).
     if (toLogout && !toLogout->Logout()) {
         IOLockGuard lock(lock_);
-        EraseRetiredSessionLocked(toLogout);
+        OnLogoutFailedLocked(toLogout, "rejected");
     }
     return true;
 }
@@ -354,7 +354,7 @@ void SessionRegistry::ReleaseOwner(void* owner) {
     for (auto& session : toLogout) {
         if (!session->Logout()) {
             IOLockGuard lock(lock_);
-            EraseRetiredSessionLocked(session);
+            OnLogoutFailedLocked(session, "rejected");
         }
     }
 }
@@ -413,9 +413,38 @@ void SessionRegistry::OnBusReset(uint16_t newGeneration) {
             record.executor->OnBusReset();
         }
     }
-    // The reset ends the target's claim on a parked command's buffer.
+    // The reset ends the target's claim on a parked command's buffer. An entry
+    // kept only for that (its logout had failed) goes with it; one still
+    // logging out is erased by its own logout callback.
     for (auto& retired : retiringSessions_) {
         retired.parked.reset();
+    }
+    std::erase_if(retiringSessions_, [](const RetiringSession& retired) {
+        return retired.session && retired.session->State() != LoginState::LoggingOut;
+    });
+}
+
+// A logout that was rejected or never answered leaves the target's claim on a
+// parked command unresolved; SBP-2 gives no other way to end it than a bus
+// reset (main's policy for an unreachable target), after which OnBusReset
+// frees the command. Without a parked command there is nothing to protect and
+// the entry is simply dropped.
+void SessionRegistry::OnLogoutFailedLocked(const std::shared_ptr<LoginSession>& session,
+                                           const char* reason) {
+    const auto it = std::find_if(
+        retiringSessions_.begin(), retiringSessions_.end(),
+        [&session](const RetiringSession& retired) { return retired.session == session; });
+    if (it == retiringSessions_.end()) {
+        return;
+    }
+    if (!it->parked) {
+        retiringSessions_.erase(it);
+        return;
+    }
+    ASFW_LOG(Async, "SessionRegistry: logout %{public}s with a command outstanding — "
+                    "requesting bus reset to free it", reason);
+    if (busResetRequester_) {
+        busResetRequester_();
     }
 }
 
@@ -586,7 +615,7 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
     std::weak_ptr<LoginSession> weakSession = session;
     std::weak_ptr<int> alive = lifetimeToken_;
     session->SetLogoutCallback(
-        [this, handle, guid, weakSession, alive](const LogoutCompleteParams&) {
+        [this, handle, guid, weakSession, alive](const LogoutCompleteParams& params) {
             if (alive.expired()) {
                 return;  // registry destroyed; session outlived it
             }
@@ -602,7 +631,11 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
                 sessions_.erase(it);
             }
 
-            EraseRetiredSessionLocked(completedSession);
+            if (params.status == 0 || completedSession == nullptr) {
+                EraseRetiredSessionLocked(completedSession);
+            } else {
+                OnLogoutFailedLocked(completedSession, params.status == -2 ? "timed out" : "failed");
+            }
             EmitLoginStateLocked(guid, false);
         });
 }
