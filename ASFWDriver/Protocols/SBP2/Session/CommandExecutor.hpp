@@ -167,6 +167,12 @@ private:
     std::unique_ptr<SBP2CommandORB> commandORB_;
     std::unique_ptr<SBP2PageTable> commandPageTable_;
     uint64_t commandBufferHandle_{0};
+    // The data buffer is the caller's own mapping (request.dataIOVA); it may be
+    // reused the moment the result is delivered.
+    bool commandInPlace_{false};
+    // The timeout recovery's own LUN reset is in flight (its completion owns
+    // the retained resources); a client task-management ORB is not.
+    bool recoveryResetInFlight_{false};
     ResultCallback resultCallback_;
 
     std::unique_ptr<SBP2ManagementORB> managementORB_;

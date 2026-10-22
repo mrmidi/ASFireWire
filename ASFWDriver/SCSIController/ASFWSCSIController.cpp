@@ -297,10 +297,9 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
     // and rejects any task larger than a small threshold before it reaches the
     // dext: VueScan's SEND LUT (32 KB out) and image READ (~510 KB in) failed
     // instantly while everything ≤197 B went through (LS-9000 traffic, but the
-    // constraint applies to any scanner in this class). The dext never touches
-    // fBufferIOVMAddr segments (data is copied via UserGetDataBuffer), so the
-    // values only need to be permissive and consistent with
-    // UserGetDMASpecification (Apple's ~30 MB SBP-2 ceiling, 64-bit, 4-byte alignment).
+    // constraint applies to any scanner in this class). The values need to be
+    // permissive and consistent with UserGetDMASpecification (Apple's ~30 MB
+    // SBP-2 ceiling, 4-byte alignment).
     OSDictionary* constraints = OSDictionary::withCapacity(7);
     if (constraints == nullptr) {
         return kIOReturnNoMemory;
@@ -440,14 +439,17 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeTargetForID)
 kern_return_t IMPL(ASFWSCSIController, UserGetDMASpecification)
 {
     // This spec drives the kernel shim's IODMACommand for the task buffer it
-    // maps before UserProcessParallelTask (fBufferIOVMAddr). Big-endian segment
-    // output byte-swaps those segment addresses — with kDMAOutputSegmentBig32
-    // the first data-carrying command (INQUIRY) died in kernel DMA prep and
-    // never reached the dext ("InitializeDeviceSupport error"). Wire endianness
-    // is irrelevant here; SBP-2 data movement uses our own DMA path anyway.
+    // maps before UserProcessParallelTask (fBufferIOVMAddr). That mapping is
+    // what the SBP-2 target reads and writes through the OHCI physical response
+    // unit, which serves the first 4 GiB (PhysicalUpperBound), so the address
+    // width is 32 bits: the kernel bounces anything that would land higher.
+    // Big-endian segment output byte-swaps the segment addresses — with
+    // kDMAOutputSegmentBig32 the first data-carrying command (INQUIRY) died in
+    // kernel DMA prep and never reached the dext ("InitializeDeviceSupport
+    // error").
     *maxTransferSize = kMaxTransferPerTask;
     *alignment = 4;
-    *numAddressBits = 64;
+    *numAddressBits = 32;
     *segmentType = kDMAOutputSegmentHost64;
     return kIOReturnSuccess;
 }
@@ -577,29 +579,20 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
                             ? parallelRequest.fTimeoutInMilliSec
                             : kDefaultTaskTimeoutMs;
 
-    // Resolve the task's data buffer HERE — the SDK contract is that
-    // UserGetDataBuffer is called inside UserProcessParallelTask. The mapping
-    // stays valid until the task completes, so the completion lambda may write
-    // through the captured address for data-IN.
-    //
-    // Like every DriverKit `OSObject**` out-param, the descriptor comes back
-    // +1 retained and must be released by us. Leaking it cost one dext-side
-    // object (and its mach ports) per data-carrying task; a long VueScan
-    // session (~57k tasks) exhausted the port space and the kernel killed the
-    // dext with EXC_RESOURCE/PORTS. Hold it until the task completes (the
-    // mapping must outlive the data-IN copy) and release it there.
-    IOAddressSegment dataSeg{};
-    IOBufferMemoryDescriptor* buffer = nullptr;
+    // The kernel mapped the task's buffer for our PCI device before this call
+    // (fBufferIOVMAddr, one segment, below 4 GiB per UserGetDMASpecification),
+    // and keeps it until ParallelTaskCompletion. The SBP-2 target reads and
+    // writes that mapping directly, as Apple's SBP-2 does
+    // (IOFireWireSBP2ORB.cpp prepareBufferAddressSpace). UserGetDataBuffer is
+    // not called: per the SDK it invalidates this mapping. The mapping covers
+    // fRequestedTransferCount bytes, which is exactly what request.transferLength
+    // carries and what the target is told; there is no second length to check
+    // it against without that call.
     if (request.transferLength > 0) {
-        kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
-                                             parallelRequest.fControllerTaskIdentifier,
-                                             &buffer);
-        if (kr != kIOReturnSuccess || buffer == nullptr ||
-            buffer->GetAddressRange(&dataSeg) != kIOReturnSuccess || dataSeg.address == 0 ||
-            dataSeg.length < request.transferLength) {
-            ASFW_LOG(Controller, "[SCSIHBA] task data buffer unavailable (kr=0x%x len=%llu/%u)",
-                     kr, dataSeg.length, request.transferLength);
-            OSSafeReleaseNULL(buffer);
+        if (parallelRequest.fBufferIOVMAddr == 0 ||
+            parallelRequest.fBufferIOVMAddr + request.transferLength > (uint64_t{1} << 32)) {
+            ASFW_LOG(Controller, "[SCSIHBA] task buffer not DMA-mapped below 4 GiB (iova=0x%llx len=%u)",
+                     (uint64_t)parallelRequest.fBufferIOVMAddr, request.transferLength);
             resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
             ParallelTaskCompletion(completion, resp);
             if (response != nullptr) {
@@ -607,15 +600,11 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             }
             return kIOReturnSuccess;
         }
-        if (request.direction == SBP2::SCSI::DataDirection::ToTarget) {
-            const auto* src = reinterpret_cast<const uint8_t*>(dataSeg.address);
-            request.outgoingPayload.assign(src, src + request.transferLength);
-        }
+        request.dataIOVA = parallelRequest.fBufferIOVMAddr;
     }
 
     // The completion fires later, from the FireWire driver's work queue — keep
-    // the OSAction and this service alive across the async gap. `buffer`
-    // (already +1) rides along and is released in the same place.
+    // the OSAction and this service alive across the async gap.
     completion->retain();
     this->retain();
 
@@ -623,24 +612,19 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     const uint64_t taskID = parallelRequest.fControllerTaskIdentifier;
     const bool dataIn = (request.direction == SBP2::SCSI::DataDirection::FromTarget);
     const uint32_t requestedLength = request.transferLength;
-    const uint64_t dataAddress = dataSeg.address;
-    const uint64_t dataLength = dataSeg.length;
 
     bridge->SubmitTask(std::move(request),
-        [this, completion, buffer, targetID, taskID, dataIn, requestedLength, dataAddress,
-         dataLength, opcode](const SBP2::SCSI::CommandResult& result) {
+        [this, completion, targetID, taskID, dataIn, requestedLength,
+         opcode](const SBP2::SCSI::CommandResult& result) {
             SCSIUserParallelResponse asyncResp{};
             asyncResp.version = kScsiUserParallelTaskResponseCurrentVersion1;
             asyncResp.fTargetID = targetID;
             asyncResp.fControllerTaskIdentifier = taskID;
             FillResponseFromResult(asyncResp, result);
 
-            if (dataIn && asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE &&
-                !result.payload.empty() && dataAddress != 0) {
-                uint64_t n = std::min<uint64_t>(result.payload.size(), requestedLength);
-                n = std::min<uint64_t>(n, dataLength);
-                memcpy(reinterpret_cast<void*>(dataAddress), result.payload.data(), n);
-                asyncResp.fBytesTransferred = n;
+            if (dataIn && asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE) {
+                asyncResp.fBytesTransferred =
+                    std::min<uint64_t>(result.inPlaceBytes, requestedLength);
             } else if (!dataIn &&
                        asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE &&
                        asyncResp.fCompletionStatus == kSCSITaskStatus_GOOD) {
@@ -665,9 +649,6 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             }
 
             ParallelTaskCompletion(completion, asyncResp);
-            if (buffer != nullptr) {
-                buffer->release();
-            }
             completion->release();
             this->release();
         });

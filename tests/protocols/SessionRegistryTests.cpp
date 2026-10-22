@@ -1532,4 +1532,173 @@ TEST_P(PhysicalDmaSizeTest, DescribesTheWholeBufferBelow4GB) {
 INSTANTIATE_TEST_SUITE_P(DescriptorBoundaries, PhysicalDmaSizeTest,
     ::testing::Values(0xF000u, 0xF001u, 1024u * 1024u, 30u * 1024u * 1024u));
 
+// An HBA task names its own DMA-mapped buffer: SBP-2 points the target at it
+// and allocates nothing of its own; the result reports the bytes moved there.
+TEST(SessionRegistryTests, InPlaceCommandUsesTheCallersBufferAndAllocatesNone) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    constexpr uint64_t kIOVA = 0x8010'0000ULL;
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x28;
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 0x1000;
+    request.dataIOVA = kIOVA;
+    std::optional<SCSI::CommandResult> delivered;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult& result) { delivered = result; }));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(write.data);
+    EXPECT_EQ(kIOVA, ReadDataBufferAddress(rig.addressManager, orbAddress));
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(kIOVA, &value));
+    ASSERT_TRUE(rig.bus.CompleteWrite(write.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    CompleteTaskManagementStatus(rig.addressManager, rig.sessionStatusAddress, orbAddress);
+    ASSERT_TRUE(delivered.has_value());
+    EXPECT_EQ(0, delivered->transportStatus);
+    EXPECT_EQ(0x1000u, delivered->inPlaceBytes);
+    EXPECT_TRUE(delivered->payload.empty());
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(orbAddress, &value));
+}
+
+// With the caller's own buffer, a result after an unanswered LUN reset must not
+// go out before the bus reset that ends the target's claim on that buffer.
+TEST(SessionRegistryTests, InPlaceResultAfterFailedLunResetWaitsForTheBusReset) {
+    SessionRegistryRig rig;
+    int resets = 0;
+    rig.registry.SetBusResetRequester([&]() { ++resets; });
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x28;
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 0x1000;
+    request.dataIOVA = 0x8040'0000ULL;
+    request.timeoutMs = 1000;
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult&) { ++callbacks; }));
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(rig.bus.WriteCount() - 1).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+    rig.AdvanceMs(1001);  // ORB timeout → AGENT_RESET + LUN-reset management write
+    auto mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    if (mgmtWrite.data.size() != 8u) {
+        mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 2);
+    }
+    ASSERT_EQ(8u, mgmtWrite.data.size());
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    rig.AdvanceMs(3001);  // LUN reset never answered
+    EXPECT_EQ(1, resets);
+    EXPECT_EQ(0, callbacks);
+    rig.registry.OnBusReset(2);
+    EXPECT_EQ(1, callbacks);
+}
+
+// Timeout while a client ABORT TASK SET is already in flight: no LUN reset can
+// be issued, and the caller's buffer is handed back only with that status.
+TEST(SessionRegistryTests, InPlaceResultWithoutLunResetWaitsForTheClientTaskManagement) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x28;
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = 0x1000;
+    request.dataIOVA = 0x8050'0000ULL;
+    request.timeoutMs = 1000;
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request,
+        [&](const SCSI::CommandResult&) { ++callbacks; }));
+    const auto orbWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(orbWrite.data);
+    ASSERT_TRUE(rig.bus.CompleteWrite(orbWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    ASSERT_TRUE(rig.registry.SubmitTaskManagement(SessionRegistryRig::Owner(), handle,
+                                                  SBP2ManagementORB::Function::AbortTaskSet));
+    const auto mgmtWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    ASSERT_EQ(8u, mgmtWrite.data.size());
+    const uint64_t mgmtOrbAddress = DecodeAddressFromWritePayload(mgmtWrite.data);
+    ASSERT_TRUE(rig.bus.CompleteWrite(mgmtWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    rig.AdvanceMs(1001);  // ORB timeout; the LUN reset cannot be submitted
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    EXPECT_EQ(0, callbacks);
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(orbAddress, &value));
+
+    CompleteTaskManagementStatus(rig.addressManager,
+                                 ReadTaskManagementStatusAddress(rig.addressManager, mgmtOrbAddress),
+                                 mgmtOrbAddress);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(orbAddress, &value));
+}
+
+TEST(SessionRegistryTests, InPlaceDataOutCarriesNoPayload) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x2a;
+    request.direction = SCSI::DataDirection::ToTarget;
+    request.transferLength = 512;
+    request.dataIOVA = 0x8020'0000ULL;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    EXPECT_EQ(0x8020'0000ULL,
+              ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data)));
+}
+
+TEST(SessionRegistryTests, InPlacePageTableCoversTheCallersRange) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    constexpr uint64_t kIOVA = 0x8030'0000ULL;
+    constexpr uint32_t kLength = 1024u * 1024u;
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(10, 0);
+    request.cdb[0] = 0x28;
+    request.direction = SCSI::DataDirection::FromTarget;
+    request.transferLength = kLength;
+    request.dataIOVA = kIOVA;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t orbAddress = DecodeAddressFromWritePayload(write.data);
+    const uint64_t descriptor = ReadDataBufferAddress(rig.addressManager, orbAddress);
+    const uint32_t entries = OSSwapBigToHostInt32(
+        ReadQuadlet(rig.addressManager, orbAddress + offsetof(NormalORB, options))) & 0xFFFFu;
+    EXPECT_EQ((kLength + 0xEFFFu) / 0xF000u, entries);
+    uint64_t expected = kIOVA;
+    uint32_t total = 0;
+    for (uint32_t index = 0; index < entries; ++index) {
+        const uint32_t hi = OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, descriptor + index * 8));
+        const uint32_t lo = OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, descriptor + index * 8 + 4));
+        EXPECT_EQ(expected, ComposeAddress(hi & 0xFFFFu, lo));
+        expected += hi >> 16;
+        total += hi >> 16;
+    }
+    EXPECT_EQ(kLength, total);
+}
+
 } // namespace

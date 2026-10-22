@@ -7,10 +7,18 @@ and Linux (`sbp2.c` `sbp2_map_scatterlist`, `ohci.c` `ohci_enable_phys_dma`)
 carry SBP-2 data the same way. ORBs, page tables, status FIFOs and the login
 response stay in the software-served `0xFFFF:xxxx` window.
 
+For HBA tasks the buffer is the kernel's own: the SCSI shim maps the task
+buffer for our PCI device before `UserProcessParallelTask` (`fBufferIOVMAddr`,
+one segment, below 4 GiB because `UserGetDMASpecification` asks for 32-bit
+addresses) and keeps it until `ParallelTaskCompletion`. `CommandRequest::dataIOVA`
+hands that address to SBP-2 and nothing is copied. `UserGetDataBuffer` is never
+called; per the SDK it invalidates the mapping. The raw user client has no
+mapping of its own and gets a bounce buffer in the same address space.
+
 ## Mechanism
 
-- `AddressSpaceManager::AllocatePhysicalRange` allocates a 32-bit IOVA buffer
-  (cacheable mapping, no shadow copy) and publishes it at its own address.
+- `AddressSpaceManager::AllocatePhysicalRange` allocates a 32-bit IOVA bounce
+  buffer (cacheable mapping, no shadow copy) for callers without a mapping.
 - `HardwareInterface::EnablePhysicalRequests(node, generation)` sets the node's
   bit in `PhysicalRequestFilter` after checking that `SelfIDCount` still shows
   that generation and no `busReset` is pending (`ohci.c:2615`). Nothing clears a
@@ -37,6 +45,12 @@ frees the ORB, page table and buffer only at:
 | LUN-reset status after a transport failure | the task set is aborted (§10.4.3) |
 | Bus reset | the node ID and the filter bit are gone with the generation |
 | Logout status after the client released the session | logout aborts the task set (§8.4) |
+
+An HBA task's buffer is reused by the kernel at `ParallelTaskCompletion`, which
+the bridge issues at release. The dext teardown path clears the physical filter
+before the bridge shuts down (`ExecuteRuntimeTeardown`), so no target can reach
+a completed task's buffer; the other release cause is a device that has left
+the bus.
 
 A command released by its client is parked on the retiring session and freed
 with it. If the logout is rejected or never answered, the target's claim is

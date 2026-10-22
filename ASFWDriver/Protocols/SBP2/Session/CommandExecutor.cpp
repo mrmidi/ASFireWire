@@ -135,7 +135,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     if (request.direction == SCSI::DataDirection::FromTarget && !request.outgoingPayload.empty()) {
         return false;
     }
-    if (request.direction == SCSI::DataDirection::ToTarget &&
+    if (request.direction == SCSI::DataDirection::ToTarget && request.dataIOVA == 0 &&
         request.outgoingPayload.size() != request.transferLength) {
         return false;
     }
@@ -145,11 +145,16 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         return false;
     }
 
+    // The target moves the data itself through the OHCI physical response unit;
+    // LoginSession admitted its node when the login completed. A caller that
+    // owns a DMA mapping (the HBA's task buffer) names it directly; a caller
+    // without one (the user client) gets a bounce buffer in the same space.
     uint64_t bufferHandle = 0;
     AddressSpaceManager::AddressRangeMeta bufferMeta{};
-    if (request.transferLength > 0) {
-        // The target moves the data itself through the OHCI physical response
-        // unit; LoginSession admitted its node when the login completed.
+    const bool inPlace = request.dataIOVA != 0;
+    if (inPlace) {
+        bufferMeta.address = request.dataIOVA;
+    } else if (request.transferLength > 0) {
         const kern_return_t kr = addrSpaceMgr_.AllocatePhysicalRange(
             owner_, request.transferLength, &bufferHandle, &bufferMeta);
         if (kr != kIOReturnSuccess) {
@@ -160,7 +165,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
 
     std::unique_ptr<SBP2PageTable> pageTable;
     if (request.transferLength > 0) {
-        if (request.direction == SCSI::DataDirection::ToTarget) {
+        if (!inPlace && request.direction == SCSI::DataDirection::ToTarget) {
             const kern_return_t writeKr = addrSpaceMgr_.WriteLocalData(
                 owner_, bufferHandle, 0,
                 std::span<const uint8_t>{request.outgoingPayload.data(),
@@ -212,8 +217,13 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         result.transportStatus = transportStatus;
         result.sbpStatus = sbpStatus;
 
-        if (transportStatus == 0 && sbpStatus == Wire::SBPStatus::kNoAdditionalInfo &&
-            activeCommandRequest_.has_value() &&
+        const bool completed = transportStatus == 0 &&
+                               sbpStatus == Wire::SBPStatus::kNoAdditionalInfo &&
+                               activeCommandRequest_.has_value();
+        if (completed && activeCommandRequest_->dataIOVA != 0) {
+            // SBP-2 status carries no residual; the whole transfer is reported.
+            result.inPlaceBytes = activeCommandRequest_->transferLength;
+        } else if (completed &&
             activeCommandRequest_->direction == SCSI::DataDirection::FromTarget &&
             activeCommandRequest_->transferLength > 0 && commandBufferHandle_ != 0) {
             std::vector<uint8_t> payload;
@@ -271,8 +281,10 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         // failed result waits for that too.
         phase_ = CommandPhase::Recovering;
         session_.ClearCommandTracking();
+        recoveryResetInFlight_ = true;
         if (SubmitTaskManagement(SBP2ManagementORB::Function::LogicalUnitReset,
                                  [this]() {
+                                     recoveryResetInFlight_ = false;
                                      // lastError_ carries the management ORB
                                      // outcome. Nonzero means the target never
                                      // fetched the LUN-reset ORB — its fetch
@@ -290,7 +302,14 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                                                       "escalating to bus reset", lastError_);
                                              busResetRequester_();
                                          }
-                                         NotifyResultCallback();
+                                         // A caller-owned buffer is reused once
+                                         // the result is delivered, so an
+                                         // in-place result waits for the reset
+                                         // (OnBusReset flushes it); a bounce
+                                         // buffer is ours to keep.
+                                         if (!commandInPlace_) {
+                                             NotifyResultCallback();
+                                         }
                                          return;
                                      }
                                      // LUN reset status: every task is gone and
@@ -316,11 +335,18 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
             ASFW_LOG(Async, "CommandExecutor: transport failure — LUN reset before completing task");
             return;
         }
-        // No LUN reset could be issued: the session is no longer LoggedIn (the
-        // reset path owns the buffer from here) or a client task-management ORB
-        // is in flight (its status is the stop point). Nothing further confirms
-        // the target stopped, so match Linux's abort (sbp2.c:1550-1551): release
-        // and complete.
+        recoveryResetInFlight_ = false;
+        // No LUN reset could be issued: the session is no longer LoggedIn (a
+        // reset cleared the filter and OnBusReset owns the rest) or a client
+        // task-management ORB is in flight, whose status is the stop point. A
+        // caller-owned buffer waits for that status (the management completion
+        // below frees and delivers); a bounce buffer is ours, so match Linux's
+        // abort (sbp2.c:1550-1551): release and complete.
+        if (commandInPlace_ && session_.State() == LoginState::LoggedIn) {
+            ASFW_LOG(Async, "CommandExecutor: transport failure, holding in-place result "
+                            "for the task-management status");
+            return;
+        }
         CleanupCommandResources();
         NotifyResultCallback();
     });
@@ -331,6 +357,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     activeCommandRequest_ = request;
     activeCommandOpcode_ = request.cdb.front();
     commandBufferHandle_ = bufferHandle;
+    commandInPlace_ = inPlace;
     commandORB_ = std::move(orb);
     commandPageTable_ = std::move(pageTable);
     resultCallback_ = std::move(callback);
@@ -421,11 +448,13 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
             return;
         }
         lastError_ = static_cast<int32_t>(status);
-        if (status == 0 && IsSupportedTaskManagementFunction(function) &&
-            phase_ == CommandPhase::Active) {
+        const bool ownsCommand = phase_ == CommandPhase::Active ||
+            (phase_ == CommandPhase::Recovering && !recoveryResetInFlight_);
+        if (status == 0 && IsSupportedTaskManagementFunction(function) && ownsCommand) {
             // A push-mode command wiped by task management must still complete
-            // (the bridge holds an open SCSI task on it). The status says the
-            // target dropped the task set, so its buffer is free (§10.4).
+            // (the bridge holds an open SCSI task on it); a result held back by
+            // the timeout path goes out now. The status says the target dropped
+            // the task set, so its buffer is free (§10.4).
             const bool pushMode = static_cast<bool>(resultCallback_);
             if (pushMode) {
                 FailActiveCommand(static_cast<int>(kIOReturnAborted),
