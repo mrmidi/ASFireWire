@@ -368,17 +368,25 @@ TEST(DiceInitialPreparation, StaleGlobalAcceptanceDoesNotBypassTheAcceptanceWait
     EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
 }
 
-TEST(DiceInitialPreparation, UnlockedClockTimesOutWithoutEnablingStreams) {
+// The lock wait is advisory for publication (TCAT RestartStreaming 0xd8e2
+// logs a lock timeout and creates the streams); the stream start keeps its
+// own lock gate and does not enable an unlocked device.
+TEST(DiceInitialPreparation, UnlockedClockPublishesButTheStartDoesNotEnable) {
     DiceRig rig(DiceDeviceImages::kVeniceF24,
                 {.clockResponse = DiceClockResponse::kAcceptNeverLock});
     std::optional<IOReturn> result;
     rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn status) { result = status; });
     rig.timer.Advance(3'400'000'000ULL);
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(*result, kIOReturnTimeout);
+    EXPECT_EQ(*result, kIOReturnSuccess);
     EXPECT_EQ(rig.bus.Enable(), 0U);
     EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
     EXPECT_EQ(rig.timer.PendingCount(), 0U);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+    EXPECT_FALSE(rig.family->Configure(rig.ChannelsFor(caps), {.sampleRateHz = caps.sampleRateHz}));
+    EXPECT_EQ(rig.bus.Enable(), 0U);
 }
 
 TEST(DiceInitialPreparation, StaleRouteCancelsWithoutTouchingTheNewGeneration) {
@@ -703,3 +711,53 @@ INSTANTIATE_TEST_SUITE_P(Recorded, DiceWireScenarios,
                          KeyName);
 
 } // namespace
+
+
+// Issue #189: a FireStudio 2626 (no EAP, two streams each way) published on
+// build 19 and not after the clock preparation began gating publication. The
+// TCAT driver treats the waits after CLOCK_SELECT as advisory
+// (PaeFireStudio RestartStreaming 0xd8e2), so a GLOBAL read that fails while
+// the device applies the clock must not end the preparation.
+TEST(DiceInitialPreparation, FailedGlobalPollReadKeepsWaiting) {
+    using ASFW::Async::AsyncStatus;
+    for (const auto status : {AsyncStatus::kBusyRetryExhausted, AsyncStatus::kTimeout}) {
+        SCOPED_TRACE(ASFW::Async::ToString(status));
+        DiceRig rig(DiceDeviceImages::kFirestudio2626);
+        rig.bus.SetClockSelectWriteHandler([&rig, status] {
+            rig.bus.Device().RaiseNotification(NotifyBits::kClockAccepted);
+            rig.bus.FailNext(OpKind::Read, 0xE0000028U, status);
+        });
+        std::optional<IOReturn> result;
+        rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn s) { result = s; });
+        rig.timer.Advance(500'000'000ULL);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(*result, kIOReturnSuccess);
+        AudioStreamRuntimeCaps caps{};
+        ASSERT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+        EXPECT_EQ(caps.hostInputPcmChannels, 26U);
+        EXPECT_EQ(caps.hostOutputPcmChannels, 26U);
+        EXPECT_EQ(caps.deviceToHostStreamCount, 2U);
+        EXPECT_EQ(caps.hostToDeviceStreamCount, 2U);
+        EXPECT_EQ(rig.bus.Enable(), 0U);
+    }
+}
+
+// Same reference: a device that never confirms the clock, by notice or by a
+// settled STATUS, is still described after the deadline.
+TEST(DiceInitialPreparation, UnconfirmedClockStillDescribesTheDevice) {
+    DiceRig rig(DiceDeviceImages::kFirestudio2626);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.Device().SetAchievedClock(ClockRateIndex::k48000, false);
+    });
+    std::optional<IOReturn> result;
+    rig.protocol->EnsureRuntimeStreamGeometry([&](IOReturn s) { result = s; });
+    rig.timer.Advance(3'000'000'000ULL);
+    EXPECT_FALSE(result.has_value()) << "the wait still runs to its deadline";
+    rig.timer.Advance(600'000'000ULL);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(*result, kIOReturnSuccess);
+    AudioStreamRuntimeCaps caps{};
+    EXPECT_TRUE(rig.protocol->GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+    EXPECT_EQ(rig.timer.PendingCount(), 0U);
+}
