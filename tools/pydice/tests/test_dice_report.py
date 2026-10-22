@@ -31,7 +31,11 @@ EXPECTED = {
     "studiolive-2442": (0x000A9204049204CB, 0x13000006, [(16, 0), (16, 0)], [(16, 0), (10, 0)]),
     "multimix": (0x00059504000005FE, 0x11000006, [(12, 0), (2, 0)], [(2, 0)]),
     "studiolive-3242": (0x000A9204050839AE, 0x10000004, [(48, 0)], [(34, 0)]),
+    "firestudio-2626": (0x000A92040210A2EF, 0x13FF001E, [(16, 1), (10, 0)], [(16, 1), (10, 0)]),
 }
+
+# The FireStudio 2626 firmware lists 8 clock source names, not 13.
+CLOCK_SOURCE_NAME_COUNT = {"firestudio-2626": 8}
 
 
 @pytest.mark.parametrize("key", sorted(EXPECTED))
@@ -47,7 +51,7 @@ def test_geometry_matches_hand_transcription(key):
         assert len(stream.names) == stream.pcm
     assert image.tx_entry_quadlets == 70
     assert image.rx_entry_quadlets == 70
-    assert len(image.clock_source_names) == 13
+    assert len(image.clock_source_names) == CLOCK_SOURCE_NAME_COUNT.get(key, 13)
 
 
 def test_saffire_section_table_is_shifted_by_its_larger_global():

@@ -242,7 +242,41 @@ inline constexpr DiceDeviceImage kStudiolive3242{
     .rateModes = {},
 };
 
-inline constexpr std::array<const DiceDeviceImage*, 7> kAll{{
+// PreSonus FIRESTUDIO — presonus-firestudio-2626.txt
+inline constexpr DiceDeviceImage kFirestudio2626{
+    .key = "firestudio-2626",
+    .reportedModel = "PreSonus FIRESTUDIO",
+    .source = "presonus-firestudio-2626.txt",
+    .guid = 0x000A92040210A2EFULL,
+    .globalSection = {.offsetQuadlets = 10U, .sizeQuadlets = 90U},
+    .txSection = {.offsetQuadlets = 100U, .sizeQuadlets = 142U},
+    .rxSection = {.offsetQuadlets = 242U, .sizeQuadlets = 282U},
+    .extSyncSection = {.offsetQuadlets = 524U, .sizeQuadlets = 4U},
+    .hasExtension = false,
+    .owner = 0xFFFF000000000000ULL,
+    .notification = 0x00000000U,
+    .nickname = "FIRESTUDIO",
+    .clockSelect = 0x0000020CU,
+    .enable = 0U,
+    .status = 0x00000201U,
+    .extStatus = 0x00000000U,
+    .sampleRate = 48000U,
+    .version = 0x01000400U,
+    .clockCaps = 0x13FF001EU,
+    .clockSourceNames = "SPDIF\\ADAT\\Word Clock\\Unused\\Unused\\Unused\\Unused\\Internal\\\\",
+    .txEntryQuadlets = 70U,
+    .rxEntryQuadlets = 70U,
+    .txCount = 2U,
+    .tx = {{{.iso = -1, .pcm = 16U, .midi = 1U, .speedOrSeqStart = 2U, .names = "Mic/Inst 1\\Mic/Inst 2\\Mic/Line 3\\Mic/Line 4\\Mic/Line 5\\Mic/Line 6\\Mic/Line 7\\Mic/Line 8\\ADAT 1\\ADAT 2\\ADAT 3\\ADAT 4\\ADAT 5\\ADAT 6\\ADAT 7\\ADAT 8\\\\"}, {.iso = -1, .pcm = 10U, .midi = 0U, .speedOrSeqStart = 2U, .names = "ADAT 9\\ADAT 10\\ADAT 11\\ADAT 12\\ADAT 13\\ADAT 14\\ADAT 15\\ADAT 16\\SPDIF L\\SPDIF R\\\\"}}},
+    .rxCount = 2U,
+    .rx = {{{.iso = -1, .pcm = 16U, .midi = 1U, .speedOrSeqStart = 0U, .names = "DAW Out 1 (L)\\DAW Out 2 (R)\\DAW Out 3 (LS)\\DAW Out 4 (RS)\\DAW Out 5 (C)\\DAW Out 6 (Sub)\\DAW Out 7\\DAW Out 8\\DAW Out 9\\DAW Out 10\\DAW Out 11\\DAW Out 12\\DAW Out 13\\DAW Out 14\\DAW Out 15\\DAW Out 16\\\\"}, {.iso = -1, .pcm = 10U, .midi = 0U, .speedOrSeqStart = 0U, .names = "ADAT 9\\ADAT 10\\ADAT 11\\ADAT 12\\ADAT 13\\ADAT 14\\ADAT 15\\ADAT 16\\DAW Out 17\\DAW Out 18\\\\"}}},
+    .hasExtSync = true,
+    .extSync = {.clockSource = 12U, .locked = 1U, .rateIndex = 2U, .adatUserData = 0x10U},
+    .hasRateModeFormats = false,
+    .rateModes = {},
+};
+
+inline constexpr std::array<const DiceDeviceImage*, 8> kAll{{
     &kSaffirePro24Dsp,
     &kVeniceF24,
     &kVeniceF32,
@@ -250,6 +284,7 @@ inline constexpr std::array<const DiceDeviceImage*, 7> kAll{{
     &kFirestudioProject,
     &kMultimix,
     &kStudiolive3242,
+    &kFirestudio2626,
 }};
 
 } // namespace DiceDeviceImages
