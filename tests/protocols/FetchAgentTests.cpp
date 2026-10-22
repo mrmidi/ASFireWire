@@ -263,3 +263,24 @@ TEST(FetchAgentTests, WriteRetryExhaustionFailsOrbAndResetsAgent) {
 }
 
 } // namespace
+
+TEST(FetchAgentTests, MaxPayloadRoundsDownAndRespectsLinkSpeed) {
+    for (const auto speed : {ASFW::FW::FwSpeed::S100, ASFW::FW::FwSpeed::S200,
+                             ASFW::FW::FwSpeed::S400, ASFW::FW::FwSpeed::S800}) {
+        Rig rig;
+        rig.bus.SetDefaultSpeed(speed);
+        FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+        auto binding = rig.Binding();
+        binding.maxPayloadSize = 3000;
+        agent.Bind(binding);
+        SBP2CommandORB orb(rig.addressManager, nullptr, 16);
+        ASSERT_TRUE(agent.Submit(&orb));
+        const auto address = orb.GetORBAddress();
+        uint32_t options = 0;
+        ASSERT_EQ(ASFW::Async::ResponseCode::Complete, rig.addressManager.ReadQuadlet(
+            (uint64_t{address.addressHi} << 32 | address.addressLo) + offsetof(Wire::NormalORB, options), &options));
+        const uint32_t payloadLog = (OSSwapBigToHostInt32(options) >> 20) & 0xFu;
+        EXPECT_EQ(std::min(7u + static_cast<unsigned>(speed), 9u), payloadLog);
+        agent.Clear(true);
+    }
+}

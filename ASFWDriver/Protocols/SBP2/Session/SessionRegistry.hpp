@@ -71,7 +71,8 @@ public:
                     Discovery::DeviceRegistry& deviceRegistry,
                     Discovery::IDeviceManager& deviceManager,
                     ISessionScheduler& scheduler,
-                    IODispatchQueue* workQueue = nullptr);
+                    IODispatchQueue* workQueue = nullptr,
+                    uint16_t maxPayloadSize = 4096);
     ~SessionRegistry();
 
     SessionRegistry(const SessionRegistry&) = delete;
@@ -145,6 +146,7 @@ private:
     Discovery::IDeviceManager& deviceManager_;
     ISessionScheduler& scheduler_;
     IODispatchQueue* workQueue_{nullptr};
+    uint16_t maxPayloadSize_{4096};
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
