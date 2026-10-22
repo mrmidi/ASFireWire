@@ -77,7 +77,6 @@ ASFW::Audio::AudioStreamRuntimeCaps ZedCaps(uint32_t rate) {
 }
 } // namespace
 
-// ZED-R16 format-selection regression fixtures for issue #223.
 TEST(DiceMultirateValidation, ZedMeasuredModesResolveFromLowAndHighRateAttachment) {
     using namespace ASFW::Audio;
     for (const auto attachedRate : {44100U, 48000U, 88200U, 96000U}) {
@@ -125,9 +124,9 @@ TEST(DiceMultirateValidation, ZedFallbackRejectsOtherIdentityAndUnmeasuredGeomet
     caps.deviceToHostStreams[0].midiPorts = 2;
     EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
     caps = ZedCaps(48000);
-    caps.sampleRateHz = 96000; // stale low-rate descriptors must not authorize the table
+    caps.sampleRateHz = 96000; // stale low-rate descriptors
     EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
-    caps = ZedCaps(32000); // not a supported ZED attachment state
+    caps = ZedCaps(32000); // unsupported attachment rate
     EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
     caps = ZedCaps(48000);
     caps.hostToDeviceStreamCount = 1;

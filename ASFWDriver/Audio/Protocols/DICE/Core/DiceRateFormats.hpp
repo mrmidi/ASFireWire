@@ -78,15 +78,10 @@ DiceObservedFormat(const AudioStreamRuntimeCaps& caps) {
     return format;
 }
 
-// ZED-R16 measured stream layouts; see issue #223. Capture MIDI is stream 0.
-// These formats remain subject to the existing hardware-validation policy.
-// Linux dice-stream.c:609-672 keeps unknown devices limited to the observed
-// mode. This exception is identity- and geometry-gated; it never scales counts.
+// Measured ZED-R16 layouts (#223); require matching identity and live geometry.
 [[nodiscard]] inline std::optional<DiceRateFormats>
 ZedR16MeasuredFormats(uint64_t guid, const AudioStreamRuntimeCaps& caps) {
-    // The DICE resolver already checks the unit identity. Check the GUID's
-    // OUI/category/product here as well; leave the serial number unrestricted.
-    // GUID layout: Linux dice.c:34-68 (check_dice_category).
+    // Match OUI/category/product, excluding serial (Linux dice.c:34-68).
     if ((guid >> 32U) != 0x0004c404U || (static_cast<uint32_t>(guid) >> 22U) != 0)
         return std::nullopt;
     if (caps.sampleRateHz != 44100 && caps.sampleRateHz != 48000 && caps.sampleRateHz != 88200 &&
@@ -119,22 +114,18 @@ ZedR16MeasuredFormats(uint64_t guid, const AudioStreamRuntimeCaps& caps) {
 /// The per-mode formats a device publishes. When the EAP read succeeded its
 /// formats stand for every mode and the stream registers are not consulted
 /// (Linux dice-stream.c:618-621): registers read before a clock select can
-/// describe another mode (:635-643). Without EAP use measured ZED-R16 modes
-/// only when identity and live geometry match; otherwise only the observed
-/// mode is known (Linux's fallback).
-/// No clock probing or guessed scaling.
+/// describe another mode (:635-643). Without EAP use matching ZED-R16 layouts
+/// or only the observed mode; no clock probing or guessed scaling.
 [[nodiscard]] inline DiceRateFormats SelectPublishedFormats(bool eapRead, DiceRateFormats eap,
                                                             const AudioStreamRuntimeCaps& caps,
                                                             uint64_t guid = 0) {
-    if (eapRead)
-        return eap;
+    if (eapRead) return eap;
     if (const auto measured = ZedR16MeasuredFormats(guid, caps))
         return *measured;
     DiceRateFormats observedOnly{};
     const auto mode = DiceRateMode(caps.sampleRateHz);
     const auto observed = DiceObservedFormat(caps);
-    if (mode && observed)
-        observedOnly[*mode] = *observed;
+    if (mode && observed) observedOnly[*mode] = *observed;
     return observedOnly;
 }
 
