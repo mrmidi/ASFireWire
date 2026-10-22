@@ -176,8 +176,7 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
                      "TriggerROMRead: invalidating exact-generation cached ROM for nodeId=%u "
                      "cachedGen=%u guid=0x%016llx before manual reread",
                      nodeId, cached->gen.value, cached->bib.guid);
-            romStore->InvalidateROM(cached->bib.guid);
-            romStore->PruneInvalid();
+            romStore->EraseByGuid(cached->bib.guid);
         }
     }
 

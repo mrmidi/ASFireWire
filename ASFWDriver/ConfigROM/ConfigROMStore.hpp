@@ -14,12 +14,13 @@ namespace ASFW::Discovery {
 
 /**
  * @class ConfigROMStore
- * @brief Generation-aware Config ROM cache with lookup/state management.
+ * @brief Config ROM cache keyed by (bus generation, node ID).
  *
- * Stores parsed IEEE 1212 / 1394 Configuration ROM objects, deduplicating them by
- * GUID (Extended Unique Identifier, EUI-64) and indexing them by generation and node ID.
- * Implements state management for tracking devices across bus resets, mirroring
- * Apple IOFireWireROMCache patterns.
+ * Holds the ROMs read in the current generation (Fresh) and, after a bus
+ * reset, the previous generation's ROMs (Suspended) until the next reset.
+ * Generations are compared only for equality: the 8-bit bus generation wraps
+ * after 255 (OHCI 1.2 Table 11-2), so "older" and "newer" cannot be read from
+ * the value.
  */
 class ConfigROMStore {
   public:
@@ -32,9 +33,10 @@ class ConfigROMStore {
     ConfigROMStore& operator=(ConfigROMStore&&) = delete;
 
     /**
-     * @brief Inserts a parsed ROM into the store.
+     * @brief Inserts a parsed ROM under its (generation, node) key.
      *
-     * Deduplicates by GUID (EUI-64) within the given generation.
+     * A ROM with fewer quadlets, or without the unit directories the cached
+     * one has, does not replace the cached entry for the same key.
      * @param rom The ConfigROM object to insert.
      */
     void Insert(const ConfigROM& rom);
@@ -59,46 +61,6 @@ class ConfigROMStore {
     [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId,
                                                       bool allowSuspended) const;
 
-    /**
-     * @brief Looks up the most recently cached ROM for a node across any generation.
-     *
-     * @param nodeId The target node ID.
-     * @return A copy of the ConfigROM, or std::nullopt if not found.
-     */
-    [[nodiscard]] std::optional<ConfigROM> FindLatestForNode(uint8_t nodeId) const;
-
-    /**
-     * @brief Looks up a Config ROM by its 64-bit GUID.
-     *
-     * Returns the most recent ROM across all generations for this EUI-64.
-     *
-     * @param guid The 64-bit GUID (EUI-64).
-     * @return A copy of the ConfigROM, or std::nullopt if not found.
-     */
-    [[nodiscard]] std::optional<ConfigROM> FindByGuid(Guid64 guid) const;
-
-    /**
-     * @brief Exports an immutable snapshot of all ROMs for a given generation.
-     *
-     * @param gen The target bus generation.
-     * @return A vector of all active ConfigROMs in that generation.
-     */
-    std::vector<ConfigROM> Snapshot(Generation gen) const;
-
-    /**
-     * @brief Exports a snapshot of ROMs filtered by generation and state.
-     *
-     * @param gen The target bus generation.
-     * @param state The required ROMState.
-     * @return A vector of filtered ConfigROMs.
-     */
-    std::vector<ConfigROM> SnapshotByState(Generation gen, ROMState state) const;
-
-    /**
-     * @brief Clears all stored ROMs (e.g., on driver stop).
-     */
-    void Clear();
-
     // ========================================================================
     // State Management (Apple IOFireWireROMCache-inspired)
     // ========================================================================
@@ -114,16 +76,13 @@ class ConfigROMStore {
     void SuspendAll(Generation newGen);
 
     /**
-     * @brief Marks a ROM as invalid (device disappeared or ROM content changed).
+     * @brief Removes every cached ROM of one device, in any generation.
      *
-     * @param guid The 64-bit GUID to invalidate.
+     * A manual reread uses this so the new read is not refused in favour of a
+     * richer cached copy.
+     * @param guid The 64-bit GUID (EUI-64) of the device.
      */
-    void InvalidateROM(Guid64 guid);
-
-    /**
-     * @brief Removes all invalid ROMs from storage.
-     */
-    void PruneInvalid();
+    void EraseByGuid(Guid64 guid);
 
   private:
     // Packed key layout: generation in upper bits, node ID in low 8 bits.
@@ -133,7 +92,6 @@ class ConfigROMStore {
     mutable IOLock* lock_{nullptr};
 
     std::map<GenNodeKey, ConfigROM> romsByGenNode_;
-    std::map<Guid64, ConfigROM> romsByGuid_;
 };
 
 } // namespace ASFW::Discovery

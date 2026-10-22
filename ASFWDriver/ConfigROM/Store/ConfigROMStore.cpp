@@ -93,56 +93,28 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     auto nodeIt = romsByGenNode_.find(key);
     // A manual or retry scan can finish with only the BIB/root-prefix after a
     // richer scan for this exact node/generation has already completed. Keep the
-    // richer node entry: ExportConfigROM uses this index, not the GUID cache.
-    // Without this guard the UI visibly regresses from (for example) 31 to 19
+    // richer entry, which is what ExportConfigROM serves. Without this guard the UI visibly regresses from (for example) 31 to 19
     // quadlets without a bus-generation change.
     const bool shouldUpdateNode =
         nodeIt == romsByGenNode_.end() ||
         (nodeIt->second.rawQuadlets.size() <= romCopy.rawQuadlets.size() &&
          (HasParsedUnitProfile(romCopy) || !HasParsedUnitProfile(nodeIt->second)));
-    if (shouldUpdateNode) {
-        romsByGenNode_[key] = romCopy;
-    } else {
+    if (!shouldUpdateNode) {
         ASFW_LOG_V2(ConfigROM,
                     "ConfigROMStore::Insert: retaining richer node cache node=%u gen=%u "
                     "candidateQuadlets=%zu cachedQuadlets=%zu",
                     romCopy.nodeId, romCopy.gen.value, romCopy.rawQuadlets.size(),
                     nodeIt->second.rawQuadlets.size());
+        return;
     }
 
-    auto it = romsByGuid_.find(romCopy.bib.guid);
-    // Validated with Linux (core-device.c read_config_rom/fw_device_refresh) and Apple
-    // (IOFireWireROMCache::hasROMChanged): the cache must converge on the most complete
-    // ROM and never regress to a partial/unit-less one. Combine both fixes:
-    //  - newer generation: take it, but main's guard refuses to overwrite a ROM that
-    //    has a parsed unit profile with a newer one that lacks it (Apple keeps
-    //    reconsidering unit-less generation-0 devices for slow unit publishers);
-    //  - same generation: take it when it carries at least as many quadlets, i.e. a
-    //    minimal→general growth within a generation (Apple: newBIBSize > getLength()).
-    const bool shouldUpdateGuid =
-        it == romsByGuid_.end() ||
-        (it->second.gen.value < romCopy.gen.value &&
-         (HasParsedUnitProfile(romCopy) || !HasParsedUnitProfile(it->second))) ||
-        (it->second.gen == romCopy.gen &&
-         it->second.rawQuadlets.size() <= romCopy.rawQuadlets.size());
-
-    if (shouldUpdateGuid) {
-        romsByGuid_[romCopy.bib.guid] = romCopy;
-
-        ASFW_LOG_V2(ConfigROM,
-                    "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u "
-                    "rawQuadlets=%zu rootEntries=%zu unitDirs=%zu hasSBP2=%d",
-                    romCopy.bib.guid, romCopy.gen.value, romCopy.nodeId,
-                    static_cast<uint8_t>(romCopy.state), romCopy.rawQuadlets.size(),
-                    romCopy.rootDirMinimal.size(), romCopy.unitDirectories.size(),
-                    HasSBP2Unit(romCopy) ? 1 : 0);
-    } else {
-        ASFW_LOG_V2(ConfigROM,
-                    "ConfigROMStore::Insert: retaining richer GUID cache for GUID=0x%016llx "
-                    "candidateGen=%u candidateUnitDirs=%zu cachedGen=%u cachedUnitDirs=%zu",
-                    romCopy.bib.guid, romCopy.gen.value, romCopy.unitDirectories.size(),
-                    it->second.gen.value, it->second.unitDirectories.size());
-    }
+    romsByGenNode_[key] = romCopy;
+    ASFW_LOG_V2(ConfigROM,
+                "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u rawQuadlets=%zu "
+                "rootEntries=%zu unitDirs=%zu hasSBP2=%d",
+                romCopy.bib.guid, romCopy.gen.value, romCopy.nodeId, romCopy.rawQuadlets.size(),
+                romCopy.rootDirMinimal.size(), romCopy.unitDirectories.size(),
+                HasSBP2Unit(romCopy) ? 1 : 0);
 }
 
 std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId,
@@ -154,80 +126,6 @@ std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t node
         return std::nullopt;
     }
     return rom;
-}
-
-std::optional<ConfigROM> ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
-    LockGuard guard(lock_);
-
-    const ConfigROM* latest = nullptr;
-    const ConfigROM* latestWithUnitProfile = nullptr;
-    for (const auto& [key, rom] : romsByGenNode_) {
-        if (rom.nodeId != nodeId) {
-            continue;
-        }
-        if (latest == nullptr || rom.gen.value > latest->gen.value) {
-            latest = &rom;
-        }
-        if (HasParsedUnitProfile(rom) &&
-            (latestWithUnitProfile == nullptr ||
-             rom.gen.value > latestWithUnitProfile->gen.value)) {
-            latestWithUnitProfile = &rom;
-        }
-    }
-
-    if (latestWithUnitProfile != nullptr && latest != latestWithUnitProfile &&
-        latest != nullptr && latestWithUnitProfile->bib.guid == latest->bib.guid) {
-        ASFW_LOG_V2(ConfigROM,
-                    "ConfigROMStore::FindLatestForNode: node=%u using gen=%u with unit profile "
-                    "instead of partial gen=%u",
-                    nodeId, latestWithUnitProfile->gen.value, latest ? latest->gen.value : 0);
-        return *latestWithUnitProfile;
-    }
-
-    if (latest == nullptr) {
-        return std::nullopt;
-    }
-    return *latest;
-}
-
-std::optional<ConfigROM> ConfigROMStore::FindByGuid(Guid64 guid) const {
-    LockGuard guard(lock_);
-    return CopyAt(romsByGuid_, guid);
-}
-
-std::vector<ConfigROM> ConfigROMStore::Snapshot(Generation gen) const {
-    LockGuard guard(lock_);
-
-    std::vector<ConfigROM> result;
-
-    for (const auto& [key, rom] : romsByGenNode_) {
-        if (rom.gen == gen) {
-            result.push_back(rom);
-        }
-    }
-
-    return result;
-}
-
-std::vector<ConfigROM> ConfigROMStore::SnapshotByState(Generation gen, ROMState state) const {
-    LockGuard guard(lock_);
-
-    std::vector<ConfigROM> result;
-
-    for (const auto& [key, rom] : romsByGenNode_) {
-        if (rom.gen == gen && rom.state == state) {
-            result.push_back(rom);
-        }
-    }
-
-    return result;
-}
-
-void ConfigROMStore::Clear() {
-    LockGuard guard(lock_);
-
-    romsByGenNode_.clear();
-    romsByGuid_.clear();
 }
 
 void ConfigROMStore::SuspendAll(Generation newGen) {
@@ -256,74 +154,21 @@ void ConfigROMStore::SuspendAll(Generation newGen) {
         }
     }
 
-    for (auto& [guid, rom] : romsByGuid_) {
-        if (rom.state == Fresh) {
-            rom.state = Suspended;
-        }
-    }
-
     ASFW_LOG(ConfigROM,
              "ConfigROMStore::SuspendAll: Suspended %u ROMs, dropped %zu older ROMs for "
              "generation %u",
              suspendedCount, erasedCount, newGen.value);
 }
 
-void ConfigROMStore::InvalidateROM(Guid64 guid) {
+void ConfigROMStore::EraseByGuid(Guid64 guid) {
     LockGuard guard(lock_);
 
-    auto it = romsByGuid_.find(guid);
-    if (it == romsByGuid_.end()) {
-        return;
-    }
+    const size_t erasedCount = std::erase_if(romsByGenNode_, [guid](const auto& entry) {
+        return entry.second.bib.guid == guid;
+    });
 
-    it->second.state = ROMState::Invalid;
-    it->second.nodeId = kInvalidNodeId;
-
-    size_t erasedNodeEntries = 0;
-    for (auto nodeIt = romsByGenNode_.begin(); nodeIt != romsByGenNode_.end();) {
-        if (nodeIt->second.bib.guid == guid) {
-            nodeIt = romsByGenNode_.erase(nodeIt);
-            ++erasedNodeEntries;
-            continue;
-        }
-        ++nodeIt;
-    }
-
-    ASFW_LOG(ConfigROM,
-             "ConfigROMStore::InvalidateROM: Invalidated GUID 0x%016llx and removed %zu "
-             "generation/node entries",
-             guid, erasedNodeEntries);
-}
-
-void ConfigROMStore::PruneInvalid() {
-    LockGuard guard(lock_);
-
-    std::vector<Guid64> guidsToRemove;
-    for (const auto& [guid, rom] : romsByGuid_) {
-        if (rom.state == ROMState::Invalid) {
-            guidsToRemove.push_back(guid);
-        }
-    }
-
-    for (Guid64 guid : guidsToRemove) {
-        romsByGuid_.erase(guid);
-        ASFW_LOG(ConfigROM, "ConfigROMStore::PruneInvalid: Pruned GUID 0x%016llx from romsByGuid_",
-                 guid);
-    }
-
-    std::vector<GenNodeKey> keysToRemove;
-    for (const auto& [key, rom] : romsByGenNode_) {
-        if (rom.state == ROMState::Invalid) {
-            keysToRemove.push_back(key);
-        }
-    }
-
-    for (GenNodeKey key : keysToRemove) {
-        romsByGenNode_.erase(key);
-    }
-
-    ASFW_LOG(ConfigROM, "ConfigROMStore::PruneInvalid: Pruned %zu invalid ROMs",
-             guidsToRemove.size());
+    ASFW_LOG(ConfigROM, "ConfigROMStore::EraseByGuid: removed %zu ROMs for GUID 0x%016llx",
+             erasedCount, guid);
 }
 
 ConfigROMStore::GenNodeKey ConfigROMStore::MakeKey(Generation gen, uint8_t nodeId) {

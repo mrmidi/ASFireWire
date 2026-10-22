@@ -55,9 +55,16 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
 
                 store.Insert(MakeROM(gen, nodeId, guid));
 
+                // Lookups race the erasing calls (SuspendAll on the driver
+                // queue, EraseByGuid from the user client) and must only ever
+                // see whole copies.
                 (void)store.FindByNode(gen, nodeId, true);
-                (void)store.FindLatestForNode(nodeId);
-                EXPECT_TRUE(store.FindByGuid(guid).has_value());
+                if (i % 50 == 0) {
+                    store.SuspendAll(gen);
+                }
+                if (i % 70 == 0) {
+                    store.EraseByGuid(guid);
+                }
             }
         });
     }
@@ -69,12 +76,14 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
     }
 }
 
-TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
+TEST(ConfigROMStoreConcurrencyTests, SameGenerationLongerInsertReplacesNodeCache) {
     ASFW::Discovery::ConfigROMStore store;
 
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+    const ASFW::Discovery::Generation kGeneration{2};
+    constexpr uint8_t kNodeId = 2;
 
-    auto truncated = MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid);
+    auto truncated = MakeROM(kGeneration, kNodeId, kGuid);
     truncated.rawQuadlets = {0x04040B5Du, 0x31333934u, 0xE0FF8112u, 0x00130E04u, 0x02004713u};
     store.Insert(truncated);
 
@@ -82,10 +91,9 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
     complete.rawQuadlets.push_back(0x00000000u);
     store.Insert(complete);
 
-    const auto byGuid = store.FindByGuid(kGuid);
-    ASSERT_TRUE(byGuid.has_value());
-    EXPECT_EQ(byGuid->gen.value, 2u);
-    EXPECT_EQ(byGuid->rawQuadlets.size(), 6u);
+    const auto byNode = store.FindByNode(kGeneration, kNodeId, false);
+    ASSERT_TRUE(byNode.has_value());
+    EXPECT_EQ(byNode->rawQuadlets.size(), 6u);
 }
 
 TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNodeCache) {
@@ -105,46 +113,56 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNo
     const auto byNode = store.FindByNode(kGeneration, kNodeId, true);
     ASSERT_TRUE(byNode.has_value());
     EXPECT_EQ(byNode->rawQuadlets.size(), 31u);
-
-    const auto byGuid = store.FindByGuid(kGuid);
-    ASSERT_TRUE(byGuid.has_value());
-    EXPECT_EQ(byGuid->rawQuadlets.size(), 31u);
 }
 
-TEST(ConfigROMStoreConcurrencyTests, LatestLookupPrefersPreviousProfileOverNewerPartialROM) {
-    ASFW::Discovery::ConfigROMStore store;
-    constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
-
-    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kGuid));
-    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
-
-    const auto latest = store.FindLatestForNode(0);
-    ASSERT_TRUE(latest.has_value());
-    EXPECT_EQ(latest->gen.value, 2u);
-    EXPECT_EQ(latest->unitDirectories.size(), 1u);
-
-    const auto byGuid = store.FindByGuid(kGuid);
-    ASSERT_TRUE(byGuid.has_value());
-    EXPECT_EQ(byGuid->gen.value, 2u);
-    EXPECT_EQ(byGuid->unitDirectories.size(), 1u);
-}
-
-TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability) {
+// TriggerROMRead erases a device's cached ROMs before a manual reread, so the
+// reread is not refused in favour of the richer cached copy.
+TEST(ConfigROMStoreConcurrencyTests, EraseByGuidRemovesEveryGenerationOfThatDeviceOnly) {
     ASFW::Discovery::ConfigROMStore store;
 
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
-    store.Insert(MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid));
+    constexpr ASFW::Discovery::Guid64 kOtherGuid = 0x0090b54001ffffffULL;
+    const ASFW::Discovery::Generation kPrevious{2};
+    const ASFW::Discovery::Generation kCurrent{3};
 
-    ASSERT_TRUE(store.FindByNode(ASFW::Discovery::Generation{2}, 2, true).has_value());
-    ASSERT_TRUE(store.FindByGuid(kGuid).has_value());
+    store.Insert(MakeSBP2ROM(kPrevious, 2, kGuid));
+    store.SuspendAll(kCurrent);
+    store.Insert(MakeSBP2ROM(kCurrent, 2, kGuid));
+    store.Insert(MakeROM(kCurrent, 1, kOtherGuid));
 
-    store.InvalidateROM(kGuid);
+    store.EraseByGuid(kGuid);
 
-    EXPECT_FALSE(store.FindByNode(ASFW::Discovery::Generation{2}, 2, true).has_value());
-    ASSERT_TRUE(store.FindByGuid(kGuid).has_value());
-    EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
+    EXPECT_FALSE(store.FindByNode(kPrevious, 2, true).has_value());
+    EXPECT_FALSE(store.FindByNode(kCurrent, 2, true).has_value());
+    ASSERT_TRUE(store.FindByNode(kCurrent, 1, false).has_value());
+
+    // The reread's shorter ROM is now accepted.
+    store.Insert(MakeROM(kCurrent, 2, kGuid));
+    const auto reread = store.FindByNode(kCurrent, 2, false);
+    ASSERT_TRUE(reread.has_value());
+    EXPECT_TRUE(reread->unitDirectories.empty());
 }
 
+// The store compares generations only for equality, so the 255 -> 0 rollover
+// (OHCI 1.2 Table 11-2) is an ordinary reset for it.
+TEST(ConfigROMStoreConcurrencyTests, ResetAcrossGenerationRolloverServesTheNewGeneration) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+    constexpr uint8_t kNodeId = 1;
+    const ASFW::Discovery::Generation kLast{255};
+    const ASFW::Discovery::Generation kWrapped{0};
+
+    store.Insert(MakeSBP2ROM(kLast, kNodeId, kGuid));
+    store.SuspendAll(kWrapped);
+    store.Insert(MakeROM(kWrapped, kNodeId, kGuid));
+
+    const auto current = store.FindByNode(kWrapped, kNodeId, false);
+    ASSERT_TRUE(current.has_value());
+    EXPECT_EQ(current->gen.value, 0u);
+    EXPECT_FALSE(store.FindByNode(kLast, kNodeId, false).has_value());
+    EXPECT_TRUE(store.FindByNode(kLast, kNodeId, true).has_value());
+}
 TEST(ConfigROMStoreConcurrencyTests, BusResetSuspensionRejectsExactGenerationExport) {
     ASFW::Discovery::ConfigROMStore store;
 
@@ -206,36 +224,4 @@ TEST(ConfigROMStoreConcurrencyTests, GenerationWrapDoesNotKeepAnEarlierDeviceAtT
     const auto rom = store.FindByNode(kWrappedGeneration, kNodeId, false);
     ASSERT_TRUE(rom.has_value());
     EXPECT_EQ(rom->bib.guid, kLaterGuid);
-}
-
-TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDifferentGuid) {
-    ASFW::Discovery::ConfigROMStore store;
-    constexpr ASFW::Discovery::Guid64 kOldGuid = 0x0090b54001ffffffULL;
-    constexpr ASFW::Discovery::Guid64 kNewGuid = 0x00a0c91002000000ULL;
-
-    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kOldGuid));
-    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kNewGuid));
-
-    const auto latest = store.FindLatestForNode(0);
-    ASSERT_TRUE(latest.has_value());
-    EXPECT_EQ(latest->gen.value, 3u);
-    EXPECT_EQ(latest->bib.guid, kNewGuid);
-    EXPECT_TRUE(latest->unitDirectories.empty());
-}
-
-TEST(ConfigROMStoreConcurrencyTests, LatestLookupUsesNewerProfileWhenItCompletes) {
-    ASFW::Discovery::ConfigROMStore store;
-    constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
-
-    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kGuid));
-    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
-    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{4}, 0, kGuid));
-
-    const auto latest = store.FindLatestForNode(0);
-    ASSERT_TRUE(latest.has_value());
-    EXPECT_EQ(latest->gen.value, 4u);
-
-    const auto byGuid = store.FindByGuid(kGuid);
-    ASSERT_TRUE(byGuid.has_value());
-    EXPECT_EQ(byGuid->gen.value, 4u);
 }

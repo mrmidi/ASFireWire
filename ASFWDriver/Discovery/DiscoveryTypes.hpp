@@ -160,7 +160,6 @@ struct UnitDirectory {
 enum class ROMState : uint8_t {
     Fresh,      // Just read in current generation
     Suspended,  // From previous generation (bus reset occurred)
-    Invalid     // Marked for removal (device disappeared or ROM changed)
 };
 
 // Parsed Config ROM (immutable snapshot per generation)
