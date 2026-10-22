@@ -182,7 +182,7 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     mockAsync.WaitForPendingReads(1);
     ASSERT_EQ(evidence.size(), 1u);
     EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Pending);
-    scanner.Abort(request.gen);
+    scanner.Abort();
     ASSERT_GE(evidence.size(), 2u);
     EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::AbortedByReset);
 
@@ -193,6 +193,58 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     mockAsync.SimulateReadSuccess(1, std::span(&bib[2], 1));
     mockAsync.SimulateReadSuccess(2, std::span(&bib[3], 1));
     mockAsync.SimulateReadSuccess(3, std::span(&bib[4], 1));
+
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::milliseconds(200), [&] { return callbackCount > 0; });
+    }
+
+    EXPECT_EQ(callbackCount, 0);
+}
+
+// The 8-bit bus generation wraps to 0 (OHCI 1.2 Table 11-2), so a scan at
+// generation 0 is a real scan: a bus reset must abort it, and a second Start for
+// the same generation must not replace it.
+TEST(ROMScannerAbort, GenerationZeroScanIsBusyAndAbortable) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+
+    std::mutex mtx;
+    std::condition_variable cv;
+    int callbackCount = 0;
+
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 0;
+    topology.busBase16 = 0xFFC0;
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    auto completion = [&](Generation /*gen*/, std::vector<ConfigROM> /*roms*/, bool /*busy*/) {
+        std::lock_guard lock(mtx);
+        ++callbackCount;
+        cv.notify_all();
+    };
+
+    ASSERT_TRUE(scanner.Start(request, completion));
+    mockAsync.WaitForPendingReads(1);
+
+    EXPECT_FALSE(scanner.Start(request, completion));
+    EXPECT_TRUE(scanner.Abort());
+    EXPECT_FALSE(scanner.Abort());
+
+    // Late BIB completions for the aborted scan must not reach the caller.
+    const auto bib = CreateStandardBIBWithCrcLength4();
+    mockAsync.SimulateReadSuccess(0, std::span(&bib[0], 1));
 
     {
         std::unique_lock lock(mtx);

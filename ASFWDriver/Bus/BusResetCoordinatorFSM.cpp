@@ -47,10 +47,11 @@ void BusResetCoordinator::BeginNewResetCycle() {
     ++resetEpoch_;
     readyForDiscoveryFailureBits_ = 0;
 
-    if ((romScanner_ != nullptr) && (lastGeneration_.value > 0U)) {
+    // Every reset ends every scan in progress, including one at generation 0
+    // (the 8-bit generation wraps, OHCI 1.2 Table 11-2).
+    if ((romScanner_ != nullptr) && romScanner_->Abort()) {
         ++metrics_.abortCount;
-        ASFW_LOG(BusReset, "Aborting ROM scan for generation %u", lastGeneration_.value);
-        romScanner_->Abort(lastGeneration_);
+        ASFW_LOG(BusReset, "Aborted ROM scan for generation %u", lastGeneration_.value);
     }
 
     if (topologyManager_ != nullptr) {

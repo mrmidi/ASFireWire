@@ -33,7 +33,7 @@ bool ROMScanner::Start(const ROMScanRequest&, ScanCompletionCallback) {
     ASFW_UNEXPECTED_CALL();
     return false;
 }
-void ROMScanner::Abort(Generation) { ASFW_UNEXPECTED_CALL(); }
+bool ROMScanner::Abort() { ASFW_UNEXPECTED_CALL(); return false; }
 void ROMScanner::SetTopologyManager(Driver::TopologyManager*) { ASFW_UNEXPECTED_CALL(); }
 void DeviceManager::SuspendAllForBusReset() { ASFW_UNEXPECTED_CALL(); }
 DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM&, const LinkPolicy&) {

@@ -27,10 +27,8 @@ void ROMScanner::SetTopologyManager(Driver::TopologyManager* topologyManager) {
 }
 
 bool ROMScanner::IsBusyFor(Generation gen) const {
-    if (gen == Generation{0} || !session_) {
-        return false;
-    }
-    return session_->GetGeneration() == gen;
+    // Generation 0 is a real hardware value after the 8-bit counter wraps.
+    return session_ && session_->GetGeneration() == gen;
 }
 
 bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback completion) {
@@ -69,16 +67,14 @@ bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback com
     return true;
 }
 
-void ROMScanner::Abort(Generation gen) {
+bool ROMScanner::Abort() {
     if (!session_) {
-        return;
-    }
-    if (gen == Generation{0} || session_->GetGeneration() != gen) {
-        return;
+        return false;
     }
 
     session_->Abort();
     session_.reset();
+    return true;
 }
 
 } // namespace ASFW::Discovery

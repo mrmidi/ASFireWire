@@ -87,10 +87,15 @@ class ROMScanner {
     [[nodiscard]] bool Start(const ROMScanRequest& request, ScanCompletionCallback completion);
 
     /**
-     * @brief Cancels the scan for the given generation.
-     * @param gen The generation to abort (must match the current active session).
+     * @brief Cancels the active scan, whatever its generation.
+     *
+     * Called on every bus-reset edge. No scan for the new generation can exist
+     * before Self-ID completes, so any active session is stale. Generation 0 is
+     * a real hardware value (the 8-bit counter wraps, OHCI 1.2 Table 11-2) and
+     * must not be treated as "no scan".
+     * @return true if a scan was active and has been aborted.
      */
-    void Abort(Generation gen);
+    bool Abort();
 
     /**
      * @brief Sets the TopologyManager, used to update IRM node characteristics.

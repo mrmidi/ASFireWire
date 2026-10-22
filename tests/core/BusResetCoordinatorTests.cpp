@@ -14,12 +14,15 @@
 #include "ASFWDriver/Bus/SelfIDCapture.hpp"
 #include "ASFWDriver/Bus/TopologyManager.hpp"
 #include "ASFWDriver/ConfigROM/ConfigROMStager.hpp"
+#include "ASFWDriver/ConfigROM/ROMScanner.hpp"
+#include "ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "ASFWDriver/Hardware/HardwareInterface.hpp"
 #include "ASFWDriver/Hardware/InterruptManager.hpp"
 #include "ASFWDriver/Hardware/OHCIConstants.hpp"
 #include "ASFWDriver/Hardware/RegisterMap.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 #include "AsyncControllerStub.hpp"
+#include "../mocks/FakeFireWireBus.hpp"
 
 namespace ASFW::Driver {
 
@@ -135,7 +138,14 @@ class BusResetCoordinatorTestPeer {
 
 } // namespace ASFW::Driver
 
+namespace ASFW::Testing {
+extern int gRomScannerAbortCalls;  // BusResetCoordinatorDepsStubs.cpp
+} // namespace ASFW::Testing
+
 using namespace ASFW::Driver;
+using ASFW::Discovery::ROMScanner;
+using ASFW::Discovery::ROMScannerParams;
+using ASFW::Discovery::SpeedPolicy;
 
 namespace {
 
@@ -209,7 +219,7 @@ struct BusResetTestRig {
         ASFW::Testing::ResetHostMonotonicClockForTesting();
     }
 
-    void Initialize(bool withBusManager = false) {
+    void Initialize(bool withBusManager = false, ROMScanner* romScanner = nullptr) {
         ASSERT_EQ(selfIdCapture.PrepareBuffers(64U, hardware), kIOReturnSuccess);
 
         SetLocalNode(0U);
@@ -220,7 +230,7 @@ struct BusResetTestRig {
 
         coordinator.Initialize(&hardware, queue, &async, &selfIdCapture, &configRomStager,
                                &interrupts, &topologyManager,
-                               withBusManager ? &busManager : nullptr, nullptr);
+                               withBusManager ? &busManager : nullptr, romScanner);
         coordinator.BindCallbacks([this](const TopologySnapshot& topology) {
             publishedTopologies.push_back(topology);
         });
@@ -321,6 +331,32 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
 // RUN was cleared and the reset FSM polled G_ATInactive() forever — no
 // topology, no discovery, no log line. Linux context_stop() bounds that wait
 // and proceeds (ohci.c:1164-1182); so must both waits here.
+// The 8-bit bus generation wraps to 0 (OHCI 1.2 Table 11-2). A reset that
+// follows a generation-0 topology must still abort the ROM scan for it.
+TEST(BusResetCoordinatorTests, ResetAfterGenerationZeroAbortsRomScan) {
+    ASFW::Async::Fakes::FakeFireWireBus bus;
+    SpeedPolicy speedPolicy;
+    ROMScanner scanner(bus, speedPolicy, ROMScannerParams{});
+
+    BusResetTestRig rig;
+    rig.Initialize(false, &scanner);
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        0U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 0U);
+    rig.TriggerStickyCompletion();
+    rig.AdvanceMs(100U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    ASSERT_EQ(rig.publishedTopologies.front().generation, 0U);
+
+    ASFW::Testing::gRomScannerAbortCalls = 0;
+    rig.ResetHardwareState();
+    rig.StartResetCycle();
+
+    EXPECT_EQ(ASFW::Testing::gRomScannerAbortCalls, 1);
+}
+
 TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     BusResetTestRig rig;
     rig.Initialize();
