@@ -490,5 +490,24 @@ TEST_F(HardwareInterfaceOrderTests, EnablePhysicalRequestsChecksGenerationThenSe
         .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterHiSet), 1u << 8));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
     EXPECT_TRUE(hardware_.EnablePhysicalRequests(40, 7).has_value());
+}
+
+TEST_F(HardwareInterfaceOrderTests, EnablePhysicalRequestsTakesTheBitBackIfAResetSlipsIn) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterLoSet), 1u << 5));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 8u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterLoClear), 1u << 5));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_EQ(PhysicalDmaError::StaleGeneration, hardware_.EnablePhysicalRequests(5, 7).error());
 }
