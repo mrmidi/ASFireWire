@@ -176,7 +176,8 @@ TEST(ControllerCoreBusResetTests, InterruptSuspendsCachedROMBeforeRediscovery) {
     ASFW::Driver::ControllerCore core(ASFW::Driver::ControllerConfig{},
                                       ASFW::Driver::RolePolicy{}, std::move(deps));
 
-    core.HandleInterrupt(ASFW::Driver::InterruptSnapshot{
+    // Only the bus-reset side effect matters here, not the isoch events.
+    (void)core.HandleInterrupt(ASFW::Driver::InterruptSnapshot{
         .intEvent = ASFW::Driver::IntEventBits::kBusReset,
         .timestamp = 1,
     });
