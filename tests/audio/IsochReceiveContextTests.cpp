@@ -171,9 +171,11 @@ TEST_F(IsochReceiveContextTest, StopRetainsBindingStateWhenActiveNeverClears) {
     const auto controlSet = static_cast<::ASFW::Driver::Register32>(
         ::DMAContextHelpers::IsoRcvContextControlSet(0));
     hardware_->SetTestRegister(controlSet, ::ASFW::Driver::ContextControl::kActive);
+    hardware_->SetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear, 0);
 
     EXPECT_EQ(context_->Stop(), kIOReturnTimeout);
     EXPECT_EQ(context_->GetState(), IRPolicy::State::Running);
+    EXPECT_EQ(hardware_->GetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear), 0U);
 }
 
 TEST_F(IsochReceiveContextTest, PollProcessesPackets) {
@@ -226,4 +228,30 @@ TEST_F(IsochReceiveContextTest, BusyPollRetainsBindingUntilStopCanAcquireOwnersh
     EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
     EXPECT_EQ(consumer.quiesceCount, 1U);
     context_->SetReceiveConsumer(nullptr);
+}
+
+TEST_F(IsochReceiveContextTest, StopAcknowledgesOnlyItsQuiescedContext) {
+    ASSERT_EQ(context_->Configure(0, 3), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(3));
+    hardware_->SetTestRegister(controlSet, 0);
+    hardware_->SetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear, 0);
+    hardware_->SetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventSet, 0xf);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(hardware_->GetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear), 8U);
+    EXPECT_EQ(context_->GetState(), IRPolicy::State::Stopped);
+}
+
+TEST_F(IsochReceiveContextTest, StopDoesNotAcknowledgeWhenControllerReadsAllOnes) {
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, UINT32_MAX);
+    hardware_->SetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear, 0);
+
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(hardware_->GetTestRegister(::ASFW::Driver::Register32::kIsoRecvIntEventClear), 0U);
 }

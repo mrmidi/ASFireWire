@@ -54,14 +54,21 @@ public:
 
             dma.FetchFromDevice(desc, sizeof(*desc));
 
-            const uint16_t xferStatus = Async::HW::AR_xferStatus(*desc);
-            const uint16_t resCount = Async::HW::AR_resCount(*desc);
-            const bool done = (xferStatus != 0) || (resCount != reqCount);
-
-            if (!done) {
+            const uint32_t status = desc->statusWord;
+            const uint16_t xferStatus = static_cast<uint16_t>(status >> 16);
+            const uint16_t resCount = static_cast<uint16_t>(status);
+            // A residual byte count is progress, not ownership transfer.
+            // Cross-checked with Linux ohci.c:2781-2813: packet-per-buffer
+            // retirement waits for transfer_status before accessing payload.
+            if (xferStatus == 0) {
                 break;
             }
 
+            // Completion observation must precede payload reads. Linux
+            // ohci.c:2781-2813 synchronizes RX payload for the CPU here.
+            // FetchFromDevice's OSSynchronizeIO alone is DMB ST on arm64,
+            // even for cache-inhibited mappings; it does not order loads.
+            dma.ReceiveOwnershipBarrier();
             const uint16_t actualLength = (resCount <= reqCount) ? static_cast<uint16_t>(reqCount - resCount) : 0;
             auto* payloadVA = bufferRing_.GetElementVA(idx);
             if (payloadVA && actualLength > 0) {
@@ -77,6 +84,11 @@ public:
             };
             onPacket(packet);
 
+            // Finish payload reads before clearing the completion marker.
+            // Linux queues payload back for the device only after consumption
+            // (amdtp-stream.c:1343-1356; ohci.c:3370-3392). This orders CPU
+            // accesses; the circular program still has no hardware stop fence.
+            dma.ReceiveOwnershipBarrier();
             Async::HW::AR_init_status(*desc, reqCount);
             dma.PublishToDevice(desc, sizeof(*desc));
 
