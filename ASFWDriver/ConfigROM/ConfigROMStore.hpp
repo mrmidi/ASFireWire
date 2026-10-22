@@ -111,9 +111,11 @@ class ConfigROMStore {
     // ========================================================================
 
     /**
-     * @brief Marks all valid ROMs as suspended.
+     * @brief Marks all valid ROMs as suspended and drops ROMs suspended earlier.
      *
      * Called when an IEEE 1394 bus reset occurs and a new generation begins.
+     * The per-node index then holds at most the suspended previous generation
+     * plus whatever discovery inserts for the new one.
      * @param newGen The newly started generation.
      */
     void SuspendAll(Generation newGen);

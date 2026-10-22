@@ -254,6 +254,18 @@ void ConfigROMStore::SuspendAll(Generation newGen) {
 
     using enum ROMState;
 
+    // Entries suspended by the previous reset are now two generations old and
+    // nothing reads them: selector 14 refuses suspended entries and discovery
+    // re-inserts current ROMs. Hardware generations are 8 bits and wrap after
+    // 255 (OHCI 1.2 Table 11-2), so keeping them lets a (generation, node) key
+    // come back carrying an earlier device's ROM, and the cache grows by one
+    // entry per node per reset. Keep only the generation suspended now. Apple
+    // keeps one cache per device and revalidates it in place
+    // (IOFireWireDevice.cpp:708,742), so it accumulates no history either.
+    const size_t erasedCount = std::erase_if(romsByGenNode_, [](const auto& entry) {
+        return entry.second.state == Suspended;
+    });
+
     uint32_t suspendedCount = 0;
 
     for (auto& [key, rom] : romsByGenNode_) {
@@ -269,8 +281,10 @@ void ConfigROMStore::SuspendAll(Generation newGen) {
         }
     }
 
-    ASFW_LOG(ConfigROM, "ConfigROMStore::SuspendAll: Suspended %u ROMs for generation %u",
-             suspendedCount, newGen.value);
+    ASFW_LOG(ConfigROM,
+             "ConfigROMStore::SuspendAll: Suspended %u ROMs, dropped %zu older ROMs for "
+             "generation %u",
+             suspendedCount, erasedCount, newGen.value);
 }
 
 void ConfigROMStore::InvalidateROM(Guid64 guid) {

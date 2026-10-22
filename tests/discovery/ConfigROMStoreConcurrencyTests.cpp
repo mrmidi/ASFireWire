@@ -165,6 +165,50 @@ TEST(ConfigROMStoreConcurrencyTests, BusResetSuspensionRejectsExactGenerationExp
     EXPECT_FALSE(store.FindByNode(kCachedGeneration, kNodeId, false).has_value());
 }
 
+TEST(ConfigROMStoreConcurrencyTests, BusResetKeepsOnlyThePreviousGenerationSuspended) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+    constexpr uint8_t kNodeId = 1;
+    const ASFW::Discovery::Generation kFirst{1};
+    const ASFW::Discovery::Generation kSecond{2};
+
+    store.Insert(MakeROM(kFirst, kNodeId, kGuid));
+    store.SuspendAll(kSecond);
+    store.Insert(MakeROM(kSecond, kNodeId, kGuid));
+    store.SuspendAll(ASFW::Discovery::Generation{3});
+
+    // The generation suspended by the earlier reset is gone; the one suspended
+    // now is still visible to lifecycle code, but not to exports.
+    EXPECT_FALSE(store.FindByNode(kFirst, kNodeId, true).has_value());
+    ASSERT_TRUE(store.FindByNode(kSecond, kNodeId, true).has_value());
+    EXPECT_FALSE(store.FindByNode(kSecond, kNodeId, false).has_value());
+}
+
+TEST(ConfigROMStoreConcurrencyTests, GenerationWrapDoesNotKeepAnEarlierDeviceAtTheSameKey) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kEarlierGuid = 0x00130e0402004713ULL;
+    constexpr ASFW::Discovery::Guid64 kLaterGuid = 0x0090b54001ffffffULL;
+    constexpr uint8_t kNodeId = 0;
+    const ASFW::Discovery::Generation kWrappedGeneration{5};
+
+    // A full SBP-2 ROM for one device, then two resets with nothing rediscovered.
+    store.Insert(MakeSBP2ROM(kWrappedGeneration, kNodeId, kEarlierGuid));
+    store.SuspendAll(ASFW::Discovery::Generation{6});
+    store.SuspendAll(ASFW::Discovery::Generation{7});
+
+    // 256 resets later the 8-bit generation comes back to the same value
+    // (OHCI 1.2 Table 11-2) and a different device sits at the same node with a
+    // smaller ROM. Insert keeps a richer entry under the same key, so the
+    // earlier device's entry must already be gone.
+    store.Insert(MakeROM(kWrappedGeneration, kNodeId, kLaterGuid));
+
+    const auto rom = store.FindByNode(kWrappedGeneration, kNodeId, false);
+    ASSERT_TRUE(rom.has_value());
+    EXPECT_EQ(rom->bib.guid, kLaterGuid);
+}
+
 TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDifferentGuid) {
     ASFW::Discovery::ConfigROMStore store;
     constexpr ASFW::Discovery::Guid64 kOldGuid = 0x0090b54001ffffffULL;
