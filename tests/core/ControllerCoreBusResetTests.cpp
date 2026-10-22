@@ -18,6 +18,7 @@
 #include "ASFWDriver/Diagnostics/DiagnosticLogger.hpp"
 #include "ASFWDriver/Discovery/DeviceManager.hpp"
 #include "ASFWDriver/Discovery/DeviceRegistry.hpp"
+#include "ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "ASFWDriver/Hardware/HardwareInterface.hpp"
 #include "ASFWDriver/Hardware/InterruptManager.hpp"
 #include "ASFWDriver/Hardware/OHCIEventCodes.hpp"
@@ -123,6 +124,7 @@ namespace ASFW::Bus {
 void SpeedMapService::Invalidate(uint32_t) noexcept {}
 void GapPolicyCoordinator::OnBusResetStarted(uint32_t) noexcept {}
 void CyclePolicyCoordinator::OnBusResetStarted(uint32_t) noexcept {}
+bool CyclePolicyCoordinator::OnCycleTooLong(uint32_t, ICyclePolicyExecutor&) noexcept { return false; }
 void IRMFallbackCoordinator::OnBusResetStarted(uint32_t) noexcept {}
 void BusManagerElectionDriver::OnBusReset() noexcept {}
 void RootSelectionCoordinator::OnBusResetStarted(uint32_t) noexcept {}
@@ -135,6 +137,7 @@ namespace ASFW::Discovery {
 
 void DeviceManager::SuspendAllForBusReset() {}
 void DeviceRegistry::InvalidateLiveMappingsForBusReset() {}
+void SpeedPolicy::Reset() {}
 
 } // namespace ASFW::Discovery
 
