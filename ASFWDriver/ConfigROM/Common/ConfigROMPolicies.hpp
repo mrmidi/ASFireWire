@@ -10,26 +10,6 @@
 
 namespace ASFW::Discovery {
 
-class GenerationContextPolicy {
-  public:
-    [[nodiscard]] static constexpr bool IsCurrentEvent(Generation eventGeneration,
-                                                       Generation activeGeneration) noexcept {
-        return eventGeneration != Generation{0} && eventGeneration == activeGeneration;
-    }
-
-    [[nodiscard]] static constexpr bool
-    CanRestartIdleScan(Generation activeGeneration, bool scannerIdle,
-                       Generation requestedGeneration) noexcept {
-        return scannerIdle && requestedGeneration != Generation{0} &&
-               requestedGeneration != activeGeneration;
-    }
-
-    [[nodiscard]] static constexpr bool MatchesActiveScan(Generation requestedGeneration,
-                                                          Generation activeGeneration) noexcept {
-        return requestedGeneration == activeGeneration;
-    }
-};
-
 class ShortReadResolutionPolicy {
   public:
     [[nodiscard]] static constexpr bool IsValidQuadletPayload(size_t payloadSizeBytes) noexcept {
