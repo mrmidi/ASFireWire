@@ -46,6 +46,16 @@ class LockGuard {
     return !rom.unitDirectories.empty();
 }
 
+// Copy of the value at `key`, or nullopt. The caller holds the store lock.
+template <typename Map>
+[[nodiscard]] std::optional<typename Map::mapped_type> CopyAt(const Map& map,
+                                                              const typename Map::key_type& key) {
+    if (const auto it = map.find(key); it != map.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 ConfigROMStore::ConfigROMStore() : lock_(IOLockAlloc()) {
@@ -143,31 +153,15 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     }
 }
 
-std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId) const {
-    LockGuard guard(lock_);
-
-    const GenNodeKey key = MakeKey(gen, nodeId);
-    auto it = romsByGenNode_.find(key);
-    if (it == romsByGenNode_.end()) {
-        return std::nullopt;
-    }
-    return it->second;
-}
-
 std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t nodeId,
                                                     bool allowSuspended) const {
     LockGuard guard(lock_);
 
-    const auto key = MakeKey(gen, nodeId);
-    if (auto it = romsByGenNode_.find(key); it != romsByGenNode_.end()) {
-        const auto& rom = it->second;
-        if (!allowSuspended && rom.state == ROMState::Suspended) {
-            return std::nullopt;
-        }
-        return rom;
+    auto rom = CopyAt(romsByGenNode_, MakeKey(gen, nodeId));
+    if (rom && !allowSuspended && rom->state == ROMState::Suspended) {
+        return std::nullopt;
     }
-
-    return std::nullopt;
+    return rom;
 }
 
 std::optional<ConfigROM> ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
@@ -206,12 +200,7 @@ std::optional<ConfigROM> ConfigROMStore::FindLatestForNode(uint8_t nodeId) const
 
 std::optional<ConfigROM> ConfigROMStore::FindByGuid(Guid64 guid) const {
     LockGuard guard(lock_);
-
-    auto it = romsByGuid_.find(guid);
-    if (it == romsByGuid_.end()) {
-        return std::nullopt;
-    }
-    return it->second;
+    return CopyAt(romsByGuid_, guid);
 }
 
 std::vector<ConfigROM> ConfigROMStore::Snapshot(Generation gen) const {

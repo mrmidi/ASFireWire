@@ -47,16 +47,9 @@ class ConfigROMStore {
     /**
      * @brief Looks up a Config ROM by generation and node ID.
      *
-     * Returns the most recent ROM for that node in the specified generation.
-     *
-     * @param gen The IEEE 1394 bus generation.
-     * @param nodeId The target node ID.
-     * @return A copy of the ConfigROM, or std::nullopt if not found.
-     */
-    [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId) const;
-
-    /**
-     * @brief Enhanced lookup by generation and node ID, with state filtering.
+     * There is deliberately no default for allowSuspended: a suspended entry is
+     * a ROM from before the last bus reset, and exporting one as current was
+     * the selector 14 bug. Every caller states which it wants.
      *
      * @param gen The IEEE 1394 bus generation.
      * @param nodeId The target node ID.

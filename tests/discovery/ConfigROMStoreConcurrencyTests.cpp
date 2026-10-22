@@ -55,7 +55,7 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
 
                 store.Insert(MakeROM(gen, nodeId, guid));
 
-                (void)store.FindByNode(gen, nodeId);
+                (void)store.FindByNode(gen, nodeId, true);
                 (void)store.FindLatestForNode(nodeId);
                 EXPECT_TRUE(store.FindByGuid(guid).has_value());
             }
@@ -102,7 +102,7 @@ TEST(ConfigROMStoreConcurrencyTests, SameGenerationShorterInsertDoesNotRegressNo
     partialRetry.rawQuadlets.resize(19);
     store.Insert(partialRetry);
 
-    const auto byNode = store.FindByNode(kGeneration, kNodeId);
+    const auto byNode = store.FindByNode(kGeneration, kNodeId, true);
     ASSERT_TRUE(byNode.has_value());
     EXPECT_EQ(byNode->rawQuadlets.size(), 31u);
 
@@ -135,12 +135,12 @@ TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability
     constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
     store.Insert(MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid));
 
-    ASSERT_TRUE(store.FindByNode(ASFW::Discovery::Generation{2}, 2).has_value());
+    ASSERT_TRUE(store.FindByNode(ASFW::Discovery::Generation{2}, 2, true).has_value());
     ASSERT_TRUE(store.FindByGuid(kGuid).has_value());
 
     store.InvalidateROM(kGuid);
 
-    EXPECT_FALSE(store.FindByNode(ASFW::Discovery::Generation{2}, 2).has_value());
+    EXPECT_FALSE(store.FindByNode(ASFW::Discovery::Generation{2}, 2, true).has_value());
     ASSERT_TRUE(store.FindByGuid(kGuid).has_value());
     EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
 }
@@ -156,7 +156,6 @@ TEST(ConfigROMStoreConcurrencyTests, BusResetSuspensionRejectsExactGenerationExp
     store.SuspendAll(ASFW::Discovery::Generation{3});
 
     // Lifecycle code can still inspect the suspended cache entry explicitly.
-    ASSERT_TRUE(store.FindByNode(kCachedGeneration, kNodeId).has_value());
     ASSERT_TRUE(store.FindByNode(kCachedGeneration, kNodeId, true).has_value());
 
     // The live reset edge suspends this store before selector 14 can perform
