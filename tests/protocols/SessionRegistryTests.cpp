@@ -1285,4 +1285,32 @@ TEST(SessionRegistryTests, LoginStateObserverStaysSilentOnBusResetSuspend) {
     EXPECT_TRUE(events.empty());
 }
 
+// A reset during login invalidates the node ID the login was addressed to.
+// Apple and Linux both re-login after the device is re-enumerated
+// (IOFireWireSBP2Login::resumeNotify, sbp2_update); so does RefreshTargets.
+TEST(SessionRegistryTests, BusResetDuringLoginLogsInAgainAfterRediscovery) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    ASSERT_TRUE(rig.registry.StartLogin(SessionRegistryRig::Owner(), handle));
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+
+    rig.registry.OnBusReset(2);
+    rig.deviceManager.SuspendAllForBusReset();
+    rig.AdvanceMs(1000);
+    EXPECT_EQ(1u, rig.bus.WriteCount());
+    auto state = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Suspended, state->loginState);
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.UpsertDevice(Generation{2}, 0x33);
+    rig.registry.RefreshTargets(Generation{2});
+
+    ASSERT_EQ(2u, rig.bus.WriteCount());
+    EXPECT_EQ(0x33u, rig.bus.WriteAt(1).nodeId.value);
+    state = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::LoggingIn, state->loginState);
+}
+
 } // namespace
