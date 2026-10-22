@@ -703,3 +703,83 @@ TEST(LoginSessionTests,
 }
 
 } // namespace
+
+// The target's node is admitted to physical DMA when the login completes and
+// again, for the new generation and node, when a reconnect completes.
+TEST(LoginSessionTests, PhysicalDmaIsEnabledOnLoginAndReconnect) {
+    SessionRig rig;
+    std::vector<std::pair<uint16_t, uint16_t>> enabled;
+    rig.session.SetPhysicalDmaEnabler(
+        [&](uint16_t node, uint16_t generation) -> std::expected<void, ASFW::Driver::PhysicalDmaError> {
+            enabled.emplace_back(node, generation);
+            return {};
+        });
+
+    rig.LoginSuccessfully();
+    ASSERT_EQ(1u, enabled.size());
+    EXPECT_EQ(std::make_pair(kTargetNodeID, uint16_t{1}), enabled[0]);
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    auto refreshed = rig.session.TargetInfo();
+    refreshed.targetNodeId = kTargetNodeID + 1;
+    rig.session.Configure(refreshed);
+    ASSERT_TRUE(rig.session.Reconnect());
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t reconnectOrbAddress =
+        DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data);
+    const uint64_t reconnectStatusAddress =
+        ReadORBAddress(rig.addressManager, reconnectOrbAddress,
+                       offsetof(ReconnectORB, statusFIFOAddressHi),
+                       offsetof(ReconnectORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    StatusBlock status{};
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+    ASSERT_EQ(LoginState::LoggedIn, rig.session.State());
+    ASSERT_EQ(2u, enabled.size());
+    EXPECT_EQ(std::make_pair(uint16_t(kTargetNodeID + 1), uint16_t{2}), enabled[1]);
+}
+
+// A stale generation at login completion means a reset is in flight: the
+// session waits for rediscovery instead of reporting a login it cannot use.
+TEST(LoginSessionTests, PhysicalDmaFailureSuspendsInsteadOfLoggingIn) {
+    SessionRig rig;
+    rig.session.SetPhysicalDmaEnabler(
+        [](uint16_t, uint16_t) -> std::expected<void, ASFW::Driver::PhysicalDmaError> {
+            return std::unexpected(ASFW::Driver::PhysicalDmaError::StaleGeneration);
+        });
+    int loginCallbacks = 0;
+    rig.session.SetLoginCallback([&](const ASFW::Protocols::SBP2::LoginCompleteParams&) { ++loginCallbacks; });
+
+    ASSERT_TRUE(rig.session.Login());
+    const uint64_t loginOrbAddress = DecodeOrbAddressFromPayload(rig.bus.WriteAt(0).data);
+    const uint64_t loginResponseAddress =
+        ReadORBAddress(rig.addressManager, loginOrbAddress,
+                       offsetof(LoginORB, loginResponseAddressHi),
+                       offsetof(LoginORB, loginResponseAddressLo));
+    const uint64_t statusAddress =
+        ReadORBAddress(rig.addressManager, loginOrbAddress,
+                       offsetof(LoginORB, statusFIFOAddressHi),
+                       offsetof(LoginORB, statusFIFOAddressLo));
+    LoginResponse response{};
+    response.length = OSSwapHostToBigInt16(LoginResponse::kSize);
+    response.loginID = OSSwapHostToBigInt16(0x0042);
+    response.commandBlockAgentAddressHi = OSSwapHostToBigInt32(0x0000'FFFFu);
+    response.commandBlockAgentAddressLo = OSSwapHostToBigInt32(0x0020'0000);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.addressManager.ApplyRemoteWrite(
+        loginResponseAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&response), sizeof(response)});
+    StatusBlock status{};
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        statusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    EXPECT_EQ(LoginState::Suspended, rig.session.State());
+    EXPECT_EQ(0, loginCallbacks);
+    EXPECT_EQ(0u, rig.bus.PendingWriteCount());  // no busy-timeout write
+}

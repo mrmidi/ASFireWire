@@ -35,6 +35,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <span>
@@ -123,6 +124,9 @@ public:
     using LoginCallback = std::function<void(const LoginCompleteParams&)>;
     using LogoutCallback = std::function<void(const LogoutCompleteParams&)>;
     using StatusCallback = std::function<void(const Wire::StatusBlock&, uint32_t length)>;
+    // Admits the target's node to OHCI physical DMA for one generation.
+    using PhysicalDmaEnabler = std::function<std::expected<void, Driver::PhysicalDmaError>(
+        uint16_t node, uint16_t generation)>;
 
     LoginSession(Async::IFireWireBus& bus,
                  Async::IFireWireBusInfo& busInfo,
@@ -141,6 +145,7 @@ public:
     void SetLoginCallback(LoginCallback cb) noexcept { loginCallback_ = std::move(cb); }
     void SetLogoutCallback(LogoutCallback cb) noexcept { logoutCallback_ = std::move(cb); }
     void SetStatusCallback(StatusCallback cb) noexcept { statusCallback_ = std::move(cb); }
+    void SetPhysicalDmaEnabler(PhysicalDmaEnabler fn) noexcept { physicalDma_ = std::move(fn); }
 
     // -----------------------------------------------------------------------
     // Session operations
@@ -233,6 +238,7 @@ private:
     void OnStatusBlockRemoteWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
     void ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
     void CompleteLoginFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
+    [[nodiscard]] bool EnablePhysicalDma() noexcept;
     void CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
     void CompleteLogoutFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
 
@@ -265,6 +271,7 @@ private:
 
     // Configuration
     SBP2TargetInfo targetInfo_{};
+    PhysicalDmaEnabler physicalDma_;
     bool configured_{false};
     uint16_t maxPayloadSize_{4096};  // default, clipped by login response
 

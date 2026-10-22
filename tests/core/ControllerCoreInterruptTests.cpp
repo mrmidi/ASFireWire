@@ -269,4 +269,14 @@ TEST(InterruptDrainTest, GivesUpOnAnEventThatNeverClears) {
     EXPECT_EQ(passes, kMaxInterruptPasses);
 }
 
+TEST_F(ControllerCoreInterruptTest, BusResetClearsEveryPhysicalRequestFilter) {
+    hardware_->SetTestRegister(Register32::kSelfIDCount, kGeneration << 16);
+    ASSERT_TRUE(hardware_->EnablePhysicalRequests(5, kGeneration).has_value());
+    ASSERT_TRUE(hardware_->EnablePhysicalRequests(40, kGeneration).has_value());
+    hardware_->SetTestRegister(Register32::kIntEvent, IntEventBits::kBusReset);
+    (void)core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kBusReset});
+    EXPECT_EQ(0u, hardware_->GetTestRegister(Register32::kPhyReqFilterLoSet));
+    EXPECT_EQ(0u, hardware_->GetTestRegister(Register32::kPhyReqFilterHiSet));
+}
+
 } // namespace ASFW::Driver

@@ -33,6 +33,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace ASFW::Async {
 class IFireWireBus;
@@ -40,6 +41,43 @@ class IFireWireBusInfo;
 }
 
 namespace ASFW::Protocols::SBP2 {
+
+// Where a command's ORB, page table and data buffer are in their life. The
+// target moves the data itself (OHCI physical DMA) and may still be doing so
+// until a status block or a completed task-management function says it has
+// stopped (SBP-2 §10.4), so resources leave Active/Recovering only through
+// those edges, a bus reset, or by being parked on the session's logout.
+enum class CommandPhase : uint8_t {
+    Idle,        // no command resources held
+    Active,      // ORB submitted, status pending
+    Recovering,  // transport failure; LUN reset in flight, resources retained
+};
+
+// A command's resources after its session was released while the target still
+// owned them. Freed when dropped: after the logout status (the target has
+// aborted the task set, §8.4), at bus reset, or with the registry.
+class ParkedCommand {
+public:
+    ParkedCommand(AddressSpaceManager& addrSpaceMgr,
+                  void* owner,
+                  uint64_t bufferHandle,
+                  std::unique_ptr<SBP2CommandORB> orb,
+                  std::unique_ptr<SBP2PageTable> pageTable) noexcept;
+    ParkedCommand(ParkedCommand&& other) noexcept;
+    ParkedCommand& operator=(ParkedCommand&& other) noexcept;
+    ParkedCommand(const ParkedCommand&) = delete;
+    ParkedCommand& operator=(const ParkedCommand&) = delete;
+    ~ParkedCommand();
+
+private:
+    void Release() noexcept;
+
+    AddressSpaceManager* addrSpaceMgr_;
+    void* owner_;
+    uint64_t bufferHandle_;
+    std::unique_ptr<SBP2CommandORB> orb_;
+    std::unique_ptr<SBP2PageTable> pageTable_;
+};
 
 class CommandExecutor {
 public:
@@ -96,8 +134,10 @@ public:
         busResetRequester_ = std::move(requester);
     }
 
-    // Release-time cleanup: drop command + management resources.
-    void Cleanup();
+    // Release-time cleanup: complete the active command (aborted) and drop
+    // management resources. Resources the target may still be using come back
+    // parked; the caller keeps them until the logout status or a bus reset.
+    [[nodiscard]] std::optional<ParkedCommand> Cleanup();
 
     [[nodiscard]] static bool IsSupportedTaskManagementFunction(
         SBP2ManagementORB::Function function) noexcept;
@@ -123,7 +163,7 @@ private:
     std::optional<uint8_t> activeCommandOpcode_;
     std::optional<uint8_t> lastCompletedCommandOpcode_;
     bool commandReady_{false};
-    bool commandInFlight_{false};
+    CommandPhase phase_{CommandPhase::Idle};
     std::unique_ptr<SBP2CommandORB> commandORB_;
     std::unique_ptr<SBP2PageTable> commandPageTable_;
     uint64_t commandBufferHandle_{0};

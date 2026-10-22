@@ -481,3 +481,14 @@ TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffTrueSetsRhbPreservingGap) {
 }
 
 } // namespace
+
+TEST_F(HardwareInterfaceOrderTests, EnablePhysicalRequestsChecksGenerationThenSetsAndFlushes) {
+    InSequence seq;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kSelfIDCount), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 7u << 16; });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kIntEvent), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0; });
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, uint64_t(Register32::kPhyReqFilterHiSet), 1u << 8));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, uint64_t(Register32::kHCControl), _));
+    EXPECT_TRUE(hardware_.EnablePhysicalRequests(40, 7).has_value());
+}
