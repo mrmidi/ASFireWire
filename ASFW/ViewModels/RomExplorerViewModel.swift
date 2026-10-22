@@ -42,6 +42,9 @@ final class RomExplorerViewModel: ObservableObject {
     private var requestID = UUID()
     private var connector: ASFWDriverConnector?
     private var topologyViewModel: TopologyViewModel?
+    // Topology generation the current selection was made in. Node IDs can be
+    // reassigned on a bus reset, so a selection is only valid in that generation.
+    private var selectionGeneration: UInt16?
 
     // Summarized info for UI (vendor/model names, modalias, units)
     var summary: RomSummary? {
@@ -80,7 +83,12 @@ final class RomExplorerViewModel: ObservableObject {
     func refreshAvailableNodes() {
         if let topology = topologyViewModel?.topology {
             availableNodes = topology.nodes
-            if let selected = selectedNode {
+            if selectedNode != nil, selectionGeneration != topologyGeneration {
+                // The same node ID may now be a different device: drop the
+                // selection (and its ROM) instead of re-selecting by ID.
+                selectNode(nil)
+                statusMessage = Self.busResetMessage
+            } else if let selected = selectedNode {
                 selectedNode = topology.nodes.first(where: { $0.nodeId == selected.nodeId })
             }
         } else {
@@ -93,6 +101,7 @@ final class RomExplorerViewModel: ObservableObject {
         // Invalidate pending cache reads/parses before changing their target.
         requestID = UUID()
         selectedNode = node
+        selectionGeneration = node == nil ? nil : topologyGeneration
         rom = nil
         error = nil
         statusMessage = nil
@@ -156,6 +165,7 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Topology generation unknown. Refresh topology and try again."
             return
         }
+        guard ensureTopologyCurrent(connector, generation: gen) else { return }
 
         let request = UUID()
         requestID = request
@@ -164,6 +174,7 @@ final class RomExplorerViewModel: ObservableObject {
         statusMessage = "Checking ROM cache for node \(node.nodeId)..."
         sourceType = .driver
         selectedNode = node
+        selectionGeneration = gen
         liveReadState = .loadingCache
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -210,6 +221,7 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Topology generation unknown. Refresh the bus and try again."
             return
         }
+        guard ensureTopologyCurrent(connector, generation: generation) else { return }
         let request = UUID()
         requestID = request
         isLoading = true
@@ -234,6 +246,31 @@ final class RomExplorerViewModel: ObservableObject {
         }
     }
 
+    static let busResetMessage =
+        "The bus was reset, so node IDs may have changed. Select the node again."
+
+    /// True when the driver has moved to a newer bus generation than the topology
+    /// this view shows. The driver answers ROM requests only for its current
+    /// generation, and node IDs can be reassigned on a reset. Unknown (nil)
+    /// driver generation is not treated as stale.
+    nonisolated static func isTopologyStale(viewGeneration: UInt16, driverGeneration: UInt8?) -> Bool {
+        guard let driverGeneration else { return false }
+        return UInt8(truncatingIfNeeded: viewGeneration) != driverGeneration
+    }
+
+    /// Returns false, after refreshing the topology and clearing the selection,
+    /// when the bus was reset since this view's topology was loaded.
+    private func ensureTopologyCurrent(_ connector: ASFWDriverConnector, generation: UInt16) -> Bool {
+        let driverGeneration = connector.getBusResetCount()?.generation
+        guard Self.isTopologyStale(viewGeneration: generation, driverGeneration: driverGeneration) else {
+            return true
+        }
+        selectNode(nil)
+        topologyViewModel?.refresh()
+        statusMessage = Self.busResetMessage
+        return false
+    }
+
     private func pollForROM(nodeId: UInt8, generation: UInt16, request: UUID, remainingRetries: Int) {
         guard requestID == request else { return }
         guard remainingRetries > 0 else {
@@ -248,6 +285,9 @@ final class RomExplorerViewModel: ObservableObject {
             error = "Topology generation unavailable while polling ROM read"
             return
         }
+        // The read was triggered at the driver's current generation; if the bus
+        // resets mid-poll, this generation's ROM will never appear.
+        guard ensureTopologyCurrent(connector, generation: generation) else { return }
 
         liveReadState = .polling(13 - remainingRetries)
         statusMessage = "Waiting for ROM read... (attempt \(13 - remainingRetries)/12)"
