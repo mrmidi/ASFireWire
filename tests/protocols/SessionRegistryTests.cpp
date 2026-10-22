@@ -1455,6 +1455,36 @@ TEST_P(LogoutFailureTest, FailedLogoutKeepsParkedCommandAndRequestsBusReset) {
 
 INSTANTIATE_TEST_SUITE_P(RejectedAndTimedOut, LogoutFailureTest, ::testing::Bool());
 
+TEST(SessionRegistryTests, TeardownReleaseWithRejectedLogoutRequestsNoBusReset) {
+    SessionRegistryRig rig;
+    int resets = 0;
+    rig.registry.SetBusResetRequester([&]() { ++resets; });
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    std::weak_ptr<LoginSession> weakSession = rig.registry.GetSessionWeakForTesting(handle);
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle,
+        SCSI::BuildInquiryRequest(36), [&](const SCSI::CommandResult&) { ++callbacks; }));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t dataAddress =
+        ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
+
+    rig.registry.PrepareForTeardown();
+    rig.bus.FailNextWriteBlock();
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
+    // No reset on a bus that is going down; the command stays parked and goes
+    // with the registry (the teardown shut the physical filter before this).
+    EXPECT_EQ(0, resets);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_FALSE(weakSession.expired());
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+}
+
 class PhysicalDmaSizeTest : public ::testing::TestWithParam<uint32_t> {};
 
 TEST_P(PhysicalDmaSizeTest, DescribesTheWholeBufferBelow4GB) {

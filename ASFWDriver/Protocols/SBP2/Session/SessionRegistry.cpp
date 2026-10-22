@@ -369,6 +369,11 @@ void SessionRegistry::SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler ena
     }
 }
 
+void SessionRegistry::PrepareForTeardown() {
+    IOLockGuard lock(lock_);
+    tearingDown_ = true;
+}
+
 void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
     IOLockGuard lock(lock_);
     busResetRequester_ = std::move(requester);
@@ -439,6 +444,11 @@ void SessionRegistry::OnLogoutFailedLocked(const std::shared_ptr<LoginSession>& 
     }
     if (!it->parked) {
         retiringSessions_.erase(it);
+        return;
+    }
+    if (tearingDown_) {
+        // The teardown already shut the physical response unit before it
+        // released the sessions; the parked command goes with the registry.
         return;
     }
     ASFW_LOG(Async, "SessionRegistry: logout %{public}s with a command outstanding — "

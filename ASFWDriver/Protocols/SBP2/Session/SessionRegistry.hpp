@@ -110,6 +110,10 @@ public:
     void SetBusResetRequester(std::function<void()> requester);
     // Handed to every LoginSession (LoginSession::SetPhysicalDmaEnabler).
     void SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler enabler);
+    // Driver teardown is about to release every session with the physical
+    // response unit already shut: a failed logout then needs no bus reset, and
+    // a parked command is freed with the registry.
+    void PrepareForTeardown();
 
     // Push channel for login state. Fires observer(guid, true) when a session
     // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
@@ -172,6 +176,7 @@ private:
     // they are dispatched to workQueue_ — a management write can fail INLINE
     // while the caller still holds lock_, and os_unfair_lock recursion aborts).
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
+    bool tearingDown_{false};
 };
 
 } // namespace ASFW::Protocols::SBP2
