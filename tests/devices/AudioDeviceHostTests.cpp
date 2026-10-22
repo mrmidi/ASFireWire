@@ -276,8 +276,6 @@ struct HostFixture {
     void SeedDiceDevice(uint64_t guid) {
         ConfigROM rom{};
         rom.gen = Generation{1};
-        rom.firstSeen = Generation{1};
-        rom.lastValidated = Generation{1};
         rom.nodeId = 2;
         rom.bib.guid = guid;
         rom.bib.maxRec = 8;

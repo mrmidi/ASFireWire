@@ -185,8 +185,6 @@ struct ConfigROM {
 
     // State management (matching Apple IOFireWireFamily patterns)
     ROMState state{ROMState::Fresh};
-    Generation firstSeen{0};        // Original discovery generation
-    Generation lastValidated{0};     // Last time validated after bus reset
 };
 
 // ============================================================================

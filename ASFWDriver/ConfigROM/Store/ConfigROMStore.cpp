@@ -82,14 +82,6 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
 
     ConfigROM romCopy = rom;
 
-    if (romCopy.firstSeen == Generation{0}) {
-        romCopy.firstSeen = rom.gen;
-    }
-
-    if (romCopy.lastValidated == Generation{0}) {
-        romCopy.lastValidated = rom.gen;
-    }
-
     const auto nodeIdForKey = TryOperationalNodeId(romCopy.nodeId);
     if (!nodeIdForKey.has_value()) {
         ASFW_LOG_V0(ConfigROM, "ConfigROMStore::Insert: Invalid nodeId=%u for keying, skipping",
