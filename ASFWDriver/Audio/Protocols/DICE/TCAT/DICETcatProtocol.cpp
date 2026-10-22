@@ -1142,7 +1142,7 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                         // (2026-10-08) used to overwrite the EAP 2x entry
                                         // with 16 inputs, and every 2x switch rolled back.
                                         formats = SelectPublishedFormats(status == kIOReturnSuccess,
-                                                                         formats, caps);
+                                                                         formats, caps, guid_);
                                         auto formations = DiceFormations(caps.deviceRateMask, formats,
                                             runtimePolicy_.exposeDeviceToHostToCoreAudio);
                                         PublishRateFormations(

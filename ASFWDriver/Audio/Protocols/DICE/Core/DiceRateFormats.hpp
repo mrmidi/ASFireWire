@@ -6,6 +6,7 @@
 #include "../../../Runtime/ResolvedAudioConfiguration.hpp"
 #include "../../../../Common/WireFormat.hpp"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -77,18 +78,63 @@ DiceObservedFormat(const AudioStreamRuntimeCaps& caps) {
     return format;
 }
 
+// ZED-R16 measured stream layouts; see issue #223. Capture MIDI is stream 0.
+// These formats remain subject to the existing hardware-validation policy.
+// Linux dice-stream.c:609-672 keeps unknown devices limited to the observed
+// mode. This exception is identity- and geometry-gated; it never scales counts.
+[[nodiscard]] inline std::optional<DiceRateFormats>
+ZedR16MeasuredFormats(uint64_t guid, const AudioStreamRuntimeCaps& caps) {
+    // The DICE resolver already checks the unit identity. Check the GUID's
+    // OUI/category/product here as well; leave the serial number unrestricted.
+    // GUID layout: Linux dice.c:34-68 (check_dice_category).
+    if ((guid >> 32U) != 0x0004c404U || (static_cast<uint32_t>(guid) >> 22U) != 0)
+        return std::nullopt;
+    if (caps.sampleRateHz != 44100 && caps.sampleRateHz != 48000 && caps.sampleRateHz != 88200 &&
+        caps.sampleRateHz != 96000)
+        return std::nullopt;
+    const auto observed = DiceObservedFormat(caps);
+    const auto mode = DiceRateMode(caps.sampleRateHz);
+    if (!observed || !mode)
+        return std::nullopt;
+    DiceRateFormats measured{};
+    measured[0] = DiceModeFormat{{{16, 16, 0, {}, 0}, {10, 10, 0, {}, 0}},
+                                 {{16, 17, 1, {}, 1}, {10, 10, 0, {}, 0}}};
+    measured[1] = DiceModeFormat{{{16, 16, 0, {}, 0}, {2, 2, 0, {}, 0}},
+                                 {{16, 17, 1, {}, 1}, {2, 2, 0, {}, 0}}};
+    const auto matches = [](const auto& observedStreams, const auto& measuredStreams) {
+        return std::ranges::equal(
+            observedStreams, measuredStreams,
+            [](const auto& observedStream, const auto& measuredStream) {
+                return observedStream.pcmChannels == measuredStream.pcmChannels &&
+                       observedStream.dataBlockSize == measuredStream.dataBlockSize &&
+                       observedStream.midiPortCount == measuredStream.midiPortCount;
+            });
+    };
+    if (!matches(observed->playback, measured[*mode]->playback) ||
+        !matches(observed->capture, measured[*mode]->capture))
+        return std::nullopt;
+    return measured;
+}
+
 /// The per-mode formats a device publishes. When the EAP read succeeded its
 /// formats stand for every mode and the stream registers are not consulted
 /// (Linux dice-stream.c:618-621): registers read before a clock select can
-/// describe another mode (:635-643). Without EAP only the observed mode is
-/// known (Linux's fallback); no clock probing, no guessed scaling.
+/// describe another mode (:635-643). Without EAP use measured ZED-R16 modes
+/// only when identity and live geometry match; otherwise only the observed
+/// mode is known (Linux's fallback).
+/// No clock probing or guessed scaling.
 [[nodiscard]] inline DiceRateFormats SelectPublishedFormats(bool eapRead, DiceRateFormats eap,
-                                                            const AudioStreamRuntimeCaps& caps) {
-    if (eapRead) return eap;
+                                                            const AudioStreamRuntimeCaps& caps,
+                                                            uint64_t guid = 0) {
+    if (eapRead)
+        return eap;
+    if (const auto measured = ZedR16MeasuredFormats(guid, caps))
+        return *measured;
     DiceRateFormats observedOnly{};
     const auto mode = DiceRateMode(caps.sampleRateHz);
     const auto observed = DiceObservedFormat(caps);
-    if (mode && observed) observedOnly[*mode] = *observed;
+    if (mode && observed)
+        observedOnly[*mode] = *observed;
     return observedOnly;
 }
 

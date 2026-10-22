@@ -60,3 +60,98 @@ TEST(DiceMultirateValidation, EapFormatsAreNotOverwrittenByStaleRegisters) {
     EXPECT_EQ(withoutEap[1]->capture[0].pcmChannels, 16U);
     EXPECT_FALSE(withoutEap[2].has_value());
 }
+
+namespace {
+constexpr uint64_t kZedGuid = 0x0004c404000186a1ULL;
+ASFW::Audio::AudioStreamRuntimeCaps ZedCaps(uint32_t rate) {
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    caps.sampleRateHz = rate;
+    caps.deviceRateMask = 0x1e;
+    caps.deviceToHostStreamCount = caps.hostToDeviceStreamCount = 2;
+    const auto second = static_cast<uint16_t>(rate > 48000 ? 2 : 10);
+    caps.deviceToHostStreams[0] = {.pcmChannels = 16, .am824Slots = 17, .midiPorts = 1};
+    caps.hostToDeviceStreams[0] = {.pcmChannels = 16, .am824Slots = 16, .midiPorts = 0};
+    caps.deviceToHostStreams[1] = {.pcmChannels = second, .am824Slots = second, .midiPorts = 0};
+    caps.hostToDeviceStreams[1] = caps.deviceToHostStreams[1];
+    return caps;
+}
+} // namespace
+
+// ZED-R16 format-selection regression fixtures for issue #223.
+TEST(DiceMultirateValidation, ZedMeasuredModesResolveFromLowAndHighRateAttachment) {
+    using namespace ASFW::Audio;
+    for (const auto attachedRate : {44100U, 48000U, 88200U, 96000U}) {
+        const auto caps = ZedCaps(attachedRate);
+        const auto modes = DICE::SelectPublishedFormats(false, {}, caps, kZedGuid);
+        const auto formations = DICE::DiceFormations(caps.deviceRateMask, modes);
+        ASSERT_EQ(formations.size(), 4U);
+        const auto allocation = Runtime::MaximumFormationAllocation(formations, {49152, 26, 26, 0});
+        ASSERT_TRUE(allocation);
+        for (const auto& formation : formations) {
+            EXPECT_FALSE(formation.hardwareValidated);
+            ASSERT_EQ(formation.capture.size(), 2U);
+            ASSERT_EQ(formation.playback.size(), 2U);
+            EXPECT_EQ(formation.capture[0].dataBlockSize, 17U);
+            EXPECT_EQ(formation.capture[0].midiPortCount, 1U);
+            EXPECT_EQ(formation.playback[0].dataBlockSize, 16U);
+            EXPECT_EQ(formation.playback[0].midiPortCount, 0U);
+            const auto config = Runtime::ResolveAudioConfiguration(
+                formation.sampleRateHz, formations, {64, 64, 128, 128}, *allocation, 1,
+                Runtime::ConfigurationValidationPolicy::HardwareBatch);
+            ASSERT_TRUE(config) << formation.sampleRateHz;
+            const auto expected = formation.sampleRateHz > 48000 ? 18U : 26U;
+            EXPECT_EQ(config->captureChannels, expected);
+            EXPECT_EQ(config->playbackChannels, expected);
+        }
+        EXPECT_EQ(DICE::DiceFormations(0x06, modes).size(), 2U);
+        EXPECT_EQ(DICE::DiceFormations(0x60, modes).size(), 0U);
+    }
+}
+
+TEST(DiceMultirateValidation, ZedFallbackRejectsOtherIdentityAndUnmeasuredGeometry) {
+    using namespace ASFW::Audio;
+    auto caps = ZedCaps(48000);
+    for (const auto guid :
+         {0ULL, kZedGuid ^ (1ULL << 40), kZedGuid ^ (1ULL << 32), kZedGuid ^ (1ULL << 22)})
+        EXPECT_FALSE(DICE::ZedR16MeasuredFormats(guid, caps));
+    EXPECT_TRUE(DICE::ZedR16MeasuredFormats(kZedGuid + 1, caps));
+    caps.hostToDeviceStreams[0].am824Slots = 17;
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+    caps = ZedCaps(48000);
+    caps.hostToDeviceStreams[1].pcmChannels = 8;
+    caps.hostToDeviceStreams[1].am824Slots = 8;
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+    caps = ZedCaps(48000);
+    caps.deviceToHostStreams[0].midiPorts = 2;
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+    caps = ZedCaps(48000);
+    caps.sampleRateHz = 96000; // stale low-rate descriptors must not authorize the table
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+    caps = ZedCaps(32000); // not a supported ZED attachment state
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+    caps = ZedCaps(48000);
+    caps.hostToDeviceStreamCount = 1;
+    EXPECT_FALSE(DICE::ZedR16MeasuredFormats(kZedGuid, caps));
+}
+
+TEST(DiceMultirateValidation, ZedNeverOverridesSuccessfulEapEvenWhenEmpty) {
+    using namespace ASFW::Audio;
+    const auto caps = ZedCaps(48000);
+    DICE::DiceRateFormats eap{};
+    EXPECT_FALSE(DICE::SelectPublishedFormats(true, eap, caps, kZedGuid)[0]);
+    eap[1] = DICE::DiceModeFormat{{{8, 8, 0, {}, 0}}, {{8, 8, 0, {}, 0}}};
+    const auto modes = DICE::SelectPublishedFormats(true, eap, caps, kZedGuid);
+    EXPECT_FALSE(modes[0]);
+    ASSERT_TRUE(modes[1]);
+    EXPECT_EQ(modes[1]->capture[0].pcmChannels, 8U);
+}
+
+TEST(DiceMultirateValidation, NonZedIdentityKeepsObservedModeOnly) {
+    using namespace ASFW::Audio;
+    const auto caps = ZedCaps(48000);
+    const auto modes = DICE::SelectPublishedFormats(false, {}, caps, kZedGuid ^ (1ULL << 22));
+    ASSERT_TRUE(modes[0]);
+    EXPECT_FALSE(modes[1]);
+    EXPECT_FALSE(modes[2]);
+    EXPECT_EQ(DICE::DiceFormations(caps.deviceRateMask, modes).size(), 2U);
+}
