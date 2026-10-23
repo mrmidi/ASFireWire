@@ -212,6 +212,16 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
         ctx.deps.avcDiscovery->Shutdown();
     }
     ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
+    // The bridge releases sessions whose commands the target may still be
+    // serving by DMA, and their logouts may fail on a bus that is going down.
+    // Shut the physical response unit first: then no target can reach a
+    // released buffer, and a failed logout needs no bus reset.
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->ClearPhysicalRequestFilters();
+    }
+    if (ctx.deps.sbp2SessionRegistry) {
+        ctx.deps.sbp2SessionRegistry->PrepareForTeardown();
+    }
     if (ctx.sbp2Bridge) {
         ctx.sbp2Bridge->Shutdown();
         ctx.sbp2Bridge.reset();

@@ -39,9 +39,12 @@ frees the ORB, page table and buffer only at:
 | Logout status after the client released the session | logout aborts the task set (§8.4) |
 
 A command released by its client is parked on the retiring session and freed
-with it. AGENT_RESET has no status (§6.4.2); its outcome does not change the
-lifetime. A LUN reset that the target never fetches keeps the existing
-escalation to a bus reset, which is then the edge that frees the buffer.
+with it. If the logout is rejected or never answered, the target's claim is
+unresolved and a bus reset is requested; the reset is then the edge that frees
+the command, and the only reset the release path ever asks for. AGENT_RESET has
+no status (§6.4.2); its outcome does not change the lifetime. A LUN reset that
+the target never fetches keeps the existing escalation to a bus reset, which is
+then the edge that frees the buffer.
 
 ## Exposure
 

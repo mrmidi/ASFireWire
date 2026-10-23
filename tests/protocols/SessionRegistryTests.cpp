@@ -1359,6 +1359,8 @@ TEST_P(ReleaseParksCommandTest, ReleaseKeepsCommandBufferUntilLogoutStatus) {
     } else {
         ASSERT_TRUE(rig.registry.ReleaseSession(SessionRegistryRig::Owner(), handle));
     }
+    // The task completes at once (our buffer is parked, not the caller's); the
+    // buffer itself waits for the target to let go.
     EXPECT_EQ(1, callbacks);
     uint32_t value = 0;
     EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
@@ -1373,6 +1375,7 @@ TEST_P(ReleaseParksCommandTest, ReleaseKeepsCommandBufferUntilLogoutStatus) {
     rig.addressManager.ApplyRemoteWrite(
         rig.sessionStatusAddress,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+    EXPECT_EQ(1, callbacks);
     EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
               rig.addressManager.ReadQuadlet(dataAddress, &value));
 }
@@ -1386,17 +1389,99 @@ TEST(SessionRegistryTests, BusResetFreesParkedCommand) {
     while (rig.bus.PendingWriteCount() > 0) {
         ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
     }
+    int callbacks = 0;
     ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle,
-                                           SCSI::BuildInquiryRequest(36)));
+        SCSI::BuildInquiryRequest(36), [&](const SCSI::CommandResult&) { ++callbacks; }));
     const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     const uint64_t dataAddress =
         ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
     ASSERT_TRUE(rig.registry.ReleaseSession(SessionRegistryRig::Owner(), handle));
+    EXPECT_EQ(1, callbacks);
     uint32_t value = 0;
     ASSERT_EQ(ASFW::Async::ResponseCode::Complete,
               rig.addressManager.ReadQuadlet(dataAddress, &value));
     rig.registry.OnBusReset(2);
+    EXPECT_EQ(1, callbacks);
     EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+}
+
+// A logout the target never answers leaves its claim on the buffer open;
+// only a bus reset ends it (your item 1 in #213: reset only when logout fails
+// or times out).
+class LogoutFailureTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(LogoutFailureTest, FailedLogoutKeepsParkedCommandAndRequestsBusReset) {
+    SessionRegistryRig rig;
+    int resets = 0;
+    rig.registry.SetBusResetRequester([&]() { ++resets; });
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    std::weak_ptr<LoginSession> weakSession = rig.registry.GetSessionWeakForTesting(handle);
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle,
+        SCSI::BuildInquiryRequest(36), [&](const SCSI::CommandResult&) { ++callbacks; }));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t dataAddress =
+        ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
+
+    const bool rejected = GetParam();
+    if (rejected) {
+        rig.bus.FailNextWriteBlock();
+    }
+    const size_t writesBeforeRelease = rig.bus.WriteCount();
+    ASSERT_TRUE(rig.registry.ReleaseSession(SessionRegistryRig::Owner(), handle));
+    if (!rejected) {
+        ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(writesBeforeRelease).handle,
+                                          ASFW::Async::AsyncStatus::kSuccess));
+        rig.AdvanceMs(3'000);  // logout timeout
+    }
+    EXPECT_EQ(1, resets);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_FALSE(weakSession.expired());
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+
+    rig.registry.OnBusReset(2);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(dataAddress, &value));
+    EXPECT_TRUE(weakSession.expired());
+}
+
+INSTANTIATE_TEST_SUITE_P(RejectedAndTimedOut, LogoutFailureTest, ::testing::Bool());
+
+TEST(SessionRegistryTests, TeardownReleaseWithRejectedLogoutRequestsNoBusReset) {
+    SessionRegistryRig rig;
+    int resets = 0;
+    rig.registry.SetBusResetRequester([&]() { ++resets; });
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+    std::weak_ptr<LoginSession> weakSession = rig.registry.GetSessionWeakForTesting(handle);
+    int callbacks = 0;
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle,
+        SCSI::BuildInquiryRequest(36), [&](const SCSI::CommandResult&) { ++callbacks; }));
+    const auto write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t dataAddress =
+        ReadDataBufferAddress(rig.addressManager, DecodeAddressFromWritePayload(write.data));
+
+    rig.registry.PrepareForTeardown();
+    rig.bus.FailNextWriteBlock();
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
+    // No reset on a bus that is going down; the command stays parked and goes
+    // with the registry (the teardown shut the physical filter before this).
+    EXPECT_EQ(0, resets);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_FALSE(weakSession.expired());
+    uint32_t value = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
               rig.addressManager.ReadQuadlet(dataAddress, &value));
 }
 
