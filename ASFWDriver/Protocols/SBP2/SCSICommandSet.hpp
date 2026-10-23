@@ -22,6 +22,10 @@ struct CommandRequest {
     std::vector<uint8_t> outgoingPayload{};
     uint32_t timeoutMs{2000};
     bool captureSenseData{false};
+    // Bus address of the caller's own DMA-mapped buffer, below 4 GiB. When set,
+    // the target moves the data there directly: no bounce buffer, no copy, and
+    // outgoingPayload stays empty for data-out.
+    uint64_t dataIOVA{0};
 
     [[nodiscard]] bool HasTransferBuffer() const noexcept {
         return transferLength > 0;
@@ -39,6 +43,9 @@ struct CommandResult {
     bool scsiStatusValid{false};
     std::vector<uint8_t> payload{};
     std::vector<uint8_t> senseData{};
+    // Bytes the target moved straight into the caller's buffer (dataIOVA);
+    // payload stays empty for those commands.
+    uint32_t inPlaceBytes{0};
 };
 
 // SBP-2 Annex B packs autosense into the status block's command-set-dependent
