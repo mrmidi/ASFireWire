@@ -62,7 +62,11 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
     if ((events & IntEventBits::kBusReset) != 0U) {
         auto access = hw.TryBeginAccess();
         if (!access) return {};
-        const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
+        // SelfIDCount.selfIDGeneration already holds the new generation at the
+        // busReset edge (OHCI 1.2 Table 11-2); 0x06C is reserved.
+        const uint32_t generation =
+            (access.Read(Register32::kSelfIDCount) & SelfIDCountBits::kGenerationMask) >>
+            SelfIDCountBits::kGenerationShift;
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
         // in flight. This matches the legacy IOFireWireFamily policy of
