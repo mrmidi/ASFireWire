@@ -1440,6 +1440,7 @@
 		B6092FC4D28C8CBE1F474D4B /* AVCHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCHandler.cpp; sourceTree = "<group>"; };
 		B67D7B85C0AE7742A87A96D8 /* DiceLockWatch.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceLockWatch.hpp; sourceTree = "<group>"; };
 		B68AF53D0E4DFFFEFFB6C111 /* AVCUnit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCUnit.cpp; sourceTree = "<group>"; };
+		B6A28B6568BD16B3A7F638BD /* LoginStateMachine.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LoginStateMachine.hpp; sourceTree = "<group>"; };
 		B6CB2AFAEB80414349FBF935 /* net.asfw.driver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.asfw.driver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6EABCE6198C5B339B48E9CA /* DiceDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceDiagnosticsTests.swift; sourceTree = "<group>"; };
 		B6FC8F89D537351E9BA9D735 /* ControllerConfig.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerConfig.cpp; sourceTree = "<group>"; };
@@ -3190,6 +3191,7 @@
 				651E702CFD124214444CEFCC /* ISessionScheduler.hpp */,
 				50A11F405110ACE28D722447 /* LoginSession.cpp */,
 				E7BA855FF45BC36F50C20752 /* LoginSession.hpp */,
+				B6A28B6568BD16B3A7F638BD /* LoginStateMachine.hpp */,
 				36A97E74ED2EB18E06BCF26F /* SessionRegistry.cpp */,
 				FA21FB623DC8076A7D6A6ACE /* SessionRegistry.hpp */,
 			);

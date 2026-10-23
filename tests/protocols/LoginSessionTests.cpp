@@ -5,6 +5,11 @@
 #include "tests/mocks/DeferredFireWireBus.hpp"
 #include "FakeSessionScheduler.hpp"
 
+#include <chrono>
+#include <future>
+#include <optional>
+#include <thread>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -270,7 +275,7 @@ TEST(LoginSessionTests, ReconnectReplaysBusyTimeoutRegister) {
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
     ASSERT_EQ(LoginState::Suspended, rig.session.State());
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     ASSERT_EQ(LoginState::Reconnecting, rig.session.State());
 
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
@@ -300,7 +305,7 @@ TEST(LoginSessionTests, ReconnectAckStartsStatusTimeoutAndFallsBackToLogin) {
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
     ASSERT_EQ(LoginState::Suspended, rig.session.State());
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     ASSERT_EQ(LoginState::Reconnecting, rig.session.State());
 
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
@@ -335,7 +340,7 @@ TEST(LoginSessionTests, FailedReconnectWriteEmitsSessionLostThenFallbackLogin) {
 
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
                                       ASFW::Async::AsyncStatus::kTimeout));
@@ -359,7 +364,7 @@ TEST(LoginSessionTests, ReconnectRejectionEmitsSessionLostThenFreshLoginUpEdge) 
 
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
 
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     const uint64_t reconnectOrbAddress =
@@ -433,7 +438,7 @@ TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
 
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
                                       ASFW::Async::AsyncStatus::kSuccess));
@@ -453,7 +458,7 @@ TEST(LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
 
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
 
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     const uint64_t reconnectOrbAddress =
@@ -491,7 +496,7 @@ TEST(LoginSessionTests, BusResetWhileLoggingInWaitsForDiscoveryBeforeRetry) {
     ASSERT_TRUE(rig.session.Login());
     EXPECT_EQ(2u, rig.bus.WriteCount());
     EXPECT_EQ(3u, rig.bus.WriteAt(1).nodeId.value);
-    EXPECT_EQ(2u, rig.session.Generation());
+    EXPECT_EQ(2u, rig.session.Snapshot().generation);
 }
 
 TEST(LoginSessionTests, BusResetWhileReconnectingWaitsForFreshNodeBeforeRetry) {
@@ -499,7 +504,7 @@ TEST(LoginSessionTests, BusResetWhileReconnectingWaitsForFreshNodeBeforeRetry) {
     rig.LoginSuccessfully();
     rig.bus.SetGeneration(ASFW::FW::Generation{2});
     rig.session.HandleBusReset(2);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     rig.bus.SetGeneration(ASFW::FW::Generation{3});
     rig.session.HandleBusReset(3);
     EXPECT_EQ(LoginState::Suspended, rig.session.State());
@@ -508,10 +513,110 @@ TEST(LoginSessionTests, BusResetWhileReconnectingWaitsForFreshNodeBeforeRetry) {
     auto info = rig.session.TargetInfo();
     info.targetNodeId = 3;
     rig.session.Configure(info);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     EXPECT_EQ(4u, rig.bus.WriteCount());
     EXPECT_EQ(3u, rig.bus.WriteAt(3).nodeId.value);
-    EXPECT_EQ(3u, rig.session.Generation());
+    EXPECT_EQ(3u, rig.session.Snapshot().generation);
+}
+
+// A reset before the login completed leaves no login to log out of: logout
+// completes at once and puts nothing on the wire (it used to send login_ID 0).
+TEST(LoginSessionTests, LogoutAfterInterruptedLoginSendsNothing) {
+    SessionRig rig;
+    std::vector<int> logoutStatuses;
+    rig.session.SetLogoutCallback(
+        [&](const ASFW::Protocols::SBP2::LogoutCompleteParams& p) { logoutStatuses.push_back(p.status); });
+    ASSERT_TRUE(rig.session.Login());
+    rig.session.HandleBusReset(2);
+    const size_t writesBefore = rig.bus.WriteCount();
+
+    ASSERT_TRUE(rig.session.Logout());
+
+    EXPECT_EQ(writesBefore, rig.bus.WriteCount());
+    EXPECT_EQ(LoginState::Idle, rig.session.State());
+    ASSERT_EQ(1u, logoutStatuses.size());
+    EXPECT_EQ(0, logoutStatuses[0]);
+}
+
+// The reset released the management address spaces; a logout from Suspended
+// must allocate them again, or its ORB pointer addresses nothing.
+TEST(LoginSessionTests, LogoutWhileSuspendedPointsAtAnAllocatedORB) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+
+    ASSERT_TRUE(rig.session.Logout());
+    ASSERT_EQ(LoginState::LoggingOut, rig.session.State());
+
+    const uint64_t logoutOrbAddress =
+        DecodeOrbAddressFromPayload(rig.bus.WriteAt(rig.bus.WriteCount() - 1).data);
+    EXPECT_NE(0u, logoutOrbAddress & 0xFFFF'FFFF'FFFFull);
+    uint32_t quadlet = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              rig.addressManager.ReadQuadlet(logoutOrbAddress, &quadlet));
+}
+
+void DeliverLogoutStatus(SessionRig& rig) {
+    StatusBlock status{};
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+}
+
+// A callback that calls back in runs after the transition that raised it.
+TEST(LoginSessionTests, LoginFromLogoutCallbackRunsAfterTheLogoutCompletes) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::optional<bool> loginAccepted;
+    LoginState stateInCallback = LoginState::Failed;
+    rig.session.SetLogoutCallback([&](const ASFW::Protocols::SBP2::LogoutCompleteParams&) {
+        stateInCallback = rig.session.State();
+        loginAccepted = rig.session.Login();
+    });
+    ASSERT_TRUE(rig.session.Logout());
+    const size_t writesBefore = rig.bus.WriteCount();
+
+    DeliverLogoutStatus(rig);
+
+    EXPECT_EQ(LoginState::Idle, stateInCallback);
+    ASSERT_TRUE(loginAccepted.has_value());
+    EXPECT_TRUE(*loginAccepted);
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    EXPECT_EQ(writesBefore + 1, rig.bus.WriteCount());
+}
+
+// The probe user client calls in from its own queue. A request made while the
+// driver queue is inside a transition is queued, not run alongside it.
+TEST(LoginSessionTests, RequestFromAnotherThreadQueuesBehindRunningWork) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::promise<void> inCallback;
+    std::promise<void> release;
+    auto released = release.get_future().share();
+    rig.session.SetLogoutCallback([&](const ASFW::Protocols::SBP2::LogoutCompleteParams&) {
+        inCallback.set_value();
+        released.wait();
+    });
+    ASSERT_TRUE(rig.session.Logout());
+    const size_t writesBefore = rig.bus.WriteCount();
+
+    std::thread driverQueue([&] { DeliverLogoutStatus(rig); });
+    ASSERT_EQ(std::future_status::ready,
+              inCallback.get_future().wait_for(std::chrono::seconds(5)));
+
+    auto login = std::async(std::launch::async, [&] { return rig.session.Login(); });
+    const auto queued = login.wait_for(std::chrono::seconds(5));
+    const size_t writesWhileHeld = rig.bus.WriteCount();
+    release.set_value();
+    driverQueue.join();
+
+    ASSERT_EQ(std::future_status::ready, queued);
+    EXPECT_TRUE(login.get());
+    EXPECT_EQ(writesBefore, writesWhileHeld);
+    EXPECT_EQ(writesBefore + 1, rig.bus.WriteCount());
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
 }
 
 TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImmediate) {
@@ -724,7 +829,7 @@ TEST(LoginSessionTests, PhysicalDmaIsEnabledOnLoginAndReconnect) {
     auto refreshed = rig.session.TargetInfo();
     refreshed.targetNodeId = kTargetNodeID + 1;
     rig.session.Configure(refreshed);
-    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_TRUE(rig.session.Resume());
     const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
     const uint64_t reconnectOrbAddress =
         DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data);
