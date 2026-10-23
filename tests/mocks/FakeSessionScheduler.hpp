@@ -28,6 +28,9 @@ public:
         if (token == ASFW::Protocols::SBP2::kInvalidSchedulerToken) {
             return;
         }
+        if (auto hook = std::exchange(onNextCancel, {})) {
+            hook();
+        }
         for (auto& e : entries_) {
             if (e.token == token && !e.fired) {
                 e.canceled = true;
@@ -71,6 +74,9 @@ public:
         }
         nowNs_ = target;
     }
+
+    // Runs once, inside the next Cancel(), on the caller's thread.
+    std::function<void()> onNextCancel;
 
     [[nodiscard]] uint64_t NowNs() const noexcept override { return nowNs_; }
 

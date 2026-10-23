@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <thread>
 #include <vector>
 
 // SessionRegistry host tests — ported from PR #19's SBP2SessionRegistryTests,
@@ -1359,6 +1360,28 @@ TEST(SessionRegistryTests, LoginIdZeroReconnectsAfterRediscovery) {
     ASSERT_TRUE(state.has_value());
     EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Reconnecting, state->loginState);
     EXPECT_EQ(0u, state->loginID);
+}
+
+// Work another thread queues on the session while OnBusReset runs it (here a
+// session-lost edge; on HW a user-client Logout) runs on the reset's thread,
+// and its callback takes the registry lock.
+TEST(SessionRegistryTests, BusResetRunsSessionWorkOutsideRegistryLock) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    ASSERT_TRUE(rig.registry.StartLogin(SessionRegistryRig::Owner(), handle));
+    // Login ORB acked: the login timeout is armed, and the reset cancels it.
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    auto* session = rig.registry.GetSessionForTesting(handle);
+    ASSERT_NE(nullptr, session);
+
+    rig.scheduler.onNextCancel = [session] {
+        std::thread([session] { session->AbandonSuspended(); }).join();
+    };
+    rig.registry.OnBusReset(2);
+
+    const auto state = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Failed, state->loginState);
 }
 
 class ReleaseParksCommandTest : public ::testing::TestWithParam<bool> {};

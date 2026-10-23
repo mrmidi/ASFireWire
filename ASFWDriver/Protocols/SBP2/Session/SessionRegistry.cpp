@@ -410,24 +410,32 @@ void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
 }
 
 void SessionRegistry::OnBusReset(uint16_t newGeneration) {
-    IOLockGuard lock(lock_);
-    for (auto& [handle, record] : sessions_) {
-        if (record.session) {
-            record.session->HandleBusReset(newGeneration);
+    std::vector<std::shared_ptr<LoginSession>> toReset;
+    {
+        IOLockGuard lock(lock_);
+        for (auto& [handle, record] : sessions_) {
+            if (record.session) {
+                toReset.push_back(record.session);
+            }
+            if (record.executor) {
+                record.executor->OnBusReset();
+            }
         }
-        if (record.executor) {
-            record.executor->OnBusReset();
+        // The reset ends the target's claim on a parked command's buffer. An entry
+        // kept only for that (its logout had failed) goes with it; one still
+        // logging out is erased by its own logout callback.
+        for (auto& retired : retiringSessions_) {
+            retired.parked.reset();
         }
+        std::erase_if(retiringSessions_, [](const RetiringSession& retired) {
+            return retired.session && retired.session->State() != LoginState::LoggingOut;
+        });
     }
-    // The reset ends the target's claim on a parked command's buffer. An entry
-    // kept only for that (its logout had failed) goes with it; one still
-    // logging out is erased by its own logout callback.
-    for (auto& retired : retiringSessions_) {
-        retired.parked.reset();
+    // Outside lock_: this thread may end up running work another thread queued
+    // on the session meanwhile (a client's Logout), whose callback takes lock_.
+    for (auto& session : toReset) {
+        session->HandleBusReset(newGeneration);
     }
-    std::erase_if(retiringSessions_, [](const RetiringSession& retired) {
-        return retired.session && retired.session->State() != LoginState::LoggingOut;
-    });
 }
 
 // A logout that was rejected or never answered leaves the target's claim on a
