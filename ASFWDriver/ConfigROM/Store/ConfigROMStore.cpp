@@ -128,6 +128,18 @@ std::optional<ConfigROM> ConfigROMStore::FindByNode(Generation gen, uint8_t node
     return rom;
 }
 
+std::vector<ConfigROM> ConfigROMStore::SuspendedROMs() const {
+    LockGuard guard(lock_);
+
+    std::vector<ConfigROM> roms;
+    for (const auto& [key, rom] : romsByGenNode_) {
+        if (rom.state == ROMState::Suspended) {
+            roms.push_back(rom);
+        }
+    }
+    return roms;
+}
+
 void ConfigROMStore::SuspendAll(Generation newGen) {
     LockGuard guard(lock_);
 

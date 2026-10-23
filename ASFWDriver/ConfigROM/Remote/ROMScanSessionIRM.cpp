@@ -173,7 +173,7 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
 }
 
 void ROMScanSession::ContinueAfterIRMCheck(ROMScanNodeStateMachine& node) {
-    StartRootDirRead(node);
+    ContinueToRootDirectory(node);
 }
 
 } // namespace ASFW::Discovery

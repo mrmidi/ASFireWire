@@ -4,7 +4,9 @@
 // Link stubs for the ControllerCore interrupt harness. These are subsystems
 // ControllerCore reaches only through dependency pointers the harness leaves
 // null (discovery, AV/C, CMP, IRM client, SBP-2, audio). Each fails the test
-// if it is called, so a stub can never stand in for behaviour under test.
+// if it is called, so a stub can never stand in for behaviour under test. The
+// one exception is ROMScanner::Start, which a test may route to a recorder
+// (ROMScanStartRecorder.hpp) to check the request ControllerCore builds.
 
 #include <gtest/gtest.h>
 
@@ -17,6 +19,7 @@
 #include "ASFWDriver/Protocols/AVC/AVCDiscovery.hpp"
 #include "ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp"
 #include "ASFWDriver/Protocols/SBP2/Session/SessionRegistry.hpp"
+#include "ROMScanStartRecorder.hpp"
 
 #define ASFW_UNEXPECTED_CALL() ADD_FAILURE() << "unexpected call: " << __func__
 
@@ -29,7 +32,18 @@ void ConfigROMStager::RestoreHeaderAfterBusReset() { ASFW_UNEXPECTED_CALL(); }
 } // namespace ASFW::Driver
 
 namespace ASFW::Discovery {
-bool ROMScanner::Start(const ROMScanRequest&, ScanCompletionCallback) {
+// Constructible so a test can hand ControllerCore a scanner whose Start goes
+// to ROMScanStartRecorder; no scan ever runs.
+ROMScanner::ROMScanner(Async::IFireWireBus& bus, SpeedPolicy& speedPolicy,
+                       const ROMScannerParams& params, OSSharedPtr<IODispatchQueue> dispatchQueue)
+    : bus_(bus), speedPolicy_(speedPolicy), params_(params),
+      dispatchQueue_(std::move(dispatchQueue)) {}
+ROMScanner::~ROMScanner() = default;
+bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback) {
+    if (auto& recorder = Testing::ROMScanStartRecorder()) {
+        recorder(request);
+        return true;
+    }
     ASFW_UNEXPECTED_CALL();
     return false;
 }

@@ -61,6 +61,14 @@ class ConfigROMStore {
     [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId,
                                                       bool allowSuspended) const;
 
+    /**
+     * @brief Copies of the previous generation's ROMs (state Suspended).
+     *
+     * Discovery hands them to the scan after a bus reset: a node whose bus
+     * info block is unchanged completes from its copy (UnchangedROMPolicy).
+     */
+    [[nodiscard]] std::vector<ConfigROM> SuspendedROMs() const;
+
     // ========================================================================
     // State Management (Apple IOFireWireROMCache-inspired)
     // ========================================================================

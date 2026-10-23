@@ -46,6 +46,12 @@ struct ROMScanRequest {
     // Optional FW-8 callback: emits root BIB/CMC evidence while the normal full
     // discovery scan continues unchanged.
     std::function<void(Driver::Role::RootCapabilityEvidence)> rootCapabilityCallback;
+
+    // The previous generation's ROMs (ConfigROMStore::SuspendedROMs). A node
+    // whose bus info block matches one of them completes from that copy
+    // without reading the rest of its ROM (UnchangedROMPolicy). Empty: every
+    // ROM is read in full, as a manual reread wants.
+    std::vector<ConfigROM> previousROMs;
 };
 
 using ScanCompletionCallback =

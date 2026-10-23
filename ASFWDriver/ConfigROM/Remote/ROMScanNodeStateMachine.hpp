@@ -89,7 +89,9 @@ class ROMScanNodeStateMachine {
             return next == ProbingSpeed || next == WaitingConfigROMReady || next == VerifyingIRM_Read ||
                    next == ReadingRootDir || next == Complete || next == Idle || next == Failed;
         case ProbingSpeed:
-            return next == VerifyingIRM_Read || next == ReadingRootDir || next == Failed;
+            // Complete: the bus info block matched the previous generation's ROM.
+            return next == VerifyingIRM_Read || next == ReadingRootDir || next == Complete ||
+                   next == Failed;
         case WaitingConfigROMReady:
             return next == Idle || next == ReadingRootDir || next == Failed;
         case VerifyingIRM_Read:

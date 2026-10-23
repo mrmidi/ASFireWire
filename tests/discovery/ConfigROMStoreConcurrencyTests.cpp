@@ -59,6 +59,9 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
                 // queue, EraseByGuid from the user client) and must only ever
                 // see whole copies.
                 (void)store.FindByNode(gen, nodeId, true);
+                if (i % 10 == 0) {
+                    (void)store.SuspendedROMs();
+                }
                 if (i % 50 == 0) {
                     store.SuspendAll(gen);
                 }
@@ -200,6 +203,31 @@ TEST(ConfigROMStoreConcurrencyTests, BusResetKeepsOnlyThePreviousGenerationSuspe
     EXPECT_FALSE(store.FindByNode(kFirst, kNodeId, true).has_value());
     ASSERT_TRUE(store.FindByNode(kSecond, kNodeId, true).has_value());
     EXPECT_FALSE(store.FindByNode(kSecond, kNodeId, false).has_value());
+}
+
+// What discovery compares a node's new bus info block against after a reset.
+TEST(ConfigROMStoreConcurrencyTests, SuspendedROMsAreThePreviousGenerationOnly) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    const ASFW::Discovery::Generation kPrevious{4};
+    const ASFW::Discovery::Generation kCurrent{5};
+
+    store.Insert(MakeSBP2ROM(kPrevious, 1, 0x00130e0402004713ULL));
+    store.Insert(MakeROM(kPrevious, 2, 0x0090b54001ffffffULL));
+    store.SuspendAll(kCurrent);
+    store.Insert(MakeROM(kCurrent, 1, 0x00130e0402004713ULL));
+
+    const auto suspended = store.SuspendedROMs();
+    ASSERT_EQ(suspended.size(), 2U);
+    for (const auto& rom : suspended) {
+        EXPECT_EQ(rom.gen, kPrevious);
+        EXPECT_EQ(rom.state, ASFW::Discovery::ROMState::Suspended);
+    }
+
+    store.SuspendAll(ASFW::Discovery::Generation{6});
+    const auto next = store.SuspendedROMs();
+    ASSERT_EQ(next.size(), 1U);
+    EXPECT_EQ(next.front().gen, kCurrent);
 }
 
 TEST(ConfigROMStoreConcurrencyTests, GenerationWrapDoesNotKeepAnEarlierDeviceAtTheSameKey) {

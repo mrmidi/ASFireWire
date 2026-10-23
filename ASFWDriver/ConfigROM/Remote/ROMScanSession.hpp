@@ -83,6 +83,10 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void HandleIRMLockComplete(uint8_t nodeId, bool success);
     void ContinueAfterIRMCheck(ROMScanNodeStateMachine& node);
 
+    // After the BIB, the speed probe and the IRM check: complete from the
+    // previous generation's copy when the BIB is unchanged, else read on.
+    void ContinueToRootDirectory(ROMScanNodeStateMachine& node);
+    void CompleteFromPreviousROM(ROMScanNodeStateMachine& node, const ConfigROM& previous);
     void StartRootDirRead(ROMScanNodeStateMachine& node);
     void HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult result);
 
@@ -114,6 +118,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
 
     std::vector<ROMScanNodeStateMachine> nodeScans_;
     std::vector<ConfigROM> completedROMs_;
+    std::vector<ConfigROM> previousROMs_;
 
     uint16_t inflight_{0};
     bool hadBusyNodes_{false};

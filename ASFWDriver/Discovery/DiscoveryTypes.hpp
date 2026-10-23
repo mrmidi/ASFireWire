@@ -182,6 +182,11 @@ struct ConfigROM {
     // Raw ROM quadlets for debugging/GUI export (bounded)
     std::vector<uint32_t> rawQuadlets;
 
+    // A read after the bus info block failed or came back short, and discovery
+    // kept what it had. Such a copy is never reused after a bus reset
+    // (UnchangedROMPolicy), so the next generation reads the device in full.
+    bool readIncomplete{false};
+
     // State management (matching Apple IOFireWireFamily patterns)
     ROMState state{ROMState::Fresh};
 };
