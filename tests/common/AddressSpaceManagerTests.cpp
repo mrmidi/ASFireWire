@@ -314,3 +314,58 @@ TEST(AddressSpaceManagerTests, SetDebugLabelToleratesBadInputAndPreservesRange) 
     EXPECT_EQ(0xDE, readback[0]);
     EXPECT_EQ(0xEF, readback[3]);
 }
+
+TEST(AddressSpaceManagerTests, PhysicalRangeLivesBelow4GBAndRoundTrips) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+    void* owner = reinterpret_cast<void*>(0x1);
+
+    uint64_t handle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta{};
+    ASSERT_EQ(kIOReturnSuccess, manager.AllocatePhysicalRange(owner, 32, &handle, &meta));
+    EXPECT_EQ(0u, meta.addressHi);
+    EXPECT_LT(meta.address, 1ULL << 32);
+    EXPECT_EQ(32u, meta.length);
+
+    // A second buffer must not alias the first.
+    uint64_t handle2 = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta2{};
+    ASSERT_EQ(kIOReturnSuccess, manager.AllocatePhysicalRange(owner, 32, &handle2, &meta2));
+    EXPECT_NE(meta.address, meta2.address);
+
+    // The CPU side reads what the device wrote, by handle and by address.
+    const std::array<uint8_t, 4> payload{0xDE, 0xAD, 0xBE, 0xEF};
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              manager.ApplyRemoteWrite(meta.address + 8,
+                                       std::span<const uint8_t>(payload.data(), payload.size())));
+    std::vector<uint8_t> readback;
+    ASSERT_EQ(kIOReturnSuccess, manager.ReadIncomingData(owner, handle, 8, 4, &readback));
+    EXPECT_EQ(std::vector<uint8_t>(payload.begin(), payload.end()), readback);
+    uint32_t quadlet = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete, manager.ReadQuadlet(meta.address + 8, &quadlet));
+    EXPECT_EQ(0xDEADBEEFu, OSSwapBigToHostInt32(quadlet));
+
+    EXPECT_EQ(kIOReturnSuccess, manager.DeallocateAddressRange(owner, handle));
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              manager.ApplyRemoteWrite(meta.address + 8,
+                                       std::span<const uint8_t>(payload.data(), payload.size())));
+    EXPECT_EQ(kIOReturnSuccess, manager.DeallocateAddressRange(owner, handle2));
+}
+
+TEST(AddressSpaceManagerTests, BackedPhysicalRangeIsReadThroughItsMapping) {
+    ASFW::Driver::HardwareInterface hardware;
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(&hardware);
+    auto* owner = reinterpret_cast<void*>(0x42);
+    uint64_t handle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta{};
+    ASSERT_EQ(kIOReturnSuccess, manager.AllocatePhysicalRange(owner, 70000, &handle, &meta));
+    EXPECT_EQ(0u, meta.addressHi);
+    const std::array<uint8_t, 4> bytes{1, 2, 3, 4};
+    ASSERT_EQ(kIOReturnSuccess, manager.WriteLocalData(owner, handle, 69996, bytes));
+    std::vector<uint8_t> readback;
+    ASSERT_EQ(kIOReturnSuccess, manager.ReadIncomingData(owner, handle, 69996, 4, &readback));
+    EXPECT_EQ(std::vector<uint8_t>(bytes.begin(), bytes.end()), readback);
+    uint64_t overlapping = 0;
+    EXPECT_EQ(kIOReturnNoSpace,
+              manager.AllocateAddressRange(owner, 0, meta.addressLo, 4, &overlapping));
+    EXPECT_EQ(kIOReturnSuccess, manager.DeallocateAddressRange(owner, handle));
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <expected>
 #include <optional>
 #include <utility> // for std::pair
 
@@ -31,6 +32,8 @@ class IAsyncControllerPort;
 } // namespace ASFW::Async
 
 namespace ASFW::Driver {
+
+enum class PhysicalDmaError : uint8_t { InvalidNode, HardwareGone, StaleGeneration };
 
 /// Result of a local autonomous IRM CSR compare-swap operation (OHCI §5.5).
 struct LocalCSRLockResult {
@@ -110,6 +113,12 @@ class HardwareInterface {
     [[nodiscard]] PciInterruptState ReadPciInterruptState() const noexcept;
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
+    // Admit one local node's physical requests for the current generation, the
+    // way Linux ohci_enable_phys_dma does. Nothing disables a node; the filter
+    // is cleared as a whole at bus reset and teardown.
+    [[nodiscard]] std::expected<void, PhysicalDmaError>
+    EnablePhysicalRequests(uint16_t node, uint16_t generation) noexcept;
+    void ClearPhysicalRequestFilters() noexcept;
     void ClearIntEvents(uint32_t mask);
     // Acknowledges the caller-selected global bits, then reads and clears each
     // signalled isoch direction. One readback completes the entire batch before

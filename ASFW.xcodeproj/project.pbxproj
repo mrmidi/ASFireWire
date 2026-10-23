@@ -178,6 +178,7 @@
 		46EAC460C610E97D83C42F43 /* AVCMusicCapabilities.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 38B33C0D51014568208DBB2A /* AVCMusicCapabilities.cpp */; };
 		47C7D2797F3974490450A45A /* AVCNestedChannelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB92C50A509F45F51EFD3F03 /* AVCNestedChannelTests.swift */; };
 		47F41CED6EB2EE793A31B6E5 /* ASFWAudioDriverControls.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 018751CF8CA051FDDE9B2B06 /* ASFWAudioDriverControls.cpp */; };
+		47F7CC1D374745AF715C8AB2 /* PhysicalRequestFilter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AE9C2F9E30033532DA95E435 /* PhysicalRequestFilter.cpp */; };
 		48359CD69DF9A8F5868E12C0 /* ASFWMCPLiveDriverControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1391A71639068D8291B32AF /* ASFWMCPLiveDriverControl.swift */; };
 		4A7F808CC9DBBBED16B2F07A /* ConfigROMBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 290CF8A5D9D6CABD1B3BF37A /* ConfigROMBuilder.cpp */; };
 		4A8DB4DE00645A2458BAF883 /* MidiNubPublisher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2376C0878D2E3E97CF4DD0CE /* MidiNubPublisher.cpp */; };
@@ -1401,6 +1402,7 @@
 		AE208856E70C5C9AC1A54F71 /* ASFW-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ASFW-Bridging-Header.h"; sourceTree = "<group>"; };
 		AE3316AEFE76C1A5D9641992 /* MidiTxReservation.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MidiTxReservation.hpp; sourceTree = "<group>"; };
 		AE6917642BC190CEA2F5E7E3 /* BusManagerRuntimeState.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusManagerRuntimeState.hpp; sourceTree = "<group>"; };
+		AE9C2F9E30033532DA95E435 /* PhysicalRequestFilter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PhysicalRequestFilter.cpp; sourceTree = "<group>"; };
 		AEC88EDC2EC1E38DC23B8916 /* AudioCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioCoordinator.hpp; sourceTree = "<group>"; };
 		AED113166DE4061F3A41FC54 /* BoundedDequeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedDequeTests.swift; sourceTree = "<group>"; };
 		AED823683733E47EADBB95EB /* DriverConnector+IRM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DriverConnector+IRM.swift"; sourceTree = "<group>"; };
@@ -3554,6 +3556,7 @@
 				A418B8B548743D3952A8089B /* OHCIConstants.hpp */,
 				C197F16F4A4D565C13DA4286 /* OHCIDescriptors.hpp */,
 				2AEC69885AF2551714DE1936 /* OHCIEventCodes.hpp */,
+				AE9C2F9E30033532DA95E435 /* PhysicalRequestFilter.cpp */,
 				E90F7A6B5C08D9C94CD93034 /* RegisterMap.hpp */,
 			);
 			path = Hardware;
@@ -4562,6 +4565,7 @@
 				E8E793E5929460B3A42C034D /* PayloadRegistry.cpp in Sources */,
 				3C130CEE2A5FE017326B568E /* PcmSlotCodec.cpp in Sources */,
 				836FE3225BA2D368808EFC48 /* PhyCommand.cpp in Sources */,
+				47F7CC1D374745AF715C8AB2 /* PhysicalRequestFilter.cpp in Sources */,
 				3ECDDF5924BE520E1750A8FF /* PostResetTimingCoordinator.cpp in Sources */,
 				270027C27155433C83E72998 /* PowerLinkPolicyCoordinator.cpp in Sources */,
 				3455F76072D6ED0ED7E7B77E /* ROMReader.cpp in Sources */,

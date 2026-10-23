@@ -19,6 +19,7 @@
 #include "../Bus/IRM/LocalIRMResourceCSRHandler.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Hardware/IEEE1394.hpp"
+#include "../Hardware/OHCIConstants.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
@@ -224,6 +225,8 @@ public:
 };
 
 // --- SBP-2: dynamically allocated device address ranges ------------------------
+constexpr uint64_t kPhysicalResponseLimit = uint64_t{ASFW::Driver::kPhysicalUpperBound} << 16;
+
 class Sbp2LocalHandler final : public ILocalAddressHandler {
 public:
     explicit Sbp2LocalHandler(ASFW::Protocols::SBP2::AddressSpaceManager* mgr) noexcept
@@ -233,6 +236,14 @@ public:
     [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
         if (mgr_ == nullptr) {
             return LocalRequestResult::NotMine();
+        }
+        // Below PhysicalUpperBound the OHCI serves admitted nodes by DMA; a
+        // request that still reaches software came from a node without the
+        // filter bit or with a transaction type the physical unit does not
+        // take. Linux answers those with TYPE_ERROR (core-transaction.c
+        // handle_low_memory); so do we, instead of serving them from here.
+        if (ctx.destOffset < kPhysicalResponseLimit) {
+            return LocalRequestResult{.claimed = true, .rcode = ResponseCode::TypeError};
         }
         switch (ctx.tCode) {
         case AReq::kTcodeWriteQuad:

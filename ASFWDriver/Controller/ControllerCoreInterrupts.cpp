@@ -60,6 +60,9 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
+        // Node numbers are reassigned by the reset; no node stays admitted to
+        // physical DMA until its session re-enables it for the new generation.
+        hw.ClearPhysicalRequestFilters();
         auto access = hw.TryBeginAccess();
         if (!access) return {};
         // SelfIDCount.selfIDGeneration already holds the new generation at the

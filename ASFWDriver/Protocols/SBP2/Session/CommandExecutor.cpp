@@ -33,6 +33,48 @@ constexpr uint32_t kManagementTimeoutGraceMs = 1000;
 
 } // namespace
 
+ParkedCommand::ParkedCommand(AddressSpaceManager& addrSpaceMgr,
+                             void* owner,
+                             uint64_t bufferHandle,
+                             std::unique_ptr<SBP2CommandORB> orb,
+                             std::unique_ptr<SBP2PageTable> pageTable) noexcept
+    : addrSpaceMgr_(&addrSpaceMgr)
+    , owner_(owner)
+    , bufferHandle_(bufferHandle)
+    , orb_(std::move(orb))
+    , pageTable_(std::move(pageTable)) {}
+
+ParkedCommand::ParkedCommand(ParkedCommand&& other) noexcept
+    : addrSpaceMgr_(other.addrSpaceMgr_)
+    , owner_(other.owner_)
+    , bufferHandle_(std::exchange(other.bufferHandle_, 0))
+    , orb_(std::move(other.orb_))
+    , pageTable_(std::move(other.pageTable_)) {}
+
+ParkedCommand& ParkedCommand::operator=(ParkedCommand&& other) noexcept {
+    if (this != &other) {
+        Release();
+        addrSpaceMgr_ = other.addrSpaceMgr_;
+        owner_ = other.owner_;
+        bufferHandle_ = std::exchange(other.bufferHandle_, 0);
+        orb_ = std::move(other.orb_);
+        pageTable_ = std::move(other.pageTable_);
+    }
+    return *this;
+}
+
+ParkedCommand::~ParkedCommand() {
+    Release();
+}
+
+void ParkedCommand::Release() noexcept {
+    orb_.reset();
+    pageTable_.reset();
+    if (bufferHandle_ != 0) {
+        addrSpaceMgr_->DeallocateAddressRange(owner_, std::exchange(bufferHandle_, 0));
+    }
+}
+
 CommandExecutor::CommandExecutor(Async::IFireWireBus& bus,
                                  Async::IFireWireBusInfo& busInfo,
                                  AddressSpaceManager& addrSpaceMgr,
@@ -50,7 +92,7 @@ CommandExecutor::CommandExecutor(Async::IFireWireBus& bus,
 
 CommandExecutor::~CommandExecutor() {
     lifetimeToken_.reset();
-    if (commandInFlight_ && resultCallback_) {
+    if (phase_ == CommandPhase::Active && resultCallback_) {
         FailActiveCommand(static_cast<int>(kIOReturnAborted),
                           Wire::SBPStatus::kRequestAborted);
     }
@@ -84,7 +126,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     if (request.cdb.empty()) {
         return false;
     }
-    if (session_.State() != LoginState::LoggedIn || commandInFlight_) {
+    if (session_.State() != LoginState::LoggedIn || phase_ != CommandPhase::Idle) {
         return false;
     }
     if (request.transferLength > 0 && request.direction == SCSI::DataDirection::None) {
@@ -106,8 +148,10 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     uint64_t bufferHandle = 0;
     AddressSpaceManager::AddressRangeMeta bufferMeta{};
     if (request.transferLength > 0) {
-        const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
-            owner_, 0xFFFF, request.transferLength, &bufferHandle, &bufferMeta);
+        // The target moves the data itself through the OHCI physical response
+        // unit; LoginSession admitted its node when the login completed.
+        const kern_return_t kr = addrSpaceMgr_.AllocatePhysicalRange(
+            owner_, request.transferLength, &bufferHandle, &bufferMeta);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Async, "CommandExecutor: failed to allocate command buffer: 0x%08x", kr);
             return false;
@@ -156,11 +200,10 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         if (weak.expired()) {
             return;
         }
-        if (!commandInFlight_ || commandORB_.get() != submittedORB) {
+        if (phase_ != CommandPhase::Active || commandORB_.get() != submittedORB) {
             return;
         }
 
-        commandInFlight_ = false;
         commandReady_ = true;
         lastCompletedCommandOpcode_ = activeCommandOpcode_;
         activeCommandOpcode_.reset();
@@ -219,29 +262,27 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
             NotifyResultCallback();
             return;
         }
-        // Transport failure → agent gets reset before retry.
-        CleanupCommandResources();
-        // ORB timeout means the target may be wedged beyond what AGENT_RESET
-        // revives (fetches ORBs, never executes). Apple's transport resets the
-        // LUN before completing the task
-        // (IOFireWireSerialBusProtocolTransport.cpp:1554), so the initiator's
-        // retry runs against a freshly reset execution engine. Delivery of the
-        // failed result is deferred until the LUN reset completes.
+        // Transport failure: no status block, so the target may still be
+        // moving data into the buffer. SBP-2 §10.4 reuses the memory only once
+        // a task-management status says the target stopped, so the ORB, page
+        // table and buffer stay mapped through the LUN reset. Apple's transport
+        // resets the LUN before completing the task
+        // (IOFireWireSerialBusProtocolTransport.cpp:1554); delivery of the
+        // failed result waits for that too.
+        phase_ = CommandPhase::Recovering;
+        session_.ClearCommandTracking();
         if (SubmitTaskManagement(SBP2ManagementORB::Function::LogicalUnitReset,
                                  [this]() {
-                                     // lastError_ carries the management ORB outcome (set by
-                                     // the mgmt completion before onComplete). Nonzero means
-                                     // the target never fetched the LUN-reset ORB — its fetch
-                                     // engine is dead and no management function can reach it.
-                                     // Apple's transport stops here and just fails the task
-                                     // (IOFireWireSerialBusProtocolTransport.cpp:2030 ignores
-                                     // the LUN-reset status), leaving the device wedged until
-                                     // power cycle; its user-client path instead resets the
-                                     // bus (IOFireWireSBP2UserClient.cpp:427). A target
-                                     // whose fetch engine is this dead (observed on the
-                                     // LS-9000, but not a model-specific behavior) is only
-                                     // recoverable via a bus reset, so escalate — reconnect/
-                                     // re-login runs via the normal reset flow.
+                                     // lastError_ carries the management ORB
+                                     // outcome. Nonzero means the target never
+                                     // fetched the LUN-reset ORB — its fetch
+                                     // engine is dead and no management
+                                     // function can reach it. Apple's user
+                                     // client resets the bus for that
+                                     // (IOFireWireSBP2UserClient.cpp:427), and
+                                     // only the reset ends the target's claim
+                                     // on the buffer: it stays mapped until
+                                     // OnBusReset.
                                      if (lastError_ != 0) {
                                          if (busResetRequester_) {
                                              ASFW_LOG(Async,
@@ -252,12 +293,18 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                                          NotifyResultCallback();
                                          return;
                                      }
-                                     // A target may leave its fetch agent dead after a LUN
-                                     // reset (status dead bit, seen on a Hasselblad H camera),
-                                     // and a dead agent ignores ORB_POINTER. Apple resets the
-                                     // fetch agent from the LUN-reset completion and completes
-                                     // the task only after that
-                                     // (IOFireWireSerialBusProtocolTransport.cpp LunResetComplete).
+                                     // LUN reset status: every task is gone and
+                                     // the buffer is ours again (§10.4.3).
+                                     CleanupCommandResources();
+                                     // A target may leave its fetch agent dead
+                                     // after a LUN reset (status dead bit, seen
+                                     // on a Hasselblad H camera). Apple resets
+                                     // the agent from the LUN-reset completion
+                                     // and completes the task only after that
+                                     // (IOFireWireSerialBusProtocolTransport.cpp
+                                     // LunResetComplete). AGENT_RESET has no
+                                     // status (§6.4.2); its outcome changes
+                                     // nothing here.
                                      const std::weak_ptr<int> weakSelf = lifetimeToken_;
                                      session_.ResetFetchAgentNoWait([this, weakSelf]() {
                                          if (weakSelf.expired()) {
@@ -269,10 +316,16 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
             ASFW_LOG(Async, "CommandExecutor: transport failure — LUN reset before completing task");
             return;
         }
+        // No LUN reset could be issued: the session is no longer LoggedIn (the
+        // reset path owns the buffer from here) or a client task-management ORB
+        // is in flight (its status is the stop point). Nothing further confirms
+        // the target stopped, so match Linux's abort (sbp2.c:1550-1551): release
+        // and complete.
+        CleanupCommandResources();
         NotifyResultCallback();
     });
 
-    commandInFlight_ = true;
+    phase_ = CommandPhase::Active;
     commandReady_ = false;
     pendingCommandResult_.reset();
     activeCommandRequest_ = request;
@@ -287,14 +340,13 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
     }
 
     // SubmitORB returned false. Two distinct cases, told apart by whether the
-    // ORB completion callback ran synchronously during the call — it resets
-    // commandORB_ via CleanupCommandResources when it does.
-    if (commandORB_.get() == submittedORB) {
+    // ORB completion callback ran synchronously during the call — it leaves
+    // Active when it does.
+    if (phase_ == CommandPhase::Active && commandORB_.get() == submittedORB) {
         // Completion did NOT run: a genuine synchronous rejection (e.g. the
         // session rejected on state before touching the fetch agent). Roll back
         // and report false; the callback is dropped unfired, so the caller
         // completes the task itself, exactly once.
-        commandInFlight_ = false;
         commandReady_ = false;
         pendingCommandResult_.reset();
         activeCommandRequest_.reset();
@@ -304,12 +356,12 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         return false;
     }
 
-    // commandORB_ was reset, so FetchAgent::AppendImmediate fired the ORB
-    // completion synchronously (WriteBlock failed on submit). The result was
-    // already delivered, or deferred behind a LUN-reset ORB — either way the
-    // executor now owns resultCallback_. Report success so the caller does NOT
-    // fire its own fallback completion: doing so would complete the SCSI task
-    // twice (double ParallelTaskCompletion + OSAction/controller over-release).
+    // FetchAgent::AppendImmediate fired the ORB completion synchronously
+    // (WriteBlock failed on submit). The result was already delivered, or
+    // deferred behind a LUN-reset ORB — either way the executor now owns
+    // resultCallback_. Report success so the caller does NOT fire its own
+    // fallback completion: doing so would complete the SCSI task twice (double
+    // ParallelTaskCompletion + OSAction/controller over-release).
     return true;
 }
 
@@ -329,11 +381,7 @@ std::optional<SCSI::CommandResult> CommandExecutor::GetInquiryResult() {
         lastCompletedCommandOpcode_ != kInquiryOpcode) {
         return std::nullopt;
     }
-    SCSI::CommandResult result = std::move(*pendingCommandResult_);
-    pendingCommandResult_.reset();
-    lastCompletedCommandOpcode_.reset();
-    commandReady_ = false;
-    return result;
+    return GetCommandResult();
 }
 
 bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
@@ -373,19 +421,22 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
             return;
         }
         lastError_ = static_cast<int32_t>(status);
-        if (status == 0 && IsSupportedTaskManagementFunction(function)) {
+        if (status == 0 && IsSupportedTaskManagementFunction(function) &&
+            phase_ == CommandPhase::Active) {
             // A push-mode command wiped by task management must still complete
-            // (the bridge holds an open SCSI task on it).
-            if (commandInFlight_ && resultCallback_) {
+            // (the bridge holds an open SCSI task on it). The status says the
+            // target dropped the task set, so its buffer is free (§10.4).
+            const bool pushMode = static_cast<bool>(resultCallback_);
+            if (pushMode) {
                 FailActiveCommand(static_cast<int>(kIOReturnAborted),
                                   Wire::SBPStatus::kRequestAborted);
             }
             CleanupCommandResources();
             activeCommandRequest_.reset();
             activeCommandOpcode_.reset();
-            // Don't wipe a pending result awaiting deferred delivery (the
-            // timeout→LUN-reset escalation delivers it via onComplete below).
-            if (!resultCallback_) {
+            if (pushMode) {
+                NotifyResultCallback();
+            } else {
                 pendingCommandResult_.reset();
                 lastCompletedCommandOpcode_.reset();
                 commandReady_ = false;
@@ -406,28 +457,42 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
 }
 
 void CommandExecutor::OnBusReset() {
+    // The reset ends the target's claim on everything (its node ID and the
+    // physical filter are gone with the generation), as it does for Linux
+    // (sbp2.c complete_command_orb: unmap on a NULL status).
     CleanupManagementResources();
-    if (commandInFlight_ || commandORB_) {
+    if (phase_ == CommandPhase::Active) {
         FailActiveCommand(static_cast<int>(kIOReturnAborted), Wire::SBPStatus::kRequestAborted);
     }
+    CleanupCommandResources();
     // A result deferred behind a management ORB (the timeout→LUN-reset
-    // escalation) clears commandInFlight_/commandORB_ before deferring delivery
-    // to that ORB's onComplete. CleanupManagementResources above dropped the
-    // ORB without firing onComplete, so the guard misses it — flush any
-    // still-armed result now. NotifyResultCallback moves the callback out, so
-    // this is a no-op when FailActiveCommand already fired it.
+    // escalation) left Active before deferring delivery to that ORB's
+    // onComplete. CleanupManagementResources above dropped the ORB without
+    // firing onComplete, so the guard misses it — flush any still-armed result
+    // now. NotifyResultCallback moves the callback out, so this is a no-op when
+    // FailActiveCommand already fired it.
     if (resultCallback_) {
         NotifyResultCallback();
     }
 }
 
-void CommandExecutor::Cleanup() {
+std::optional<ParkedCommand> CommandExecutor::Cleanup() {
     // Release-time teardown: a pending push-mode command must complete (aborted)
     // so its task is not leaked. May run under the registry lock — the bridge's
     // callback defers any registry re-entry.
-    if (commandInFlight_ && resultCallback_) {
+    if (phase_ == CommandPhase::Active && resultCallback_) {
         FailActiveCommand(static_cast<int>(kIOReturnAborted),
                           Wire::SBPStatus::kRequestAborted);
+    }
+    // The target still owns the mapping until its logout status (§8.4 aborts
+    // the task set): hand the resources to whoever waits for that instead of
+    // unmapping under a running transfer.
+    std::optional<ParkedCommand> parked;
+    if (phase_ != CommandPhase::Idle) {
+        session_.ClearCommandTracking();
+        parked.emplace(addrSpaceMgr_, owner_, std::exchange(commandBufferHandle_, 0),
+                       std::move(commandORB_), std::move(commandPageTable_));
+        phase_ = CommandPhase::Idle;
     }
     CleanupCommandResources();
     CleanupManagementResources();
@@ -436,14 +501,14 @@ void CommandExecutor::Cleanup() {
     if (resultCallback_) {
         NotifyResultCallback();
     }
+    return parked;
 }
 
 void CommandExecutor::FailActiveCommand(int transportStatus, uint8_t sbpStatus) noexcept {
-    if (!commandInFlight_) {
+    if (phase_ != CommandPhase::Active) {
         return;
     }
 
-    commandInFlight_ = false;
     commandReady_ = true;
     lastCompletedCommandOpcode_ = activeCommandOpcode_;
     activeCommandOpcode_.reset();
@@ -456,17 +521,12 @@ void CommandExecutor::FailActiveCommand(int transportStatus, uint8_t sbpStatus) 
                      : static_cast<int32_t>(result.transportStatus);
     pendingCommandResult_ = std::move(result);
     activeCommandRequest_.reset();
-    commandPageTable_.reset();
-    if (commandBufferHandle_ != 0) {
-        addrSpaceMgr_.DeallocateAddressRange(owner_, commandBufferHandle_);
-        commandBufferHandle_ = 0;
-    }
     if (commandORB_) {
         commandORB_->SetAppended(false);
     }
-
-    CleanupCommandResources();
-    NotifyResultCallback();
+    // Resources and phase are left to the caller: it frees or parks them
+    // first, then delivers the result, so a callback that submits the next
+    // command inline finds the executor Idle.
 }
 
 void CommandExecutor::NotifyResultCallback() {
@@ -486,15 +546,15 @@ void CommandExecutor::NotifyResultCallback() {
 
 void CommandExecutor::RetireCommand() {
     // Normal completion: the target has posted status and is done with the ORB
-    // (one ORB_POINTER write per command — no chain to keep alive). Free the
-    // data buffer, page table and ORB.
+    // and the buffer (one ORB_POINTER write per command — no chain to keep
+    // alive). Free the data buffer, page table and ORB.
     if (commandBufferHandle_ != 0) {
         addrSpaceMgr_.DeallocateAddressRange(owner_, commandBufferHandle_);
         commandBufferHandle_ = 0;
     }
     commandORB_.reset();
     commandPageTable_.reset();
-    commandInFlight_ = false;
+    phase_ = CommandPhase::Idle;
 }
 
 void CommandExecutor::CleanupCommandResources() {
@@ -507,7 +567,7 @@ void CommandExecutor::CleanupCommandResources() {
     }
     commandORB_.reset();
     commandPageTable_.reset();
-    commandInFlight_ = false;
+    phase_ = CommandPhase::Idle;
 }
 
 void CommandExecutor::CleanupManagementResources() {

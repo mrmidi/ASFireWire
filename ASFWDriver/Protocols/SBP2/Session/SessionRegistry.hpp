@@ -108,6 +108,8 @@ public:
     // CommandExecutor::SetBusResetRequester). Set once during driver wiring,
     // before any session exists.
     void SetBusResetRequester(std::function<void()> requester);
+    // Handed to every LoginSession (LoginSession::SetPhysicalDmaEnabler).
+    void SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler enabler);
 
     // Push channel for login state. Fires observer(guid, true) when a session
     // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
@@ -130,7 +132,8 @@ private:
     std::shared_ptr<Discovery::FWUnit> ResolveUnit(uint64_t guid, uint32_t romOffset) const;
 
     [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
-    void RetireSessionLocked(const SessionRecord& record);
+    void RetireSessionLocked(const SessionRecord& record,
+                             std::optional<ParkedCommand> parked = std::nullopt);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
     void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
                                         const std::shared_ptr<LoginSession>& session);
@@ -150,12 +153,15 @@ private:
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
+    LoginSession::PhysicalDmaEnabler physicalDmaEnabler_;
     std::function<void(uint64_t, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
         uint64_t guid{0};
         uint32_t romOffset{0};
         std::shared_ptr<LoginSession> session;
+        // A command the target still owned at release; freed with the entry.
+        std::optional<ParkedCommand> parked;
     };
     // Hidden from registry clients, but retained until async logout finishes/times out.
     std::vector<RetiringSession> retiringSessions_;

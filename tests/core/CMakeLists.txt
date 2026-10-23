@@ -49,6 +49,10 @@ add_core_test(SelfIDSequenceTests
     SelfIDSequenceTests.cpp
 )
 
+add_core_test(PhysicalRequestFilterTests
+    PhysicalRequestFilterTests.cpp
+)
+
 # SelfID Capture Tests
 add_core_test(SelfIDCaptureTests
     SelfIDCaptureTests.cpp

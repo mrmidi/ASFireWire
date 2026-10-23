@@ -169,10 +169,17 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
         if (!state.available) {
             return;
         }
+        const uint32_t previous = state.registers[KeyFor(reg)];
         state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::Write);
 
-        if (reg == Register32::kIntEventClear) {
+        if (reg == Register32::kPhyReqFilterHiSet || reg == Register32::kPhyReqFilterLoSet) {
+            state.registers[KeyFor(reg)] = previous | value;
+        } else if (reg == Register32::kPhyReqFilterHiClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterHiSet)] &= ~value;
+        } else if (reg == Register32::kPhyReqFilterLoClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterLoSet)] &= ~value;
+        } else if (reg == Register32::kIntEventClear) {
             state.registers[KeyFor(Register32::kIntEvent)] &= ~value;
         } else if (reg == Register32::kIntMaskSet) {
             state.registers[KeyFor(Register32::kIntMaskSet)] |= value;

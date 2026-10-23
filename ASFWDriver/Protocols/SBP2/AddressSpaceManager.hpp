@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -152,6 +153,64 @@ public:
         return kr;
     }
 
+    // A buffer the target reaches through the OHCI physical response unit: its
+    // 1394 address is the buffer's own IOVA (below 4 GiB, addressHi 0), so the
+    // controller serves the target's reads and writes by DMA with no software
+    // in the path. Apple (IOFireWireSBP2ORB.cpp:1002-1041) and Linux
+    // (sbp2_map_scatterlist) carry SBP-2 data this way. The range stays in the
+    // table so the CPU side can read it by handle; it has no shadow copy.
+    kern_return_t AllocatePhysicalRange(void* owner,
+                                        uint32_t length,
+                                        uint64_t* outHandle,
+                                        AddressRangeMeta* outMeta = nullptr) {
+        if (!lock_ || !outHandle || length == 0) {
+            return kIOReturnBadArgument;
+        }
+
+        AddressRange range{};
+        range.owner = owner;
+        range.physical = true;
+        range.meta.length = length;
+
+        IOLockLock(lock_);
+        const kern_return_t kr = AllocateBacking(range);
+        if (kr != kIOReturnSuccess) {
+            IOLockUnlock(lock_);
+            return kr;
+        }
+        uint64_t address = range.deviceAddress;
+        if (!range.hasBacking) {
+            if (hardware_) {
+                IOLockUnlock(lock_);
+                return kIOReturnNoMemory;
+            }
+            // Host tests have no DMA: stand in with a unique sub-4 GiB address.
+            address = kHostTestPhysicalBase + hostTestPhysicalCursor_;
+            hostTestPhysicalCursor_ += AlignUp(length, 4096);
+            range.buffer.resize(length, 0);
+        }
+        for (const auto& [handle, existing] : ranges_) {
+            if (RangesOverlap(address, length, existing.meta.address, existing.meta.length)) {
+                CleanupBacking(range);
+                IOLockUnlock(lock_);
+                return kIOReturnNoSpace;
+            }
+        }
+        range.meta.handle = nextHandle_++;
+        range.meta.address = address;
+        range.meta.addressHi = static_cast<uint16_t>(address >> 32);
+        range.meta.addressLo = static_cast<uint32_t>(address & 0xFFFF'FFFFULL);
+
+        const uint64_t handle = range.meta.handle;
+        if (outMeta) {
+            *outMeta = range.meta;
+        }
+        ranges_.emplace(handle, std::move(range));
+        IOLockUnlock(lock_);
+        *outHandle = handle;
+        return kIOReturnSuccess;
+    }
+
     kern_return_t DeallocateAddressRange(void* owner, uint64_t handle) {
         if (!lock_ || handle == 0) {
             return kIOReturnBadArgument;
@@ -216,8 +275,8 @@ public:
             return kIOReturnNoSpace;
         }
 
-        outData->assign(range.buffer.begin() + static_cast<std::size_t>(offset),
-                        range.buffer.begin() + static_cast<std::size_t>(offset + length));
+        const auto bytes = Storage(range).subspan(offset, length);
+        outData->assign(bytes.begin(), bytes.end());
         IOLockUnlock(lock_);
         return kIOReturnSuccess;
     }
@@ -349,8 +408,7 @@ public:
         }
 
         const uint32_t offset = static_cast<uint32_t>(address - range->meta.address);
-        std::memcpy(outValue,
-                    range->buffer.data() + static_cast<std::size_t>(offset),
+        std::memcpy(outValue, Storage(*range).subspan(offset, sizeof(uint32_t)).data(),
                     sizeof(uint32_t));
 
         IOLockUnlock(lock_);
@@ -429,6 +487,7 @@ private:
     static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
+    static constexpr uint64_t kHostTestPhysicalBase = 0x4000'0000ULL;
 
     static constexpr std::size_t kDebugLabelCapacity = 32;
 
@@ -445,7 +504,17 @@ private:
         uint8_t* mappedBytes{nullptr};
         uint64_t deviceAddress{0};
         bool hasBacking{false};
+        bool physical{false};
     };
+
+    // Where the bytes live: the DMA mapping for a physical range (the target
+    // writes it directly), the shadow copy for a software-served range.
+    static std::span<const uint8_t> Storage(const AddressRange& range) {
+        if (range.physical && range.hasBacking) {
+            return {range.mappedBytes, range.meta.length};
+        }
+        return range.buffer;
+    }
 
     static void CopyDebugLabel(AddressRange& range, const char* label) {
         range.debugLabel.fill('\0');
@@ -606,9 +675,11 @@ private:
 #endif
         }
 
+        // Software-served ranges are written by the CPU per request and stay
+        // uncached; a physical range is filled by the device and read once.
         IOMemoryMap* mapping = nullptr;
         const kern_return_t kr = dma->descriptor->CreateMapping(
-            kIOMemoryMapCacheModeInhibit,
+            range.physical ? 0 : kIOMemoryMapCacheModeInhibit,
             0,
             0,
             size,
@@ -632,7 +703,11 @@ private:
             return kIOReturnNoMemory;
         }
 
-        ZeroMappedBytes(mapped, size);
+        if (range.physical) {
+            std::ranges::fill(std::span<uint8_t>{mapped, size}, uint8_t{0});
+        } else {
+            ZeroMappedBytes(mapped, size);
+        }
         OSSynchronizeIO();
 
         range.descriptor = std::move(dma->descriptor);
@@ -744,7 +819,9 @@ private:
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(data.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.buffer.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.mappedBytes) & 0x7ULL));
-        CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
+        if (!range.buffer.empty()) {
+            CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
+        }
 
         if (range.hasBacking && range.mappedBytes) {
             CopyPayloadBytes(range.mappedBytes + static_cast<std::size_t>(offset), data);
@@ -756,6 +833,7 @@ private:
     ASFW::Driver::HardwareInterface* hardware_{nullptr};
     IOLock* lock_{nullptr};
     uint64_t nextHandle_{1};
+    uint64_t hostTestPhysicalCursor_{0};
     std::unordered_map<uint64_t, AddressRange> ranges_;
 };
 

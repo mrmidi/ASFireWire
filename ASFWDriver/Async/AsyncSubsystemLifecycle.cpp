@@ -472,6 +472,7 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
     if (disableHardware && hardware_) {
         hardware_->SetInterruptMask(0xFFFFFFFFu, false);
         hardware_->ClearLinkControlBits(Driver::LinkControlBits::kRcvPhyPkt);
+        hardware_->ClearPhysicalRequestFilters();
     }
 
     // CRITICAL: Deactivate completion queue BEFORE stopping contexts

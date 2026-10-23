@@ -97,7 +97,7 @@ SessionRegistry::~SessionRegistry() {
                 (void)record.session->Logout();
             }
             if (record.executor) {
-                record.executor->Cleanup();
+                (void)record.executor->Cleanup();
             }
         }
         sessions_.clear();
@@ -164,6 +164,7 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
     record.session->SetMaxPayloadSize(maxPayloadSize_);
+    record.session->SetPhysicalDmaEnabler(physicalDmaEnabler_);
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
@@ -289,8 +290,9 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
         }
 
         auto& record = it->second;
+        std::optional<ParkedCommand> parked;
         if (record.executor) {
-            record.executor->Cleanup();
+            parked = record.executor->Cleanup();
         }
 
         const LoginState state = record.session ? record.session->State() : LoginState::Idle;
@@ -298,11 +300,11 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
             (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
             SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
             // Retire optimistically; un-retired below if Logout() is rejected.
-            RetireSessionLocked(record);
+            RetireSessionLocked(record, std::move(parked));
             toLogout = record.session;
         } else if (record.session && state == LoginState::LoggingOut) {
             SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
-            RetireSessionLocked(record);
+            RetireSessionLocked(record, std::move(parked));
         }
         sessions_.erase(it);
     }
@@ -329,20 +331,20 @@ void SessionRegistry::ReleaseOwner(void* owner) {
 
             auto& record = it->second;
             const LoginState state = record.session ? record.session->State() : LoginState::Idle;
+            std::optional<ParkedCommand> parked;
+            if (record.executor) {
+                parked = record.executor->Cleanup();
+            }
 
             if (record.session &&
                 (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
                 SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
                 // Retire optimistically; un-retired below if Logout() is rejected.
-                RetireSessionLocked(record);
+                RetireSessionLocked(record, std::move(parked));
                 toLogout.push_back(record.session);
             } else if (record.session && state == LoginState::LoggingOut) {
                 SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
-                RetireSessionLocked(record);
-            }
-
-            if (record.executor) {
-                record.executor->Cleanup();
+                RetireSessionLocked(record, std::move(parked));
             }
             it = sessions_.erase(it);
         }
@@ -353,6 +355,16 @@ void SessionRegistry::ReleaseOwner(void* owner) {
         if (!session->Logout()) {
             IOLockGuard lock(lock_);
             EraseRetiredSessionLocked(session);
+        }
+    }
+}
+
+void SessionRegistry::SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler enabler) {
+    IOLockGuard lock(lock_);
+    physicalDmaEnabler_ = std::move(enabler);
+    for (auto& [handle, record] : sessions_) {
+        if (record.session) {
+            record.session->SetPhysicalDmaEnabler(physicalDmaEnabler_);
         }
     }
 }
@@ -400,6 +412,10 @@ void SessionRegistry::OnBusReset(uint16_t newGeneration) {
         if (record.executor) {
             record.executor->OnBusReset();
         }
+    }
+    // The reset ends the target's claim on a parked command's buffer.
+    for (auto& retired : retiringSessions_) {
+        retired.parked.reset();
     }
 }
 
@@ -527,7 +543,8 @@ bool SessionRegistry::HasSessionForTargetLocked(uint64_t guid, uint32_t romOffse
                        });
 }
 
-void SessionRegistry::RetireSessionLocked(const SessionRecord& record) {
+void SessionRegistry::RetireSessionLocked(const SessionRecord& record,
+                                          std::optional<ParkedCommand> parked) {
     if (record.session == nullptr) {
         return;
     }
@@ -539,7 +556,10 @@ void SessionRegistry::RetireSessionLocked(const SessionRecord& record) {
             .guid = record.guid,
             .romOffset = record.romOffset,
             .session = record.session,
+            .parked = std::move(parked),
         });
+    } else if (!it->parked) {
+        it->parked = std::move(parked);
     }
 }
 
@@ -577,7 +597,7 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
             if (it != sessions_.end() &&
                 (completedSession == nullptr || it->second.session == completedSession)) {
                 if (it->second.executor) {
-                    it->second.executor->Cleanup();
+                    (void)it->second.executor->Cleanup();
                 }
                 sessions_.erase(it);
             }

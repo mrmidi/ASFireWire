@@ -828,6 +828,9 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
         .nodeID = loginNodeID_}};
 
     loginRetryCount_ = 0;
+    if (!EnablePhysicalDma()) {
+        return;
+    }
     SetState(LoginState::LoggedIn);
     BindFetchAgent();
 
@@ -865,6 +868,9 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
         return;
     }
 
+    if (!EnablePhysicalDma()) {
+        return;
+    }
     SetState(LoginState::LoggedIn);
     BindFetchAgent();
     ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", loginID_.load());
@@ -885,6 +891,24 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
         params.generation = loginGeneration_;
         loginCallback_(params);
     }
+}
+
+// Command data moves by physical DMA, so a login is usable only once the OHCI
+// admits the target's node for this generation; Linux enables at login
+// (sbp2.c:1146) and reconnect (sbp2.c:1198) the same way. A stale generation
+// means a reset is already in flight: wait for rediscovery like any reset.
+bool LoginSession::EnablePhysicalDma() noexcept {
+    if (!physicalDma_) {
+        return true;
+    }
+    const auto enabled = physicalDma_(loginNodeID_, loginGeneration_.load());
+    if (enabled) {
+        return true;
+    }
+    ASFW_LOG_SBP2("LoginSession: physical DMA not enabled for node=0x%04x gen=%u (err=%u), suspending",
+                  loginNodeID_, loginGeneration_.load(), static_cast<unsigned>(enabled.error()));
+    SetState(LoginState::Suspended);
+    return false;
 }
 
 void LoginSession::CompleteLogoutFromStatusBlock(const Wire::StatusBlock& /*block*/,

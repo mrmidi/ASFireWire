@@ -725,8 +725,11 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
         return configRomStatus;
     }
 
-    // Step 7: Set Physical Upper Bound (256MB CSR address range)
-    // TODO(ASFW-DMA): Confirm whether remote DMA still requires this register programming.
+    // Step 7: bound physical responses to the 4 GiB every DMA IOVA lives in
+    // (AllocateDMA asks for 32-bit addresses), as Linux ohci_enable does.
+    if (auto access = hw.TryBeginAccess()) {
+        access.WriteAndFlush(Register32::kPhyUpperBound, ASFW::Driver::kPhysicalUpperBound);
+    }
     // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
