@@ -304,3 +304,98 @@ TEST(ResolvedAudioConfigurationTests, PackedPaddingDoesNotAllocateExtraHostChann
     EXPECT_FALSE(ResolveAudioConfiguration(48000,{&formation,1},policy,
         {49152,14,14,4104},0,ConfigurationValidationPolicy::HardwareBatch));
 }
+
+// A DICE device without EAP announces every CLOCK_CAPS rate before it has run
+// at it; such a rate carries a placeholder layout (layoutProvisional) until a
+// rate change reads the device's registers at that rate.
+namespace {
+RateFormation Provisional(uint32_t rate, uint32_t channels) {
+    auto formation = Formation(rate, channels);
+    formation.hardwareValidated = false;
+    formation.layoutProvisional = true;
+    return formation;
+}
+
+ASFW::Audio::RateHardwareObservation Observed(uint32_t rate, uint32_t channels, bool clockConfirmed = true) {
+    ASFW::Audio::RateHardwareObservation observed{};
+    auto& caps = observed.caps;
+    caps.sampleRateHz = rate;
+    caps.hostInputPcmChannels = caps.hostOutputPcmChannels = channels;
+    caps.hostToDeviceStreamCount = caps.deviceToHostStreamCount = 1;
+    caps.hostToDeviceStreams[0] = caps.deviceToHostStreams[0] = {
+        .pcmChannels = static_cast<uint16_t>(channels),
+        .am824Slots = static_cast<uint16_t>(channels + 1), .midiPorts = 1};
+    observed.clockConfirmed = clockConfirmed;
+    return observed;
+}
+
+ASFW::Audio::Model::ASFWAudioDevice CommittedAt48kWithProvisional96k() {
+    ASFW::Audio::Model::ASFWAudioDevice prior{};
+    prior.currentSampleRate = 48000;
+    prior.sampleRates = {48000, 96000};
+    prior.rateFormationCandidates = {Formation(48000, 16), Provisional(96000, 16)};
+    return *ASFW::Audio::Model::WithRateFormation(prior, 48000);
+}
+} // namespace
+
+TEST(ResolvedAudioConfigurationTests, ObservedLayoutReplacesOnlyAPlaceholder) {
+    using namespace ASFW::Audio;
+    const auto committed = CommittedAt48kWithProvisional96k();
+    EXPECT_TRUE(Model::LayoutIsProvisional(committed, 96000));
+    EXPECT_FALSE(Model::LayoutIsProvisional(committed, 48000));
+    EXPECT_FALSE(Model::LayoutIsProvisional(committed, 44100));
+
+    const auto learned = Model::WithObservedRateCatalog(committed, Formation(96000, 12));
+    ASSERT_TRUE(learned);
+    EXPECT_FALSE(Model::LayoutIsProvisional(*learned, 96000));
+    EXPECT_EQ(learned->currentSampleRate, 48000U) << "learning a layout does not change the live format";
+    EXPECT_EQ(learned->inputChannelCount, 16U);
+    EXPECT_EQ(learned->rateFormationCandidates.size(), 2U);
+    const auto at96 = Model::WithRateFormation(*learned, 96000);
+    ASSERT_TRUE(at96);
+    EXPECT_EQ(at96->inputChannelCount, 12U);
+    EXPECT_EQ(at96->outputChannelCount, 12U);
+
+    // Once measured, the layout is known geometry: stale registers cannot
+    // overwrite it, and a placeholder is never an observation.
+    EXPECT_FALSE(Model::WithObservedRateCatalog(*learned, Formation(96000, 16)));
+    EXPECT_FALSE(Model::WithObservedRateCatalog(committed, Provisional(96000, 12)));
+}
+
+TEST(ResolvedAudioConfigurationTests, ProvisionalRateIsSettledByItsLockedClockOnly) {
+    using namespace ASFW::Audio;
+    const auto committed = CommittedAt48kWithProvisional96k();
+    // The placeholder says 16; the device reads 12 at 96 kHz. A confirmed clock
+    // settles the rate, and the 12 are what the window installs.
+    EXPECT_TRUE(ObservationSettlesRate(committed, Observed(96000, 12)));
+    EXPECT_FALSE(ObservationSettlesRate(committed, Observed(96000, 12, false)));
+    // A measured rate still has to match its formation (Pro 24 DSP, 2026-10-08:
+    // stale registers after a clock change).
+    EXPECT_TRUE(ObservationSettlesRate(committed, Observed(48000, 16)));
+    EXPECT_FALSE(ObservationSettlesRate(committed, Observed(48000, 12)));
+    EXPECT_FALSE(ObservationSettlesRate(committed, Observed(88200, 16))) << "not in the catalog";
+    const auto learned = Model::WithObservedRateCatalog(committed, Formation(96000, 12));
+    ASSERT_TRUE(learned);
+    EXPECT_TRUE(ObservationSettlesRate(*learned, Observed(96000, 12)));
+    EXPECT_FALSE(ObservationSettlesRate(*learned, Observed(96000, 16)));
+}
+
+TEST(ResolvedAudioConfigurationTests, ProvisionalRateReservesTheProtocolLimit) {
+    const std::vector<RateFormation> measured{Formation(48000, 18)};
+    const auto known = MaximumFormationAllocation(measured, {24576, 0, 0, 0});
+    ASSERT_TRUE(known);
+    EXPECT_EQ(known->playbackChannelCapacity, 18U);
+    EXPECT_EQ(known->captureChannelCapacity, 18U);
+    // Attached at 96 kHz with 18 channels, 48 kHz may need more: the mappings
+    // are reserved once and never replaced, so reserve what a layout can be.
+    const std::vector<RateFormation> withPlaceholder{Provisional(48000, 18), Formation(96000, 18)};
+    const auto reserved = MaximumFormationAllocation(withPlaceholder, {24576, 0, 0, 0});
+    ASSERT_TRUE(reserved);
+    EXPECT_EQ(reserved->playbackChannelCapacity, ASFW::Encoding::kMaxPcmChannels);
+    EXPECT_EQ(reserved->captureChannelCapacity, ASFW::Encoding::kMaxPcmChannels);
+    EXPECT_GT(reserved->maxPacketBytes, known->maxPacketBytes);
+    const auto resolved = ResolveAudioConfiguration(48000, withPlaceholder, policy, *reserved, 1,
+        ConfigurationValidationPolicy::HardwareBatch);
+    ASSERT_TRUE(resolved);
+    EXPECT_EQ(resolved->captureChannels, 18U) << "the HAL still sees the placeholder";
+}

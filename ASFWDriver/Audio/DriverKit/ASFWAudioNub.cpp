@@ -1015,9 +1015,7 @@ kern_return_t IMPL(ASFWAudioNub, ReadRateClockState) {
             [owner](auto done) { owner->ReadRateObservation(std::move(done)); }, 5000, kIOReturnTimeout);
         if (result.status != kIOReturnSuccess) return result.status;
         if (!binding.registry->IsCurrent(*route)) return kIOReturnAborted;
-        const auto actual = ASFW::Audio::Model::WithRateFormation(config, result.value.caps.sampleRateHz);
-        const bool known = result.value.clockConfirmed && actual &&
-            ASFW::Audio::RuntimeCapsMatchConfiguration(*actual, result.value.caps);
+        const bool known = ASFW::Audio::ObservationSettlesRate(config, result.value);
         *outIncarnation = route->deviceIncarnation;
         *outRouteEpoch = route->routeEpoch;
         *outBusGeneration = route->generation.value;
@@ -1144,6 +1142,9 @@ kern_return_t IMPL(ASFWAudioNub, InstallRateFormation) {
     if (!binding.registry->IsCurrent(route)) return kIOReturnAborted;
     ASFW::Audio::Model::ASFWAudioDevice prior{};
     if (!endpoint->CopyConfig(prior)) return kIOReturnNotReady;
+    // Only a layout read from the device is installed; the window replaces a
+    // placeholder through CopyObservedRateCatalog first.
+    if (ASFW::Audio::Model::LayoutIsProvisional(prior, sampleRateHz)) return kIOReturnNotReady;
     const auto next = ASFW::Audio::Model::WithRateFormation(prior, sampleRateHz);
     if (!next) return kIOReturnUnsupported;
     if (prior.usesRateFormations && (!ivars->rateHardwareObservation ||

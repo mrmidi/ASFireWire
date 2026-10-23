@@ -41,6 +41,11 @@ struct RateFormation final {
     bool packedPcm{false}; // MOTU: 3-byte chunks, not PCM quadlet slots.
     uint32_t packedCaptureMessageChunks{2};
     uint32_t packedPlaybackMessageChunks{2};
+    // The device supports this rate but its layout has not been read yet: the
+    // streams are a placeholder for the HAL format list only. A rate change
+    // reads the real layout once the clock is locked at the rate, and only a
+    // measured formation is ever installed or streamed.
+    bool layoutProvisional{false};
     friend bool operator==(const RateFormation&, const RateFormation&) = default;
 };
 
@@ -168,12 +173,17 @@ MaximumFormationAllocation(std::span<const RateFormation> formations,
             probePolicy, ceiling, 0, ConfigurationValidationPolicy::HardwareBatch);
         if (!resolved) return std::unexpected(resolved.error());
         result.frameCapacity = std::max(result.frameCapacity, resolved->timing.frameRingFrames);
-        result.playbackChannelCapacity = std::max(result.playbackChannelCapacity, resolved->playbackChannels);
-        result.captureChannelCapacity = std::max(result.captureChannelCapacity, resolved->captureChannels);
+        // A provisional layout can be larger than its placeholder (a device
+        // attached at 96 kHz shows the 2x layout for 48 kHz too), so reserve
+        // the protocol limit. The mappings are never replaced afterwards.
+        const auto playback = formation.layoutProvisional ? limit : resolved->playbackChannels;
+        const auto capture = formation.layoutProvisional ? limit : resolved->captureChannels;
+        result.playbackChannelCapacity = std::max(result.playbackChannelCapacity, playback);
+        result.captureChannelCapacity = std::max(result.captureChannelCapacity, capture);
         for (const auto& direction : {std::span(formation.playback), std::span(formation.capture)})
             for (const auto& stream : direction)
-                result.maxPacketBytes = std::max(result.maxPacketBytes,
-                    8U + resolved->maxPacketFrames * stream.dataBlockSize * 4U);
+                result.maxPacketBytes = std::max(result.maxPacketBytes, 8U + resolved->maxPacketFrames * 4U *
+                    (formation.layoutProvisional ? Encoding::kMaxAmdtpDbs : stream.dataBlockSize));
     }
     return result;
 }

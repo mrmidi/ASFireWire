@@ -221,6 +221,7 @@ struct ASFWAudioDevice {
                          formation.mode == Encoding::StreamMode::kBlocking ? 1U : 0U) ||
                     !add(PropertyKeys::kFormationProtocolSupported, formation.protocolSupported) ||
                     !add(PropertyKeys::kFormationHardwareValidated, formation.hardwareValidated) ||
+                    !add(PropertyKeys::kFormationLayoutProvisional, formation.layoutProvisional) ||
                     !add("ASFWMotuPackedPcm", formation.packedPcm) ||
                     !add("ASFWMotuCaptureMessageChunks", formation.packedCaptureMessageChunks) ||
                     !add("ASFWMotuPlaybackMessageChunks", formation.packedPlaybackMessageChunks) ||

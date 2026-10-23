@@ -492,9 +492,16 @@ void DICETcatProtocol::ReadRateObservation(
                 if (stable && locked) {
                     const auto measured = DiceObservedRateFormation(caps,
                         runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                    // Learn a rate never seen, or read the layout of a
+                    // provisional one now that the clock is locked at it.
                     const auto known = RateFormations();
-                    if (measured && (!known || std::ranges::find(*known, measured->sampleRateHz,
-                        &Runtime::RateFormation::sampleRateHz) == known->end()))
+                    const bool unmeasured = [&] {
+                        if (!known) return true;
+                        const auto existing = std::ranges::find(*known, caps.sampleRateHz,
+                            &Runtime::RateFormation::sampleRateHz);
+                        return existing == known->end() || existing->layoutProvisional;
+                    }();
+                    if (measured && unmeasured)
                         PublishRateFormations(std::make_shared<const std::vector<Runtime::RateFormation>>(
                             std::vector<Runtime::RateFormation>{*measured}));
                 }
@@ -1165,10 +1172,18 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                         // locked at 88.2 kHz with its 48 kHz layout
                                         // (2026-10-08) used to overwrite the EAP 2x entry
                                         // with 16 inputs, and every 2x switch rolled back.
-                                        formats = SelectPublishedFormats(status == kIOReturnSuccess,
-                                                                         formats, caps);
+                                        const bool eapRead = status == kIOReturnSuccess;
+                                        ASFW_LOG(DICE, "DICETcatProtocol: rate formats from %{public}s "
+                                                 "(EAP read 0x%x (%{public}s)) rate=%u caps=0x%02x",
+                                                 eapRead ? "EAP" : "stream registers", status,
+                                                 ASFW::Logging::IOReturnName(status), caps.sampleRateHz,
+                                                 caps.deviceRateMask);
+                                        formats = SelectPublishedFormats(eapRead, formats, caps);
                                         auto formations = DiceFormations(caps.deviceRateMask, formats,
                                             runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                                        if (!eapRead)
+                                            formations = WithProvisionalRates(caps.deviceRateMask,
+                                                std::move(formations), caps.sampleRateHz);
                                         PublishRateFormations(
                                             std::make_shared<const std::vector<Runtime::RateFormation>>(
                                                 std::move(formations)));

@@ -4,6 +4,13 @@
 
 namespace ASFW::Audio::Model {
 
+// The device supports this rate, but its layout is still a placeholder.
+[[nodiscard]] inline bool LayoutIsProvisional(const ASFWAudioDevice& config, uint32_t rateHz) noexcept {
+    const auto formation = std::ranges::find(config.rateFormationCandidates, rateHz,
+        &Runtime::RateFormation::sampleRateHz);
+    return formation != config.rateFormationCandidates.end() && formation->layoutProvisional;
+}
+
 // Resolve from retained descriptor formations, never by scaling channel counts.
 // This is a value copy; callers install it only with both directions quiesced.
 [[nodiscard]] inline std::expected<ASFWAudioDevice, Runtime::ConfigurationError>
@@ -44,15 +51,19 @@ WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
 
 // Add one measured formation without changing the committed live format.
 // A known formation must agree: stale registers must not overwrite an EAP
-// catalog. The caller supplies a stable, route-checked hardware observation.
+// catalog. A provisional one is a placeholder and takes the measured layout.
+// The caller supplies a stable, route-checked hardware observation.
 [[nodiscard]] inline std::expected<ASFWAudioDevice, Runtime::ConfigurationError>
 WithObservedRateCatalog(const ASFWAudioDevice& prior, const Runtime::RateFormation& observed) {
+    if (observed.layoutProvisional) return std::unexpected(Runtime::ConfigurationError::InvalidFormation);
     auto next = prior;
     const auto existing = std::ranges::find(next.rateFormationCandidates,
         observed.sampleRateHz, &Runtime::RateFormation::sampleRateHz);
     if (existing == next.rateFormationCandidates.end()) {
         next.rateFormationCandidates.push_back(observed);
         std::ranges::sort(next.rateFormationCandidates, {}, &Runtime::RateFormation::sampleRateHz);
+    } else if (existing->layoutProvisional) {
+        *existing = observed;
     }
     const auto selected = WithRateFormation(next, observed.sampleRateHz);
     if (!selected) return std::unexpected(selected.error());

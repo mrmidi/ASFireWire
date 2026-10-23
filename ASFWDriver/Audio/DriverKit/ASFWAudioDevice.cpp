@@ -1103,6 +1103,29 @@ ResolveRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
         .resolved = std::make_shared<const ResolvedAudioConfiguration>(*resolved)};
 }
 
+// Take the nub's catalog after it measured `rateHz` from the device's
+// registers (CopyObservedRateCatalog). The device must be locked at the rate.
+[[nodiscard]] kern_return_t AdoptObservedRateCatalog(ASFWAudioDriver_IVars& driver, uint32_t rateHz) {
+    OSDictionary* rawProperties = nullptr;
+    const auto status = driver.device.audioNub->CopyObservedRateCatalog(rateHz, &rawProperties);
+    const auto properties = OSSharedPtr(rawProperties, OSNoRetain);
+    if (status != kIOReturnSuccess) return status;
+    ASFW::Isoch::Audio::ParsedAudioDriverConfig catalog{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(catalog);
+    ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(properties.get(), catalog);
+    if (catalog.guid != driver.device.guid ||
+        catalog.rateRouteIncarnation != driver.device.rateRouteIncarnation ||
+        std::ranges::find(catalog.rateFormationCandidates, rateHz,
+            &ASFW::Audio::Runtime::RateFormation::sampleRateHz) == catalog.rateFormationCandidates.end())
+        return kIOReturnAborted;
+    driver.device.rateFormationCandidates = std::move(catalog.rateFormationCandidates);
+    driver.device.sampleRateCount = catalog.sampleRateCount;
+    std::ranges::copy(std::span{catalog.sampleRates, catalog.sampleRateCount}, driver.device.sampleRates);
+    driver.device.rateRouteEpoch = catalog.rateRouteEpoch;
+    driver.device.rateBusGeneration = catalog.rateBusGeneration;
+    return kIOReturnSuccess;
+}
+
 void InstallDriverFormation(ASFWAudioDriver_IVars& driver,
                               const ASFW::Audio::Runtime::ResolvedAudioConfiguration& resolved) {
     auto& state = driver.device;
@@ -1493,24 +1516,8 @@ kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz)
             !std::holds_alternative<ASFW::Configuration::Uninitialized>(ivars->rateMachine.state);
         IOLockUnlock(ivars->rateLock);
         if (pending) return kIOReturnBusy;
-        OSDictionary* rawProperties = nullptr;
-        const auto status = driverIvars.device.audioNub->CopyObservedRateCatalog(nominalRateHz, &rawProperties);
-        const auto properties = OSSharedPtr(rawProperties, OSNoRetain);
+        const auto status = AdoptObservedRateCatalog(driverIvars, nominalRateHz);
         if (status != kIOReturnSuccess) return status;
-        ASFW::Isoch::Audio::ParsedAudioDriverConfig catalog{};
-        ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(catalog);
-        ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(properties.get(), catalog);
-        if (catalog.guid != driverIvars.device.guid ||
-            catalog.rateRouteIncarnation != driverIvars.device.rateRouteIncarnation ||
-            std::ranges::find(catalog.rateFormationCandidates, nominalRateHz,
-                &ASFW::Audio::Runtime::RateFormation::sampleRateHz) == catalog.rateFormationCandidates.end())
-            return kIOReturnAborted;
-        driverIvars.device.rateFormationCandidates = std::move(catalog.rateFormationCandidates);
-        driverIvars.device.sampleRateCount = catalog.sampleRateCount;
-        std::ranges::copy(std::span{catalog.sampleRates, catalog.sampleRateCount},
-                          driverIvars.device.sampleRates);
-        driverIvars.device.rateRouteEpoch = catalog.rateRouteEpoch;
-        driverIvars.device.rateBusGeneration = catalog.rateBusGeneration;
     }
     if (!driverIvars.device.rateFormationCandidates.empty())
         return StageSampleRate(nominalRateHz, true);
@@ -1652,11 +1659,32 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
             return status == kIOReturnSuccess ? kIOReturnNotReady : status;
         }
         auto commitConfiguration = transaction.candidate;
-        const bool requestedConfirmed = readback == kIOReturnSuccess && confirmed(transaction.candidate.sampleRate);
+        bool requestedConfirmed = readback == kIOReturnSuccess && confirmed(transaction.candidate.sampleRate);
         bool otherConfirmed = false;
         if (!requestedConfirmed && readback == kIOReturnSuccess && input && (output == input || output == 0)) {
             const auto actual = ResolveRate(driver, input, transaction.prior.revision + 1);
             if (actual) { commitConfiguration = *actual; otherConfirmed = true; }
+        }
+        // A provisional rate's layout is read now, with the clock locked at it,
+        // as TCAT's RestartStreaming reads TX/RX after CLOCK_ACCEPTED. The
+        // measured formation is never the staged placeholder, so the device
+        // confirmed another configuration than the candidate.
+        if ((requestedConfirmed || otherConfirmed) &&
+            commitConfiguration.resolved->formation.layoutProvisional) {
+            const uint32_t rate = commitConfiguration.sampleRate;
+            const auto adopted = AdoptObservedRateCatalog(driver, rate);
+            std::expected<DeviceConfiguration, kern_return_t> measured = std::unexpected(adopted);
+            if (adopted == kIOReturnSuccess) measured = ResolveRate(driver, rate, transaction.prior.revision + 1);
+            const bool learned = measured && !measured->resolved->formation.layoutProvisional;
+            if (learned) commitConfiguration = *measured;
+            else status = measured ? kIOReturnNotReady : measured.error();
+            otherConfirmed = learned;
+            requestedConfirmed = false;
+            ASFW_LOG(Audio, "[RateTxn] phase=learn token=%llu gen=%u rate=%u result=0x%x (%{public}s) in=%u out=%u",
+                transaction.identity.token, generation, rate, learned ? kIOReturnSuccess : status,
+                ASFW::Logging::IOReturnName(learned ? kIOReturnSuccess : status),
+                learned ? commitConfiguration.resolved->captureChannels : 0U,
+                learned ? commitConfiguration.resolved->playbackChannels : 0U);
         }
         ASFW_LOG(Audio, "[RateTxn] phase=confirm kind=%{public}s token=%llu gen=%u requested=%u out=%u in=%u kr=0x%x (%{public}s)",
             requestedConfirmed ? "requested" : otherConfirmed ? "other" : "unknown",

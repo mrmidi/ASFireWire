@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "ASFWAudioDevice.hpp"
+#include "RateConfiguration.hpp"
 #include "../Protocols/AudioTypes.hpp"
 #include <optional>
 #include <algorithm>
@@ -30,6 +31,19 @@ namespace ASFW::Audio {
     };
     return matches(config.playbackStreams, caps.hostToDeviceStreamCount, caps.hostToDeviceStreams) &&
         matches(config.captureStreams, caps.deviceToHostStreamCount, caps.deviceToHostStreams);
+}
+
+// Whether a hardware observation settles its rate for this endpoint: the clock
+// is confirmed at a rate the catalog offers, and the registers match that
+// rate's formation. A provisional formation has no layout to match yet; the
+// registers read now are its layout (WithObservedRateCatalog).
+[[nodiscard]] inline bool ObservationSettlesRate(const Model::ASFWAudioDevice& config,
+                                                 const RateHardwareObservation& observed) noexcept {
+    if (!observed.clockConfirmed) return false;
+    const uint32_t rate = observed.caps.sampleRateHz;
+    if (Model::LayoutIsProvisional(config, rate)) return true;
+    const auto actual = Model::WithRateFormation(config, rate);
+    return actual && RuntimeCapsMatchConfiguration(*actual, observed.caps);
 }
 
 [[nodiscard]] inline std::optional<AudioStreamRuntimeCaps> DiscoveredCaps(
