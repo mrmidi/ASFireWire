@@ -326,6 +326,9 @@ void LoginSession::ArmTimer(Fsm::Timer timer) noexcept {
         case Fsm::Timer::ReconnectRetry:
             arm(kRetryDelayMs, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
             break;
+        case Fsm::Timer::ReconnectResend:
+            arm(kReconnectResendDelayMs, Fsm::Ev::ReconnectRetryDue{});
+            break;
         case Fsm::Timer::LogoutTimeout:
             arm(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Logout});
             break;
@@ -790,9 +793,12 @@ void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& blo
         return;
     }
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        ASFW_LOG_SBP2( "LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
-                 block.sbpStatus);
-        (void)Apply(Fsm::Ev::ReconnectRejected{});
+        const bool retry = block.Response() == Wire::StatusBlock::kRespRequestComplete &&
+                           block.sbpStatus == Wire::SBPStatus::kUnspecifiedError;
+        ASFW_LOG_SBP2( "LoginSession: reconnect failed — sbpStatus=%u resp=%u, %{public}s",
+                 block.sbpStatus, block.Response(),
+                 retry ? "retrying" : "falling back to full login");
+        (void)Apply(Fsm::Ev::ReconnectRejected{retry});
         return;
     }
     const bool physicalDmaOk = EnablePhysicalDma(reconnecting->route);

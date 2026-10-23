@@ -426,6 +426,52 @@ TEST(LoginSessionTests, ReconnectRejectionEmitsSessionLostThenFreshLoginUpEdge) 
     EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
 }
 
+// Apple treats "request complete, unspecified error" as transient and sends the
+// reconnect again after 100 ms (IOFireWireSBP2Login.cpp:2498-2503); the login
+// is not lost.
+TEST(LoginSessionTests, ReconnectUnspecifiedErrorResendsInsteadOfLoggingIn) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_TRUE(rig.session.Resume());
+
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t reconnectStatusAddress = ReadORBAddress(
+        rig.addressManager, DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data),
+        offsetof(ReconnectORB, statusFIFOAddressHi), offsetof(ReconnectORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+    StatusBlock unspecified{};
+    unspecified.sbpStatus = SBPStatus::kUnspecifiedError;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&unspecified), sizeof(unspecified)});
+
+    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
+    rig.AdvanceMs(99);
+    EXPECT_EQ(reconnectWriteIndex + 1, rig.bus.WriteCount());
+    rig.AdvanceMs(1);
+    ASSERT_EQ(reconnectWriteIndex + 2, rig.bus.WriteCount());
+    const auto& resend = rig.bus.WriteAt(reconnectWriteIndex + 1);
+    ASSERT_TRUE(rig.bus.CompleteWrite(resend.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    StatusBlock good{};
+    good.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&good), sizeof(good)});
+
+    EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_EQ(0, statuses[0]);
+}
+
 TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
     SessionRig rig;
     rig.LoginSuccessfully();

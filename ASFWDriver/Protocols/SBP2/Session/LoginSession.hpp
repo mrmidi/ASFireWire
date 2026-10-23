@@ -289,6 +289,7 @@ private:
     bool executing_{false};
 
     static constexpr uint64_t kRetryDelayMs = 1000;
+    static constexpr uint64_t kReconnectResendDelayMs = 100;
 
     // Address space handles ---------------------------------------------------
     uint64_t loginORBHandle_{0};

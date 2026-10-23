@@ -254,6 +254,22 @@ TEST(LoginStateMachineTests, ReconnectingRejectedReportsLostThenLogsIn) {
     EXPECT_EQ(Op::Login, step.fx.write);
 }
 
+TEST(LoginStateMachineTests, ReconnectingUnspecifiedErrorResendsAfterABackoff) {
+    const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kOld}, Ev::ReconnectRejected{true});
+    ExpectRoute(As<St::Reconnecting>(step).route, kOld);
+    EXPECT_EQ(Timer::ReconnectResend, step.fx.arm);
+    EXPECT_FALSE(step.fx.sessionLostFirst);
+    EXPECT_FALSE(step.fx.cancelWindow);
+}
+
+TEST(LoginStateMachineTests, ReconnectingResendGoesToTheCurrentRoute) {
+    const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kOld}, Ev::ReconnectRetryDue{});
+    const auto& next = As<St::Reconnecting>(step);
+    EXPECT_EQ(0x42u, next.login.id);
+    ExpectRoute(next.route, kNow);
+    EXPECT_EQ(Op::Reconnect, step.fx.write);
+}
+
 TEST(LoginStateMachineTests, ReconnectingBusResetKeepsLoginHeld) {
     const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kNow}, Ev::BusReset{3});
     EXPECT_EQ(0x42u, As<St::SuspendedHeld>(step).login.id);

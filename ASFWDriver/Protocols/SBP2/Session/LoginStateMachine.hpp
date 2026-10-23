@@ -90,17 +90,21 @@ struct WriteRefused { Op op; };         // the bus refused the write synchronous
 struct WriteDone { Op op; uint16_t generation{0}; bool ok{false}; };
 struct Timeout { Op op; };
 struct LoginRetryDue {};
+struct ReconnectRetryDue {};
 struct ReconnectWindowClosed {};
 struct LoginAccepted { HeldLogin login; bool physicalDmaOk{false}; };
 struct LoginRejected {};                // error status, or the response is unreadable
 struct ReconnectAccepted { bool physicalDmaOk{false}; };
-struct ReconnectRejected {};
+// retry: request complete with sbp_status "unspecified error", which Apple
+// treats as transient (IOFireWireSBP2Login.cpp:2498-2503).
+struct ReconnectRejected { bool retry{false}; };
 struct LogoutDone {};
 } // namespace Ev
 
 using Event = std::variant<Ev::Login, Ev::Logout, Ev::Resume, Ev::BusReset, Ev::DeviceGone,
                            Ev::ResourcesUnavailable, Ev::WriteRefused, Ev::WriteDone, Ev::Timeout,
-                           Ev::LoginRetryDue, Ev::ReconnectWindowClosed, Ev::LoginAccepted,
+                           Ev::LoginRetryDue, Ev::ReconnectRetryDue, Ev::ReconnectWindowClosed,
+                           Ev::LoginAccepted,
                            Ev::LoginRejected,
                            Ev::ReconnectAccepted, Ev::ReconnectRejected, Ev::LogoutDone>;
 
@@ -108,6 +112,7 @@ enum class Timer : uint8_t {
     LoginTimeout,       // management timeout → Timeout{Login}
     LoginRetry,         // 1 s → LoginRetryDue
     ReconnectRetry,     // 1 s → Timeout{Reconnect}
+    ReconnectResend,    // 100 ms → ReconnectRetryDue (Apple :589)
     LogoutTimeout,      // management timeout → Timeout{Logout}
 };
 
@@ -343,8 +348,13 @@ template <class... F> struct Overload : F... { using F::operator()...; };
             if (!e.physicalDmaOk) return HoldWithoutDma(s.login, s.route.generation);
             return Bound(s.login, s.route, Op::Reconnect);
         },
-        [&](const St::Reconnecting& s, const Ev::ReconnectRejected&) -> R {
+        // Unspecified error: send the reconnect again until the window closes.
+        [&](const St::Reconnecting& s, const Ev::ReconnectRejected& e) -> R {
+            if (e.retry) return Step{s, {.arm = Timer::ReconnectResend}};
             return FallBackToLogin(s, now);
+        },
+        [&](const St::Reconnecting& s, const Ev::ReconnectRetryDue&) -> R {
+            return Step{St::Reconnecting{s.login, now}, {.write = Op::Reconnect}};
         },
         [&](const St::Reconnecting& s, const Ev::BusReset& e) -> R {
             return SuspendHeld(s.login, e.generation);

@@ -73,7 +73,9 @@ A:2202-2235). A held login that has not reconnected when it closes is lost.
 | Reconnecting | write ACKed | Reconnecting | (status due before the window closes) | Apple A:2349-2362 |
 | Reconnecting | accepted, physical DMA on | LoggedIn | close window, bind, busy timeout, report up | Apple A:2458-2496; Linux L:944-954 |
 | Reconnecting | accepted, physical DMA refused | SuspendedHeld | open window | Linux enables at reconnect L:1198 |
-| Reconnecting | rejected, retry timeout, window closed | LoggingIn(now) | close window, report session lost, then write login | Apple ReconnectFailed A:2504-2519, 2395-2413 → client logs in T:794-806 |
+| Reconnecting | rejected: request complete, unspecified error | Reconnecting | resend after 100 ms | Apple A:2498-2503, 589 |
+| Reconnecting | resend due | Reconnecting(now) | write reconnect | Apple `reconnectRetryTimeout` → `doReconnect` |
+| Reconnecting | rejected otherwise, retry timeout, window closed | LoggingIn(now) | close window, report session lost, then write login | Apple ReconnectFailed A:2504-2519, 2395-2413 → client logs in T:794-806 |
 | Reconnecting | bus reset | SuspendedHeld | cancel timer, unbind, release, restart window | Apple A:2072-2077 |
 | LoggingOut | write refused, resources unavailable | Failed | cancel timer | |
 | LoggingOut | write ACKed | LoggingOut | logout timeout | |
@@ -132,8 +134,6 @@ own queue, as before this change; only the login state is serialized here.
 
 Kept as they were; each changes bus behaviour and needs hardware to verify.
 
-2. **Reconnect with unspecified error.** Apple retries after 100 ms
-   (A:2498-2503). We fall back to a fresh login.
 3. **Logout while suspended.** Apple defers it until the reconnect resolves
    (`fLogoutPending`, A:2639-2655). We send it at once, to the node of the last
    rediscovery.
