@@ -489,18 +489,13 @@ uint64_t FetchAgent::MakeORBKey(const Async::FWAddress& address) noexcept {
 }
 
 uint16_t FetchAgent::MaxPayloadLog() const noexcept {
-    uint16_t payloadBytes = binding_.maxPayloadSize;
-    if (payloadBytes > 4096) {
-        payloadBytes = 4096;
-    }
-    const uint16_t quadlets = payloadBytes / 4;
-    if (quadlets == 0) {
-        return 0;
-    }
+    // Linux sbp2.c:1169-1176: 512 bytes at S100, doubling with link speed.
+    const auto speed = static_cast<unsigned>(TargetSpeed());
+    const uint32_t speedLimit = 512u << std::min(speed, 3u);
+    const uint32_t payloadBytes = std::min({uint32_t{binding_.maxPayloadSize}, 4096u, speedLimit});
+    const uint32_t quadlets = payloadBytes / 4;
     uint16_t log = 0;
-    while ((1u << log) < quadlets && log < 15) {
-        ++log;
-    }
+    while (log < 10 && (2u << log) <= quadlets) ++log;
     return log;
 }
 
