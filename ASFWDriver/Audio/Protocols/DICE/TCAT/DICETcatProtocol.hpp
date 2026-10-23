@@ -306,8 +306,10 @@ private:
         for (const auto& formation : *snapshot) {
             const auto existing = std::ranges::find(retained, formation.sampleRateHz,
                 &Runtime::RateFormation::sampleRateHz);
+            // A placeholder never replaces a layout read from the device: a
+            // re-describe after a reset rebuilds them for every rate.
             if (existing == retained.end()) retained.push_back(formation);
-            else *existing = formation;
+            else if (!formation.layoutProvisional || existing->layoutProvisional) *existing = formation;
         }
         std::ranges::sort(retained, {}, &Runtime::RateFormation::sampleRateHz);
         rateFormations_ = std::make_shared<const std::vector<Runtime::RateFormation>>(std::move(retained));

@@ -471,6 +471,7 @@ struct SessionShape {
     uint32_t unitVersion;
     const ::ASFW::Testing::DICE::DiceDeviceImage* diceImage{nullptr};  // null: scripted device
     bool spro24Dsp{false};
+    uint64_t guid{0};  // 0: synthetic OUI-prefixed GUID
 };
 
 inline constexpr uint32_t kDiceUnitVersion = 0x000001;
@@ -480,6 +481,7 @@ inline constexpr uint32_t kAvcUnitVersion = 0x010001;
 // The GUID carries the vendor's OUI in its top 24 bits, as a real one does;
 // the catalog cross-checks it.
 inline constexpr uint64_t SessionGuid(const SessionShape& shape) noexcept {
+    if (shape.guid != 0) return shape.guid;
     return (uint64_t{shape.vendorId} << 40) | 0x0004713ULL;
 }
 
@@ -497,6 +499,7 @@ inline ConfigROM MakeSessionRom(const SessionShape& shape, Generation gen) {
     unit.offsetQuadlets = 5;
     unit.unitSpecId = shape.unitSpecifier;
     unit.unitSwVersion = shape.unitVersion;
+    if (shape.guid != 0) unit.modelId = shape.modelId;  // a captured DICE unit directory carries it
     rom.unitDirectories.push_back(unit);
     return rom;
 }

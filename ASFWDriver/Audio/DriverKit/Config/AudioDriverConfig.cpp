@@ -269,6 +269,8 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
                 ? ::ASFW::Encoding::StreamMode::kBlocking : ::ASFW::Encoding::StreamMode::kNonBlocking;
             formation.protocolSupported = protocol->unsigned32BitValue() != 0;
             formation.hardwareValidated = validated->unsigned32BitValue() != 0;
+            if (auto* provisional = OSDynamicCast(OSNumber, entry->getObject(Keys::kFormationLayoutProvisional)))
+                formation.layoutProvisional = provisional->unsigned32BitValue() != 0;
             if (auto* packed = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPackedPcm")))
                 formation.packedPcm = packed->unsigned32BitValue() != 0;
             if (auto* value = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuCaptureMessageChunks")))

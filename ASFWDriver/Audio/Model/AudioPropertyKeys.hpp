@@ -53,6 +53,8 @@ inline constexpr const char* kRateFormations = "ASFWRateFormations";
 inline constexpr const char* kUsesRateFormations = "ASFWDiceRateFormations";
 inline constexpr const char* kFormationProtocolSupported = "ProtocolSupported";
 inline constexpr const char* kFormationHardwareValidated = "HardwareValidated";
+// Optional: absent means the formation's layout was read from the device.
+inline constexpr const char* kFormationLayoutProvisional = "LayoutProvisional";
 
 // Keys within one stream entry.
 inline constexpr const char* kStreamPcmChannels = "PCM";

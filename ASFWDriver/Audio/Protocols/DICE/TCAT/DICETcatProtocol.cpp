@@ -271,25 +271,47 @@ void DICETcatProtocol::InitialClockWrite(const std::shared_ptr<InitialClockPrepa
 }
 
 void DICETcatProtocol::InitialClockPoll(const std::shared_ptr<InitialClockPreparation>& state) {
+    // Both waits after the CLOCK_SELECT write are advisory, as in the TCAT
+    // driver (PaeFireStudio RestartStreaming 0xd8e2): it waits up to 150 ms
+    // for CLOCK_ACCEPTED and up to 1 s for lock, keeps waiting through a
+    // failed STATUS read, logs a timeout and creates the streams anyway. Only
+    // a failed write stops it. Stream start keeps its own lock gate.
     // Events arriving during a GLOBAL read overtake its snapshot: consume
     // them, but require another read before accepting that older locked state.
     state->notifications |= notifications_.Consume();
     diceReader_.ReadGlobalStateFull(sections_, [this, state](IOReturn status, GlobalState global) {
         if (!state->active.load(std::memory_order_acquire)) return;
         if (!InitialClockCurrent(state)) return;
-        if (status != kIOReturnSuccess) { FinishInitialClock(state, status); return; }
+        const uint64_t now = preparationScheduler_->NowNs();
+        const bool expired = now - state->startedNs >= 3'000'000'000ULL;
+        if (status != kIOReturnSuccess) {
+            // A bus reset or a cancellation ends this preparation; the new
+            // generation prepares again.
+            if (status == kIOReturnOffline || status == kIOReturnAborted) {
+                FinishInitialClock(state, status); return;
+            }
+            if (expired) {
+                ASFW_LOG(DICE, "[DiceInit] clock unconfirmed guid=%016llx: GLOBAL read kr=0x%x at deadline; "
+                         "continuing", guid_, status);
+                FinishInitialClock(state, kIOReturnSuccess); return;
+            }
+            ScheduleInitialClockPoll(state, 10, false);
+            return;
+        }
         const uint32_t late = notifications_.Consume();
         // GLOBAL can retain flags from before this write. Only newly set
         // register bits or fresh mailbox writes belong to this transition.
         state->notifications |= (global.notification & ~state->priorGlobalNotifications) | late;
-        const uint64_t now = preparationScheduler_->NowNs();
         const bool atTarget = global.clockSelect == state->clock.clockSelect &&
             NominalRateHz(global.status) == state->clock.sampleRateHz &&
             global.sampleRate == state->clock.sampleRateHz;
         const bool ready = atTarget &&
             (!runtimePolicy_.requireSourceLockBeforeStreamEnable || IsSourceLocked(global.status));
         if (!state->accepted && ((state->notifications & Notify::kClockAccepted) ||
-                                (now - state->startedNs >= 150'000'000ULL && ready))) {
+                                now - state->startedNs >= 150'000'000ULL)) {
+            if (!(state->notifications & Notify::kClockAccepted)) {
+                ASFW_LOG(DICE, "[DiceInit] no CLOCK_ACCEPTED within 150 ms guid=%016llx; continuing", guid_);
+            }
             state->accepted = true;
             state->acceptedNs = now;
         }
@@ -300,9 +322,11 @@ void DICETcatProtocol::InitialClockPoll(const std::shared_ptr<InitialClockPrepar
             !(late & (Notify::kLockChange | Notify::kRxConfigChange | Notify::kTxConfigChange))) {
             FinishInitialClock(state, kIOReturnSuccess); return;
         }
-        if ((!state->accepted && now - state->startedNs >= 150'000'000ULL) ||
-            now - state->startedNs >= 3'000'000'000ULL) {
-            FinishInitialClock(state, kIOReturnTimeout); return;
+        if (expired) {
+            ASFW_LOG(DICE, "[DiceInit] clock unconfirmed guid=%016llx: select=0x%08x status=0x%08x "
+                     "rate=%u notify=0x%x; continuing", guid_, global.clockSelect, global.status,
+                     global.sampleRate, state->notifications);
+            FinishInitialClock(state, kIOReturnSuccess); return;
         }
         ScheduleInitialClockPoll(state, 10, false);
     });
@@ -468,9 +492,16 @@ void DICETcatProtocol::ReadRateObservation(
                 if (stable && locked) {
                     const auto measured = DiceObservedRateFormation(caps,
                         runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                    // Learn a rate never seen, or read the layout of a
+                    // provisional one now that the clock is locked at it.
                     const auto known = RateFormations();
-                    if (measured && (!known || std::ranges::find(*known, measured->sampleRateHz,
-                        &Runtime::RateFormation::sampleRateHz) == known->end()))
+                    const bool unmeasured = [&] {
+                        if (!known) return true;
+                        const auto existing = std::ranges::find(*known, caps.sampleRateHz,
+                            &Runtime::RateFormation::sampleRateHz);
+                        return existing == known->end() || existing->layoutProvisional;
+                    }();
+                    if (measured && unmeasured)
                         PublishRateFormations(std::make_shared<const std::vector<Runtime::RateFormation>>(
                             std::vector<Runtime::RateFormation>{*measured}));
                 }
@@ -1141,10 +1172,18 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                         // locked at 88.2 kHz with its 48 kHz layout
                                         // (2026-10-08) used to overwrite the EAP 2x entry
                                         // with 16 inputs, and every 2x switch rolled back.
-                                        formats = SelectPublishedFormats(status == kIOReturnSuccess,
-                                                                         formats, caps);
+                                        const bool eapRead = status == kIOReturnSuccess;
+                                        ASFW_LOG(DICE, "DICETcatProtocol: rate formats from %{public}s "
+                                                 "(EAP read 0x%x (%{public}s)) rate=%u caps=0x%02x",
+                                                 eapRead ? "EAP" : "stream registers", status,
+                                                 ASFW::Logging::IOReturnName(status), caps.sampleRateHz,
+                                                 caps.deviceRateMask);
+                                        formats = SelectPublishedFormats(eapRead, formats, caps);
                                         auto formations = DiceFormations(caps.deviceRateMask, formats,
                                             runtimePolicy_.exposeDeviceToHostToCoreAudio);
+                                        if (!eapRead)
+                                            formations = WithProvisionalRates(caps.deviceRateMask,
+                                                std::move(formations), caps.sampleRateHz);
                                         PublishRateFormations(
                                             std::make_shared<const std::vector<Runtime::RateFormation>>(
                                                 std::move(formations)));

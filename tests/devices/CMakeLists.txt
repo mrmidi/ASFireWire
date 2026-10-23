@@ -540,6 +540,18 @@ add_device_test(DiceMultirateClockTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp")
 target_compile_definitions(DiceMultirateClockTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)
 
+# Rates of a DICE without EAP: announced from CLOCK_CAPS, layout read after the
+# switch. The flag matches every Xcode build.
+add_device_test(DiceNonEapRateTests
+    DiceNonEapRateTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceFamilyDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp")
+target_compile_definitions(DiceNonEapRateTests PRIVATE ASFW_DICE_MULTIRATE_VALIDATION=1)
+
 # RME Fireface adapter on the audio device host.
 add_device_test(RmeFamilyAdapterTests
     RmeFamilyAdapterTests.cpp

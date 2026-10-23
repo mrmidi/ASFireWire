@@ -384,3 +384,23 @@ TEST(NubGeometryRoundTrip, MotuHostAndWireWidthsSurviveTheCrossingSeparately) {
     EXPECT_EQ(parsed.rateFormationCandidates[0].capture[0].packedPcmChunks,18U);
     EXPECT_EQ(parsed.rateFormationCandidates[0].playback[0].packedPcmChunks,14U);
 }
+
+TEST(NubGeometryRoundTrip, ProvisionalLayoutFlagSurvivesTheCrossing) {
+    auto device = MakeVeniceF24();
+    ASFW::Audio::Runtime::RateFormation base{};
+    base.sampleRateHz = 48000;
+    base.protocolSupported = true;
+    base.playback = {{2, 3, 1, {}}};
+    base.capture = base.playback;
+    auto placeholder = base;
+    placeholder.sampleRateHz = 96000;
+    placeholder.layoutProvisional = true;
+    device.rateFormationCandidates = {base, placeholder};
+    bool published = false;
+    const auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    ASSERT_EQ(parsed.rateFormationCandidates.size(), 2U);
+    EXPECT_FALSE(parsed.rateFormationCandidates[0].layoutProvisional);
+    EXPECT_TRUE(parsed.rateFormationCandidates[1].layoutProvisional);
+    EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
+}

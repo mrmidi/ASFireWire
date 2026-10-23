@@ -6,6 +6,7 @@
 #include "../../../Runtime/ResolvedAudioConfiguration.hpp"
 #include "../../../../Common/WireFormat.hpp"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -81,7 +82,8 @@ DiceObservedFormat(const AudioStreamRuntimeCaps& caps) {
 /// formats stand for every mode and the stream registers are not consulted
 /// (Linux dice-stream.c:618-621): registers read before a clock select can
 /// describe another mode (:635-643). Without EAP only the observed mode is
-/// known (Linux's fallback); no clock probing, no guessed scaling.
+/// known here; the other rates are learned when the host selects them
+/// (WithProvisionalRates). No probing at attach, no guessed scaling.
 [[nodiscard]] inline DiceRateFormats SelectPublishedFormats(bool eapRead, DiceRateFormats eap,
                                                             const AudioStreamRuntimeCaps& caps) {
     if (eapRead) return eap;
@@ -125,6 +127,34 @@ DiceFormations(uint32_t mask, const DiceRateFormats& formats, bool exposeCapture
             true, false});
     }
     return result;
+}
+
+/// Without EAP the registers describe only the current rate's mode, yet the
+/// device runs every rate in CLOCK_CAPS. TCAT's kexts offer all of them and
+/// read the layout after switching: Saffire.kext 4.3.0 performFormatChange
+/// (0x5028) checks the rate against CLOCK_CAPS and requests a restart;
+/// RestartStreaming (0xdb02) writes CLOCK_SELECT, waits for CLOCK_ACCEPTED,
+/// reads TX/RX (PopulateDeviceStruct) and rebuilds the streams (CreateStreams).
+/// Each such rate here carries the current rate's layout as a placeholder for
+/// the HAL format list, marked layoutProvisional; the rate transaction reads
+/// the real layout before anything is installed.
+[[nodiscard]] inline std::vector<Runtime::RateFormation>
+WithProvisionalRates(uint32_t mask, std::vector<Runtime::RateFormation> measured,
+                     uint32_t currentRateHz) {
+    const auto current = std::ranges::find(measured, currentRateHz, &Runtime::RateFormation::sampleRateHz);
+    if (current == measured.end()) return measured;
+    const auto placeholder = *current;
+    for (const auto& rate : kDiceRateTable) {
+        if (!(mask & rate.capsBit) || std::ranges::find(measured, rate.hz,
+            &Runtime::RateFormation::sampleRateHz) != measured.end()) continue;
+        auto formation = placeholder;
+        formation.sampleRateHz = rate.hz;
+        formation.hardwareValidated = false;
+        formation.layoutProvisional = true;
+        measured.push_back(std::move(formation));
+    }
+    std::ranges::sort(measured, {}, &Runtime::RateFormation::sampleRateHz);
+    return measured;
 }
 
 // One observed rate is evidence for that rate only, even when the capability

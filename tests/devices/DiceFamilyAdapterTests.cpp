@@ -483,3 +483,35 @@ TEST(DescribeGeometryTest, GeometryReadFailureIsRefusedAsGeometryLoadFailed) {
 }
 
 } // namespace
+
+// Issue #189: FireStudio 2626 (vendor 0x000A92, model 0x08) has no catalog
+// row, so it is published through the generic DICE fallback: two streams each
+// way (16 + 10 PCM), no EAP. It published on build 19 and not after clock
+// preparation began gating publication, where one GLOBAL read failing while
+// the device applied the clock ended the preparation and refused the device.
+TEST(DescribeFireStudio2626Test, PublishedThroughAFailedClockPollRead) {
+    const SessionShape shape{"firestudio-2626", 0x000a92, 0x000008, 0x000a92,
+        ASFW::Testing::Session::kDiceUnitVersion,
+        &ASFW::Testing::DICE::DiceDeviceImages::kFirestudio2626, false,
+        0x000A92040210A2EFULL};
+    SessionRig rig(shape);
+    rig.bus.SetClockSelectWriteHandler([&rig] {
+        rig.bus.Device().RaiseNotification(ASFW::Audio::DICE::Notify::kClockAccepted);
+        rig.bus.FailNext(ASFW::Testing::OpKind::Read, 0xE0000028U,
+                         ASFW::Async::AsyncStatus::kBusyRetryExhausted);
+    });
+    DiceFamilyAdapter adapter{rig.notifications};
+    const auto in = MakeInput(rig);
+    ASSERT_NE(in.policy, nullptr) << "no audio policy: the generic DICE fallback refused the identity";
+    const auto result = Describe(adapter, in, rig.timer);
+    ASSERT_TRUE(result.has_value());
+    const auto* device = std::get_if<ASFWAudioDevice>(&*result);
+    if (device == nullptr) {
+        const auto* refusal = std::get_if<DescribeRefusal>(&*result);
+        FAIL() << "refused: " << (refusal ? refusal->reason : "(note)");
+    }
+    EXPECT_EQ(device->inputChannelCount, 26U);
+    EXPECT_EQ(device->outputChannelCount, 26U);
+    EXPECT_EQ(device->captureStreams.size(), 2U);
+    EXPECT_EQ(device->playbackStreams.size(), 2U);
+}

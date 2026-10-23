@@ -60,3 +60,65 @@ TEST(DiceMultirateValidation, EapFormatsAreNotOverwrittenByStaleRegisters) {
     EXPECT_EQ(withoutEap[1]->capture[0].pcmChannels, 16U);
     EXPECT_FALSE(withoutEap[2].has_value());
 }
+
+namespace {
+// FireStudio 2626 (issue #189 dump): no EAP, 16+MIDI and 10 channels each
+// way at 48 kHz, CLOCK_CAPS 44.1-96 kHz.
+ASFW::Audio::AudioStreamRuntimeCaps Firestudio2626Caps(uint32_t rate, uint16_t second) {
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    caps.sampleRateHz = rate;
+    caps.deviceRateMask = 0x1e;
+    caps.deviceToHostStreamCount = caps.hostToDeviceStreamCount = 2;
+    caps.deviceToHostStreams[0] = caps.hostToDeviceStreams[0] = {.pcmChannels = 16, .am824Slots = 17, .midiPorts = 1};
+    caps.deviceToHostStreams[1] = caps.hostToDeviceStreams[1] = {.pcmChannels = second, .am824Slots = second};
+    return caps;
+}
+
+std::vector<ASFW::Audio::Runtime::RateFormation> NonEapCatalog(const ASFW::Audio::AudioStreamRuntimeCaps& caps) {
+    using namespace ASFW::Audio::DICE;
+    return WithProvisionalRates(caps.deviceRateMask,
+        DiceFormations(caps.deviceRateMask, SelectPublishedFormats(false, {}, caps)), caps.sampleRateHz);
+}
+} // namespace
+
+// Saffire.kext 4.3.0 announces every CLOCK_CAPS rate with the current mode's
+// channel count and reads the real layout after switching (performFormatChange
+// 0x5028, RestartStreaming 0xdb02). Without EAP the other mode is a
+// placeholder: announced, never inferred.
+TEST(DiceMultirateValidation, NonEapDeviceAnnouncesEveryClockCapsRate) {
+    using namespace ASFW::Audio;
+    const auto catalog = NonEapCatalog(Firestudio2626Caps(48000, 10));
+    ASSERT_EQ(catalog.size(), 4U);
+    const std::array<uint32_t, 4> rates{44100, 48000, 88200, 96000};
+    for (size_t i = 0; i < rates.size(); ++i) {
+        EXPECT_EQ(catalog[i].sampleRateHz, rates[i]);
+        EXPECT_EQ(catalog[i].layoutProvisional, rates[i] > 48000) << rates[i];
+        EXPECT_FALSE(catalog[i].hardwareValidated);
+        EXPECT_EQ(catalog[i].capture, catalog[1].capture) << "the placeholder is the current layout";
+    }
+    EXPECT_TRUE(Runtime::RateEnabled(catalog[3], 48000, true));
+    const auto allocation = Runtime::MaximumFormationAllocation(catalog, {24576, 26, 26, 0});
+    ASSERT_TRUE(allocation);
+    EXPECT_EQ(allocation->captureChannelCapacity, ASFW::Encoding::kMaxPcmChannels);
+}
+
+TEST(DiceMultirateValidation, AttachedAtTwoXTheLowRatesArePlaceholders) {
+    const auto catalog = NonEapCatalog(Firestudio2626Caps(96000, 2));
+    ASSERT_EQ(catalog.size(), 4U);
+    EXPECT_TRUE(catalog[0].layoutProvisional);
+    EXPECT_TRUE(catalog[1].layoutProvisional);
+    EXPECT_FALSE(catalog[2].layoutProvisional);
+    EXPECT_FALSE(catalog[3].layoutProvisional);
+    EXPECT_EQ(catalog[1].capture[1].pcmChannels, 2U) << "the 2x layout stands in until 48 kHz is read";
+}
+
+TEST(DiceMultirateValidation, NoPlaceholderWithoutAKnownCurrentLayout) {
+    using namespace ASFW::Audio::DICE;
+    auto caps = Firestudio2626Caps(48000, 10);
+    caps.hostToDeviceStreams[0].am824Slots = 3; // not a coherent register layout
+    EXPECT_TRUE(NonEapCatalog(caps).empty());
+    caps = Firestudio2626Caps(48000, 10);
+    const auto measured = DiceFormations(0x06, SelectPublishedFormats(false, {}, caps));
+    // 48 kHz absent from the mask: nothing to stand in for the other rates.
+    EXPECT_EQ(WithProvisionalRates(0x18, measured, 32000).size(), measured.size());
+}
