@@ -416,13 +416,14 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
     if (!IsSupportedTaskManagementFunction(function)) {
         return false;
     }
-    if (session_.State() != LoginState::LoggedIn || managementORB_) {
+    const LoginSnapshot snap = session_.Snapshot();
+    if (snap.state != LoginState::LoggedIn || !snap.loginID || managementORB_) {
         return false;
     }
 
     auto orb = std::make_unique<SBP2ManagementORB>(bus_, busInfo_, addrSpaceMgr_, owner_);
     orb->SetFunction(function);
-    orb->SetLoginID(session_.LoginID());
+    orb->SetLoginID(*snap.loginID);
     orb->SetManagementAgentOffset(session_.TargetInfo().managementAgentOffset);
     // Grace beyond the advertised management timeout: a target can post status
     // a hair past its own Unit_Characteristics timeout (observed on the LS-9000,
@@ -432,7 +433,7 @@ bool CommandExecutor::SubmitTaskManagement(SBP2ManagementORB::Function function,
     // headroom instead. Not a model-specific value.
     orb->SetTimeout(session_.TargetInfo().managementTimeoutMs + kManagementTimeoutGraceMs);
     orb->SetScheduler(&scheduler_);
-    orb->SetTargetNode(session_.Generation(), session_.TargetInfo().targetNodeId);
+    orb->SetTargetNode(snap.generation, session_.TargetInfo().targetNodeId);
 
     const SBP2ManagementORB* submittedORB = orb.get();
     const std::weak_ptr<int> weak = lifetimeToken_;

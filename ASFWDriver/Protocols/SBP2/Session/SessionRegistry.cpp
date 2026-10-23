@@ -224,9 +224,10 @@ std::optional<SBP2SessionState> SessionRegistry::GetSessionState(void* owner,
     }
 
     SBP2SessionState state{};
-    state.loginState = record->session->State();
-    state.loginID = record->session->LoginID();
-    state.generation = record->session->Generation();
+    const LoginSnapshot snap = record->session->Snapshot();
+    state.loginState = snap.state;
+    state.loginID = snap.loginID.value_or(0);
+    state.generation = snap.generation;
     state.lastError = record->lastError;
     state.reconnectPending = (state.loginState == LoginState::Suspended);
     return state;
@@ -499,7 +500,7 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
 
             record.session->Configure(BuildTargetInfoFromUnit(*unit));
             record.route = *route;
-            ASFW_LOG(Async, "SessionRegistry: reconnecting session handle=%llu gen=%u",
+            ASFW_LOG(Async, "SessionRegistry: resuming session handle=%llu gen=%u",
                      handle, gen.value);
             toReconnect.push_back(record.session);
         }
@@ -511,8 +512,7 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
         session->AbandonSuspended();
     }
     for (auto& session : toReconnect) {
-        if (session->LoginID() == 0) (void)session->Login();
-        else (void)session->Reconnect();
+        (void)session->Resume();
     }
 }
 

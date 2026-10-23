@@ -1335,6 +1335,32 @@ TEST(SessionRegistryTests, BusResetDuringLoginLogsInAgainAfterRediscovery) {
     EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::LoggingIn, state->loginState);
 }
 
+// SBP-2 reserves no login_ID and the H4D assigns 0: a held login reconnects
+// whatever its ID (Apple decides by login state, IOFireWireSBP2Login.cpp:2067).
+// Treating 0 as "no login" sent a Login the target rejects while it holds ours.
+TEST(SessionRegistryTests, LoginIdZeroReconnectsAfterRediscovery) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle, 0);
+    while (rig.bus.PendingWriteCount() > 0) {
+        ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    }
+
+    rig.registry.OnBusReset(2);
+    rig.deviceManager.SuspendAllForBusReset();
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.UpsertDevice(Generation{2}, 0x33);
+    const size_t writesBefore = rig.bus.WriteCount();
+    rig.registry.RefreshTargets(Generation{2});
+
+    ASSERT_EQ(writesBefore + 1, rig.bus.WriteCount());
+    EXPECT_EQ(0x33u, rig.bus.WriteAt(writesBefore).nodeId.value);
+    const auto state = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Reconnecting, state->loginState);
+    EXPECT_EQ(0u, state->loginID);
+}
+
 class ReleaseParksCommandTest : public ::testing::TestWithParam<bool> {};
 
 // Quitting a client mid-transfer completes the task at once, but the target

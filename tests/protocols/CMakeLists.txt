@@ -321,6 +321,11 @@ add_protocols_test(FetchAgentTests
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
 )
 
+# SBP2 LoginStateMachine Tests (pure transition table)
+add_protocols_test(LoginStateMachineTests
+    LoginStateMachineTests.cpp
+)
+
 # SBP2 LoginSession Tests (login/reconnect/logout state machine + status routing)
 add_protocols_test(LoginSessionTests
     LoginSessionTests.cpp

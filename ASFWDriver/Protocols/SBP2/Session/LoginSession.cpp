@@ -1,4 +1,5 @@
-// LoginSession — SBP-2 login/reconnect/logout state machine. See LoginSession.hpp.
+// LoginSession — SBP-2 login/reconnect/logout. See LoginSession.hpp; the
+// transitions are LoginFsm (LoginStateMachine.hpp).
 //
 // Ported from PR #19's SBP2LoginSession, decomposed for DICE: the command plane
 // moved to FetchAgent (composed here), timers go through ISessionScheduler (one
@@ -16,10 +17,23 @@
 namespace ASFW::Protocols::SBP2 {
 
 using namespace ASFW::Protocols::SBP2::Wire;
+namespace Fsm = LoginFsm;
 
 // DICE's logging has no dedicated SBP-2 category; the session/command layer logs
 // under the Async subsystem category (matching FetchAgent).
 #define ASFW_LOG_SBP2(fmt, ...) ASFW_LOG(Async, fmt, ##__VA_ARGS__)
+
+namespace {
+
+uint64_t PackSnapshot(const Fsm::State& state) noexcept {
+    const auto* held = Fsm::Held(state);
+    return static_cast<uint64_t>(Fsm::Reported(state)) |
+           (static_cast<uint64_t>(Fsm::GenerationOf(state)) << 8) |
+           (static_cast<uint64_t>(held ? held->id : 0) << 24) |
+           (static_cast<uint64_t>(held != nullptr) << 40);
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Construction / Destruction
@@ -33,7 +47,8 @@ LoginSession::LoginSession(Async::IFireWireBus& bus,
     , busInfo_(busInfo)
     , addrSpaceMgr_(addrSpaceMgr)
     , scheduler_(scheduler)
-    , fetchAgent_(bus, busInfo, scheduler) {}
+    , fetchAgent_(bus, busInfo, scheduler)
+    , executorLock_(IOLockAlloc()) {}
 
 LoginSession::~LoginSession() {
     CancelManagementTimer();
@@ -59,6 +74,9 @@ LoginSession::~LoginSession() {
     }
     fetchAgent_.Unbind();
     DeallocateResources();
+    if (executorLock_) {
+        IOLockFree(executorLock_);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +95,7 @@ void LoginSession::Configure(const SBP2TargetInfo& info) noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// Login
+// Session operations
 // ---------------------------------------------------------------------------
 
 bool LoginSession::Login() noexcept {
@@ -85,208 +103,274 @@ bool LoginSession::Login() noexcept {
         ASFW_LOG_SBP2( "LoginSession::Login: not configured");
         return false;
     }
-    if (state_ == LoginState::LoggingIn || state_ == LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::Login: state=%{public}s, ignoring", ToString(state_));
-        return false;
-    }
-
-    if (!AllocateResources()) {
-        ASFW_LOG_SBP2( "LoginSession::Login: resource allocation failed");
-        SetState(LoginState::Failed);
-        return false;
-    }
-
-    SetState(LoginState::LoggingIn);
-    loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-    loginNodeID_ = targetInfo_.targetNodeId;
-
-    BuildLoginORB();
-
-    const FW::Generation gen{loginGeneration_};
-    const FW::NodeId node{static_cast<uint8_t>(TargetNodeShort())};
-    const Async::FWAddress mgmtAddr{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = 0xFFFF,
-        .addressLo = ManagementAgentAddressLo(targetInfo_.managementAgentOffset),
-        .nodeID = loginNodeID_}};
-    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
-
-    const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
-    loginWriteHandle_ = bus_.WriteBlock(
-        gen, node, mgmtAddr,
-        std::span<const uint8_t>{loginORBAddressBE_.data(), loginORBAddressBE_.size()},
-        speed,
-        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
-                                                         std::span<const uint8_t>) {
-            if (auto self = weakSelf.lock()) {
-                self->OnLoginWriteComplete(requestGeneration, status);
-            }
-        });
-
-    if (!loginWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Login: WriteBlock failed immediately");
-        SetState(LoginState::Failed);
-        return false;
-    }
-
-    StartLoginTimer();
-    return true;
+    return Request(Fsm::Ev::Login{}, "Login");
 }
-
-// ---------------------------------------------------------------------------
-// Logout
-// ---------------------------------------------------------------------------
 
 bool LoginSession::Logout() noexcept {
-    if (state_ != LoginState::LoggedIn && state_ != LoginState::Suspended) {
-        ASFW_LOG_SBP2( "LoginSession::Logout: state=%{public}s, ignoring", ToString(state_));
-        return false;
-    }
-
-    SetState(LoginState::LoggingOut);
-    fetchAgent_.Unbind();
-    BuildLogoutORB();
-
-    const FW::Generation gen{loginGeneration_};
-    const FW::NodeId node{static_cast<uint8_t>(TargetNodeShort())};
-    const Async::FWAddress mgmtAddr{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = 0xFFFF,
-        .addressLo = ManagementAgentAddressLo(targetInfo_.managementAgentOffset),
-        .nodeID = loginNodeID_}};
-    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
-
-    const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
-    logoutWriteHandle_ = bus_.WriteBlock(
-        gen, node, mgmtAddr,
-        std::span<const uint8_t>{logoutORBAddressBE_.data(), logoutORBAddressBE_.size()},
-        speed,
-        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
-                                                         std::span<const uint8_t>) {
-            if (auto self = weakSelf.lock()) {
-                self->OnLogoutWriteComplete(requestGeneration, status);
-            }
-        });
-
-    if (!logoutWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Logout: WriteBlock failed");
-        SetState(LoginState::Failed);
-        return false;
-    }
-
-    StartLogoutTimer();
-    return true;
+    return Request(Fsm::Ev::Logout{}, "Logout");
 }
 
-// ---------------------------------------------------------------------------
-// Reconnect
-// ---------------------------------------------------------------------------
-
-bool LoginSession::Reconnect() noexcept {
-    if (state_ != LoginState::Suspended && state_ != LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: state=%{public}s, ignoring", ToString(state_));
-        return false;
-    }
-
-    SetState(LoginState::Reconnecting);
-    loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-    loginNodeID_ = targetInfo_.targetNodeId;
-
-    if (!AllocateResources()) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: resource allocation failed");
-        SetState(LoginState::Failed);
-        return false;
-    }
-
-    BuildReconnectORB();
-
-    const FW::Generation gen{loginGeneration_};
-    const FW::NodeId node{static_cast<uint8_t>(TargetNodeShort())};
-    const Async::FWAddress mgmtAddr{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = 0xFFFF,
-        .addressLo = ManagementAgentAddressLo(targetInfo_.managementAgentOffset),
-        .nodeID = loginNodeID_}};
-    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
-
-    const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
-    reconnectWriteHandle_ = bus_.WriteBlock(
-        gen, node, mgmtAddr,
-        std::span<const uint8_t>{reconnectORBAddressBE_.data(), reconnectORBAddressBE_.size()},
-        speed,
-        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
-                                                         std::span<const uint8_t>) {
-            if (auto self = weakSelf.lock()) {
-                self->OnReconnectWriteComplete(requestGeneration, status);
-            }
-        });
-
-    if (!reconnectWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: WriteBlock failed, will retry");
-        ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
-        return true;  // will retry
-    }
-
-    return true;
+bool LoginSession::Resume() noexcept {
+    return Request(Fsm::Ev::Resume{}, "Resume");
 }
-
-// ---------------------------------------------------------------------------
-// Bus Reset Handling
-// ---------------------------------------------------------------------------
 
 void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
-    ASFW_LOG_SBP2( "LoginSession::HandleBusReset: state=%{public}s newGen=%u loginGen=%u",
-             ToString(state_), newGeneration, loginGeneration_.load());
-
-    switch (state_) {
-        case LoginState::LoggingIn:
-            CancelManagementTimer();
-            loginRetryCount_ = 0;
-            loginGeneration_ = newGeneration;
-            fetchAgent_.Unbind();
-            DeallocateResources();
-            loginID_ = 0;
-            SetState(LoginState::Suspended);
-            break;
-
-        case LoginState::LoggedIn:
-            CancelManagementTimer();
-            fetchAgent_.Unbind();
-            DeallocateResources();
-            SetState(LoginState::Suspended);
-            loginGeneration_ = newGeneration;
-            break;
-
-        case LoginState::Reconnecting:
-            CancelManagementTimer();
-            fetchAgent_.Unbind();
-            DeallocateResources();
-            loginGeneration_ = newGeneration;
-            SetState(LoginState::Suspended);
-            break;
-
-        case LoginState::LoggingOut:
-            CancelManagementTimer();
-            fetchAgent_.Unbind();
-            DeallocateResources();
-            SetState(LoginState::Idle);
-            break;
-
-        case LoginState::Failed:
-            DeallocateResources();
-            break;
-
-        default:
-            break;
-    }
+    Serialized([this, newGeneration] {
+        ASFW_LOG_SBP2( "LoginSession::HandleBusReset: state=%{public}s newGen=%u gen=%u",
+                 Fsm::Name(fsm_), newGeneration, Fsm::GenerationOf(fsm_));
+        (void)Apply(Fsm::Ev::BusReset{newGeneration});
+    });
 }
 
 void LoginSession::AbandonSuspended() noexcept {
-    if (state_ != LoginState::Suspended) {
+    Serialized([this] {
+        if (Fsm::Reported(fsm_) != LoginState::Suspended) {
+            return;
+        }
+        ASFW_LOG_SBP2("LoginSession: device gone while suspended — session lost");
+        (void)Apply(Fsm::Ev::DeviceGone{});
+    });
+}
+
+// ---------------------------------------------------------------------------
+// State machine
+// ---------------------------------------------------------------------------
+
+void LoginSession::Serialized(std::function<void()> work) noexcept {
+    IOLockLock(executorLock_);
+    pendingWork_.push_back(std::move(work));
+    if (executing_) {
+        IOLockUnlock(executorLock_);
         return;
     }
-    ASFW_LOG_SBP2("LoginSession: device gone while suspended — session lost");
-    CancelManagementTimer();
-    loginID_ = 0;
-    SetState(LoginState::Failed);
-    NotifySessionLost();
+    executing_ = true;
+    IOLockUnlock(executorLock_);
+
+    // A callback may drop the registry's reference mid-transition.
+    const auto keepAlive = weak_from_this().lock();
+    for (;;) {
+        IOLockLock(executorLock_);
+        if (pendingWork_.empty()) {
+            executing_ = false;
+            IOLockUnlock(executorLock_);
+            return;
+        }
+        auto next = std::move(pendingWork_.front());
+        pendingWork_.pop_front();
+        IOLockUnlock(executorLock_);
+        next();
+    }
+}
+
+void LoginSession::Dispatch(Fsm::Event event) noexcept {
+    Serialized([this, event = std::move(event)] { (void)Apply(event); });
+}
+
+bool LoginSession::Request(Fsm::Event event, const char* what) noexcept {
+    // Shared: if another thread is running work, ours runs after we return.
+    const auto accepted = std::make_shared<std::optional<bool>>();
+    Serialized([this, accepted, what, event = std::move(event)] {
+        *accepted = Apply(event);
+        if (!**accepted) {
+            ASFW_LOG_SBP2( "LoginSession::%{public}s: state=%{public}s, ignoring", what,
+                     Fsm::Name(fsm_));
+        }
+    });
+    if (!accepted->has_value()) {
+        return true;
+    }
+    // A write refused on the spot is queued behind the request and has run by
+    // now; it leaves the session Failed.
+    return **accepted && Snapshot().state != LoginState::Failed;
+}
+
+bool LoginSession::Apply(const Fsm::Event& event) noexcept {
+    auto step = Fsm::Transition(fsm_, event, Now());
+    if (!step) {
+        return false;
+    }
+    const Fsm::Effects& fx = step->fx;
+
+    if (fx.cancelTimer) {
+        CancelManagementTimer();
+    }
+    if (fx.unbind) {
+        fetchAgent_.Unbind();
+    }
+    if (fx.release) {
+        DeallocateResources();
+    }
+    // Down-edge for the old login before the fallback login's state is visible.
+    if (fx.sessionLostFirst) {
+        NotifySessionLost(fx.generation);
+    }
+    Commit(std::move(step->next));
+    if (fx.write) {
+        IssueWrite(*fx.write);
+    }
+    if (fx.arm) {
+        ArmTimer(*fx.arm);
+    }
+    if (fx.bind) {
+        BindCommandPlane(*fx.bind);
+    }
+    Notify(fx);
+    return true;
+}
+
+void LoginSession::Commit(Fsm::State next) noexcept {
+    const char* from = Fsm::Name(fsm_);
+    const char* to = Fsm::Name(next);
+    if (std::strcmp(from, to) != 0) {
+        ASFW_LOG_SBP2( "LoginSession: state %{public}s -> %{public}s", from, to);
+    }
+    fsm_ = std::move(next);
+    snapshot_.store(PackSnapshot(fsm_), std::memory_order_release);
+}
+
+Fsm::Route LoginSession::Now() const noexcept {
+    return Fsm::Route{static_cast<uint16_t>(busInfo_.GetGeneration().value),
+                      targetInfo_.targetNodeId};
+}
+
+LoginSnapshot LoginSession::Snapshot() const noexcept {
+    const uint64_t word = snapshot_.load(std::memory_order_acquire);
+    LoginSnapshot snap{};
+    snap.state = static_cast<LoginState>(word & 0xFFu);
+    snap.generation = static_cast<uint16_t>(word >> 8);
+    if ((word >> 40) & 1u) {
+        snap.loginID = static_cast<uint16_t>(word >> 24);
+    }
+    return snap;
+}
+
+void LoginSession::IssueWrite(Fsm::Op op) noexcept {
+    const auto route = Fsm::RouteOf(fsm_);
+    if (!route) {
+        return;
+    }
+    // Every management ORB needs the address spaces; a reset released them.
+    if (!AllocateResources()) {
+        ASFW_LOG_SBP2( "LoginSession: resource allocation failed");
+        Dispatch(Fsm::Ev::ResourcesUnavailable{});
+        return;
+    }
+
+    const auto* held = Fsm::Held(fsm_);
+    Async::AsyncHandle* handle = nullptr;
+    switch (op) {
+        case Fsm::Op::Login:
+            BuildLoginORB();
+            handle = &loginWriteHandle_;
+            break;
+        case Fsm::Op::Reconnect:
+            BuildReconnectORB(held ? held->id : 0);
+            handle = &reconnectWriteHandle_;
+            break;
+        case Fsm::Op::Logout:
+            BuildLogoutORB(held ? held->id : 0);
+            handle = &logoutWriteHandle_;
+            break;
+    }
+
+    const auto& orbAddress = OrbAddressFor(op);
+    const FW::NodeId node = ShortNode(route->node);
+    const Async::FWAddress mgmtAddr{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = 0xFFFF,
+        .addressLo = ManagementAgentAddressLo(targetInfo_.managementAgentOffset),
+        .nodeID = route->node}};
+
+    const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
+    *handle = bus_.WriteBlock(
+        FW::Generation{route->generation}, node, mgmtAddr,
+        std::span<const uint8_t>{orbAddress.data(), orbAddress.size()},
+        busInfo_.GetSpeed(node),
+        [weakSelf, op, generation = route->generation](Async::AsyncStatus status,
+                                                       std::span<const uint8_t>) {
+            if (auto self = weakSelf.lock()) {
+                if (status != Async::AsyncStatus::kSuccess) {
+                    ASFW_LOG_SBP2( "LoginSession: management write status=%{public}s",
+                             Async::ToString(status));
+                }
+                self->Dispatch(Fsm::Ev::WriteDone{
+                    op, generation, status == Async::AsyncStatus::kSuccess});
+            }
+        });
+
+    if (!*handle) {
+        ASFW_LOG_SBP2( "LoginSession: management WriteBlock failed immediately");
+        Dispatch(Fsm::Ev::WriteRefused{op});
+    }
+}
+
+void LoginSession::ArmTimer(Fsm::Timer timer) noexcept {
+    const uint64_t mgmtMs = targetInfo_.managementTimeoutMs;
+    switch (timer) {
+        case Fsm::Timer::LoginTimeout:
+            ArmManagementTimer(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Login});
+            break;
+        case Fsm::Timer::LoginRetry:
+            ArmManagementTimer(kRetryDelayMs, Fsm::Ev::LoginRetryDue{});
+            break;
+        case Fsm::Timer::ReconnectTimeout:
+            ArmManagementTimer(mgmtMs + 1000, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
+            break;
+        case Fsm::Timer::ReconnectRetry:
+            ArmManagementTimer(kRetryDelayMs, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
+            break;
+        case Fsm::Timer::LogoutTimeout:
+            ArmManagementTimer(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Logout});
+            break;
+    }
+}
+
+void LoginSession::Notify(const Fsm::Effects& fx) noexcept {
+    switch (fx.notify) {
+        case Fsm::Notify::None:
+            return;
+        case Fsm::Notify::SessionLost:
+            NotifySessionLost(fx.generation);
+            return;
+        case Fsm::Notify::LoggedIn:
+        case Fsm::Notify::LoginFailed:
+            if (loginCallback_) {
+                LoginCompleteParams params{};
+                params.status = fx.status;
+                if (const auto* held = Fsm::Held(fsm_)) {
+                    params.loginResponse = held->response;
+                }
+                params.generation = fx.generation;
+                loginCallback_(params);
+            }
+            return;
+        case Fsm::Notify::LogoutDone:
+            if (logoutCallback_) {
+                LogoutCompleteParams params{};
+                params.status = fx.status;
+                params.generation = fx.generation;
+                logoutCallback_(params);
+            }
+            return;
+    }
+}
+
+// A rejected or unanswered reconnect means the target dropped the old login —
+// typically a device power-cycle, which also reverts its command state
+// (initialization such as MODE SELECT is gone). Emit the terminal down-edge
+// for the old session BEFORE the fallback login: observers tear down state
+// keyed to it (the HBA destroys SCSI target 0), and the fresh login's up-edge
+// rebuilds it, forcing a full SAM re-probe/re-init against the rebooted device
+// instead of reusing its stale identity. Matches Apple's model — IOFireWireSBP2
+// reports a failed reconnect as a lost session to its clients rather than
+// silently re-logging-in underneath them.
+void LoginSession::NotifySessionLost(uint16_t generation) noexcept {
+    if (!loginCallback_) {
+        return;
+    }
+    LoginCompleteParams params{};
+    params.status = Fsm::kStatusSessionLost;
+    params.generation = generation;
+    loginCallback_(params);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +378,20 @@ void LoginSession::AbandonSuspended() noexcept {
 // ---------------------------------------------------------------------------
 
 uint32_t LoginSession::ReconnectHoldSeconds() const noexcept {
-    return reconnectHold_ > 0 ? (1u << reconnectHold_) : 0;
+    const auto* held = Fsm::Held(fsm_);
+    return held && held->reconnectHold > 0 ? (1u << held->reconnectHold) : 0;
+}
+
+Async::FWAddress LoginSession::CommandBlockAgent() const noexcept {
+    const auto* held = Fsm::Held(fsm_);
+    if (!held) {
+        return {};
+    }
+    const auto route = Fsm::RouteOf(fsm_);
+    return Async::FWAddress{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = held->commandBlockAgentHi,
+        .addressLo = held->commandBlockAgentLo,
+        .nodeID = route ? route->node : targetInfo_.targetNodeId}};
 }
 
 // ---------------------------------------------------------------------------
@@ -452,6 +549,21 @@ bool LoginSession::AllocateLogoutORBAddressSpace() noexcept {
 // ORB Construction
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Management agent write payload: [nodeID(2)][addressHi(2)][addressLo(4)] BE.
+void EncodeOrbAddress(std::array<uint8_t, 8>& out, uint16_t localNode,
+                      const AddressSpaceManager::AddressRangeMeta& meta) noexcept {
+    out[0] = static_cast<uint8_t>(localNode >> 8);
+    out[1] = static_cast<uint8_t>(localNode & 0xFF);
+    out[2] = static_cast<uint8_t>(meta.addressHi >> 8);
+    out[3] = static_cast<uint8_t>(meta.addressHi & 0xFF);
+    const uint32_t addrLoBE = OSSwapHostToBigInt32(meta.addressLo);
+    std::memcpy(&out[4], &addrLoBE, sizeof(uint32_t));
+}
+
+} // namespace
+
 void LoginSession::BuildLoginORB() noexcept {
     std::memset(&loginORBBuffer_, 0, sizeof(loginORBBuffer_));
 
@@ -475,23 +587,17 @@ void LoginSession::BuildLoginORB() noexcept {
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&loginORBBuffer_),
                                  sizeof(loginORBBuffer_)});
 
-    // Management agent write payload: [nodeID(2)][addressHi(2)][addressLo(4)] BE.
-    loginORBAddressBE_[0] = static_cast<uint8_t>(localNode >> 8);
-    loginORBAddressBE_[1] = static_cast<uint8_t>(localNode & 0xFF);
-    loginORBAddressBE_[2] = static_cast<uint8_t>(loginORBMeta_.addressHi >> 8);
-    loginORBAddressBE_[3] = static_cast<uint8_t>(loginORBMeta_.addressHi & 0xFF);
-    const uint32_t orbAddrLoBE = OSSwapHostToBigInt32(loginORBMeta_.addressLo);
-    std::memcpy(&loginORBAddressBE_[4], &orbAddrLoBE, sizeof(uint32_t));
+    EncodeOrbAddress(loginORBAddressBE_, localNode, loginORBMeta_);
 }
 
-void LoginSession::BuildReconnectORB() noexcept {
+void LoginSession::BuildReconnectORB(uint16_t loginID) noexcept {
     std::memset(&reconnectORBBuffer_, 0, sizeof(reconnectORBBuffer_));
 
     const uint16_t localNode =
         NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     reconnectORBBuffer_.options = Options::kReconnectNotify;
-    reconnectORBBuffer_.loginID = OSSwapHostToBigInt16(loginID_);
+    reconnectORBBuffer_.loginID = OSSwapHostToBigInt16(loginID);
     reconnectORBBuffer_.statusFIFOAddressHi =
         OSSwapHostToBigInt32(ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     reconnectORBBuffer_.statusFIFOAddressLo = OSSwapHostToBigInt32(statusBlockMeta_.addressLo);
@@ -501,22 +607,17 @@ void LoginSession::BuildReconnectORB() noexcept {
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&reconnectORBBuffer_),
                                  sizeof(reconnectORBBuffer_)});
 
-    reconnectORBAddressBE_[0] = static_cast<uint8_t>(localNode >> 8);
-    reconnectORBAddressBE_[1] = static_cast<uint8_t>(localNode & 0xFF);
-    reconnectORBAddressBE_[2] = static_cast<uint8_t>(reconnectORBMeta_.addressHi >> 8);
-    reconnectORBAddressBE_[3] = static_cast<uint8_t>(reconnectORBMeta_.addressHi & 0xFF);
-    const uint32_t addrLoBE = OSSwapHostToBigInt32(reconnectORBMeta_.addressLo);
-    std::memcpy(&reconnectORBAddressBE_[4], &addrLoBE, sizeof(uint32_t));
+    EncodeOrbAddress(reconnectORBAddressBE_, localNode, reconnectORBMeta_);
 }
 
-void LoginSession::BuildLogoutORB() noexcept {
+void LoginSession::BuildLogoutORB(uint16_t loginID) noexcept {
     std::memset(&logoutORBBuffer_, 0, sizeof(logoutORBBuffer_));
 
     const uint16_t localNode =
         NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     logoutORBBuffer_.options = Options::kLogoutNotify;
-    logoutORBBuffer_.loginID = OSSwapHostToBigInt16(loginID_);
+    logoutORBBuffer_.loginID = OSSwapHostToBigInt16(loginID);
     logoutORBBuffer_.statusFIFOAddressHi =
         OSSwapHostToBigInt32(ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     logoutORBBuffer_.statusFIFOAddressLo = OSSwapHostToBigInt32(statusBlockMeta_.addressLo);
@@ -526,192 +627,69 @@ void LoginSession::BuildLogoutORB() noexcept {
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&logoutORBBuffer_),
                                  sizeof(logoutORBBuffer_)});
 
-    logoutORBAddressBE_[0] = static_cast<uint8_t>(localNode >> 8);
-    logoutORBAddressBE_[1] = static_cast<uint8_t>(localNode & 0xFF);
-    logoutORBAddressBE_[2] = static_cast<uint8_t>(logoutORBMeta_.addressHi >> 8);
-    logoutORBAddressBE_[3] = static_cast<uint8_t>(logoutORBMeta_.addressHi & 0xFF);
-    const uint32_t addrLoBE = OSSwapHostToBigInt32(logoutORBMeta_.addressLo);
-    std::memcpy(&logoutORBAddressBE_[4], &addrLoBE, sizeof(uint32_t));
+    EncodeOrbAddress(logoutORBAddressBE_, localNode, logoutORBMeta_);
+}
+
+const std::array<uint8_t, 8>& LoginSession::OrbAddressFor(Fsm::Op op) const noexcept {
+    switch (op) {
+        case Fsm::Op::Login:     return loginORBAddressBE_;
+        case Fsm::Op::Reconnect: return reconnectORBAddressBE_;
+        case Fsm::Op::Logout:    return logoutORBAddressBE_;
+    }
+    return loginORBAddressBE_;
 }
 
 // ---------------------------------------------------------------------------
 // Command-plane binding
 // ---------------------------------------------------------------------------
 
-void LoginSession::BindFetchAgent() noexcept {
+void LoginSession::BindCommandPlane(Fsm::Op op) noexcept {
+    const auto* held = Fsm::Held(fsm_);
+    const auto route = Fsm::RouteOf(fsm_);
+    if (!held || !route) {
+        return;
+    }
+    BindFetchAgent(*held, *route);
+
+    // Login enables unsolicited status before the busy-timeout write (PR #19's
+    // ordering); a reconnect replays the busy timeout first.
+    if (op == Fsm::Op::Login) {
+        if (unsolicitedStatusRequested_) {
+            unsolicitedStatusRequested_ = false;
+            EnableUnsolicitedStatusNow();
+        }
+        ASFW_LOG_SBP2( "LoginSession: login successful — loginID=%u CBA=%04x:%08x reconnectHold=2^%u",
+                 held->id, held->commandBlockAgentHi, held->commandBlockAgentLo,
+                 held->reconnectHold);
+        WriteBusyTimeout();
+        return;
+    }
+
+    ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", held->id);
+    WriteBusyTimeout();
+    if (unsolicitedStatusRequested_) {
+        unsolicitedStatusRequested_ = false;
+        EnableUnsolicitedStatusNow();
+    }
+}
+
+void LoginSession::BindFetchAgent(const Fsm::HeldLogin& login, const Fsm::Route& route) noexcept {
     const auto cbaAddr = [&](uint32_t offset) {
         return Async::FWAddress{Async::FWAddress::QualifiedAddressParts{
-            .addressHi = commandBlockAgent_.addressHi,
-            .addressLo = commandBlockAgent_.addressLo + offset,
-            .nodeID = loginNodeID_}};
+            .addressHi = login.commandBlockAgentHi,
+            .addressLo = login.commandBlockAgentLo + offset,
+            .nodeID = route.node}};
     };
 
     FetchAgent::Binding binding{};
-    binding.generation = loginGeneration_;
-    binding.nodeID = loginNodeID_;
+    binding.generation = route.generation;
+    binding.nodeID = route.node;
     binding.fetchAgentAddress = cbaAddr(Wire::CommandBlockAgentOffsets::kFetchAgent);
     binding.agentResetAddress = cbaAddr(Wire::CommandBlockAgentOffsets::kAgentReset);
     binding.maxPayloadSize = maxPayloadSize_;
     fetchAgent_.Bind(binding);
 
-    RefreshUnsolicitedStatusAddress();
-}
-
-void LoginSession::RefreshUnsolicitedStatusAddress() noexcept {
-    unsolicitedStatusAddress_ = Async::FWAddress{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = commandBlockAgent_.addressHi,
-        .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kUnsolicitedStatusEnable,
-        .nodeID = loginNodeID_}};
-}
-
-// ---------------------------------------------------------------------------
-// Management Write Completions
-// ---------------------------------------------------------------------------
-
-void LoginSession::OnLoginWriteComplete(uint16_t expectedGeneration,
-                                        Async::AsyncStatus status) noexcept {
-    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggingIn) {
-        return;
-    }
-
-    CancelManagementTimer();
-
-    if (status != Async::AsyncStatus::kSuccess) {
-        if (loginRetryCount_ < kLoginRetryMax) {
-            loginRetryCount_++;
-            ArmManagementTimer(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
-            });
-            return;
-        }
-
-        ASFW_LOG_SBP2( "LoginSession: login retries exhausted");
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -1;
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
-        return;
-    }
-
-    // Management agent write ACK'd. Wait for the device to write the status block;
-    // restart the timer for the device processing window.
-    StartLoginTimer();
-}
-
-void LoginSession::OnLoginTimeout() noexcept {
-    if (state_ != LoginState::LoggingIn) {
-        return;
-    }
-
-    if (loginRetryCount_ < kLoginRetryMax) {
-        loginRetryCount_++;
-        SetState(LoginState::Idle);
-        (void)Login();
-    } else {
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -2;  // timeout
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
-    }
-}
-
-void LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
-                                            Async::AsyncStatus status) noexcept {
-    if (expectedGeneration != loginGeneration_ || state_ != LoginState::Reconnecting) {
-        return;
-    }
-
-    if (status != Async::AsyncStatus::kSuccess) {
-        // The old retry called Reconnect(), which ignores anything but
-        // Suspended/LoggedIn — so a failed write left the session Reconnecting
-        // with no timer, forever (e.g. device unplugged mid-reconnect). A failed
-        // reconnect write is a failed reconnect: Apple reports the session lost
-        // and its client logs in afresh (IOFireWireSBP2Login::doReconnect,
-        // IOFireWireSBP2Login.cpp:2285). Same fallback as a synchronous
-        // WriteBlock failure in Reconnect().
-        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, session lost",
-                 Async::ToString(status));
-        ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
-        return;
-    }
-
-    // Reconnect ORB write ACK'd. Wait for the status block from the device.
-    StartReconnectTimer();
-}
-
-void LoginSession::OnReconnectTimeout() noexcept {
-    if (state_ != LoginState::Reconnecting) {
-        return;
-    }
-    ASFW_LOG_SBP2( "LoginSession: reconnect timeout, falling back to full login");
-    NotifySessionLost();
-    SetState(LoginState::Idle);
-    (void)Login();
-}
-
-// A rejected or unanswered reconnect means the target dropped the old login —
-// typically a device power-cycle, which also reverts its command state
-// (initialization such as MODE SELECT is gone). Emit the terminal down-edge
-// for the old session BEFORE the fallback login: observers tear down state
-// keyed to it (the HBA destroys SCSI target 0), and the fresh login's up-edge
-// rebuilds it, forcing a full SAM re-probe/re-init against the rebooted device
-// instead of reusing its stale identity. Matches Apple's model — IOFireWireSBP2
-// reports a failed reconnect as a lost session to its clients rather than
-// silently re-logging-in underneath them.
-void LoginSession::NotifySessionLost() noexcept {
-    if (!loginCallback_) {
-        return;
-    }
-    LoginCompleteParams params{};
-    params.status = kStatusSessionLost;
-    params.generation = loginGeneration_;
-    loginCallback_(params);
-}
-
-void LoginSession::OnLogoutWriteComplete(uint16_t expectedGeneration,
-                                         Async::AsyncStatus status) noexcept {
-    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggingOut) {
-        return;
-    }
-
-    if (status != Async::AsyncStatus::kSuccess) {
-        CancelManagementTimer();
-        loginID_ = 0;
-        SetState(LoginState::Idle);
-        if (logoutCallback_) {
-            LogoutCompleteParams params{};
-            params.status = -1;
-            params.generation = loginGeneration_;
-            logoutCallback_(params);
-        }
-        return;
-    }
-
-    StartLogoutTimer();
-}
-
-void LoginSession::OnLogoutTimeout() noexcept {
-    if (state_ != LoginState::LoggingOut) {
-        return;
-    }
-    ASFW_LOG_SBP2( "LoginSession: logout timeout, transitioning to Idle anyway");
-    loginID_ = 0;
-    SetState(LoginState::Idle);
-    if (logoutCallback_) {
-        LogoutCompleteParams params{};
-        params.status = -2;
-        params.generation = loginGeneration_;
-        logoutCallback_(params);
-    }
+    unsolicitedStatusAddress_ = cbaAddr(Wire::CommandBlockAgentOffsets::kUnsolicitedStatusEnable);
 }
 
 // ---------------------------------------------------------------------------
@@ -731,55 +709,43 @@ void LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
     }
     std::memcpy(&block, payload.data(), len);
 
-    ASFW_LOG_SBP2( "LoginSession::OnStatusBlockRemoteWrite: state=%{public}s offset=%u len=%u sbpStatus=%u",
-             ToString(state_), offset, len, block.sbpStatus);
+    Serialized([this, block, offset, len] {
+        ASFW_LOG_SBP2( "LoginSession::OnStatusBlockRemoteWrite: state=%{public}s offset=%u len=%u sbpStatus=%u",
+                 Fsm::Name(fsm_), offset, len, block.sbpStatus);
 
-    switch (state_) {
-        case LoginState::LoggingIn:
-            CancelManagementTimer();
-            CompleteLoginFromStatusBlock(block, len);
-            break;
-        case LoginState::Reconnecting:
-            CancelManagementTimer();
-            CompleteReconnectFromStatusBlock(block, len);
-            break;
-        case LoginState::LoggingOut:
-            CancelManagementTimer();
-            CompleteLogoutFromStatusBlock(block, len);
-            break;
-        case LoginState::LoggedIn:
-            ProcessStatusBlock(block, len);
-            break;
-        default:
-            ASFW_LOG_SBP2( "LoginSession: unexpected status block in state %{public}s", ToString(state_));
-            break;
-    }
+        switch (Fsm::Reported(fsm_)) {
+            case LoginState::LoggingIn:
+                CompleteLoginFromStatusBlock(block);
+                break;
+            case LoginState::Reconnecting:
+                CompleteReconnectFromStatusBlock(block);
+                break;
+            case LoginState::LoggingOut:
+                ASFW_LOG_SBP2( "LoginSession: logout complete (was loginID=%u)",
+                         Fsm::Held(fsm_) ? Fsm::Held(fsm_)->id : 0);
+                (void)Apply(Fsm::Ev::LogoutDone{});
+                break;
+            case LoginState::LoggedIn:
+                ProcessStatusBlock(block, len);
+                break;
+            default:
+                ASFW_LOG_SBP2( "LoginSession: unexpected status block in state %{public}s",
+                         Fsm::Name(fsm_));
+                break;
+        }
+    });
 }
 
-void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
-                                                uint32_t length) noexcept {
+void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block) noexcept {
+    const auto* loggingIn = std::get_if<Fsm::St::LoggingIn>(&fsm_);
+    if (!loggingIn) {
+        return;
+    }
+
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
         ASFW_LOG_SBP2( "LoginSession: login failed — sbpStatus=%u, retrying (%u/%u)",
-                 block.sbpStatus, loginRetryCount_ + 1, kLoginRetryMax);
-        if (loginRetryCount_ < kLoginRetryMax) {
-            loginRetryCount_++;
-            ArmManagementTimer(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
-            });
-            return;
-        }
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -1;
-            params.statusBlock = block;
-            params.statusBlockLength = length;
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
+                 block.sbpStatus, loggingIn->retries + 1, Fsm::kLoginRetryMax);
+        (void)Apply(Fsm::Ev::LoginRejected{});
         return;
     }
 
@@ -791,139 +757,55 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
     if (kr != kIOReturnSuccess || responseData.size() < sizeof(Wire::LoginResponse)) {
         ASFW_LOG_SBP2( "LoginSession: failed to read login response (kr=0x%08x, len=%zu)",
                  kr, responseData.size());
-        if (loginRetryCount_ < kLoginRetryMax) {
-            loginRetryCount_++;
-            ArmManagementTimer(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
-            });
-            return;
-        }
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -1;
-            params.statusBlock = block;
-            params.statusBlockLength = length;
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
+        (void)Apply(Fsm::Ev::LoginRejected{});
         return;
     }
 
     Wire::LoginResponse resp{};
     std::memcpy(&resp, responseData.data(), sizeof(resp));
 
-    loginID_ = OSSwapBigToHostInt16(resp.loginID);
-    reconnectHold_ = OSSwapBigToHostInt16(resp.reconnectHold);
-    loginResponse_ = resp;
+    Fsm::HeldLogin login{};
+    login.id = OSSwapBigToHostInt16(resp.loginID);
+    login.reconnectHold = OSSwapBigToHostInt16(resp.reconnectHold);
+    login.commandBlockAgentHi =
+        static_cast<uint16_t>(OSSwapBigToHostInt32(resp.commandBlockAgentAddressHi) & 0xFFFFu);
+    login.commandBlockAgentLo = OSSwapBigToHostInt32(resp.commandBlockAgentAddressLo);
+    login.response = resp;
 
-    const uint32_t cbaHi = OSSwapBigToHostInt32(resp.commandBlockAgentAddressHi);
-    const uint32_t cbaLo = OSSwapBigToHostInt32(resp.commandBlockAgentAddressLo);
-    commandBlockAgent_ = Async::FWAddress{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = static_cast<uint16_t>(cbaHi & 0xFFFFu),
-        .addressLo = cbaLo,
-        .nodeID = loginNodeID_}};
-
-    loginRetryCount_ = 0;
-    if (!EnablePhysicalDma()) {
-        return;
-    }
-    SetState(LoginState::LoggedIn);
-    BindFetchAgent();
-
-    // If unsolicited status was requested before login, enable it now (before the
-    // busy-timeout write, matching PR #19's ordering).
-    if (unsolicitedStatusRequested_) {
-        unsolicitedStatusRequested_ = false;
-        EnableUnsolicitedStatus();
-    }
-
-    ASFW_LOG_SBP2( "LoginSession: login successful — loginID=%u CBA=%04x:%08x reconnectHold=2^%u",
-             loginID_.load(), commandBlockAgent_.addressHi, commandBlockAgent_.addressLo, reconnectHold_);
-
-    WriteBusyTimeout();
-
-    if (loginCallback_) {
-        LoginCompleteParams params{};
-        params.status = 0;
-        params.loginResponse = loginResponse_;
-        params.statusBlock = block;
-        params.statusBlockLength = length;
-        params.generation = loginGeneration_;
-        loginCallback_(params);
-    }
+    const bool physicalDmaOk = EnablePhysicalDma(loggingIn->route);
+    (void)Apply(Fsm::Ev::LoginAccepted{login, physicalDmaOk});
 }
 
-void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block,
-                                                    uint32_t length) noexcept {
+void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block) noexcept {
+    const auto* reconnecting = std::get_if<Fsm::St::Reconnecting>(&fsm_);
+    if (!reconnecting) {
+        return;
+    }
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
         ASFW_LOG_SBP2( "LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
                  block.sbpStatus);
-        NotifySessionLost();
-        SetState(LoginState::Idle);
-        (void)Login();
+        (void)Apply(Fsm::Ev::ReconnectRejected{});
         return;
     }
-
-    if (!EnablePhysicalDma()) {
-        return;
-    }
-    SetState(LoginState::LoggedIn);
-    BindFetchAgent();
-    ASFW_LOG_SBP2( "LoginSession: reconnect successful — loginID=%u", loginID_.load());
-
-    WriteBusyTimeout();
-
-    if (unsolicitedStatusRequested_) {
-        unsolicitedStatusRequested_ = false;
-        EnableUnsolicitedStatus();
-    }
-
-    if (loginCallback_) {
-        LoginCompleteParams params{};
-        params.status = 0;
-        params.loginResponse = loginResponse_;
-        params.statusBlock = block;
-        params.statusBlockLength = length;
-        params.generation = loginGeneration_;
-        loginCallback_(params);
-    }
+    const bool physicalDmaOk = EnablePhysicalDma(reconnecting->route);
+    (void)Apply(Fsm::Ev::ReconnectAccepted{physicalDmaOk});
 }
 
 // Command data moves by physical DMA, so a login is usable only once the OHCI
 // admits the target's node for this generation; Linux enables at login
 // (sbp2.c:1146) and reconnect (sbp2.c:1198) the same way. A stale generation
 // means a reset is already in flight: wait for rediscovery like any reset.
-bool LoginSession::EnablePhysicalDma() noexcept {
+bool LoginSession::EnablePhysicalDma(const Fsm::Route& route) noexcept {
     if (!physicalDma_) {
         return true;
     }
-    const auto enabled = physicalDma_(loginNodeID_, loginGeneration_.load());
+    const auto enabled = physicalDma_(route.node, route.generation);
     if (enabled) {
         return true;
     }
     ASFW_LOG_SBP2("LoginSession: physical DMA not enabled for node=0x%04x gen=%u (err=%u), suspending",
-                  loginNodeID_, loginGeneration_.load(), static_cast<unsigned>(enabled.error()));
-    SetState(LoginState::Suspended);
+                  route.node, route.generation, static_cast<unsigned>(enabled.error()));
     return false;
-}
-
-void LoginSession::CompleteLogoutFromStatusBlock(const Wire::StatusBlock& /*block*/,
-                                                 uint32_t /*length*/) noexcept {
-    const uint16_t oldLoginID = loginID_;
-    loginID_ = 0;
-    SetState(LoginState::Idle);
-    ASFW_LOG_SBP2( "LoginSession: logout complete (was loginID=%u)", oldLoginID);
-
-    if (logoutCallback_) {
-        LogoutCompleteParams params{};
-        params.status = 0;
-        params.generation = loginGeneration_;
-        logoutCallback_(params);
-    }
 }
 
 void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept {
@@ -935,7 +817,7 @@ void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t l
     }
 
     if (isUnsolicited) {
-        EnableUnsolicitedStatus();  // re-arm so the device can send more
+        EnableUnsolicitedStatusNow();  // re-arm so the device can send more
         return;
     }
 
@@ -947,8 +829,9 @@ void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t l
 // ---------------------------------------------------------------------------
 
 bool LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
-    if (state_ != LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state_));
+    const LoginState state = Snapshot().state;
+    if (state != LoginState::LoggedIn) {
+        ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state));
         return false;
     }
     return fetchAgent_.Submit(orb);
@@ -963,29 +846,36 @@ void LoginSession::ResetFetchAgent(std::function<void(int)> callback) noexcept {
 // ---------------------------------------------------------------------------
 
 void LoginSession::EnableUnsolicitedStatus() noexcept {
-    if (state_ != LoginState::LoggedIn) {
+    Serialized([this] { EnableUnsolicitedStatusNow(); });
+}
+
+void LoginSession::EnableUnsolicitedStatusNow() noexcept {
+    const auto* loggedIn = std::get_if<Fsm::St::LoggedIn>(&fsm_);
+    if (!loggedIn) {
         unsolicitedStatusRequested_ = true;
         return;
     }
 
-    const FW::Generation gen{loginGeneration_};
-    const FW::NodeId node{static_cast<uint8_t>(TargetNodeShort())};
-    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
-
+    const auto route = loggedIn->route;
+    const FW::NodeId node = ShortNode(route.node);
     const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
     unsolicitedStatusWriteHandle_ = bus_.WriteQuad(
-        gen, node, unsolicitedStatusAddress_, 0, speed,
-        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
+        FW::Generation{route.generation}, node, unsolicitedStatusAddress_, 0,
+        busInfo_.GetSpeed(node),
+        [weakSelf, requestGeneration = route.generation](Async::AsyncStatus status,
                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
-                self->OnUnsolicitedStatusEnableComplete(requestGeneration, status);
+                self->Serialized([self, requestGeneration, status] {
+                    self->OnUnsolicitedStatusEnableComplete(requestGeneration, status);
+                });
             }
         });
 }
 
 void LoginSession::OnUnsolicitedStatusEnableComplete(uint16_t expectedGeneration,
                                                      Async::AsyncStatus status) noexcept {
-    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggedIn) {
+    const auto* loggedIn = std::get_if<Fsm::St::LoggedIn>(&fsm_);
+    if (!loggedIn || expectedGeneration != loggedIn->route.generation) {
         return;
     }
     if (status != Async::AsyncStatus::kSuccess) {
@@ -1003,25 +893,29 @@ void LoginSession::WriteBusyTimeout() noexcept {
         bus_.Cancel(busyTimeoutWriteHandle_);
         busyTimeoutInProgress_ = false;
     }
+    const auto route = Fsm::RouteOf(fsm_);
+    if (!route) {
+        return;
+    }
 
-    const FW::Generation gen{loginGeneration_};
-    const FW::NodeId node{static_cast<uint8_t>(TargetNodeShort())};
+    const FW::NodeId node = ShortNode(route->node);
     const Async::FWAddress busyAddr{Async::FWAddress::QualifiedAddressParts{
         .addressHi = kCSRBusAddressHi,
         .addressLo = kBusyTimeoutAddressLo,
-        .nodeID = loginNodeID_}};
-    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+        .nodeID = route->node}};
 
     busyTimeoutInProgress_ = true;
     const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
     busyTimeoutWriteHandle_ = bus_.WriteBlock(
-        gen, node, busyAddr,
+        FW::Generation{route->generation}, node, busyAddr,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&busyTimeoutBuffer_), 4},
-        speed,
-        [weakSelf, requestGeneration = loginGeneration_.load()](Async::AsyncStatus status,
-                                                         std::span<const uint8_t>) {
+        busInfo_.GetSpeed(node),
+        [weakSelf, requestGeneration = route->generation](Async::AsyncStatus status,
+                                                          std::span<const uint8_t>) {
             if (auto self = weakSelf.lock()) {
-                self->OnBusyTimeoutComplete(requestGeneration, status);
+                self->Serialized([self, requestGeneration, status] {
+                    self->OnBusyTimeoutComplete(requestGeneration, status);
+                });
             }
         });
 
@@ -1033,7 +927,7 @@ void LoginSession::WriteBusyTimeout() noexcept {
 
 void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
                                          Async::AsyncStatus status) noexcept {
-    if (expectedGeneration != loginGeneration_) {
+    if (expectedGeneration != Fsm::GenerationOf(fsm_)) {
         return;
     }
     busyTimeoutInProgress_ = false;
@@ -1046,38 +940,28 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
 // Helpers
 // ---------------------------------------------------------------------------
 
-void LoginSession::SetState(LoginState newState) noexcept {
-    if (state_ != newState) {
-        ASFW_LOG_SBP2( "LoginSession: state %{public}s -> %{public}s", ToString(state_), ToString(newState));
-        state_ = newState;
-    }
-}
-
-void LoginSession::StartLoginTimer() noexcept {
-    ArmManagementTimer(targetInfo_.managementTimeoutMs, [this]() { OnLoginTimeout(); });
-}
-
-void LoginSession::StartReconnectTimer() noexcept {
-    ArmManagementTimer(targetInfo_.managementTimeoutMs + 1000, [this]() { OnReconnectTimeout(); });
-}
-
-void LoginSession::StartLogoutTimer() noexcept {
-    ArmManagementTimer(targetInfo_.managementTimeoutMs, [this]() { OnLogoutTimeout(); });
-}
-
-void LoginSession::ArmManagementTimer(uint64_t delayMs, std::function<void()> fn) noexcept {
+// A timer that fires after it was cancelled or re-armed (its work queued
+// behind the transition that did so) is dropped by its arm count.
+void LoginSession::ArmManagementTimer(uint64_t delayMs, Fsm::Event event) noexcept {
     CancelManagementTimer();
+    const uint64_t arm = timerArm_;
     const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
     managementTimerToken_ = scheduler_.ScheduleAfter(
-        delayMs * 1'000'000ULL, [weakSelf, fn = std::move(fn)]() mutable {
+        delayMs * 1'000'000ULL, [weakSelf, arm, event = std::move(event)]() mutable {
             if (auto self = weakSelf.lock()) {
-                self->managementTimerToken_ = kInvalidSchedulerToken;
-                fn();
+                self->Serialized([self, arm, event = std::move(event)] {
+                    if (arm != self->timerArm_) {
+                        return;
+                    }
+                    self->managementTimerToken_ = kInvalidSchedulerToken;
+                    (void)self->Apply(event);
+                });
             }
         });
 }
 
 void LoginSession::CancelManagementTimer() noexcept {
+    ++timerArm_;
     if (managementTimerToken_ != kInvalidSchedulerToken) {
         scheduler_.Cancel(managementTimerToken_);
         managementTimerToken_ = kInvalidSchedulerToken;

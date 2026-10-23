@@ -12,8 +12,12 @@
 //   3. On the status block write, parse the login response, derive the
 //      command-block-agent addresses, Bind() the FetchAgent, and write the
 //      busy-timeout CSR.
-//   4. On bus reset, Suspend then Reconnect() with the stored loginID.
+//   4. On bus reset, suspend; Resume() after rediscovery reconnects a held
+//      login or logs in again if the login never completed.
 //   5. Logout() terminates the session.
+//
+// The states and their transitions are LoginFsm (LoginStateMachine.hpp); this
+// class feeds it events and carries out the effects.
 //
 // DICE adaptations vs #19:
 //   * Timers go through the injected ISessionScheduler (one cancelable management
@@ -25,6 +29,7 @@
 //     solicited blocks to FetchAgent::OnStatusBlock.
 
 #include "ISessionScheduler.hpp"
+#include "LoginStateMachine.hpp"
 #include "FetchAgent.hpp"
 #include "../SBP2WireFormats.hpp"
 #include "../SBP2CommandORB.hpp"
@@ -35,10 +40,13 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
+#include <vector>
 
 namespace ASFW::Async {
 class IFireWireBus;
@@ -76,8 +84,6 @@ struct SBP2TargetInfo {
 struct LoginCompleteParams {
     int status{0};  // 0 = success, negative = errno-style error
     Wire::LoginResponse loginResponse{};
-    Wire::StatusBlock statusBlock{};
-    uint32_t statusBlockLength{0};
     uint16_t generation{0};
 };
 
@@ -86,32 +92,13 @@ struct LogoutCompleteParams {
     uint16_t generation{0};
 };
 
-// ---------------------------------------------------------------------------
-// Login session states
-// ---------------------------------------------------------------------------
-
-enum class LoginState : uint8_t {
-    Idle,
-    LoggingIn,
-    LoggedIn,
-    Reconnecting,
-    LoggingOut,
-    Suspended,     // Lost after bus reset, waiting for reconnect
-    Failed
+// What other queues read: one atomic word, so the state, login ID and
+// generation are always from the same transition.
+struct LoginSnapshot {
+    LoginState state{LoginState::Idle};
+    uint16_t generation{0};
+    std::optional<uint16_t> loginID;  // set only while the target holds our login
 };
-
-[[nodiscard]] inline constexpr const char* ToString(LoginState s) noexcept {
-    switch (s) {
-        case LoginState::Idle:         return "Idle";
-        case LoginState::LoggingIn:    return "LoggingIn";
-        case LoginState::LoggedIn:     return "LoggedIn";
-        case LoginState::Reconnecting: return "Reconnecting";
-        case LoginState::LoggingOut:   return "LoggingOut";
-        case LoginState::Suspended:    return "Suspended";
-        case LoginState::Failed:       return "Failed";
-    }
-    return "Unknown";
-}
 
 // ---------------------------------------------------------------------------
 // LoginSession
@@ -153,7 +140,9 @@ public:
 
     [[nodiscard]] bool Login() noexcept;
     [[nodiscard]] bool Logout() noexcept;
-    [[nodiscard]] bool Reconnect() noexcept;
+    // Rediscovery supplied a fresh route (Configure() first): reconnect a held
+    // login, or log in if the reset interrupted the login.
+    [[nodiscard]] bool Resume() noexcept;
     void HandleBusReset(uint16_t newGeneration) noexcept;
     // The suspended login's device is gone for good (unit terminated, or back
     // as a new incarnation that cannot hold the old login). No reconnect is
@@ -164,11 +153,13 @@ public:
     // Accessors
     // -----------------------------------------------------------------------
 
-    [[nodiscard]] LoginState State() const noexcept { return state_; }
-    [[nodiscard]] uint16_t LoginID() const noexcept { return loginID_; }
-    [[nodiscard]] uint16_t Generation() const noexcept { return loginGeneration_; }
+    // Safe from any queue.
+    [[nodiscard]] LoginSnapshot Snapshot() const noexcept;
+    [[nodiscard]] LoginState State() const noexcept { return Snapshot().state; }
+
     [[nodiscard]] const SBP2TargetInfo& TargetInfo() const noexcept { return targetInfo_; }
-    [[nodiscard]] Async::FWAddress CommandBlockAgent() const noexcept { return commandBlockAgent_; }
+    // Read the state unserialized: host tests and diagnostics only.
+    [[nodiscard]] Async::FWAddress CommandBlockAgent() const noexcept;
     [[nodiscard]] uint32_t ReconnectHoldSeconds() const noexcept;
     [[nodiscard]] uint16_t MaxPayloadSize() const noexcept { return maxPayloadSize_; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
@@ -216,50 +207,57 @@ private:
     bool AllocateLogoutORBAddressSpace() noexcept;
     void RegisterStatusBlockCallback() noexcept;
 
+    // State machine ----------------------------------------------------------
+    // Every access to fsm_ runs through Serialized(), one piece of work at a
+    // time whatever the calling queue: timers, completions and RX arrive on the
+    // driver queue, the probe user client calls in from its own. The lock
+    // covers only the queue, so work may run callbacks that take the registry's
+    // lock. Work raised while other work runs (an inline write completion, a
+    // callback calling back in) is queued behind it: run-to-completion.
+    void Serialized(std::function<void()> work) noexcept;
+    void Dispatch(LoginFsm::Event event) noexcept;
+    // A public request: false if the state refused it, or its write was refused
+    // on the spot. Queued behind another thread's work, it reports true.
+    [[nodiscard]] bool Request(LoginFsm::Event event, const char* what) noexcept;
+    bool Apply(const LoginFsm::Event& event) noexcept;
+    void Commit(LoginFsm::State next) noexcept;
+    [[nodiscard]] LoginFsm::Route Now() const noexcept;
+    void IssueWrite(LoginFsm::Op op) noexcept;
+    void ArmTimer(LoginFsm::Timer timer) noexcept;
+    void Notify(const LoginFsm::Effects& fx) noexcept;
+
     // ORB construction --------------------------------------------------------
     void BuildLoginORB() noexcept;
-    void BuildReconnectORB() noexcept;
-    void BuildLogoutORB() noexcept;
+    void BuildReconnectORB(uint16_t loginID) noexcept;
+    void BuildLogoutORB(uint16_t loginID) noexcept;
+    [[nodiscard]] const std::array<uint8_t, 8>& OrbAddressFor(LoginFsm::Op op) const noexcept;
 
-    // Bind / unbind the command plane ----------------------------------------
-    void BindFetchAgent() noexcept;
-    void RefreshUnsolicitedStatusAddress() noexcept;
+    // Bind the command plane after a login or reconnect -----------------------
+    void BindCommandPlane(LoginFsm::Op op) noexcept;
+    void BindFetchAgent(const LoginFsm::HeldLogin& login, const LoginFsm::Route& route) noexcept;
 
-    // Management write completions -------------------------------------------
-    void OnLoginWriteComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
-    void OnLoginTimeout() noexcept;
-    void OnReconnectWriteComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
-    void OnReconnectTimeout() noexcept;
-    void OnLogoutWriteComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
-    void OnLogoutTimeout() noexcept;
-    void NotifySessionLost() noexcept;
+    void NotifySessionLost(uint16_t generation) noexcept;
 
     // Status block handling ---------------------------------------------------
     void OnStatusBlockRemoteWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
     void ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
-    void CompleteLoginFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
-    [[nodiscard]] bool EnablePhysicalDma() noexcept;
-    void CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
-    void CompleteLogoutFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
+    void CompleteLoginFromStatusBlock(const Wire::StatusBlock& block) noexcept;
+    [[nodiscard]] bool EnablePhysicalDma(const LoginFsm::Route& route) noexcept;
+    void CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block) noexcept;
 
     // Unsolicited status + busy timeout writes -------------------------------
+    void EnableUnsolicitedStatusNow() noexcept;
     void OnUnsolicitedStatusEnableComplete(uint16_t expectedGeneration,
                                            Async::AsyncStatus status) noexcept;
     void WriteBusyTimeout() noexcept;
     void OnBusyTimeoutComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
 
     // Helpers -----------------------------------------------------------------
-    void SetState(LoginState newState) noexcept;
-    void StartLoginTimer() noexcept;
-    void StartReconnectTimer() noexcept;
-    void StartLogoutTimer() noexcept;
-    void CancelLoginTimer() noexcept { CancelManagementTimer(); }
-    void ArmManagementTimer(uint64_t delayMs, std::function<void()> fn) noexcept;
+    void ArmManagementTimer(uint64_t delayMs, LoginFsm::Event event) noexcept;
     void CancelManagementTimer() noexcept;
-    void ScheduleManagementRetry(uint64_t delayMs, void (LoginSession::*op)()) noexcept;
 
-    [[nodiscard]] uint16_t TargetNodeShort() const noexcept {
-        return static_cast<uint16_t>(loginNodeID_ & 0x3Fu);
+    [[nodiscard]] static FW::NodeId ShortNode(uint16_t node) noexcept {
+        return FW::NodeId{static_cast<uint8_t>(node & 0x3Fu)};
     }
 
     // Members -----------------------------------------------------------------
@@ -275,28 +273,15 @@ private:
     bool configured_{false};
     uint16_t maxPayloadSize_{4096};  // default, clipped by login response
 
-    // Session state
-    // Written on the driver work queue; read cross-queue by the HBA
-    // (SBP2TargetBridge::IsReady → SessionRegistry::GetSessionState from the
-    // SCSI controller's queues). The registry lock does not cover the writers
-    // (RX, timer and write-completion paths), so these must be atomic.
-    std::atomic<LoginState> state_{LoginState::Idle};
-    std::atomic<uint16_t> loginID_{0};
-    std::atomic<uint16_t> loginGeneration_{0};
-    uint16_t loginNodeID_{0xFFFF};
+    // Session state. fsm_ lives on the driver work queue; other queues (the
+    // HBA via SessionRegistry::GetSessionState, the user client) read snapshot_.
+    LoginFsm::State fsm_{LoginFsm::St::Idle{}};
+    std::atomic<uint64_t> snapshot_{0};
+    IOLock* executorLock_{nullptr};
+    std::deque<std::function<void()>> pendingWork_;
+    bool executing_{false};
 
-    // Login response data
-    Wire::LoginResponse loginResponse_{};
-    Async::FWAddress commandBlockAgent_{};
-    uint16_t reconnectHold_{0};
-
-    // Login retry state
-    uint32_t loginRetryCount_{0};
-    static constexpr uint32_t kLoginRetryMax = 32;
-    static constexpr uint64_t kLoginRetryDelayMs = 1000;
-    // LoginCompleteParams.status for a lost session (reconnect rejected/timed
-    // out): terminal for the OLD login; a fresh fallback login follows.
-    static constexpr int kStatusSessionLost = -3;
+    static constexpr uint64_t kRetryDelayMs = 1000;
 
     // Address space handles ---------------------------------------------------
     uint64_t loginORBHandle_{0};
@@ -347,6 +332,7 @@ private:
 
     // Single cancelable management-plane timer (login/reconnect/logout/retry).
     SchedulerToken managementTimerToken_{kInvalidSchedulerToken};
+    uint64_t timerArm_{0};
 };
 
 } // namespace ASFW::Protocols::SBP2
