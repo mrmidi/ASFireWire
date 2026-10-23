@@ -142,6 +142,7 @@ TEST(LoginStateMachineTests, LoggingInAcceptedBindsAndReportsUp) {
     EXPECT_EQ(Op::Login, step.fx.bind);
     EXPECT_EQ(Notify::LoggedIn, step.fx.notify);
     EXPECT_EQ(0, step.fx.status);
+    EXPECT_TRUE(step.fx.cancelWindow);
 }
 
 TEST(LoginStateMachineTests, LoggingInAcceptedWithoutPhysicalDmaHoldsLoginSuspended) {
@@ -177,6 +178,7 @@ TEST(LoginStateMachineTests, LoggedInBusResetHoldsLogin) {
     EXPECT_EQ(2u, next.generation);
     EXPECT_TRUE(step.fx.unbind);
     EXPECT_TRUE(step.fx.release);
+    EXPECT_TRUE(step.fx.armWindow);
 }
 
 TEST(LoginStateMachineTests, LoggedInLogoutWritesLogout) {
@@ -204,13 +206,22 @@ TEST(LoginStateMachineTests, ReconnectingRefusedWriteRetriesThroughTimeout) {
     EXPECT_EQ(Timer::ReconnectRetry, step.fx.arm);
 }
 
-TEST(LoginStateMachineTests, ReconnectingWriteCompletionArmsTheMatchingTimer) {
+// The window from the reset bounds the wait for status; an ACK arms nothing.
+TEST(LoginStateMachineTests, ReconnectingWriteCompletion) {
     const St::Reconnecting s{MakeLogin(1), kNow};
-    EXPECT_EQ(Timer::ReconnectTimeout,
-              Expect(s, Ev::WriteDone{Op::Reconnect, kNow.generation, true}).fx.arm);
+    const Step acked = Expect(s, Ev::WriteDone{Op::Reconnect, kNow.generation, true});
+    EXPECT_FALSE(acked.fx.arm.has_value());
+    EXPECT_FALSE(acked.fx.armWindow);
     EXPECT_EQ(Timer::ReconnectRetry,
               Expect(s, Ev::WriteDone{Op::Reconnect, kNow.generation, false}).fx.arm);
     ExpectIgnored(s, Ev::WriteDone{Op::Reconnect, kOld.generation, true});
+}
+
+TEST(LoginStateMachineTests, ReconnectingWindowClosedReportsLostThenLogsIn) {
+    const Step step = Expect(St::Reconnecting{MakeLogin(1), kOld}, Ev::ReconnectWindowClosed{});
+    ExpectRoute(As<St::LoggingIn>(step).route, kNow);
+    EXPECT_TRUE(step.fx.sessionLostFirst);
+    EXPECT_EQ(Op::Login, step.fx.write);
 }
 
 TEST(LoginStateMachineTests, ReconnectingTimeoutReportsLostThenLogsIn) {
@@ -228,6 +239,7 @@ TEST(LoginStateMachineTests, ReconnectingAcceptedBindsAndReportsUp) {
     ExpectRoute(next.route, kNow);
     EXPECT_EQ(Op::Reconnect, step.fx.bind);
     EXPECT_EQ(Notify::LoggedIn, step.fx.notify);
+    EXPECT_TRUE(step.fx.cancelWindow);
 }
 
 TEST(LoginStateMachineTests, ReconnectingAcceptedWithoutPhysicalDmaStaysSuspended) {
@@ -242,10 +254,27 @@ TEST(LoginStateMachineTests, ReconnectingRejectedReportsLostThenLogsIn) {
     EXPECT_EQ(Op::Login, step.fx.write);
 }
 
+TEST(LoginStateMachineTests, ReconnectingUnspecifiedErrorResendsAfterABackoff) {
+    const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kOld}, Ev::ReconnectRejected{true});
+    ExpectRoute(As<St::Reconnecting>(step).route, kOld);
+    EXPECT_EQ(Timer::ReconnectResend, step.fx.arm);
+    EXPECT_FALSE(step.fx.sessionLostFirst);
+    EXPECT_FALSE(step.fx.cancelWindow);
+}
+
+TEST(LoginStateMachineTests, ReconnectingResendGoesToTheCurrentRoute) {
+    const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kOld}, Ev::ReconnectRetryDue{});
+    const auto& next = As<St::Reconnecting>(step);
+    EXPECT_EQ(0x42u, next.login.id);
+    ExpectRoute(next.route, kNow);
+    EXPECT_EQ(Op::Reconnect, step.fx.write);
+}
+
 TEST(LoginStateMachineTests, ReconnectingBusResetKeepsLoginHeld) {
     const Step step = Expect(St::Reconnecting{MakeLogin(0x42), kNow}, Ev::BusReset{3});
     EXPECT_EQ(0x42u, As<St::SuspendedHeld>(step).login.id);
     EXPECT_TRUE(step.fx.release);
+    EXPECT_TRUE(step.fx.armWindow);
 }
 
 // SuspendedHeld --------------------------------------------------------------
@@ -257,6 +286,7 @@ TEST(LoginStateMachineTests, SuspendedHeldResumeReconnectsEvenWithLoginIdZero) {
     EXPECT_EQ(0u, next.login.id);
     ExpectRoute(next.route, kNow);
     EXPECT_EQ(Op::Reconnect, step.fx.write);
+    EXPECT_FALSE(step.fx.armWindow);  // the window runs from the reset, not the write
 }
 
 TEST(LoginStateMachineTests, SuspendedHeldLogoutWritesLogoutAtCurrentRoute) {
@@ -272,10 +302,25 @@ TEST(LoginStateMachineTests, SuspendedHeldDeviceGoneReportsLost) {
     EXPECT_EQ(kStatusSessionLost, step.fx.status);
 }
 
-TEST(LoginStateMachineTests, SuspendedHeldBusResetTracksGeneration) {
+TEST(LoginStateMachineTests, SuspendedHeldBusResetRestartsTheWindow) {
     const Step step = Expect(St::SuspendedHeld{MakeLogin(0x42), 2}, Ev::BusReset{3});
     EXPECT_EQ(3u, As<St::SuspendedHeld>(step).generation);
     EXPECT_FALSE(step.fx.write.has_value());
+    EXPECT_TRUE(step.fx.armWindow);
+}
+
+TEST(LoginStateMachineTests, SuspendedHeldWindowClosedReportsLostAndWaitsToLogIn) {
+    const Step step = Expect(St::SuspendedHeld{MakeLogin(0x42), 2}, Ev::ReconnectWindowClosed{});
+    EXPECT_EQ(2u, As<St::SuspendedNoLogin>(step).generation);
+    EXPECT_EQ(Notify::SessionLost, step.fx.notify);
+    EXPECT_EQ(kStatusSessionLost, step.fx.status);
+    EXPECT_FALSE(step.fx.write.has_value());
+}
+
+TEST(LoginStateMachineTests, WindowClosingOutsideTheReconnectIsDropped) {
+    ExpectIgnored(St::LoggedIn{MakeLogin(1), kNow}, Ev::ReconnectWindowClosed{});
+    ExpectIgnored(St::SuspendedNoLogin{2}, Ev::ReconnectWindowClosed{});
+    ExpectIgnored(St::LoggingIn{kNow}, Ev::ReconnectWindowClosed{});
 }
 
 TEST(LoginStateMachineTests, SuspendedHeldIgnoresLogin) {
@@ -338,11 +383,8 @@ TEST(LoginStateMachineTests, LoggingOutEndsInIdle) {
     EXPECT_EQ(0, done.fx.status);
 }
 
-TEST(LoginStateMachineTests, LoggingOutBusResetDropsToIdle) {
-    const Step step = Expect(St::LoggingOut{MakeLogin(1), kOld}, Ev::BusReset{2});
-    As<St::Idle>(step);
-    EXPECT_TRUE(step.fx.release);
-    EXPECT_EQ(Notify::None, step.fx.notify);
+TEST(LoginStateMachineTests, LoggingOutIgnoresBusReset) {
+    ExpectIgnored(St::LoggingOut{MakeLogin(1), kOld}, Ev::BusReset{2});
 }
 
 // Reporting -------------------------------------------------------------------

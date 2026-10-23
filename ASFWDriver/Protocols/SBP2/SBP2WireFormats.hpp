@@ -174,6 +174,7 @@ struct StatusBlock {
     uint32_t status[6]{};    // Up to 24 additional bytes of status
 
     static constexpr uint32_t kMaxSize = 32; // header (8) + max status (24)
+    static constexpr uint8_t kRespRequestComplete = 0;  // Apple kFWSBP2RequestComplete
 
     // Bit positions cross-validated with Linux sbp2.c STATUS_GET_* macros
     // (quadlet bits 31:30 src, 29:28 resp, 27 dead, 26:24 len → byte 0 above).

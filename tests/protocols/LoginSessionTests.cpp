@@ -426,6 +426,52 @@ TEST(LoginSessionTests, ReconnectRejectionEmitsSessionLostThenFreshLoginUpEdge) 
     EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
 }
 
+// Apple treats "request complete, unspecified error" as transient and sends the
+// reconnect again after 100 ms (IOFireWireSBP2Login.cpp:2498-2503); the login
+// is not lost.
+TEST(LoginSessionTests, ReconnectUnspecifiedErrorResendsInsteadOfLoggingIn) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_TRUE(rig.session.Resume());
+
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    const uint64_t reconnectStatusAddress = ReadORBAddress(
+        rig.addressManager, DecodeOrbAddressFromPayload(rig.bus.WriteAt(reconnectWriteIndex).data),
+        offsetof(ReconnectORB, statusFIFOAddressHi), offsetof(ReconnectORB, statusFIFOAddressLo));
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+    StatusBlock unspecified{};
+    unspecified.sbpStatus = SBPStatus::kUnspecifiedError;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&unspecified), sizeof(unspecified)});
+
+    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
+    rig.AdvanceMs(99);
+    EXPECT_EQ(reconnectWriteIndex + 1, rig.bus.WriteCount());
+    rig.AdvanceMs(1);
+    ASSERT_EQ(reconnectWriteIndex + 2, rig.bus.WriteCount());
+    const auto& resend = rig.bus.WriteAt(reconnectWriteIndex + 1);
+    ASSERT_TRUE(rig.bus.CompleteWrite(resend.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    StatusBlock good{};
+    good.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        reconnectStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&good), sizeof(good)});
+
+    EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_EQ(0, statuses[0]);
+}
+
 TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
     SessionRig rig;
     rig.LoginSuccessfully();
@@ -448,6 +494,50 @@ TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
     ASSERT_EQ(1u, statuses.size());
     EXPECT_LT(statuses[0], 0);
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+}
+
+// The reconnect window runs from the reset (Apple suspendedNotify →
+// startReconnectTimer): a login not rediscovered in time is reported lost, and
+// the rediscovery that follows logs in afresh.
+TEST(LoginSessionTests, ReconnectWindowClosingBeforeRediscoveryLosesTheLogin) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    const size_t writesBefore = rig.bus.WriteCount();
+
+    rig.AdvanceMs(1009);
+    EXPECT_TRUE(statuses.empty());
+    rig.AdvanceMs(1);
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_EQ(-3, statuses[0]);
+    EXPECT_EQ(LoginState::Suspended, rig.session.State());
+    EXPECT_FALSE(rig.session.Snapshot().loginID.has_value());
+    EXPECT_EQ(writesBefore, rig.bus.WriteCount());
+
+    ASSERT_TRUE(rig.session.Resume());
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    EXPECT_EQ(writesBefore + 1, rig.bus.WriteCount());
+}
+
+// A second reset restarts the window rather than shortening it.
+TEST(LoginSessionTests, AnotherResetRestartsTheReconnectWindow) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    rig.AdvanceMs(800);
+    rig.bus.SetGeneration(ASFW::FW::Generation{3});
+    rig.session.HandleBusReset(3);
+    rig.AdvanceMs(800);
+
+    ASSERT_TRUE(rig.session.Resume());
+    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
 }
 
 TEST(LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
@@ -617,6 +707,28 @@ TEST(LoginSessionTests, RequestFromAnotherThreadQueuesBehindRunningWork) {
     EXPECT_EQ(writesBefore, writesWhileHeld);
     EXPECT_EQ(writesBefore + 1, rig.bus.WriteCount());
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+}
+
+// A reset during logout leaves the logout to finish on its own: the write of
+// the old generation fails and reports it (Apple ignores the suspend there).
+TEST(LoginSessionTests, BusResetWhileLoggingOutStillReportsTheLogout) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> logoutStatuses;
+    rig.session.SetLogoutCallback(
+        [&](const ASFW::Protocols::SBP2::LogoutCompleteParams& p) { logoutStatuses.push_back(p.status); });
+    ASSERT_TRUE(rig.session.Logout());
+    const auto logoutWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1).handle;
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    EXPECT_EQ(LoginState::LoggingOut, rig.session.State());
+    EXPECT_TRUE(logoutStatuses.empty());
+
+    ASSERT_TRUE(rig.bus.CompleteWrite(logoutWrite, ASFW::Async::AsyncStatus::kTimeout));
+    EXPECT_EQ(LoginState::Idle, rig.session.State());
+    ASSERT_EQ(1u, logoutStatuses.size());
+    EXPECT_EQ(-1, logoutStatuses[0]);
 }
 
 TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImmediate) {

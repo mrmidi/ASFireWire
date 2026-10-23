@@ -252,9 +252,16 @@ private:
     void WriteBusyTimeout() noexcept;
     void OnBusyTimeoutComplete(uint16_t expectedGeneration, Async::AsyncStatus status) noexcept;
 
-    // Helpers -----------------------------------------------------------------
-    void ArmManagementTimer(uint64_t delayMs, LoginFsm::Event event) noexcept;
-    void CancelManagementTimer() noexcept;
+    // Timers ------------------------------------------------------------------
+    // A timer that fires after it was cancelled or re-armed (its work queued
+    // behind the transition that did so) is dropped by its arm count.
+    struct TimerSlot {
+        SchedulerToken token{kInvalidSchedulerToken};
+        uint64_t arm{0};
+    };
+    void ArmTimerSlot(TimerSlot LoginSession::*slot, uint64_t delayMs, LoginFsm::Event event) noexcept;
+    void CancelTimerSlot(TimerSlot& slot) noexcept;
+    void CancelManagementTimer() noexcept { CancelTimerSlot(managementTimer_); }
 
     [[nodiscard]] static FW::NodeId ShortNode(uint16_t node) noexcept {
         return FW::NodeId{static_cast<uint8_t>(node & 0x3Fu)};
@@ -282,6 +289,7 @@ private:
     bool executing_{false};
 
     static constexpr uint64_t kRetryDelayMs = 1000;
+    static constexpr uint64_t kReconnectResendDelayMs = 100;
 
     // Address space handles ---------------------------------------------------
     uint64_t loginORBHandle_{0};
@@ -330,9 +338,10 @@ private:
     LogoutCallback logoutCallback_;
     StatusCallback statusCallback_;
 
-    // Single cancelable management-plane timer (login/reconnect/logout/retry).
-    SchedulerToken managementTimerToken_{kInvalidSchedulerToken};
-    uint64_t timerArm_{0};
+    // One management-plane timer (login/reconnect/logout timeouts and retries)
+    // and the reconnect window.
+    TimerSlot managementTimer_;
+    TimerSlot reconnectWindow_;
 };
 
 } // namespace ASFW::Protocols::SBP2
