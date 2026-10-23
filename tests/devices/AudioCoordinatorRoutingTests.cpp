@@ -101,8 +101,6 @@ SeededDevice MakeRom(uint64_t guid, uint32_t vendorId, uint32_t modelId, uint32_
                      uint32_t unitSwVersion) {
     SeededDevice seed{};
     seed.rom.gen = Generation{1};
-    seed.rom.firstSeen = Generation{1};
-    seed.rom.lastValidated = Generation{1};
     seed.rom.nodeId = 2;
     seed.rom.bib.guid = guid;
     seed.rom.bib.maxRec = 8;

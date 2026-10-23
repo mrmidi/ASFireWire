@@ -151,11 +151,15 @@ struct UnitDirectory {
 };
 
 // ROM lifecycle state (matching Apple IOFireWireROMCache patterns)
+//
+// A device that reappears after a bus reset is re-entered through
+// ConfigROMStore::Insert(), which overwrites the whole entry — including this
+// field — rather than transitioning a suspended one back in place. There is
+// therefore no separate "validated" state; Suspended entries are keyed to the
+// generation that is now stale and are simply never looked up again.
 enum class ROMState : uint8_t {
     Fresh,      // Just read in current generation
-    Validated,  // Confirmed valid across bus reset (device reappeared)
-    Suspended,  // From previous generation, not yet validated (bus reset occurred)
-    Invalid     // Marked for removal (device disappeared or ROM changed)
+    Suspended,  // From previous generation (bus reset occurred)
 };
 
 // Parsed Config ROM (immutable snapshot per generation)
@@ -178,10 +182,13 @@ struct ConfigROM {
     // Raw ROM quadlets for debugging/GUI export (bounded)
     std::vector<uint32_t> rawQuadlets;
 
+    // A read after the bus info block failed or came back short, and discovery
+    // kept what it had. Such a copy is never reused after a bus reset
+    // (UnchangedROMPolicy), so the next generation reads the device in full.
+    bool readIncomplete{false};
+
     // State management (matching Apple IOFireWireFamily patterns)
     ROMState state{ROMState::Fresh};
-    Generation firstSeen{0};        // Original discovery generation
-    Generation lastValidated{0};     // Last time validated after bus reset
 };
 
 // ============================================================================

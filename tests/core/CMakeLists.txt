@@ -99,6 +99,7 @@ add_core_test(BusResetCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
     "../support/BusResetCoordinatorDepsStubs.cpp"
 )
 
@@ -143,6 +144,13 @@ add_core_test(InterruptMaskShadowTests
     "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
 )
 target_link_libraries(InterruptMaskShadowTests PRIVATE GTest::gmock)
+
+# ControllerCore bus-reset liveness boundary tests
+add_core_test(ControllerCoreBusResetTests
+    ControllerCoreBusResetTests.cpp
+    "${ASFW_DRIVER_DIR}/Controller/ControllerCoreInterrupts.cpp"
+)
+target_link_libraries(ControllerCoreBusResetTests PRIVATE asfw_configrom_host)
 
 # Topology Map Builder Tests
 add_core_test(TopologyMapBuilderTests

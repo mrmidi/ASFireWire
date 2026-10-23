@@ -14,12 +14,13 @@ namespace ASFW::Discovery {
 
 /**
  * @class ConfigROMStore
- * @brief Generation-aware Config ROM cache with lookup/state management.
+ * @brief Config ROM cache keyed by (bus generation, node ID).
  *
- * Stores parsed IEEE 1212 / 1394 Configuration ROM objects, deduplicating them by
- * GUID (Extended Unique Identifier, EUI-64) and indexing them by generation and node ID.
- * Implements state management for tracking devices across bus resets, mirroring
- * Apple IOFireWireROMCache patterns.
+ * Holds the ROMs read in the current generation (Fresh) and, after a bus
+ * reset, the previous generation's ROMs (Suspended) until the next reset.
+ * Generations are compared only for equality: the 8-bit bus generation wraps
+ * after 255 (OHCI 1.2 Table 11-2), so "older" and "newer" cannot be read from
+ * the value.
  */
 class ConfigROMStore {
   public:
@@ -32,106 +33,64 @@ class ConfigROMStore {
     ConfigROMStore& operator=(ConfigROMStore&&) = delete;
 
     /**
-     * @brief Inserts a parsed ROM into the store.
+     * @brief Inserts a parsed ROM under its (generation, node) key.
      *
-     * Deduplicates by GUID (EUI-64) within the given generation.
+     * A ROM with fewer quadlets, or without the unit directories the cached
+     * one has, does not replace the cached entry for the same key.
      * @param rom The ConfigROM object to insert.
      */
     void Insert(const ConfigROM& rom);
 
+    // Lookups return a copy taken under the store lock. The store is shared by
+    // the driver queue (Insert, SuspendAll on the bus-reset edge) and the
+    // user-client queue (ExportConfigROM, TriggerROMRead), and SuspendAll erases
+    // entries; a pointer into the map would dangle once the lock is released.
+
     /**
      * @brief Looks up a Config ROM by generation and node ID.
      *
-     * Returns the most recent ROM for that node in the specified generation.
-     *
-     * @param gen The IEEE 1394 bus generation.
-     * @param nodeId The target node ID.
-     * @return Pointer to the ConfigROM, or nullptr if not found.
-     */
-    const ConfigROM* FindByNode(Generation gen, uint8_t nodeId) const;
-
-    /**
-     * @brief Enhanced lookup by generation and node ID, with state filtering.
+     * There is deliberately no default for allowSuspended: a suspended entry is
+     * a ROM from before the last bus reset, and exporting one as current was
+     * the selector 14 bug. Every caller states which it wants.
      *
      * @param gen The IEEE 1394 bus generation.
      * @param nodeId The target node ID.
      * @param allowSuspended If false, ignores ROMs in the Suspended state.
-     * @return Pointer to the ConfigROM, or nullptr if not found/filtered out.
+     * @return A copy of the ConfigROM, or std::nullopt if not found/filtered out.
      */
-    const ConfigROM* FindByNode(Generation gen, uint8_t nodeId, bool allowSuspended) const;
+    [[nodiscard]] std::optional<ConfigROM> FindByNode(Generation gen, uint8_t nodeId,
+                                                      bool allowSuspended) const;
 
     /**
-     * @brief Looks up the most recently cached ROM for a node across any generation.
+     * @brief Copies of the previous generation's ROMs (state Suspended).
      *
-     * @param nodeId The target node ID.
-     * @return Pointer to the ConfigROM, or nullptr if not found.
+     * Discovery hands them to the scan after a bus reset: a node whose bus
+     * info block is unchanged completes from its copy (UnchangedROMPolicy).
      */
-    const ConfigROM* FindLatestForNode(uint8_t nodeId) const;
-
-    /**
-     * @brief Looks up a Config ROM by its 64-bit GUID.
-     *
-     * Returns the most recent ROM across all generations for this EUI-64.
-     *
-     * @param guid The 64-bit GUID (EUI-64).
-     * @return Pointer to the ConfigROM, or nullptr if not found.
-     */
-    const ConfigROM* FindByGuid(Guid64 guid) const;
-
-    /**
-     * @brief Exports an immutable snapshot of all ROMs for a given generation.
-     *
-     * @param gen The target bus generation.
-     * @return A vector of all active ConfigROMs in that generation.
-     */
-    std::vector<ConfigROM> Snapshot(Generation gen) const;
-
-    /**
-     * @brief Exports a snapshot of ROMs filtered by generation and state.
-     *
-     * @param gen The target bus generation.
-     * @param state The required ROMState.
-     * @return A vector of filtered ConfigROMs.
-     */
-    std::vector<ConfigROM> SnapshotByState(Generation gen, ROMState state) const;
-
-    /**
-     * @brief Clears all stored ROMs (e.g., on driver stop).
-     */
-    void Clear();
+    [[nodiscard]] std::vector<ConfigROM> SuspendedROMs() const;
 
     // ========================================================================
     // State Management (Apple IOFireWireROMCache-inspired)
     // ========================================================================
 
     /**
-     * @brief Marks all valid ROMs as suspended.
+     * @brief Marks all valid ROMs as suspended and drops ROMs suspended earlier.
      *
      * Called when an IEEE 1394 bus reset occurs and a new generation begins.
+     * The per-node index then holds at most the suspended previous generation
+     * plus whatever discovery inserts for the new one.
      * @param newGen The newly started generation.
      */
     void SuspendAll(Generation newGen);
 
     /**
-     * @brief Validates a ROM after a bus reset (device reappeared).
+     * @brief Removes every cached ROM of one device, in any generation.
      *
-     * @param guid The 64-bit GUID.
-     * @param gen The current generation.
-     * @param nodeId The new node ID of the device.
+     * A manual reread uses this so the new read is not refused in favour of a
+     * richer cached copy.
+     * @param guid The 64-bit GUID (EUI-64) of the device.
      */
-    void ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId);
-
-    /**
-     * @brief Marks a ROM as invalid (device disappeared or ROM content changed).
-     *
-     * @param guid The 64-bit GUID to invalidate.
-     */
-    void InvalidateROM(Guid64 guid);
-
-    /**
-     * @brief Removes all invalid ROMs from storage.
-     */
-    void PruneInvalid();
+    void EraseByGuid(Guid64 guid);
 
   private:
     // Packed key layout: generation in upper bits, node ID in low 8 bits.
@@ -141,7 +100,6 @@ class ConfigROMStore {
     mutable IOLock* lock_{nullptr};
 
     std::map<GenNodeKey, ConfigROM> romsByGenNode_;
-    std::map<Guid64, ConfigROM> romsByGuid_;
 };
 
 } // namespace ASFW::Discovery

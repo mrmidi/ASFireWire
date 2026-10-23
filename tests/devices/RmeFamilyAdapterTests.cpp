@@ -89,8 +89,6 @@ DeviceRecord SeedDevice(DeviceRegistry& registry, uint64_t guid, uint32_t vendor
                         uint32_t modelId, uint32_t unitSpecId, uint32_t unitSwVersion) {
     ConfigROM rom{};
     rom.gen = Generation{1};
-    rom.firstSeen = Generation{1};
-    rom.lastValidated = Generation{1};
     rom.nodeId = 2;
     rom.bib.guid = guid;
     rom.bib.maxRec = 8;

@@ -139,7 +139,7 @@ class ROMSpeedProbeTests : public ::testing::Test {
 protected:
     void TearDown() override {
         // Abort callbacks capture the fixture; retire them before its members.
-        if (scanner) scanner->Abort(Generation{1});
+        if (scanner) scanner->Abort();
         scanner.reset();
     }
     void Start(uint8_t pathSpeed, uint8_t linkSpeed, bool betaRepeaters = false,
@@ -247,7 +247,7 @@ TEST_F(ROMSpeedProbeTests, BetaRepeaterTriggersProbeOnAnS400Path) {
 
 TEST_F(ROMSpeedProbeTests, AbortDuringProbeDoesNotPublishOrTryASlowerSpeed) {
     Start(3, 3);
-    scanner->Abort(Generation{1});
+    scanner->Abort();
     bus.SimulateReadSuccess(4, {bib[0]});
     EXPECT_EQ(bus.pendingReads_.size(), 5U);
     EXPECT_EQ(completions, 0U);
@@ -399,7 +399,7 @@ TEST(ROMScannerMultiNodeFSM, InitialBIBReadUsesS100EvenOnFasterPhysicalPath) {
         EXPECT_EQ(mockAsync.pendingReads_[0].nodeId.value, 1);
         EXPECT_EQ(mockAsync.pendingReads_[0].speed, ASFW::FW::FwSpeed::S100);
     }
-    scanner.Abort(Generation{1});
+    scanner.Abort();
 }
 
 TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {

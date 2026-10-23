@@ -18,8 +18,25 @@ void ConfigROMStager::RestoreHeaderAfterBusReset() {}
 
 } // namespace ASFW::Driver
 
+namespace ASFW::Testing {
+
+// Counts ROMScanner::Abort calls made by the coordinator under test.
+int gRomScannerAbortCalls = 0;
+
+} // namespace ASFW::Testing
+
 namespace ASFW::Discovery {
 
-void ROMScanner::Abort(Generation) {}
+ROMScanner::ROMScanner(Async::IFireWireBus& bus, SpeedPolicy& speedPolicy,
+                       const ROMScannerParams& params, OSSharedPtr<IODispatchQueue> dispatchQueue)
+    : bus_(bus), speedPolicy_(speedPolicy), params_(params),
+      dispatchQueue_(std::move(dispatchQueue)) {}
+
+ROMScanner::~ROMScanner() = default;
+
+bool ROMScanner::Abort() {
+    ++ASFW::Testing::gRomScannerAbortCalls;
+    return true;
+}
 
 } // namespace ASFW::Discovery

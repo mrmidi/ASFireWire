@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 
 #include "../../Async/AsyncTypes.hpp"
 #include "../../Discovery/SpeedPolicy.hpp"
@@ -9,26 +12,6 @@
 #include "ConfigROMConstants.hpp"
 
 namespace ASFW::Discovery {
-
-class GenerationContextPolicy {
-  public:
-    [[nodiscard]] static constexpr bool IsCurrentEvent(Generation eventGeneration,
-                                                       Generation activeGeneration) noexcept {
-        return eventGeneration != Generation{0} && eventGeneration == activeGeneration;
-    }
-
-    [[nodiscard]] static constexpr bool
-    CanRestartIdleScan(Generation activeGeneration, bool scannerIdle,
-                       Generation requestedGeneration) noexcept {
-        return scannerIdle && requestedGeneration != Generation{0} &&
-               requestedGeneration != activeGeneration;
-    }
-
-    [[nodiscard]] static constexpr bool MatchesActiveScan(Generation requestedGeneration,
-                                                          Generation activeGeneration) noexcept {
-        return requestedGeneration == activeGeneration;
-    }
-};
 
 class ShortReadResolutionPolicy {
   public:
@@ -91,6 +74,44 @@ class RetryBackoffPolicy {
         transitionNodeState(node, ROMScanNodeStateMachine::State::Idle,
                             "RetryWithFallback speed fallback");
         return Decision::RetryWithFallback;
+    }
+};
+
+// After a bus reset Apple reads only a node's bus info block and keeps the ROM
+// it cached for that device when the block is unchanged
+// (IOFireWireROMCache::hasROMChanged, IOFireWireROMCache.cpp:240-320; resume
+// in IOFireWireDevice.cpp:727-743). The block carries the GUID, the CRC of the
+// ROM in its header quadlet, and the ROM generation a device advances when its
+// ROM content changes (bus options [7:4]).
+class UnchangedROMPolicy {
+  public:
+    // The previous generation's copy of the ROM whose bus info block equals
+    // `busInfoBlockBE` (big-endian, header quadlet included), or nullptr when
+    // the node has to be read in full.
+    [[nodiscard]] static const ConfigROM* Find(std::span<const uint32_t> busInfoBlockBE,
+                                               std::span<const ConfigROM> previous) noexcept {
+        const auto it = std::ranges::find_if(
+            previous, [busInfoBlockBE](const ConfigROM& rom) { return IsSame(busInfoBlockBE, rom); });
+        return it != previous.end() ? std::to_address(it) : nullptr;
+    }
+
+    [[nodiscard]] static bool IsSame(std::span<const uint32_t> busInfoBlockBE,
+                                     const ConfigROM& rom) noexcept {
+        // A copy built around a failed read would otherwise be kept for good.
+        if (rom.readIncomplete) {
+            return false;
+        }
+        // The copy must hold more than the block: the root directory onward.
+        if (busInfoBlockBE.empty() || rom.rawQuadlets.size() <= busInfoBlockBE.size()) {
+            return false;
+        }
+        if (!std::ranges::equal(busInfoBlockBE,
+                                std::span{rom.rawQuadlets}.first(busInfoBlockBE.size()))) {
+            return false;
+        }
+        // Apple always re-reads a ROM of generation 0 that has no units: some
+        // devices publish their units late without advancing the generation.
+        return rom.bib.generation != 0 || !rom.unitDirectories.empty();
     }
 };
 

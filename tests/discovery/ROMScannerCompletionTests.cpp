@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 #include <functional>
 #include <span>
@@ -330,12 +331,16 @@ TEST(ROMScannerCompletion, RootBIBTimeout_EmitsTerminalTimeoutEvidence) {
     EXPECT_EQ(evidence.back().verdict, RootCapability::Unknown);
 }
 
-TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRootHeader) {
+// Generation 0 is a real bus generation after the 8-bit counter wraps (OHCI 1.2
+// Table 11-2): a scan there must complete exactly as at any other generation.
+class ROMScannerCompletionAtGeneration : public ::testing::TestWithParam<uint8_t> {};
+
+TEST_P(ROMScannerCompletionAtGeneration, EmptyRootDirectory_InvokesCallbackAfterRootHeader) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
     int callbackCount = 0;
-    Generation completedGen{0};
+    Generation completedGen{0xFF};
     bool hadBusyNodes = false;
     std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
@@ -347,7 +352,7 @@ TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRoo
 
     // Create topology with one remote node
     TopologySnapshot topology;
-    topology.generation = 42;
+    topology.generation = GetParam();
     topology.busBase16 = 0xFFC0;  // Standard bus address
     topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
@@ -389,14 +394,54 @@ TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRoo
     }
 
     EXPECT_EQ(callbackCount, 1);
-    EXPECT_EQ(completedGen.value, 42u);
+    EXPECT_EQ(completedGen.value, GetParam());
     EXPECT_FALSE(hadBusyNodes);
 
-    EXPECT_EQ(completedROMs.size(), 1u);
+    ASSERT_EQ(completedROMs.size(), 1u);
     EXPECT_EQ(completedROMs[0].nodeId, 1);
-    EXPECT_EQ(completedROMs[0].gen.value, 42u);
+    EXPECT_EQ(completedROMs[0].gen.value, GetParam());
     EXPECT_EQ(completedROMs[0].rawQuadlets.size(), 6u);
 }
+
+TEST_P(ROMScannerCompletionAtGeneration, NoRemoteNodes_CompletesImmediately) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = GetParam();
+    topology.busBase16 = 0xFFC0;
+    topology.physical.nodes.push_back({.physicalId = 0, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+
+    int callbackCount = 0;
+    Generation completedGen{0xFF};
+    std::vector<ConfigROM> completedROMs{ConfigROM{}};
+    ASSERT_TRUE(scanner.Start(request, [&](Generation gen, std::vector<ConfigROM> roms, bool) {
+        ++callbackCount;
+        completedGen = gen;
+        completedROMs = std::move(roms);
+    }));
+
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 0u);
+    EXPECT_EQ(callbackCount, 1);
+    EXPECT_EQ(completedGen.value, GetParam());
+    EXPECT_TRUE(completedROMs.empty());
+
+    // The finished scan no longer blocks a new scan for the same generation.
+    EXPECT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+}
+
+INSTANTIATE_TEST_SUITE_P(Generations, ROMScannerCompletionAtGeneration, ::testing::Values(uint8_t{42}, uint8_t{0}),
+                         [](const ::testing::TestParamInfo<uint8_t>& info) {
+                             return "Gen" + std::to_string(info.param);
+                         });
 
 TEST(ROMScannerCompletion, ManualRead_GeneralROM_CrcLengthEqualsBusInfoLength_ReadsRootDir) {
     MockAsyncSubsystem mockAsync;

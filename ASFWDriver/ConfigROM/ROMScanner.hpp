@@ -46,6 +46,12 @@ struct ROMScanRequest {
     // Optional FW-8 callback: emits root BIB/CMC evidence while the normal full
     // discovery scan continues unchanged.
     std::function<void(Driver::Role::RootCapabilityEvidence)> rootCapabilityCallback;
+
+    // The previous generation's ROMs (ConfigROMStore::SuspendedROMs). A node
+    // whose bus info block matches one of them completes from that copy
+    // without reading the rest of its ROM (UnchangedROMPolicy). Empty: every
+    // ROM is read in full, as a manual reread wants.
+    std::vector<ConfigROM> previousROMs;
 };
 
 using ScanCompletionCallback =
@@ -87,10 +93,15 @@ class ROMScanner {
     [[nodiscard]] bool Start(const ROMScanRequest& request, ScanCompletionCallback completion);
 
     /**
-     * @brief Cancels the scan for the given generation.
-     * @param gen The generation to abort (must match the current active session).
+     * @brief Cancels the active scan, whatever its generation.
+     *
+     * Called on every bus-reset edge. No scan for the new generation can exist
+     * before Self-ID completes, so any active session is stale. Generation 0 is
+     * a real hardware value (the 8-bit counter wraps, OHCI 1.2 Table 11-2) and
+     * must not be treated as "no scan".
+     * @return true if a scan was active and has been aborted.
      */
-    void Abort(Generation gen);
+    bool Abort();
 
     /**
      * @brief Sets the TopologyManager, used to update IRM node characteristics.
@@ -108,6 +119,9 @@ class ROMScanner {
 
     std::shared_ptr<ROMReader> reader_;
     std::shared_ptr<ROMScanSession> session_;
+    // Generation of session_, recorded here at Start. The session itself only
+    // learns its generation once its start task runs on the dispatch queue.
+    Generation sessionGen_{0};
 };
 
 } // namespace ASFW::Discovery

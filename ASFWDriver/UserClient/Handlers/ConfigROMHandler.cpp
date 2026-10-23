@@ -62,9 +62,9 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
     }
 
-    const auto* rom = romStore->FindByNode(requestedGen, nodeId);
+    const auto rom = romStore->FindByNode(requestedGen, nodeId, false);
 
-    if (rom == nullptr) {
+    if (!rom.has_value()) {
         ASFW_LOG(UserClient,
                  "ExportConfigROM: ROM not found for node=%u gen=%u (exact-generation lookup "
                  "only; no stale fallback)",
@@ -170,14 +170,13 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
     request.targetNodes = {nodeId};
 
     if (auto* romStore = controller->GetConfigROMStore(); romStore != nullptr) {
-        if (const auto* cached = romStore->FindByNode(request.gen, nodeId, true); cached != nullptr &&
-            cached->bib.guid != 0) {
+        if (const auto cached = romStore->FindByNode(request.gen, nodeId, true);
+            cached.has_value() && cached->bib.guid != 0) {
             ASFW_LOG(UserClient,
                      "TriggerROMRead: invalidating exact-generation cached ROM for nodeId=%u "
                      "cachedGen=%u guid=0x%016llx before manual reread",
                      nodeId, cached->gen.value, cached->bib.guid);
-            romStore->InvalidateROM(cached->bib.guid);
-            romStore->PruneInvalid();
+            romStore->EraseByGuid(cached->bib.guid);
         }
     }
 

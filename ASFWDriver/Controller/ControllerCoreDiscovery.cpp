@@ -282,6 +282,12 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     request.rootCapabilityCallback = [this](Role::RootCapabilityEvidence evidence) {
         this->OnRootCapabilityProbe(evidence);
     };
+    // The reset edge suspended the previous generation's ROMs (SuspendAll in
+    // HandleInterrupt). A device whose bus info block is unchanged is taken
+    // from its copy instead of being read in full, as Apple does.
+    if (deps_.romStore) {
+        request.previousROMs = deps_.romStore->SuspendedROMs();
+    }
 
     const bool started = StartDiscoveryScan(request);
     if (!started) {

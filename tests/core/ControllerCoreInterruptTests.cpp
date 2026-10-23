@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 
+#include "../ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "../ASFWDriver/Bus/BusResetCoordinator.hpp"
 #include "../ASFWDriver/Bus/SelfIDCapture.hpp"
 #include "../ASFWDriver/Bus/TopologyManager.hpp"
@@ -18,6 +19,10 @@
 #include "../ASFWDriver/Hardware/InterruptDrain.hpp"
 #include "../ASFWDriver/Hardware/InterruptManager.hpp"
 #include "../ASFWDriver/Hardware/RegisterMap.hpp"
+#include "../ASFWDriver/ConfigROM/ConfigROMStore.hpp"
+#include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
+#include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
+#include "../support/ROMScanStartRecorder.hpp"
 #include "AsyncControllerStub.hpp"
 
 namespace ASFW::Driver {
@@ -140,6 +145,78 @@ TEST_F(ControllerCoreInterruptTest, CycleTooLongReenablesTheCycleMasterThePolicy
     EXPECT_EQ(hardware_->GetTestRegister(Register32::kIntEvent) & IntEventBits::kCycleTooLong, 0U);
     EXPECT_TRUE(CycleMasterSet());
     EXPECT_EQ(core_->GetCyclePolicyCoordinator()->Snapshot().cycleMasterRestoreCount, 1U);
+}
+
+// Discovery after a reset starts its scan with the ROMs that reset suspended,
+// so a device whose bus info block is unchanged is not read again.
+class NullBus final : public Async::IFireWireBus {
+public:
+    Async::AsyncHandle ReadBlock(FW::Generation, FW::NodeId, Async::FWAddress, uint32_t,
+                                 FW::FwSpeed, Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    Async::AsyncHandle WriteBlock(FW::Generation, FW::NodeId, Async::FWAddress,
+                                  std::span<const uint8_t>, FW::FwSpeed,
+                                  Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    Async::AsyncHandle Lock(FW::Generation, FW::NodeId, Async::FWAddress, FW::LockOp,
+                            std::span<const uint8_t>, uint32_t, FW::FwSpeed,
+                            Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    bool Cancel(Async::AsyncHandle) override { return false; }
+    FW::FwSpeed GetSpeed(FW::NodeId) const override { return FW::FwSpeed::S100; }
+    uint32_t HopCount(FW::NodeId, FW::NodeId) const override { return 0; }
+    FW::Generation GetGeneration() const override { return FW::Generation{0}; }
+    FW::NodeId GetLocalNodeID() const override { return FW::NodeId{0}; }
+};
+
+class ControllerCoreDiscoveryTest : public ControllerCoreInterruptTest {
+protected:
+    void SetUp() override {
+        ControllerCore::Dependencies deps{};
+        deps.hardware = hardware_;
+        deps.stateMachine = stateMachine_;
+        deps.topology = topology_;
+        deps.romStore = romStore_;
+        deps.romScanner = std::make_shared<Discovery::ROMScanner>(bus_, speedPolicy_,
+                                                                  Discovery::ROMScannerParams{});
+        core_ = std::make_shared<ControllerCore>(ControllerConfig{}, RolePolicy::MakeLiveDefault(),
+                                                 std::move(deps));
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kStarting, "test", 0),
+                  TransitionDisposition::kApplied);
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kRunning, "test", 0),
+                  TransitionDisposition::kApplied);
+        Discovery::Testing::ROMScanStartRecorder() = [this](const Discovery::ROMScanRequest& request) {
+            requests_.push_back(request);
+        };
+    }
+    void TearDown() override { Discovery::Testing::ROMScanStartRecorder() = nullptr; }
+
+    NullBus bus_;
+    Discovery::SpeedPolicy speedPolicy_;
+    std::shared_ptr<Discovery::ConfigROMStore> romStore_ = std::make_shared<Discovery::ConfigROMStore>();
+    std::vector<Discovery::ROMScanRequest> requests_;
+};
+
+TEST_F(ControllerCoreDiscoveryTest, ScanStartsWithTheROMsTheResetSuspended) {
+    Discovery::ConfigROM rom{};
+    rom.gen = Discovery::Generation{kGeneration - 1};
+    rom.nodeId = 0;
+    rom.bib.guid = 0x000A9204050839AEULL;
+    rom.rawQuadlets = {0x04201234, 0x31333934, 0x00008012, 0x000A9204, 0x050839AE, 0x00020000};
+    romStore_->Insert(rom);
+    // The bus-reset edge suspends the previous generation (HandleInterrupt).
+    romStore_->SuspendAll(Discovery::Generation{kGeneration});
+
+    BringUpTopology(/*localNodeId=*/1);
+
+    ASSERT_EQ(requests_.size(), 1U);
+    EXPECT_EQ(requests_.front().gen, Discovery::Generation{kGeneration});
+    ASSERT_EQ(requests_.front().previousROMs.size(), 1U);
+    EXPECT_EQ(requests_.front().previousROMs.front().bib.guid, rom.bib.guid);
+    EXPECT_EQ(requests_.front().previousROMs.front().rawQuadlets, rom.rawQuadlets);
 }
 
 // Not root: the policy never chose this node, so nothing sets cycleMaster.

@@ -90,6 +90,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         }
 
         session->gen_ = request.gen;
+        session->scanActive_ = true;
         session->topology_ = std::move(request.topology);
         session->localNodeId_ = request.localNodeId;
         session->completion_ = std::move(completion);
@@ -98,6 +99,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->hadBusyNodes_ = false;
         session->inflight_ = 0;
         session->completedROMs_.clear();
+        session->previousROMs_ = std::move(request.previousROMs);
         session->nodeScans_.clear();
         session->rootProbeStarted_ = false;
         session->rootProbeTerminal_ = false;
@@ -159,8 +161,9 @@ void ROMScanSession::Abort() {
         session->completionNotified_ = true;
         session->nodeScans_.clear();
         session->completedROMs_.clear();
+        session->previousROMs_.clear();
         session->inflight_ = 0;
-        session->gen_ = Generation{0};
+        session->scanActive_ = false;
         session->hadBusyNodes_ = false;
     });
 }
@@ -464,7 +467,7 @@ Driver::Role::RootBibReadStatus ROMScanSession::MapBIBFailureStatus(
 }
 
 void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result) {
-    if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) {
+    if (aborted_.load(std::memory_order_relaxed) || !IsCurrentScan(result.generation)) {
         return;
     }
 
@@ -587,7 +590,7 @@ void ROMScanSession::StartSpeedProbe(ROMScanNodeStateMachine& node) {
 }
 
 void ROMScanSession::HandleSpeedProbeComplete(uint8_t nodeId, ROMReader::ReadResult result) {
-    if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) return;
+    if (aborted_.load(std::memory_order_relaxed) || !IsCurrentScan(result.generation)) return;
     if (inflight_ > 0) --inflight_;
     auto* node = FindNode(nodeId);
     if (!node || node->CurrentState() != ROMScanNodeStateMachine::State::ProbingSpeed) { Pump(); return; }
@@ -635,7 +638,37 @@ void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint
     // Apple: IOFireWireFamily.kmodproj/IOFireWireDevice.cpp:917.
     // General IEEE 1394 ROMs always continue to the root directory; crc_length
     // is CRC coverage and must not be used as a total-ROM/minimal-ROM test.
+    ContinueToRootDirectory(node);
+}
+
+void ROMScanSession::ContinueToRootDirectory(ROMScanNodeStateMachine& node) {
+    if (const auto* previous = UnchangedROMPolicy::Find(node.ROM().rawQuadlets, previousROMs_)) {
+        CompleteFromPreviousROM(node, *previous);
+        return;
+    }
     StartRootDirRead(node);
+}
+
+void ROMScanSession::CompleteFromPreviousROM(ROMScanNodeStateMachine& node,
+                                             const ConfigROM& previous) {
+    ConfigROM rom = previous;
+    rom.gen = gen_;
+    rom.nodeId = node.NodeId();
+    rom.state = ROMState::Fresh;
+
+    if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
+                             "bus info block unchanged")) {
+        Pump();
+        return;
+    }
+
+    ASFW_LOG(ConfigROM,
+             "ROMScanSession: Node %u gen=%u bus info block unchanged (GUID=0x%016llx), "
+             "reusing the ROM read in gen=%u (%zu quadlets)",
+             node.NodeId(), gen_.value, rom.bib.guid, previous.gen.value, rom.rawQuadlets.size());
+    completedROMs_.push_back(std::move(rom));
+    MaybeFinish();
+    Pump();
 }
 
 bool ROMScanSession::ShouldDelayConfigROMReadyRetry(
@@ -736,7 +769,7 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (result.generation != gen_) {
+    if (!IsCurrentScan(result.generation)) {
         return;
     }
 
@@ -850,7 +883,7 @@ void ROMScanSession::EnsurePrefix(uint8_t nodeId,
                     if (self->aborted_.load(std::memory_order_relaxed)) {
                         return;
                     }
-                    if (res.generation != self->gen_) {
+                    if (!self->IsCurrentScan(res.generation)) {
                         return;
                     }
 
@@ -869,6 +902,7 @@ void ROMScanSession::EnsurePrefix(uint8_t nodeId,
 
                     if (!res.success || res.quadletsBE.empty()) {
                         ASFW_LOG(ConfigROM, "EnsurePrefix read failed: node=%u", nodeId);
+                        node->MutableROM().readIncomplete = true;
                         if (completionHolder && *completionHolder) {
                             (*completionHolder)(false);
                         }
@@ -887,6 +921,7 @@ void ROMScanSession::EnsurePrefix(uint8_t nodeId,
                         ASFW_LOG_V2(ConfigROM,
                                     "EnsurePrefix short read: node=%u have=%zu required=%u", nodeId,
                                     rawQuadlets.size(), requiredTotalQuadlets.value);
+                        node->MutableROM().readIncomplete = true;
                     }
 
                     if (completionHolder && *completionHolder) {
@@ -905,7 +940,7 @@ void ROMScanSession::MaybeFinish() {
     if (completionNotified_ || completion_ == nullptr) {
         return;
     }
-    if (gen_ == Generation{0}) {
+    if (!scanActive_) {
         return;
     }
     if (!nodeScans_.empty() && inflight_ > 0) {
@@ -928,8 +963,9 @@ void ROMScanSession::MaybeFinish() {
     // Make the session inert before calling out.
     nodeScans_.clear();
     completedROMs_.clear();
+    previousROMs_.clear();
     inflight_ = 0;
-    gen_ = Generation{0};
+    scanActive_ = false;
     hadBusyNodes_ = false;
 
     if (completion) {

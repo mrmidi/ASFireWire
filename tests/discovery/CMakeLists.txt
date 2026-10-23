@@ -58,6 +58,17 @@ target_link_libraries(ROMScannerIRMVerifyTests PRIVATE
 )
 gtest_discover_tests(ROMScannerIRMVerifyTests)
 
+# ROMScanner: unchanged bus info block completes from the previous generation
+add_executable(ROMScannerUnchangedROMTests
+    ROMScannerUnchangedROMTests.cpp
+)
+target_link_libraries(ROMScannerUnchangedROMTests PRIVATE
+    asfw_discovery_host
+    asfw_test_support
+    GTest::gtest_main
+)
+gtest_discover_tests(ROMScannerUnchangedROMTests)
+
 # ROMScanner Abort Tests
 add_executable(ROMScannerAbortTests
     ROMScannerAbortTests.cpp
