@@ -52,6 +52,7 @@ LoginSession::LoginSession(Async::IFireWireBus& bus,
 
 LoginSession::~LoginSession() {
     CancelManagementTimer();
+    CancelTimerSlot(reconnectWindow_);
     if (loginWriteHandle_) {
         bus_.Cancel(loginWriteHandle_);
         loginWriteHandle_ = {};
@@ -194,6 +195,9 @@ bool LoginSession::Apply(const Fsm::Event& event) noexcept {
     if (fx.cancelTimer) {
         CancelManagementTimer();
     }
+    if (fx.cancelWindow) {
+        CancelTimerSlot(reconnectWindow_);
+    }
     if (fx.unbind) {
         fetchAgent_.Unbind();
     }
@@ -210,6 +214,10 @@ bool LoginSession::Apply(const Fsm::Event& event) noexcept {
     }
     if (fx.arm) {
         ArmTimer(*fx.arm);
+    }
+    if (fx.armWindow) {
+        ArmTimerSlot(&LoginSession::reconnectWindow_, targetInfo_.managementTimeoutMs + 1000,
+                     Fsm::Ev::ReconnectWindowClosed{});
     }
     if (fx.bind) {
         BindCommandPlane(*fx.bind);
@@ -305,21 +313,21 @@ void LoginSession::IssueWrite(Fsm::Op op) noexcept {
 
 void LoginSession::ArmTimer(Fsm::Timer timer) noexcept {
     const uint64_t mgmtMs = targetInfo_.managementTimeoutMs;
+    const auto arm = [this](uint64_t delayMs, Fsm::Event event) {
+        ArmTimerSlot(&LoginSession::managementTimer_, delayMs, std::move(event));
+    };
     switch (timer) {
         case Fsm::Timer::LoginTimeout:
-            ArmManagementTimer(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Login});
+            arm(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Login});
             break;
         case Fsm::Timer::LoginRetry:
-            ArmManagementTimer(kRetryDelayMs, Fsm::Ev::LoginRetryDue{});
-            break;
-        case Fsm::Timer::ReconnectTimeout:
-            ArmManagementTimer(mgmtMs + 1000, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
+            arm(kRetryDelayMs, Fsm::Ev::LoginRetryDue{});
             break;
         case Fsm::Timer::ReconnectRetry:
-            ArmManagementTimer(kRetryDelayMs, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
+            arm(kRetryDelayMs, Fsm::Ev::Timeout{Fsm::Op::Reconnect});
             break;
         case Fsm::Timer::LogoutTimeout:
-            ArmManagementTimer(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Logout});
+            arm(mgmtMs, Fsm::Ev::Timeout{Fsm::Op::Logout});
             break;
     }
 }
@@ -940,31 +948,31 @@ void LoginSession::OnBusyTimeoutComplete(uint16_t expectedGeneration,
 // Helpers
 // ---------------------------------------------------------------------------
 
-// A timer that fires after it was cancelled or re-armed (its work queued
-// behind the transition that did so) is dropped by its arm count.
-void LoginSession::ArmManagementTimer(uint64_t delayMs, Fsm::Event event) noexcept {
-    CancelManagementTimer();
-    const uint64_t arm = timerArm_;
+void LoginSession::ArmTimerSlot(TimerSlot LoginSession::*slot, uint64_t delayMs,
+                                Fsm::Event event) noexcept {
+    CancelTimerSlot(this->*slot);
+    const uint64_t arm = (this->*slot).arm;
     const std::weak_ptr<LoginSession> weakSelf = weak_from_this();
-    managementTimerToken_ = scheduler_.ScheduleAfter(
-        delayMs * 1'000'000ULL, [weakSelf, arm, event = std::move(event)]() mutable {
+    (this->*slot).token = scheduler_.ScheduleAfter(
+        delayMs * 1'000'000ULL, [weakSelf, slot, arm, event = std::move(event)]() mutable {
             if (auto self = weakSelf.lock()) {
-                self->Serialized([self, arm, event = std::move(event)] {
-                    if (arm != self->timerArm_) {
+                self->Serialized([self, slot, arm, event = std::move(event)] {
+                    TimerSlot& fired = (*self).*slot;
+                    if (arm != fired.arm) {
                         return;
                     }
-                    self->managementTimerToken_ = kInvalidSchedulerToken;
+                    fired.token = kInvalidSchedulerToken;
                     (void)self->Apply(event);
                 });
             }
         });
 }
 
-void LoginSession::CancelManagementTimer() noexcept {
-    ++timerArm_;
-    if (managementTimerToken_ != kInvalidSchedulerToken) {
-        scheduler_.Cancel(managementTimerToken_);
-        managementTimerToken_ = kInvalidSchedulerToken;
+void LoginSession::CancelTimerSlot(TimerSlot& slot) noexcept {
+    ++slot.arm;
+    if (slot.token != kInvalidSchedulerToken) {
+        scheduler_.Cancel(slot.token);
+        slot.token = kInvalidSchedulerToken;
     }
 }
 

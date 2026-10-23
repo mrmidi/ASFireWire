@@ -40,6 +40,12 @@ Write completions carry the operation and the generation they were issued in;
 one from an older generation, or for another operation, is dropped. Any pair
 not listed is dropped.
 
+Two timers run independently. The management timer covers login, reconnect
+and logout timeouts and retries. The reconnect window (management timeout +
+1 s) starts at a reset with a login held and restarts on every further reset,
+as Apple's `startReconnectTimer` does from `suspendedNotify` (A:2067-2077,
+A:2202-2235). A held login that has not reconnected when it closes is lost.
+
 | From | Event | To | Effects | Reference |
 |---|---|---|---|---|
 | Idle, Failed | Login | LoggingIn(now) | write login, login timeout | Apple `submitLogin` A:1463-1533 |
@@ -50,23 +56,25 @@ not listed is dropped.
 | LoggingIn | login timeout | LoggingIn(now, retries+1) | write login; Failed + report at 32 | |
 | LoggingIn | retry due | LoggingIn(now) | write login | |
 | LoggingIn | accepted, physical DMA on | LoggedIn | bind, busy timeout, report up | Apple A:1965-2033; Linux `sbp2_login` L:833-886 |
-| LoggingIn | accepted, physical DMA refused | SuspendedHeld | | Linux enables at login L:1146 |
+| LoggingIn | accepted, physical DMA refused | SuspendedHeld | open window | Linux enables at login L:1146 |
 | LoggingIn | bus reset | SuspendedNoLogin | cancel timer, unbind, release | |
-| LoggedIn | bus reset | SuspendedHeld | cancel timer, unbind, release | Apple `suspendedNotify` A:2067 |
+| LoggedIn | bus reset | SuspendedHeld | cancel timer, unbind, release, open window | Apple `suspendedNotify` A:2067 |
 | LoggedIn | Logout | LoggingOut(route) | unbind, write logout, timeout | Apple `executeLogout` A:2664-2682 |
 | SuspendedHeld | Resume | Reconnecting(now) | write reconnect | Apple `resumeNotify` A:2121-2125, 2278; Linux `sbp2_reconnect` L:917-924 |
 | SuspendedNoLogin | Resume, Login | LoggingIn(now) | write login | |
-| SuspendedHeld | Logout | LoggingOut(now) | unbind, write logout, timeout | see deviation 3 |
+| SuspendedHeld | Logout | LoggingOut(now) | close window, unbind, write logout, timeout | see deviation 3 |
+| SuspendedHeld | window closed | SuspendedNoLogin | report session lost | Apple `reconnectTimeout` A:2395-2413 |
 | SuspendedNoLogin | Logout | Idle | report logout done, nothing on the wire | |
-| Suspended* | device gone | Failed | report session lost | Apple drops the login on terminate A:2158-2196 |
-| Suspended* | bus reset | same | track generation | |
+| Suspended* | device gone | Failed | close window, report session lost | Apple drops the login on terminate A:2158-2196 |
+| SuspendedHeld | bus reset | SuspendedHeld | track generation, restart window | Apple A:2072-2077 |
+| SuspendedNoLogin | bus reset | SuspendedNoLogin | track generation | |
 | Reconnecting | resources unavailable | Failed | cancel timer | |
 | Reconnecting | write refused or failed | Reconnecting | 1 s, then as a timeout | Apple A:2285 |
-| Reconnecting | write ACKed | Reconnecting | timeout = mgmt timeout + 1 s | Apple A:2229 |
-| Reconnecting | accepted, physical DMA on | LoggedIn | bind, busy timeout, report up | Apple A:2458-2496; Linux L:944-954 |
-| Reconnecting | accepted, physical DMA refused | SuspendedHeld | | Linux enables at reconnect L:1198 |
-| Reconnecting | rejected, timeout | LoggingIn(now) | report session lost, then write login | Apple ReconnectFailed A:2565-2583 → client logs in T:794-806 |
-| Reconnecting | bus reset | SuspendedHeld | cancel timer, unbind, release | |
+| Reconnecting | write ACKed | Reconnecting | (status due before the window closes) | Apple A:2349-2362 |
+| Reconnecting | accepted, physical DMA on | LoggedIn | close window, bind, busy timeout, report up | Apple A:2458-2496; Linux L:944-954 |
+| Reconnecting | accepted, physical DMA refused | SuspendedHeld | open window | Linux enables at reconnect L:1198 |
+| Reconnecting | rejected, retry timeout, window closed | LoggingIn(now) | close window, report session lost, then write login | Apple ReconnectFailed A:2504-2519, 2395-2413 → client logs in T:794-806 |
+| Reconnecting | bus reset | SuspendedHeld | cancel timer, unbind, release, restart window | Apple A:2072-2077 |
 | LoggingOut | write refused, resources unavailable | Failed | cancel timer | |
 | LoggingOut | write ACKed | LoggingOut | logout timeout | |
 | LoggingOut | status, write failed, timeout | Idle | report logout done (0 / -1 / -2) | Apple A:1916-1944, 2730-2757 |
@@ -124,10 +132,6 @@ own queue, as before this change; only the login state is serialized here.
 
 Kept as they were; each changes bus behaviour and needs hardware to verify.
 
-1. **Reconnect window.** Apple starts the reconnect timer at the reset
-   (mgmt timeout + 1 s, A:2202-2235) and fails the reconnect when it expires.
-   We start it when the reconnect write is ACKed, and wait for rediscovery
-   without a limit while suspended.
 2. **Reconnect with unspecified error.** Apple retries after 100 ms
    (A:2498-2503). We fall back to a fresh login.
 3. **Logout while suspended.** Apple defers it until the reconnect resolves

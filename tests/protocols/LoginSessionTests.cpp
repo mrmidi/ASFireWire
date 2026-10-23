@@ -450,6 +450,50 @@ TEST(LoginSessionTests, ReconnectTimeoutEmitsSessionLostBeforeFallbackLogin) {
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
 }
 
+// The reconnect window runs from the reset (Apple suspendedNotify →
+// startReconnectTimer): a login not rediscovered in time is reported lost, and
+// the rediscovery that follows logs in afresh.
+TEST(LoginSessionTests, ReconnectWindowClosingBeforeRediscoveryLosesTheLogin) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> statuses;
+    rig.session.SetLoginCallback(
+        [&statuses](const ASFW::Protocols::SBP2::LoginCompleteParams& params) {
+            statuses.push_back(params.status);
+        });
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    const size_t writesBefore = rig.bus.WriteCount();
+
+    rig.AdvanceMs(1009);
+    EXPECT_TRUE(statuses.empty());
+    rig.AdvanceMs(1);
+    ASSERT_EQ(1u, statuses.size());
+    EXPECT_EQ(-3, statuses[0]);
+    EXPECT_EQ(LoginState::Suspended, rig.session.State());
+    EXPECT_FALSE(rig.session.Snapshot().loginID.has_value());
+    EXPECT_EQ(writesBefore, rig.bus.WriteCount());
+
+    ASSERT_TRUE(rig.session.Resume());
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    EXPECT_EQ(writesBefore + 1, rig.bus.WriteCount());
+}
+
+// A second reset restarts the window rather than shortening it.
+TEST(LoginSessionTests, AnotherResetRestartsTheReconnectWindow) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    rig.AdvanceMs(800);
+    rig.bus.SetGeneration(ASFW::FW::Generation{3});
+    rig.session.HandleBusReset(3);
+    rig.AdvanceMs(800);
+
+    ASSERT_TRUE(rig.session.Resume());
+    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
+}
+
 TEST(LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
     SessionRig rig;
 

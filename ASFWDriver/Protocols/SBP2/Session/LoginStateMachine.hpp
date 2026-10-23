@@ -90,6 +90,7 @@ struct WriteRefused { Op op; };         // the bus refused the write synchronous
 struct WriteDone { Op op; uint16_t generation{0}; bool ok{false}; };
 struct Timeout { Op op; };
 struct LoginRetryDue {};
+struct ReconnectWindowClosed {};
 struct LoginAccepted { HeldLogin login; bool physicalDmaOk{false}; };
 struct LoginRejected {};                // error status, or the response is unreadable
 struct ReconnectAccepted { bool physicalDmaOk{false}; };
@@ -99,13 +100,13 @@ struct LogoutDone {};
 
 using Event = std::variant<Ev::Login, Ev::Logout, Ev::Resume, Ev::BusReset, Ev::DeviceGone,
                            Ev::ResourcesUnavailable, Ev::WriteRefused, Ev::WriteDone, Ev::Timeout,
-                           Ev::LoginRetryDue, Ev::LoginAccepted, Ev::LoginRejected,
+                           Ev::LoginRetryDue, Ev::ReconnectWindowClosed, Ev::LoginAccepted,
+                           Ev::LoginRejected,
                            Ev::ReconnectAccepted, Ev::ReconnectRejected, Ev::LogoutDone>;
 
 enum class Timer : uint8_t {
     LoginTimeout,       // management timeout → Timeout{Login}
     LoginRetry,         // 1 s → LoginRetryDue
-    ReconnectTimeout,   // management timeout + 1 s → Timeout{Reconnect}
     ReconnectRetry,     // 1 s → Timeout{Reconnect}
     LogoutTimeout,      // management timeout → Timeout{Logout}
 };
@@ -116,15 +117,24 @@ enum class Notify : uint8_t { None, LoggedIn, LoginFailed, SessionLost, LogoutDo
 // device gone): terminal for the OLD login.
 inline constexpr int kStatusSessionLost = -3;
 
-// Carried out by LoginSession in this order: cancelTimer, unbind, release,
-// sessionLostFirst, (state committed), write, arm, bind, notify.
+// Carried out by LoginSession in this order: cancelTimer/cancelWindow, unbind,
+// release, sessionLostFirst, (state committed), write, arm/armWindow, bind, notify.
+//
+// The reconnect window is a second timer, beside the management one: it runs
+// from the bus reset (management timeout + 1 s → ReconnectWindowClosed) and a
+// held login that has not reconnected when it closes is lost. Apple starts it
+// at the reset and restarts it on every further reset
+// (IOFireWireSBP2Login::suspendedNotify → startReconnectTimer, :2067-2077,
+// :2202-2235).
 struct Effects {
     bool cancelTimer{false};
+    bool cancelWindow{false};
     bool unbind{false};               // detach the fetch agent
     bool release{false};              // free the management address spaces
     bool sessionLostFirst{false};     // down-edge for the old login before what follows
     std::optional<Op> write;
     std::optional<Timer> arm;
+    bool armWindow{false};
     std::optional<Op> bind;           // bind the command plane after a login or reconnect
     Notify notify{Notify::None};
     int status{0};
@@ -205,6 +215,7 @@ inline Step RetryLogin(const St::LoggingIn& s) {
 inline Step FallBackToLogin(const St::Reconnecting& s, const Route& now) {
     Step step = StartLogin(now, 0);
     step.fx.cancelTimer = true;
+    step.fx.cancelWindow = true;
     step.fx.sessionLostFirst = true;
     step.fx.generation = s.route.generation;
     return step;
@@ -212,12 +223,30 @@ inline Step FallBackToLogin(const St::Reconnecting& s, const Route& now) {
 
 inline Step Bound(const HeldLogin& login, const Route& route, Op op) {
     return {St::LoggedIn{login, route},
-            {.cancelTimer = true, .bind = op, .notify = Notify::LoggedIn,
+            {.cancelTimer = true, .cancelWindow = true, .bind = op, .notify = Notify::LoggedIn,
              .generation = route.generation}};
 }
 
 inline Step Suspend(State next) {
     return {std::move(next), {.cancelTimer = true, .unbind = true, .release = true}};
+}
+
+// A reset with a login held (re)starts the reconnect window.
+inline Step SuspendHeld(const HeldLogin& login, uint16_t generation) {
+    Step step = Suspend(St::SuspendedHeld{login, generation});
+    step.fx.armWindow = true;
+    return step;
+}
+
+// Physical DMA was refused: a reset is in flight. Hold the login meanwhile.
+inline Step HoldWithoutDma(const HeldLogin& login, uint16_t generation) {
+    return {St::SuspendedHeld{login, generation}, {.cancelTimer = true, .armWindow = true}};
+}
+
+inline Step Lost(uint16_t generation) {
+    return {St::Failed{generation},
+            {.cancelTimer = true, .cancelWindow = true, .notify = Notify::SessionLost,
+             .status = kStatusSessionLost, .generation = generation}};
 }
 
 inline Step LoggedOut(const Route& route, int status) {
@@ -270,9 +299,7 @@ template <class... F> struct Overload : F... { using F::operator()...; };
             return StartLogin(now, s.retries);
         },
         [&](const St::LoggingIn& s, const Ev::LoginAccepted& e) -> R {
-            if (!e.physicalDmaOk) {
-                return Step{St::SuspendedHeld{e.login, s.route.generation}, {.cancelTimer = true}};
-            }
+            if (!e.physicalDmaOk) return HoldWithoutDma(e.login, s.route.generation);
             return Bound(e.login, s.route, Op::Login);
         },
         [&](const St::LoggingIn& s, const Ev::LoginRejected&) -> R { return RetryLogin(s); },
@@ -282,7 +309,7 @@ template <class... F> struct Overload : F... { using F::operator()...; };
 
         // LoggedIn -----------------------------------------------------------
         [&](const St::LoggedIn& s, const Ev::BusReset& e) -> R {
-            return Suspend(St::SuspendedHeld{s.login, e.generation});
+            return SuspendHeld(s.login, e.generation);
         },
         [&](const St::LoggedIn& s, const Ev::Logout&) -> R {
             return Step{St::LoggingOut{s.login, s.route},
@@ -299,25 +326,28 @@ template <class... F> struct Overload : F... { using F::operator()...; };
             if (e.op != Op::Reconnect) return std::nullopt;
             return Step{s, {.arm = Timer::ReconnectRetry}};
         },
+        // ACKed: the status is due before the reconnect window closes.
         [&](const St::Reconnecting& s, const Ev::WriteDone& e) -> R {
             if (!Current(e, Op::Reconnect, s.route)) return std::nullopt;
-            return Step{s, {.arm = e.ok ? Timer::ReconnectTimeout : Timer::ReconnectRetry}};
+            if (e.ok) return Step{s, {}};
+            return Step{s, {.arm = Timer::ReconnectRetry}};
+        },
+        [&](const St::Reconnecting& s, const Ev::ReconnectWindowClosed&) -> R {
+            return FallBackToLogin(s, now);
         },
         [&](const St::Reconnecting& s, const Ev::Timeout& e) -> R {
             if (e.op != Op::Reconnect) return std::nullopt;
             return FallBackToLogin(s, now);
         },
         [&](const St::Reconnecting& s, const Ev::ReconnectAccepted& e) -> R {
-            if (!e.physicalDmaOk) {
-                return Step{St::SuspendedHeld{s.login, s.route.generation}, {.cancelTimer = true}};
-            }
+            if (!e.physicalDmaOk) return HoldWithoutDma(s.login, s.route.generation);
             return Bound(s.login, s.route, Op::Reconnect);
         },
         [&](const St::Reconnecting& s, const Ev::ReconnectRejected&) -> R {
             return FallBackToLogin(s, now);
         },
         [&](const St::Reconnecting& s, const Ev::BusReset& e) -> R {
-            return Suspend(St::SuspendedHeld{s.login, e.generation});
+            return SuspendHeld(s.login, e.generation);
         },
 
         // SuspendedHeld ------------------------------------------------------
@@ -326,15 +356,20 @@ template <class... F> struct Overload : F... { using F::operator()...; };
         },
         [&](const St::SuspendedHeld& s, const Ev::Logout&) -> R {
             return Step{St::LoggingOut{s.login, now},
-                        {.unbind = true, .write = Op::Logout, .arm = Timer::LogoutTimeout}};
+                        {.cancelWindow = true, .unbind = true, .write = Op::Logout,
+                         .arm = Timer::LogoutTimeout}};
         },
-        [&](const St::SuspendedHeld& s, const Ev::DeviceGone&) -> R {
-            return Step{St::Failed{s.generation},
-                        {.cancelTimer = true, .notify = Notify::SessionLost,
-                         .status = kStatusSessionLost, .generation = s.generation}};
-        },
+        [&](const St::SuspendedHeld& s, const Ev::DeviceGone&) -> R { return Lost(s.generation); },
         [&](const St::SuspendedHeld& s, const Ev::BusReset& e) -> R {
-            return Step{St::SuspendedHeld{s.login, e.generation}, {}};
+            return Step{St::SuspendedHeld{s.login, e.generation}, {.armWindow = true}};
+        },
+        // Not rediscovered in time: the target has dropped the login. Report
+        // it lost; rediscovery then logs in afresh (Apple: reconnectTimeout →
+        // ReconnectFailed, :2395-2413, and the client logs in again).
+        [&](const St::SuspendedHeld& s, const Ev::ReconnectWindowClosed&) -> R {
+            return Step{St::SuspendedNoLogin{s.generation},
+                        {.notify = Notify::SessionLost, .status = kStatusSessionLost,
+                         .generation = s.generation}};
         },
 
         // SuspendedNoLogin ---------------------------------------------------
@@ -344,11 +379,7 @@ template <class... F> struct Overload : F... { using F::operator()...; };
         [&](const St::SuspendedNoLogin& s, const Ev::Logout&) -> R {
             return LoggedOut(Route{s.generation, now.node}, 0);
         },
-        [&](const St::SuspendedNoLogin& s, const Ev::DeviceGone&) -> R {
-            return Step{St::Failed{s.generation},
-                        {.cancelTimer = true, .notify = Notify::SessionLost,
-                         .status = kStatusSessionLost, .generation = s.generation}};
-        },
+        [&](const St::SuspendedNoLogin& s, const Ev::DeviceGone&) -> R { return Lost(s.generation); },
         [&](const St::SuspendedNoLogin&, const Ev::BusReset& e) -> R {
             return Step{St::SuspendedNoLogin{e.generation}, {}};
         },
