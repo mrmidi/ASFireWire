@@ -167,8 +167,9 @@ TEST(ControllerCoreBusResetTests, InterruptSuspendsCachedROMBeforeRediscovery) {
     romStore->Insert(MakeROM(kCachedGeneration, kNodeId, kGuid));
     ASSERT_TRUE(romStore->FindByNode(kCachedGeneration, kNodeId, false).has_value());
 
-    hardware->SetTestRegister(ASFW::Driver::Register32::kSelfIDGeneration,
-                              kResetGeneration);
+    // The interrupt path reads the new generation from SelfIDCount.
+    hardware->SetTestRegister(ASFW::Driver::Register32::kSelfIDCount,
+                              kResetGeneration << ASFW::Driver::SelfIDCountBits::kGenerationShift);
 
     ASFW::Driver::ControllerCore::Dependencies deps{};
     deps.hardware = hardware;
