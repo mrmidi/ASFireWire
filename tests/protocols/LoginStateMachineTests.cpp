@@ -383,11 +383,8 @@ TEST(LoginStateMachineTests, LoggingOutEndsInIdle) {
     EXPECT_EQ(0, done.fx.status);
 }
 
-TEST(LoginStateMachineTests, LoggingOutBusResetDropsToIdle) {
-    const Step step = Expect(St::LoggingOut{MakeLogin(1), kOld}, Ev::BusReset{2});
-    As<St::Idle>(step);
-    EXPECT_TRUE(step.fx.release);
-    EXPECT_EQ(Notify::None, step.fx.notify);
+TEST(LoginStateMachineTests, LoggingOutIgnoresBusReset) {
+    ExpectIgnored(St::LoggingOut{MakeLogin(1), kOld}, Ev::BusReset{2});
 }
 
 // Reporting -------------------------------------------------------------------

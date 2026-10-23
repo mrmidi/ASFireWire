@@ -412,9 +412,9 @@ template <class... F> struct Overload : F... { using F::operator()...; };
             return LoggedOut(s.route, -2);
         },
         [&](const St::LoggingOut& s, const Ev::LogoutDone&) -> R { return LoggedOut(s.route, 0); },
-        [&](const St::LoggingOut&, const Ev::BusReset& e) -> R {
-            return Suspend(St::Idle{e.generation});
-        },
+        // A bus reset changes nothing here: the logout write of the old
+        // generation fails, or the timeout ends it, and both report the logout
+        // (Apple: suspendedNotify ignores LoggingOut, IOFireWireSBP2Login.cpp:2088-2092).
 
         [](const auto&, const auto&) -> R { return std::nullopt; },
     }, state, event);

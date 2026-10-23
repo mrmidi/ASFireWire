@@ -709,6 +709,28 @@ TEST(LoginSessionTests, RequestFromAnotherThreadQueuesBehindRunningWork) {
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
 }
 
+// A reset during logout leaves the logout to finish on its own: the write of
+// the old generation fails and reports it (Apple ignores the suspend there).
+TEST(LoginSessionTests, BusResetWhileLoggingOutStillReportsTheLogout) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+    std::vector<int> logoutStatuses;
+    rig.session.SetLogoutCallback(
+        [&](const ASFW::Protocols::SBP2::LogoutCompleteParams& p) { logoutStatuses.push_back(p.status); });
+    ASSERT_TRUE(rig.session.Logout());
+    const auto logoutWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1).handle;
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    EXPECT_EQ(LoginState::LoggingOut, rig.session.State());
+    EXPECT_TRUE(logoutStatuses.empty());
+
+    ASSERT_TRUE(rig.bus.CompleteWrite(logoutWrite, ASFW::Async::AsyncStatus::kTimeout));
+    EXPECT_EQ(LoginState::Idle, rig.session.State());
+    ASSERT_EQ(1u, logoutStatuses.size());
+    EXPECT_EQ(-1, logoutStatuses[0]);
+}
+
 TEST(LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNextImmediate) {
     SessionRig rig;
     rig.LoginSuccessfully();

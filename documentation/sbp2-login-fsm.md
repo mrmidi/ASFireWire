@@ -62,7 +62,7 @@ A:2202-2235). A held login that has not reconnected when it closes is lost.
 | LoggedIn | Logout | LoggingOut(route) | unbind, write logout, timeout | Apple `executeLogout` A:2664-2682 |
 | SuspendedHeld | Resume | Reconnecting(now) | write reconnect | Apple `resumeNotify` A:2121-2125, 2278; Linux `sbp2_reconnect` L:917-924 |
 | SuspendedNoLogin | Resume, Login | LoggingIn(now) | write login | |
-| SuspendedHeld | Logout | LoggingOut(now) | close window, unbind, write logout, timeout | see deviation 3 |
+| SuspendedHeld | Logout | LoggingOut(now) | close window, unbind, write logout, timeout | see *Where the references disagree* |
 | SuspendedHeld | window closed | SuspendedNoLogin | report session lost | Apple `reconnectTimeout` A:2395-2413 |
 | SuspendedNoLogin | Logout | Idle | report logout done, nothing on the wire | |
 | Suspended* | device gone | Failed | close window, report session lost | Apple drops the login on terminate A:2158-2196 |
@@ -80,7 +80,7 @@ A:2202-2235). A held login that has not reconnected when it closes is lost.
 | LoggingOut | write refused, resources unavailable | Failed | cancel timer | |
 | LoggingOut | write ACKed | LoggingOut | logout timeout | |
 | LoggingOut | status, write failed, timeout | Idle | report logout done (0 / -1 / -2) | Apple A:1916-1944, 2730-2757 |
-| LoggingOut | bus reset | Idle | cancel timer, unbind, release | see deviation 4 |
+| LoggingOut | bus reset | (ignored; the old-generation write fails or times out) | | Apple `suspendedNotify` A:2088-2092 |
 
 A = `references/IOFireWireSBP2/Source/IOFireWireSBP2/IOFireWireSBP2Login.cpp`,
 T = `IOFireWireSerialBusProtocolTransport.cpp`,
@@ -130,12 +130,13 @@ own queue, as before this change; only the login state is serialized here.
   keep a stale ID, for example in Failed after a fallback login failed.
 - `LoginCompleteParams` no longer carries the status block. Nothing read it.
 
-## Open deviations from the references
+## Where the references disagree
 
-Kept as they were; each changes bus behaviour and needs hardware to verify.
-
-3. **Logout while suspended.** Apple defers it until the reconnect resolves
-   (`fLogoutPending`, A:2639-2655). We send it at once, to the node of the last
-   rediscovery.
-4. **Bus reset while logging out.** Apple ignores it and waits for the logout
-   to complete or time out (A:2088-2092). We go to Idle.
+**Logout while suspended** follows Linux. Linux sends the logout at once, to
+the device's current node (`sbp2_remove`, L:1221-1243). Apple sets
+`fLogoutPending` instead (A:2639-2655), but in the Reconnect state that path
+only sets the flag again, and the reconnect timeout calls `executeLogout`
+with the flag still set, which returns busy (A:2409-2410, 2634). No logout
+goes out and the client is never answered;
+the target drops the login when its reconnect hold expires. Until rediscovery
+the node we send to is the one from the last `Configure()`.
