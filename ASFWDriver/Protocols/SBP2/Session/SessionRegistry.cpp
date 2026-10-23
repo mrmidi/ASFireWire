@@ -456,7 +456,8 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
         session->AbandonSuspended();
     }
     for (auto& session : toReconnect) {
-        (void)session->Reconnect();
+        if (session->LoginID() == 0) (void)session->Login();
+        else (void)session->Reconnect();
     }
 }
 

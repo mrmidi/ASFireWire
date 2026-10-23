@@ -242,8 +242,8 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             loginGeneration_ = newGeneration;
             fetchAgent_.Unbind();
             DeallocateResources();
-            SetState(LoginState::Idle);
-            ArmManagementTimer(100, [this]() { (void)Login(); });
+            loginID_ = 0;
+            SetState(LoginState::Suspended);
             break;
 
         case LoginState::LoggedIn:
@@ -260,7 +260,6 @@ void LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             DeallocateResources();
             loginGeneration_ = newGeneration;
             SetState(LoginState::Suspended);
-            ArmManagementTimer(100, [this]() { (void)Reconnect(); });
             break;
 
         case LoginState::LoggingOut:
