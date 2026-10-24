@@ -20,6 +20,12 @@ public:
     // Explicitly allocate a payload buffer region (from payload slab)
     virtual std::optional<Shared::DMARegion> AllocatePayloadBuffer(size_t size) = 0;
 
+    /// Orders completion observation, payload reads, and completion rearming.
+    /// Separate from publication: receive ownership also needs load ordering.
+    virtual void ReceiveOwnershipBarrier() const noexcept {
+        ASFW::Driver::DmaOwnershipBarrier();
+    }
+
     /// Orders payload publication before descriptor publication. Kept virtual
     /// so host tests can record the exact DMA visibility sequence.
     virtual void PublishBarrier() const noexcept {

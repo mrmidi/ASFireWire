@@ -248,13 +248,19 @@ TEST(IsochServiceTxPreparation, FaultedTransmitIsQuiescedByStopBeforeReuse) {
                                                   controlDescriptor,
                                                   AudioTimingGeometry::kTxPacketsPerGroup),
               kIOReturnBusy);
+    // A pending sibling event must survive our stop. Neither event may be
+    // acknowledged while this context still owns its DMA program.
+    hardware.SetTestRegister(Register32::kIsoXmitIntEventSet, 0x5u);
+    hardware.SetTestRegister(Register32::kIsoXmitIntEventClear, 0u);
     EXPECT_EQ(service.StopTransmit(), kIOReturnTimeout);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Faulted);
+    EXPECT_EQ(hardware.GetTestRegister(Register32::kIsoXmitIntEventClear), 0u);
 
     hardware.SetTestRegister(controlSet, 0);
     EXPECT_EQ(service.StopTransmit(), kIOReturnSuccess);
     EXPECT_EQ(context->GetState(), ASFW::Isoch::ITState::Stopped);
     EXPECT_FALSE(context->NeedsQuiesce());
+    EXPECT_EQ(hardware.GetTestRegister(Register32::kIsoXmitIntEventClear), 1u);
 }
 
 // Start clears every ContextControl bit: cycleMatchEnable (bit 31) has an
