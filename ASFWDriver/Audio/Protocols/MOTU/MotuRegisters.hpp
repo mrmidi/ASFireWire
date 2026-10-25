@@ -36,6 +36,9 @@ enum class Reg : uint32_t {
     InOutConfV2 = 0x0c04,
     OpticalBanksV3 = 0x0c94,
     StreamConfigV3 = 0x0b1c,
+    /// Command-DSP models: where the unit sends its DSP messages (MotuCommandDsp.hpp).
+    DspMessageDstHi = 0x0b38,
+    DspMessageDstLo = 0x0b3c,
 };
 
 //==============================================================================

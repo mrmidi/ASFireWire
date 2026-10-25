@@ -1035,6 +1035,7 @@
 		5C9CB7FD7D277B18AC1ABA76 /* DiceReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceReportView.swift; sourceTree = "<group>"; };
 		5CFD326310BE43F6EA6ECF38 /* AVCDiscovery.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AVCDiscovery.cpp; sourceTree = "<group>"; };
 		5D72F405B0691442CEBAEF1C /* AvcExtensionInventory.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcExtensionInventory.hpp; sourceTree = "<group>"; };
+		5D8FA9DEDAB17D032D3D4E3C /* MotuDspMessages.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuDspMessages.hpp; sourceTree = "<group>"; };
 		5DBBFD00CC8DC86B858FABF8 /* FetchAgent.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FetchAgent.cpp; sourceTree = "<group>"; };
 		5DEB4C39DCC090F393970EBA /* InterruptManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = InterruptManager.cpp; sourceTree = "<group>"; };
 		5E2821CE59289283CC8B6E0C /* BusResetHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusResetHistoryView.swift; sourceTree = "<group>"; };
@@ -1078,6 +1079,7 @@
 		65206CACBA43AF5FF9A23D25 /* BusManagerElection.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusManagerElection.hpp; sourceTree = "<group>"; };
 		655FB09EB76F6D8D6126D358 /* IsochRxTiming.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochRxTiming.hpp; sourceTree = "<group>"; };
 		6584C34EAEB3398DDF00C1E1 /* MackieOnyx400FProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MackieOnyx400FProfile.cpp; sourceTree = "<group>"; };
+		65B329E37EE2E482DBD3ABD6 /* MotuControlModel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuControlModel.hpp; sourceTree = "<group>"; };
 		65B3BA7B9A5F9DC8E1BEC3EA /* IsochDMAMemoryManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IsochDMAMemoryManager.cpp; sourceTree = "<group>"; };
 		65D8BB52EEC447350C67D3B4 /* DVCaptureSink.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DVCaptureSink.hpp; sourceTree = "<group>"; };
 		65E0DB76F5551D7A7CE2E777 /* BeBoBBootloaderPreparationCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBBootloaderPreparationCoordinator.cpp; sourceTree = "<group>"; };
@@ -2294,6 +2296,8 @@
 			isa = PBXGroup;
 			children = (
 				DD35BC29224B2B0AADDC17EF /* MotuCommandDsp.hpp */,
+				65B329E37EE2E482DBD3ABD6 /* MotuControlModel.hpp */,
+				5D8FA9DEDAB17D032D3D4E3C /* MotuDspMessages.hpp */,
 				5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */,
 				00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */,
 				C5E583C7BF3E87EA0C34C09C /* MotuProtocol.hpp */,

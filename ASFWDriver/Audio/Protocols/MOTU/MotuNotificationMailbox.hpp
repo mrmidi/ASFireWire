@@ -3,6 +3,7 @@
 #pragma once
 
 #include "MotuRegisters.hpp"
+#include "MotuDspMessages.hpp"
 #include "../../../Discovery/DeviceRouteToken.hpp"
 #include "../../../Async/Rx/LocalRequestDispatch.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -162,6 +163,9 @@ inline void ClearObserver(void* context) {
 }
 [[nodiscard]] inline Async::LocalRequestResult Handle(const Async::LocalRequestContext& ctx) {
     const auto offset = ctx.destOffset;
+    // The command-DSP message slots follow in the same region and share the
+    // MOTU participant of the local request dispatch.
+    if (CommandDsp::Messages::Owns(offset)) return CommandDsp::Messages::Handle(ctx);
     if (offset < kAsyncMessageRegionStart || offset >= kAsyncMessageRegionStart + kSlots * 4)
         return Async::LocalRequestResult::NotMine();
     if (ctx.tCode != 0) return Async::LocalRequestResult::Write(Async::ResponseCode::Complete);

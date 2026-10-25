@@ -14,6 +14,7 @@
 
 #include "Audio/Protocols/MOTU/MotuProtocol.hpp"
 #include "Audio/Controls/CoreAudioProjection.hpp"
+#include "Audio/Model/Topology/Validate.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "tests/mocks/FakeTimerScheduler.hpp"
 #include "MotuChannelMappingFixtures.hpp"
@@ -71,6 +72,7 @@ public:
     struct Write {
         uint32_t addressLo{0};
         uint32_t value{0};
+        std::vector<uint8_t> bytes{};
     };
 
     std::vector<Write> writes;
@@ -143,7 +145,7 @@ public:
             value = (value << 8) | byte;
         }
         const bool isFirstWrite = writes.empty();
-        writes.push_back(Write{address.addressLo, value});
+        writes.push_back(Write{address.addressLo, value, std::vector<uint8_t>(data.begin(), data.end())});
 
         const AsyncStatus status =
             (!isFirstWrite && failWritesAfterFirst != AsyncStatus::kSuccess)
@@ -1875,7 +1877,8 @@ TEST(MotuV3ClockSource, PrepareReportsTheDevicesSourceAsAGlobalClockSelector) {
     std::optional<IOReturn> prepared;
     protocol.Prepare([&](IOReturn status) { prepared = status; });
     ASSERT_EQ(prepared, kIOReturnSuccess);
-    EXPECT_TRUE(bus.writes.empty());
+    // Reading the source writes no clock register (Prepare also starts DSP messaging).
+    EXPECT_TRUE(std::ranges::none_of(bus.writes, [](const auto& w) { return w.addressLo == LowOf(Reg::ClockStatusV2); }));
 
     const auto snapshot = protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
@@ -1908,9 +1911,11 @@ TEST(MotuV3ClockSource, SettingSPdifWritesTheLowByteAndConfirmsByReading) {
                           AM::ParameterValue{int64_t{0x10}},
                           [&](IOReturn s, AM::ParameterValue v) { status = s; confirmed = v; });
     ASSERT_EQ(status, kIOReturnSuccess);
-    ASSERT_EQ(bus.writes.size(), 1U);
-    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::ClockStatusV2));
-    EXPECT_EQ(bus.writes[0].value, kVendorSpdif);
+    std::vector<RecordingBus::Write> clockWrites;
+    std::ranges::copy_if(bus.writes, std::back_inserter(clockWrites),
+                         [](const auto& w) { return w.addressLo == LowOf(Reg::ClockStatusV2); });
+    ASSERT_EQ(clockWrites.size(), 1U);
+    EXPECT_EQ(clockWrites[0].value, kVendorSpdif);
     EXPECT_EQ(bus.reads.back(), LowOf(Reg::ClockStatusV2)); // read back after the write
     EXPECT_EQ(confirmed, AM::ParameterValue{int64_t{0x10}});
     const auto snapshot = protocol.CopySnapshot();
@@ -1941,6 +1946,7 @@ TEST(MotuV3ClockSource, RejectsAnUnlistedSourceWithoutTouchingTheDevice) {
     MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
     protocol.Prepare([](IOReturn) {});
     const auto readsBefore = bus.reads.size();
+    const auto writesBefore = bus.writes.size();
     for (const int64_t code : {int64_t{0x01}, int64_t{0x08}, int64_t{0x18}}) {
         std::optional<IOReturn> status;
         protocol.SetParameter(AM::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId},
@@ -1951,21 +1957,31 @@ TEST(MotuV3ClockSource, RejectsAnUnlistedSourceWithoutTouchingTheDevice) {
     protocol.SetParameter(AM::ParameterId{1}, AM::ParameterValue{int64_t{0x10}},
                           [&](IOReturn s, AM::ParameterValue) { wrongId = s; });
     EXPECT_EQ(wrongId, kIOReturnBadArgument);
-    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_EQ(bus.writes.size(), writesBefore);
     EXPECT_EQ(bus.reads.size(), readsBefore);
 }
 
-TEST(MotuV3ClockSource, AnUnlistedSourceOnTheDevicePublishesNoControl) {
+namespace {
+bool HasClockParameter(const ASFW::Audio::Controls::ControlSnapshot& snapshot) {
+    return std::ranges::any_of(snapshot.topology.parameters, [](const auto& p) {
+        return p.id == ASFW::AudioModel::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId};
+    });
+}
+} // namespace
+
+TEST(MotuV3ClockSource, AnUnlistedSourceOnTheDeviceWithdrawsOnlyTheClockControl) {
     RecordingBus bus; RouteState routes;
     bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x02000001U; // word clock: no BNC on this model
     MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
     std::optional<IOReturn> prepared;
     protocol.Prepare([&](IOReturn status) { prepared = status; });
-    EXPECT_EQ(prepared, kIOReturnUnsupported);
-    EXPECT_FALSE(protocol.CopySnapshot().has_value());
+    EXPECT_EQ(prepared, kIOReturnSuccess);  // the mixer stays
+    const auto snapshot = protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_FALSE(HasClockParameter(*snapshot));
 }
 
-TEST(MotuV3ClockSource, AFailedReadPublishesNoControl) {
+TEST(MotuV3ClockSource, AFailedReadPublishesNoClockControl) {
     RecordingBus bus; RouteState routes;
     bus.readStatus = AsyncStatus::kTimeout;
     MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
@@ -1973,7 +1989,8 @@ TEST(MotuV3ClockSource, AFailedReadPublishesNoControl) {
     protocol.Prepare([&](IOReturn status) { prepared = status; });
     ASSERT_TRUE(prepared.has_value());
     EXPECT_NE(*prepared, kIOReturnSuccess);
-    EXPECT_FALSE(protocol.CopySnapshot().has_value());
+    const auto snapshot = protocol.CopySnapshot();
+    EXPECT_TRUE(!snapshot || !HasClockParameter(*snapshot));
 }
 
 //==============================================================================
@@ -2034,4 +2051,192 @@ TEST(MotuV3UltraLiteMk3, EveryRateMatchesTheVendorDriversRegistersAndChannels) {
         EXPECT_EQ(translate(inNames), row.inputs);
         EXPECT_EQ(translate(outNames), row.outputs);
     }
+}
+
+//==============================================================================
+// CueMix: the UltraLite mk3's command DSP (MotuCommandDsp.hpp). Framing and
+// registers after snd-firewire-ctl-services command_dsp.rs; not yet seen on
+// the wire.
+//==============================================================================
+
+namespace {
+
+namespace MC = ASFW::Audio::Motu::MotuControl;
+namespace CD = ASFW::Audio::Motu::CommandDsp;
+constexpr uint32_t kDspCommandLo = 0x00010000U;
+
+std::vector<RecordingBus::Write> WritesTo(const RecordingBus& bus, uint32_t addressLo) {
+    std::vector<RecordingBus::Write> out;
+    std::ranges::copy_if(bus.writes, std::back_inserter(out),
+                         [addressLo](const auto& w) { return w.addressLo == addressLo; });
+    return out;
+}
+
+/// The message slot the protocol told the unit to use (0x0b38/0x0b3c).
+uint64_t RegisteredDestination(const RecordingBus& bus) {
+    const auto hi = WritesTo(bus, LowOf(Reg::DspMessageDstHi));
+    const auto lo = WritesTo(bus, LowOf(Reg::DspMessageDstLo));
+    if (hi.empty() || lo.empty()) return 0;
+    return (uint64_t{hi.back().value & 0xffffU} << 32) | lo.back().value;
+}
+
+/// A frame from the unit, delivered the way the local request dispatch does.
+ASFW::Async::LocalRequestResult FromUnit(const RouteState& routes, uint64_t destination,
+                                         const std::vector<uint8_t>& frame, uint16_t node = kNodeId) {
+    ASFW::Async::LocalRequestContext ctx{};
+    ctx.destOffset = destination;
+    ctx.tCode = 1;
+    ctx.sourceID = static_cast<uint16_t>(0xffc0U | node);
+    ctx.generation = routes.route.generation.value;
+    ctx.writePayload = frame;
+    ctx.dataLength = static_cast<uint32_t>(frame.size());
+    return ASFW::Audio::Motu::Notifications::Handle(ctx);
+}
+
+double ScalarParameter(const ASFW::Audio::Controls::ControlSnapshot& s, uint32_t id) {
+    return std::get<double>(s.state.parameters.at(ASFW::AudioModel::ParameterId{id}).value);
+}
+bool BoolParameter(const ASFW::Audio::Controls::ControlSnapshot& s, uint32_t id) {
+    return std::get<bool>(s.state.parameters.at(ASFW::AudioModel::ParameterId{id}).value);
+}
+
+struct CueMixRig {
+    RecordingBus bus;
+    RouteState routes;
+    MotuProtocol protocol{bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion};
+    uint64_t destination{0};
+    CueMixRig() {
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = kVendorInternal;
+        protocol.Prepare([](IOReturn) {});
+        destination = RegisteredDestination(bus);
+    }
+};
+
+} // namespace
+
+TEST(MotuCueMix, PrepareRegistersTheMessageDestinationAndBeginsMessaging) {
+    CueMixRig rig;
+    const auto hi = WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi));
+    ASSERT_EQ(hi.size(), 1u);
+    EXPECT_EQ(hi[0].value >> 16, 0xffc0u) << "the host's node ID, in the top 16 bits";
+    EXPECT_TRUE(CD::Messages::Owns(rig.destination)) << std::hex << rig.destination;
+    // Begin messaging: tag 1 then tag 2, empty, sequence 0 and 1.
+    const auto frames = WritesTo(rig.bus, kDspCommandLo);
+    ASSERT_EQ(frames.size(), 2u);
+    EXPECT_EQ(frames[0].bytes, (std::vector<uint8_t>{0x01, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(frames[1].bytes, (std::vector<uint8_t>{0x02, 0x01, 0x00, 0x00}));
+    // Registration precedes the frames.
+    const auto at = [&](uint32_t lo) {
+        return std::ranges::find(rig.bus.writes, lo, &RecordingBus::Write::addressLo) - rig.bus.writes.begin();
+    };
+    EXPECT_LT(at(LowOf(Reg::DspMessageDstLo)), at(kDspCommandLo));
+}
+
+TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
+    CueMixRig rig;
+    const auto snapshot = rig.protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    // 8 mixes x (destination, mute, volume + 10 sources x 4) + main volume + clock.
+    EXPECT_EQ(snapshot->topology.parameters.size(), 8u * (3 + 10 * 4) + 1 + 1);
+    EXPECT_TRUE(ASFW::AudioModel::validate(snapshot->topology));
+    const auto controls = ASFW::Audio::Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state);
+    ASSERT_EQ(controls.size(), 1u);
+    EXPECT_EQ(controls[0].classId, uint32_t{'clck'});
+}
+
+TEST(MotuCueMix, AMixerWriteIsOneCommandFrameAndIsRecorded) {
+    CueMixRig rig;
+    std::optional<IOReturn> status;
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{MC::Source(1, 3, MC::Field::kSourceGain)},
+                              ASFW::AudioModel::ParameterValue{0.5},
+                              [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
+    ASSERT_EQ(status, kIOReturnSuccess);
+    const auto frames = WritesTo(rig.bus, kDspCommandLo);
+    ASSERT_EQ(frames.size(), 3u);
+    // Tag 2, sequence 2, then mix 2 / source 4 gain 0.5 (0x3f000000, little-endian), padded.
+    EXPECT_EQ(frames[2].bytes, (std::vector<uint8_t>{0x02, 0x02, 0x66, 0x01, 0x03, 0x05, 0x02,
+                                                     0x00, 0x00, 0x00, 0x3f, 0x00}));
+    const auto snapshot = rig.protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::Source(1, 3, MC::Field::kSourceGain)), 0.5);
+}
+
+TEST(MotuCueMix, AFailedWriteRecordsNothing) {
+    CueMixRig rig;
+    rig.bus.writeStatus = AsyncStatus::kTimeout;
+    std::optional<IOReturn> status;
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{MC::Mixer(0, MC::Field::kOutputMute)},
+                              ASFW::AudioModel::ParameterValue{true},
+                              [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
+    ASSERT_TRUE(status.has_value());
+    EXPECT_NE(*status, kIOReturnSuccess);
+    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), MC::Mixer(0, MC::Field::kOutputMute)));
+}
+
+TEST(MotuCueMix, InvalidMixerWritesNeverReachTheUnit) {
+    CueMixRig rig;
+    const auto before = rig.bus.writes.size();
+    const std::vector<std::pair<uint32_t, ASFW::AudioModel::ParameterValue>> bad{
+        {MC::Source(0, 10, MC::Field::kSourceGain), ASFW::AudioModel::ParameterValue{0.5}},  // no 11th source
+        {MC::Mixer(8, MC::Field::kOutputVolume), ASFW::AudioModel::ParameterValue{0.5}},    // no 9th mix
+        {MC::Mixer(0, MC::Field::kOutputAssign), ASFW::AudioModel::ParameterValue{int64_t{7}}},  // 7 outputs
+        {MC::Mixer(0, MC::Field::kOutputMute), ASFW::AudioModel::ParameterValue{0.5}},      // wrong kind
+    };
+    for (const auto& [id, value] : bad) {
+        std::optional<IOReturn> status;
+        rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{id}, value,
+                                  [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
+        EXPECT_EQ(status, kIOReturnBadArgument) << std::hex << id;
+    }
+    EXPECT_EQ(rig.bus.writes.size(), before);
+}
+
+TEST(MotuCueMix, TheUnitsMessagesUpdateTheMixer) {
+    CueMixRig rig;
+    std::vector<uint8_t> message;
+    CD::Encode(CD::Set::SourceMute(0, 0, true), message);
+    CD::Encode(CD::Set::OutputVolume(2, 0.25f), message);
+    CD::Encode(CD::Set::MainVolume(0.75f), message);
+    uint8_t sequence = 0x40;
+    const auto frame = CD::BuildFrames(message, CD::kTagCommands, sequence)[0];
+    const auto result = FromUnit(rig.routes, rig.destination, frame);
+    EXPECT_TRUE(result.claimed);
+    EXPECT_EQ(result.rcode, ASFW::Async::ResponseCode::Complete);
+    const auto snapshot = rig.protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_TRUE(BoolParameter(*snapshot, MC::Source(0, 0, MC::Field::kSourceMute)));
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::Mixer(2, MC::Field::kOutputVolume)), 0.25);
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::kMainVolume), 0.75);
+}
+
+TEST(MotuCueMix, FramesFromAnotherNodeAreIgnored) {
+    CueMixRig rig;
+    std::vector<uint8_t> message;
+    CD::Encode(CD::Set::SourceMute(0, 0, true), message);
+    uint8_t sequence = 0;
+    const auto frame = CD::BuildFrames(message, CD::kTagCommands, sequence)[0];
+    (void)FromUnit(rig.routes, rig.destination, frame, /*node=*/5);
+    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), MC::Source(0, 0, MC::Field::kSourceMute)));
+}
+
+TEST(MotuCueMix, AFrameTooLongOrOffSlotIsRefused) {
+    CueMixRig rig;
+    EXPECT_EQ(FromUnit(rig.routes, rig.destination, std::vector<uint8_t>(252, 0)).rcode,
+              ASFW::Async::ResponseCode::DataError);
+    EXPECT_EQ(FromUnit(rig.routes, rig.destination + 4, std::vector<uint8_t>{0x02, 0, 0, 0}).rcode,
+              ASFW::Async::ResponseCode::AddressError);
+}
+
+TEST(MotuCueMix, ShutdownCancelsMessagingAndClearsTheDestination) {
+    CueMixRig rig;
+    const auto before = rig.bus.writes.size();
+    ASSERT_EQ(rig.protocol.Shutdown(), kIOReturnSuccess);
+    std::vector<RecordingBus::Write> after(rig.bus.writes.begin() + static_cast<std::ptrdiff_t>(before),
+                                           rig.bus.writes.end());
+    ASSERT_GE(after.size(), 3u);
+    const auto cancel = std::ranges::find(after, kDspCommandLo, &RecordingBus::Write::addressLo);
+    ASSERT_NE(cancel, after.end());
+    EXPECT_EQ(cancel->bytes[0], CD::kTagCancel);
+    EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi)).back().value, 0u);
+    EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstLo)).back().value, 0u);
 }
