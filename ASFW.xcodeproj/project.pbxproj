@@ -1619,6 +1619,7 @@
 		DC915CE751EF8C365B2EC9DB /* MetricsSink.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MetricsSink.cpp; sourceTree = "<group>"; };
 		DCA1D25B11BB9D696976C2CE /* BridgeCoInventory.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BridgeCoInventory.hpp; sourceTree = "<group>"; };
 		DCBE7EC49EB1D425BE77EC09 /* Link.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Link.hpp; sourceTree = "<group>"; };
+		DD35BC29224B2B0AADDC17EF /* MotuCommandDsp.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuCommandDsp.hpp; sourceTree = "<group>"; };
 		DD55C8C0DCD7E10BE9733931 /* DuetControlModel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DuetControlModel.hpp; sourceTree = "<group>"; };
 		DDB2A42EFB6F3567628A7951 /* OrpheusControlModel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OrpheusControlModel.hpp; sourceTree = "<group>"; };
 		DDC8BB9AD43F0F474F1D7F08 /* HardwareAccessGate.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareAccessGate.hpp; sourceTree = "<group>"; };
@@ -2292,6 +2293,7 @@
 		37AF15EE4187516EA2FDB2CB /* MOTU */ = {
 			isa = PBXGroup;
 			children = (
+				DD35BC29224B2B0AADDC17EF /* MotuCommandDsp.hpp */,
 				5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */,
 				00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */,
 				C5E583C7BF3E87EA0C34C09C /* MotuProtocol.hpp */,

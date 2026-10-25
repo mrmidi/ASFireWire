@@ -152,6 +152,9 @@ add_audio_test(MotuPayloadWriterTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
+# MOTU mk3 command DSP: command bytes, framing, reassembly, mixer state.
+add_audio_test(MotuCommandDspTests MotuCommandDspTests.cpp)
+
 # MOTU v2 Protocol Adapter Tests
 # DeviceRegistry is linked because the protocol now takes a registry-issued route token
 # (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
