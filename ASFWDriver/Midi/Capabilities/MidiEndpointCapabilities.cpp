@@ -113,4 +113,29 @@ MidiEndpointCapabilities ProjectMidiCapabilities(
     return out;
 }
 
+namespace {
+[[nodiscard]] MidiDirectionCapabilities ProjectMotuDirection(uint32_t unitSwVersion,
+                                                             bool capture) noexcept {
+    MidiDirectionCapabilities out{};
+    const auto slot = ASFW::Encoding::Motu::OffsetsOf(
+        ASFW::Encoding::Motu::MidiSlotFor(unitSwVersion, capture));
+    if (!slot) return out;  // kNoMidi
+    out.status = MidiCapabilityStatus::kOk;
+    out.portCount = 1;
+    out.motuSlot = slot;
+    return out;
+}
+} // namespace
+
+MidiEndpointCapabilities ProjectMotuMidiCapabilities(const uint32_t unitSwVersion,
+                                                     const uint64_t guid,
+                                                     const uint64_t streamEpoch) noexcept {
+    MidiEndpointCapabilities out{};
+    out.guid = guid;
+    out.streamEpoch = streamEpoch;
+    out.deviceToHost = ProjectMotuDirection(unitSwVersion, true);
+    out.hostToDevice = ProjectMotuDirection(unitSwVersion, false);
+    return out;
+}
+
 } // namespace ASFW::Midi

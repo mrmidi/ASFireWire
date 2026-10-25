@@ -1885,3 +1885,86 @@ TEST(MidiTxThroughTheProducer, AStreamWhoseGeometryDiffersFromTheSeamIsNotCompos
     StartSaffire(midi, profile);
     EXPECT_EQ(midi.Ivars().runtime.midiTxBlock, nullptr);
 }
+
+// MOTU: MIDI out through the real producer. The nub hands the seam with one
+// destination port; the slot comes from the model the run armed (the UltraLite
+// mk3: flag byte 8, data byte 7 of each data block), not from the seam.
+namespace {
+
+struct MotuMidiByte {
+    uint64_t block;  // data block index across the whole run
+    uint8_t value;
+};
+
+std::vector<MotuMidiByte> ReadMotuMidi(const std::vector<WirePacket>& wire, uint32_t dbs) {
+    std::vector<MotuMidiByte> out;
+    uint64_t blockBase = 0;
+    for (const auto& packet : wire) {
+        if (packet.bytes.size() <= 8) continue;  // NO-DATA: header only
+        const uint32_t blocks = static_cast<uint32_t>((packet.bytes.size() - 8) / (dbs * 4));
+        for (uint32_t b = 0; b < blocks; ++b) {
+            const size_t at = 8 + static_cast<size_t>(b) * dbs * 4;
+            if (packet.bytes[at + 8] & 0x01) out.push_back({blockBase + b, packet.bytes[at + 7]});
+        }
+        blockBase += blocks;
+    }
+    return out;
+}
+
+void StartUltraLiteMk3(TxProducerRig& rig, const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile& profile) {
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::MotuUltraliteMk3, 48000));
+    rig.FeedMotuRx(8);
+    rig.EnableHostOutput({});
+}
+
+} // namespace
+
+TEST(MidiTxThroughTheProducer, MotuBytesLeaveInTheMessageBytesSpacedForTheUnit) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x19};
+    TxProducerRig plain;
+    StartUltraLiteMk3(plain, profile);
+    TxProducerRig midi;
+    auto* block = midi.EnableMidi(0);
+    StartUltraLiteMk3(midi, profile);
+    ASSERT_NE(midi.Ivars().runtime.midiTxBlock, nullptr) << "StartIO did not bind MOTU MIDI TX";
+    EXPECT_TRUE(midi.Ivars().runtime.midiTxMotu);
+    EXPECT_EQ(midi.Ivars().runtime.txMotuUnitVersion, 0x19u);
+    ASSERT_EQ(plain.Ivars().runtime.midiTxBlock, nullptr);
+
+    block->Arm(1);
+    ASSERT_TRUE(plain.RunPackets(2000)) << plain.DescribeFault();
+    ASSERT_TRUE(midi.RunPackets(2000)) << midi.DescribeFault();
+
+    const std::vector<uint8_t> sent{0x90, 0x3C, 0x40, 0x80, 0x3C, 0x00};
+    ASSERT_TRUE(block->hostToDevice[0].TryWrite(sent, 1));
+    ASSERT_TRUE(plain.RunPackets(2000)) << plain.DescribeFault();
+    ASSERT_TRUE(midi.RunPackets(2000)) << midi.DescribeFault();
+
+    const uint32_t dbs = midi.Dbs();
+    const auto bytes = ReadMotuMidi(midi.Wire(), dbs);
+    ASSERT_EQ(bytes.size(), sent.size());
+    for (size_t i = 0; i < sent.size(); ++i) EXPECT_EQ(bytes[i].value, sent[i]) << "byte " << i;
+    // 48000 / 3093 = 15: at least 16 data blocks between bytes.
+    for (size_t i = 1; i < bytes.size(); ++i)
+        EXPECT_GE(bytes[i].block - bytes[i - 1].block, 16u) << "byte " << i;
+    EXPECT_TRUE(block->hostToDevice[0].Empty());
+    EXPECT_EQ(midi.Ivars().runtime.motuMidiTxComposer.Counters().bytesComposed, sent.size());
+
+    // Outside the MIDI slot, the wire is what the same run without MIDI sent.
+    const auto& a = plain.Wire();
+    const auto& b = midi.Wire();
+    ASSERT_EQ(a.size(), b.size());
+    size_t differing = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        ASSERT_EQ(a[i].bytes.size(), b[i].bytes.size()) << "packet " << i;
+        for (size_t off = 0; off < a[i].bytes.size(); ++off) {
+            if (a[i].bytes[off] == b[i].bytes[off]) continue;
+            ++differing;
+            const size_t inBlock = off >= 8 ? (off - 8) % (dbs * 4) : 0;
+            EXPECT_TRUE(off >= 8 && (inBlock == 7 || inBlock == 8))
+                << "packet " << i << " offset " << off;
+        }
+    }
+    EXPECT_GT(differing, 0u);
+    EXPECT_TRUE(midi.LateWrites().empty()) << "late write at packet " << midi.LateWrites().front().packet;
+}

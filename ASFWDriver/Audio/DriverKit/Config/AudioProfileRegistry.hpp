@@ -47,6 +47,11 @@ public:
     /// without a downcast. nullptr for every non-DICE builder.
     [[nodiscard]] static const DICE::DiceProfile* DiceProfileForBuilderId(
         uint32_t profileBuilderId) noexcept;
+
+    /// The MOTU Unit_Sw_Version a builder's profile serves, or 0 for a builder
+    /// that is not MOTU. MIDI publication needs the model, which MOTU reports
+    /// nowhere in its stream registers.
+    [[nodiscard]] static uint32_t MotuUnitVersionForBuilderId(uint32_t profileBuilderId) noexcept;
 };
 
 } // namespace ASFW::Isoch::Audio

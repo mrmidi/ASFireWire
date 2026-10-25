@@ -21,8 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "../../Audio/Protocols/AudioTypes.hpp"
+#include "../../Audio/Wire/MOTU/MotuMidi.hpp"
 
 namespace ASFW::Midi {
 
@@ -102,6 +104,10 @@ struct MidiDirectionCapabilities final {
     /// the CIP_UNALIGHED_DBC quirk only to specific families. Make it false
     /// only with a reference that names the device.
     bool dbcAligned{true};
+    /// A MOTU stream: no MPX slot; its one port rides in each data block's
+    /// message bytes at these offsets (MotuMidi.hpp). The AM824 fields above
+    /// are zero then.
+    std::optional<ASFW::Encoding::Motu::MidiSlotOffsets> motuSlot{};
 
     [[nodiscard]] constexpr bool Usable() const noexcept {
         return status == MidiCapabilityStatus::kOk && portCount > 0;
@@ -162,6 +168,14 @@ enum class MidiDirection : uint8_t {
 /// unusable is still a perfectly good audio device.
 [[nodiscard]] MidiEndpointCapabilities ProjectMidiCapabilities(
     const ASFW::Audio::AudioStreamRuntimeCaps& caps,
+    uint64_t guid,
+    uint64_t streamEpoch) noexcept;
+
+/// MIDI capability of a MOTU unit, from its Unit_Sw_Version alone: MOTU
+/// reports no MIDI in its stream registers, so the model decides (MotuMidi.hpp,
+/// after Linux motu-protocol-v2.c/v3.c). One port per direction that has a slot.
+[[nodiscard]] MidiEndpointCapabilities ProjectMotuMidiCapabilities(
+    uint32_t unitSwVersion,
     uint64_t guid,
     uint64_t streamEpoch) noexcept;
 

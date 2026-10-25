@@ -1583,6 +1583,7 @@
 		D59B2504A609DD39A21A1360 /* MetalSpectrogramView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalSpectrogramView.swift; sourceTree = "<group>"; };
 		D5D8CA6549248C65817F04F6 /* TopologyManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyManager.hpp; sourceTree = "<group>"; };
 		D627F5CB0371AE94C13B34E3 /* DiceDeviceIo.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceDeviceIo.hpp; sourceTree = "<group>"; };
+		D66EE95AA7F18ABA30D50FD7 /* MotuMidiTxComposer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuMidiTxComposer.hpp; sourceTree = "<group>"; };
 		D68931FC8929251C7AAB84CF /* ContextManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ContextManager.hpp; sourceTree = "<group>"; };
 		D6995F5ACB583D7F872E3D9E /* SplitTimeout.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SplitTimeout.hpp; sourceTree = "<group>"; };
 		D6D8E4FDE24B107EC58D69F9 /* DiceReportTextFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiceReportTextFormatter.swift; sourceTree = "<group>"; };
@@ -2355,6 +2356,7 @@
 				F397FF4D09CEEF87CC74063E /* DiceTxStreamEngine.cpp */,
 				9F7B6EF02487E7B7842B0237 /* DiceTxStreamEngine.hpp */,
 				4DE40D960B7A8D10AFFDFD45 /* MidiTxComposer.hpp */,
+				D66EE95AA7F18ABA30D50FD7 /* MotuMidiTxComposer.hpp */,
 			);
 			path = Tx;
 			sourceTree = "<group>";

@@ -33,6 +33,7 @@ enum class MidiSlot : uint8_t { None, SecondQuadlet, ThirdQuadlet };
 struct MidiSlotOffsets final {
     uint32_t flag;
     uint32_t byte;
+    friend constexpr bool operator==(const MidiSlotOffsets&, const MidiSlotOffsets&) noexcept = default;
 };
 
 inline constexpr uint32_t kMidiFlagByteOffset3rdQ = 8;
@@ -92,6 +93,11 @@ public:
     void Configure(uint32_t sampleRateHz) noexcept {
         interval_ = static_cast<int32_t>(MidiDataBlockInterval(sampleRateHz));
         countdown_ = 0;
+    }
+
+    /// Whether one of the next `blocks` data blocks may carry a byte.
+    [[nodiscard]] bool HasSlotWithin(uint32_t blocks) const noexcept {
+        return countdown_ >= 0 && static_cast<uint32_t>(countdown_) < blocks;
     }
 
     /// Fill the MIDI slot of `blocks` data blocks. `take(uint8_t&)` yields the

@@ -16,6 +16,7 @@
 #include "../Runtime/TxStartupTrace.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Engine/Direct/Tx/MidiTxComposer.hpp"
+#include "../Engine/Direct/Tx/MotuMidiTxComposer.hpp"
 #include "../Wire/MOTU/MotuPayloadWriter.hpp"
 #include "../Wire/MOTU/MotuDeviceTiming.hpp"
 #include "../../Isoch/Core/IsochTxQueue.hpp"
@@ -266,6 +267,12 @@ struct AudioDriverRuntimeState {
     // TX preparation queue only, except the bind/unbind in StartIO/StopIO,
     // which run while that queue is quiesced.
     ASFW::AudioEngine::Direct::Tx::MidiTxComposer midiTxComposer;
+    // A MOTU stream has no MPX slot: its MIDI goes through this one instead,
+    // and `midiTxMotu` says which of the two the bound run uses.
+    ASFW::AudioEngine::Direct::Tx::MotuMidiTxComposer motuMidiTxComposer;
+    bool midiTxMotu{false};
+    // Unit_Sw_Version of the MOTU stream this run armed, 0 for every other family.
+    uint32_t txMotuUnitVersion{0};
     ASFW::Midi::MidiTransportBlock* midiTxBlock{nullptr};
     // Counters last reported, so [MidiTx] speaks only when something changed.
     uint64_t midiTxReportedBytes{0};
