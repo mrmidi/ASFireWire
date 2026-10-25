@@ -15,6 +15,7 @@ add_executable(IsochReceiveContextTests
     IsochRxDmaRingTests.cpp
     IsochRxTimingTests.cpp
     MidiReceivePathTests.cpp
+    MotuMidiTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"

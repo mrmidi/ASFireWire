@@ -3,9 +3,11 @@
 #include "AudioTransportControlBlock.hpp"
 #include "../../Ports/IMidiReceiveWake.hpp"
 #include "../../Wire/AM824/MpxMidiDemux.hpp"
+#include "../../Wire/MOTU/MotuMidi.hpp"
 #include "../../../Midi/Transport/MidiTransportBlock.hpp"
 
 #include <cstdint>
+#include <optional>
 
 namespace ASFW::Audio::Runtime {
 
@@ -23,10 +25,16 @@ struct MidiReceiveBinding final {
     ASFW::Midi::MidiTransportBlock* block{nullptr};
     /// Device -> host: the slot index and port count of the capture stream.
     ASFW::Encoding::MpxMidiGeometry geometry{};
+    /// A MOTU capture stream's one port, carried in each data block's message
+    /// bytes (MotuMidi.hpp). Set instead of `geometry`.
+    std::optional<ASFW::Encoding::Motu::MidiSlotOffsets> motuSlot{};
     ASFW::Audio::Ports::IMidiReceiveWake* wake{nullptr};
 
     [[nodiscard]] bool Valid() const noexcept {
-        return block != nullptr && geometry.Valid();
+        return block != nullptr && (motuSlot.has_value() || geometry.Valid());
+    }
+    [[nodiscard]] uint8_t PortCount() const noexcept {
+        return motuSlot.has_value() ? 1 : geometry.portCount;
     }
 };
 

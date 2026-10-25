@@ -139,7 +139,7 @@ void DirectAudioReceiveConsumer::UnbindMidi() noexcept {
 
 void DirectAudioReceiveConsumer::MarkMidiGapAllPorts() noexcept {
     if (!midiBound_) return;
-    for (uint8_t port = 0; port < midiBinding_.geometry.portCount; ++port) {
+    for (uint8_t port = 0; port < midiBinding_.PortCount(); ++port) {
         midiSink_.MarkMidiDiscontinuity(port);
     }
 }
@@ -305,6 +305,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (midiBound_) {
         midi.sink = &midiSink_;
         midi.geometry = midiBinding_.geometry;
+        midi.motuSlot = midiBinding_.motuSlot;
+        midi.motuCounters = &motuMidiCounters_;
         midi.counters = &midiCounters_;
         // This drain's own pair, not anything held across BeginReceiveBatch:
         // the batch is handed to every ConsumePacket, so each packet is dated

@@ -1159,6 +1159,7 @@
 		757EC74289724A098B1A039B /* SignalSourceCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SignalSourceCommand.hpp; sourceTree = "<group>"; };
 		75BF1539474CBA7AFB67A769 /* RxTelemetrySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RxTelemetrySection.swift; sourceTree = "<group>"; };
 		75FA4BD49A436757DB447E83 /* RawPcm24In32Decoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RawPcm24In32Decoder.hpp; sourceTree = "<group>"; };
+		76559DAD11EAE3F65822AA1B /* MotuMidi.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuMidi.hpp; sourceTree = "<group>"; };
 		76574F961A8705D1667DDBD3 /* DICETcatProtocol.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DICETcatProtocol.hpp; sourceTree = "<group>"; };
 		76B0E21D7030C5536C28D271 /* IAsyncControllerPort.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IAsyncControllerPort.hpp; sourceTree = "<group>"; };
 		76B69B4F0AB736B03BF63BBF /* AVCUnit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCUnit.hpp; sourceTree = "<group>"; };
@@ -2874,6 +2875,7 @@
 				4343F3527B3CEA77F73E62EB /* MotuBlockCodec.hpp */,
 				B297F57F5F8592875537BB88 /* MotuBlockLayout.hpp */,
 				A26A0D6C7257A20EF0E2569E /* MotuDeviceTiming.hpp */,
+				76559DAD11EAE3F65822AA1B /* MotuMidi.hpp */,
 				751D51C8E06FC1670D3DCDB4 /* MotuModel.hpp */,
 				70905838A5754565A839A4F9 /* MotuPayloadCodec.hpp */,
 				B8A798523A386FF95BDEB419 /* MotuPayloadReader.hpp */,

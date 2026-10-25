@@ -24,7 +24,7 @@ constexpr uint8_t kAm824NoDataFdf = 0xFF;
 
 void MarkMidiGap(const RxMidiExtraction& midi, RxAudioPacketProcessorResult& result) noexcept {
     if (!midi.Enabled()) return;
-    for (uint8_t port = 0; port < midi.geometry.portCount; ++port) {
+    for (uint8_t port = 0; port < midi.PortCount(); ++port) {
         midi.sink->MarkMidiDiscontinuity(port);
     }
     result.midiGap = true;
@@ -126,7 +126,26 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
     // MIDI slot was projected for, and whose payload is whole data blocks. A
     // packet that fails any of these other than for being NO-DATA lost its
     // bytes, so the sink is told the stream is discontinuous.
-    if (midi.Enabled() && !headerless) {
+    // A MOTU packet is never AM824 and has no NO-DATA form beyond an empty
+    // payload, handled above. Its blocks are the codec's stride, which the
+    // CIP DBS does not describe for every model (MotuRxPayloadCodec).
+    if (midi.Enabled() && !headerless && midi.motuSlot) {
+        if (cipFormat != kFormatAm824 && (payloadBytes % strideBytes) == 0) {
+            ASFW::Encoding::Motu::MotuMidiDemuxCounters discard{};
+            auto& counters = midi.motuCounters != nullptr ? *midi.motuCounters : discard;
+            const uint64_t before = counters.bytesDelivered;
+            const uint64_t packetHostTicks =
+                result.hasReceiveCycleTimestamp
+                    ? ASFW::Isoch::Rx::PacketHostTicks(result.receiveCycleTimestamp,
+                                                       midi.drainCycleTimer, midi.drainHostTicks)
+                    : midi.drainHostTicks;
+            ASFW::Encoding::Motu::DemuxMotuMidi(data, static_cast<uint32_t>(eventCount), strideBytes,
+                                                *midi.motuSlot, packetHostTicks, *midi.sink, counters);
+            result.midiBytesDelivered = static_cast<uint32_t>(counters.bytesDelivered - before);
+        } else {
+            MarkMidiGap(midi, result);
+        }
+    } else if (midi.Enabled() && !headerless) {
         const bool noData = cipFormat == kFormatAm824 && result.fdf == kAm824NoDataFdf;
         if (!noData) {
             const bool whole = (payloadBytes % strideBytes) == 0;
