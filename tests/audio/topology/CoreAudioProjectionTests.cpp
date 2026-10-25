@@ -137,3 +137,30 @@ TEST(CoreAudioProjection, PositionTranslatorUsesRangeAndGridWithoutAmplitudeLaw)
     EXPECT_NEAR(*PositionToScalar(uneven, 1), 0.9, 1e-12);
 }
 } // namespace
+// A device-wide clock source sits on a node with no ports. The HAL reads the
+// device's clock source list from a global-scope 'clck' selector, so that is
+// where it goes. A clock parameter on a node with a host path is not device-wide.
+TEST(CoreAudioProjection, PlacesADeviceWideClockSourceOnTheGlobalScope) {
+    Fixture f;
+    f.topology.nodes.push_back({AM::NodeId{9}, "Clock", AM::EndpointNode{AM::EndpointKind::Host}});
+    f.topology.parameters.push_back({AM::ParameterId{20}, AM::NodeId{9}, AM::ParameterSemantic::ClockSource,
+        AM::EnumDomain{{{0, "Internal"}, {16, "S/PDIF"}}}, "Clock Source"});
+    f.state.parameters.emplace(AM::ParameterId{20}, AM::ParameterState{int64_t{16}});
+    ASSERT_TRUE(AM::validate(f.topology));
+    const auto controls = ProjectCoreAudioControls(f.topology, f.state);
+    const auto clock = std::ranges::find(controls, AM::ParameterId{20}, &CoreAudioControl::parameter);
+    ASSERT_NE(clock, controls.end());
+    EXPECT_EQ(clock->classId, uint32_t{'clck'});
+    EXPECT_EQ(clock->scope, uint32_t{'glob'});
+    EXPECT_EQ(clock->element, 0U);
+    EXPECT_EQ(clock->kind, CoreAudioControlKind::Selector);
+}
+TEST(CoreAudioProjection, KeepsAClockSourceOnAPortedNodeOffTheGlobalScope) {
+    Fixture f;
+    // Node 1 owns the microphone port, so a clock parameter there is not device-wide.
+    f.topology.parameters.push_back({AM::ParameterId{20}, AM::NodeId{1}, AM::ParameterSemantic::ClockSource,
+        AM::EnumDomain{{{0, "Internal"}, {16, "S/PDIF"}}}, "Clock Source"});
+    f.state.parameters.emplace(AM::ParameterId{20}, AM::ParameterState{int64_t{0}});
+    const auto controls = ProjectCoreAudioControls(f.topology, f.state);
+    EXPECT_TRUE(std::ranges::none_of(controls, [](const auto& c) { return c.scope == uint32_t{'glob'}; }));
+}

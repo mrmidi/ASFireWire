@@ -16,6 +16,10 @@
 #include "../../../Logging/Logging.hpp"
 #include "../../DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
+#include "../../Controls/ControlNotifications.hpp"
+#include "../../Model/Topology/Validate.hpp"
+
+#include <algorithm>
 
 namespace ASFW::Audio::Motu {
 
@@ -131,6 +135,103 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
     cachedSampleRateHz_.store(0, std::memory_order_release);
     preparedRateHz_.store(0, std::memory_order_release);
     if (!shuttingDown_.load(std::memory_order_acquire)) registerCommands_.Reopen();
+}
+
+namespace {
+namespace AM = ::ASFW::AudioModel;
+namespace C = ::ASFW::Audio::Controls;
+
+[[nodiscard]] int64_t SourceCode(ClockSourceV2 source) noexcept {
+    return static_cast<int64_t>(EncodeClockSourceV3(0, source).value_or(0));
+}
+
+// One node, the device clock, carrying the clock source parameter. It has no
+// ports, so the Core Audio projection places it on the global scope, where the
+// HAL looks for a device's clock source. Enum values are the register codes.
+C::ControlSnapshot BuildClockControl(std::span<const ClockSourceChoice> choices, int64_t code,
+                                     uint64_t revision, uint64_t sequence) {
+    C::ControlSnapshot result;
+    result.family = "motu";
+    result.topology.revision = result.state.topologyRevision = revision;
+    result.sequence = sequence;
+    result.topology.nodes.push_back({AM::NodeId{1}, "Clock", AM::EndpointNode{AM::EndpointKind::Host}});
+    AM::EnumDomain domain;
+    for (const auto& choice : choices) domain.values.push_back({SourceCode(choice.source), choice.name});
+    result.topology.parameters.push_back({AM::ParameterId{kClockSourceParameterId}, AM::NodeId{1},
+                                          AM::ParameterSemantic::ClockSource, std::move(domain), "Clock Source"});
+    result.state.parameters.emplace(AM::ParameterId{kClockSourceParameterId}, AM::ParameterState{code});
+    return result;
+}
+} // namespace
+
+bool MotuProtocol::CommitClockControl(uint32_t raw) {
+    const auto choices = SelectableClockSourcesV3(unitSwVersion_);
+    const auto code = static_cast<int64_t>(raw & 0xffU);
+    if (std::ranges::none_of(choices, [code](const auto& choice) { return SourceCode(choice.source) == code; }))
+        return false;
+    auto next = BuildClockControl(choices, code, route_.routeEpoch,
+                                  controlSnapshot_ ? controlSnapshot_->sequence : 0);
+    if (!AM::validate(next.topology) || !AM::validateState(next.topology, next.state)) return false;
+    auto& notifications = C::ControlNotifications::Shared();
+    if (controlSnapshot_ && controlSnapshot_->topology.revision != next.topology.revision) {
+        // A new route: listeners re-read everything (kind 4, as the Duet does).
+        next.sequence = notifications.NextSequence();
+        notifications.Publish({route_.guid, next.topology.revision, next.sequence, 0, 4, 0});
+    } else if (controlSnapshot_ &&
+               controlSnapshot_->state.parameters.at(AM::ParameterId{kClockSourceParameterId}).value !=
+                   AM::ParameterValue{code}) {
+        next.sequence = notifications.NextSequence();
+        notifications.Publish({route_.guid, next.topology.revision, next.sequence,
+                               kClockSourceParameterId, 2, static_cast<uint64_t>(code)});
+    }
+    controlSnapshot_ = std::move(next);
+    return true;
+}
+
+void MotuProtocol::Prepare(std::function<void(IOReturn)> done) {
+    if (!Controls()) { done(kIOReturnUnsupported); return; }
+    ReadClockStatus([this, done = std::move(done)](IOReturn status, ClockStatus clock) {
+        if (status != kIOReturnSuccess) { done(status); return; }
+        // A source outside the list cannot be shown, so publish no control.
+        done(CommitClockControl(clock.raw) ? kIOReturnSuccess : kIOReturnUnsupported);
+    });
+}
+
+std::optional<::ASFW::Audio::Controls::ControlSnapshot> MotuProtocol::CopySnapshot() const {
+    return controlSnapshot_;
+}
+
+void MotuProtocol::SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                                Completion done) {
+    const auto choices = SelectableClockSourcesV3(unitSwVersion_);
+    const auto* code = std::get_if<int64_t>(&value);
+    const auto choice = std::ranges::find_if(choices, [code](const auto& choice) {
+        return code && SourceCode(choice.source) == *code;
+    });
+    if (id.value != kClockSourceParameterId || choice == choices.end()) {
+        done(kIOReturnBadArgument, false);
+        return;
+    }
+    // Read-modify-write the low byte only; the rate field and fetch bit stay, as
+    // MOTU's driver leaves them (EncodeClockSourceV3). Then read the register
+    // back: the device, not the request, decides what is reported.
+    const auto source = choice->source;
+    ModifyRegister(ClockRegister(),
+        [source](uint32_t raw) { return EncodeClockSourceV3(raw, source).value_or(raw); },
+        [this, done = std::move(done)](IOReturn writeStatus) mutable {
+            ReadClockStatus([this, writeStatus, done = std::move(done)](IOReturn readStatus, ClockStatus clock) {
+                if (readStatus != kIOReturnSuccess) {
+                    done(writeStatus != kIOReturnSuccess ? writeStatus : readStatus, false);
+                    return;
+                }
+                const bool known = CommitClockControl(clock.raw);
+                ASFW_LOG(Audio, "[MOTU] clock source write status=0x%x now raw=0x%08x known=%u",
+                         writeStatus, clock.raw, known);
+                const IOReturn status = writeStatus != kIOReturnSuccess ? writeStatus
+                    : known ? kIOReturnSuccess : kIOReturnError;
+                done(status, AM::ParameterValue{static_cast<int64_t>(clock.raw & 0xffU)});
+            });
+        });
 }
 
 void MotuProtocol::ReadRegister(Async::FWAddress address,

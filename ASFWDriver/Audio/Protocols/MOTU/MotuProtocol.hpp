@@ -22,6 +22,7 @@
 #include "../Duplex/FamilyDriver.hpp"
 #include "../Duplex/FamilyStageWait.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "../../Controls/IControlProvider.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -37,15 +38,35 @@ struct ClockStatus {
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
+/// Parameter id of the clock source control ('MCLK').
+inline constexpr uint32_t kClockSourceParameterId = 0x4d434c4bU;
+
 /// Shared MOTU register adapter for FireWire-only V1, V2 and V3 models.
 ///
 /// Also serves as its own FamilyDriver: the audio session reaches every protocol
 /// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
 /// implement to be driven at all.
-class MotuProtocol final : public IDeviceProtocol, public FamilyDriver {
+///
+/// For a V3 model with a known clock source list (SelectableClockSourcesV3) it
+/// is also the control provider for one parameter, the clock source, which the
+/// Core Audio projection publishes as the device's clock source.
+class MotuProtocol final : public IDeviceProtocol, public FamilyDriver,
+                           public ::ASFW::Audio::Controls::IControlProvider {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
+
+    // ---- IControlProvider (controller queue) ----
+    ::ASFW::Audio::Controls::IControlProvider* Controls() noexcept override {
+        return SelectableClockSourcesV3(unitSwVersion_).empty() ? nullptr : this;
+    }
+    /// Read 0x0b14 and build the control snapshot from what the device reports.
+    void Prepare(std::function<void(IOReturn)> done) override;
+    [[nodiscard]] std::optional<::ASFW::Audio::Controls::ControlSnapshot> CopySnapshot() const override;
+    /// Write the clock source (low byte of 0x0b14), then re-read the register:
+    /// the completion carries the source the device reports, not the one asked for.
+    void SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                      Completion done) override;
 
     MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
                    Protocols::Ports::FireWireBusInfo& busInfo,
@@ -258,6 +279,13 @@ private:
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;
+
+    /// Replace the control snapshot with the clock source `raw` reports, and
+    /// announce a changed value. False when the device reports a source that
+    /// is not in the model's list (an external choice made elsewhere).
+    bool CommitClockControl(uint32_t raw);
+    // Controller queue only, like every IControlProvider call.
+    std::optional<::ASFW::Audio::Controls::ControlSnapshot> controlSnapshot_;
 };
 
 } // namespace ASFW::Audio::Motu

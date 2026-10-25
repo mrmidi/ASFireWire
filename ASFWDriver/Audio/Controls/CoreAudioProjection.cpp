@@ -213,7 +213,14 @@ std::vector<CoreAudioControl> ProjectCoreAudioControls(const AM::Topology& t, co
         if ((mapping->kind == CoreAudioControlKind::Level && !std::holds_alternative<AM::ScalarDomain>(domain)) ||
             (mapping->kind == CoreAudioControlKind::Boolean && !std::holds_alternative<AM::BooleanDomain>(domain)) ||
             (mapping->kind == CoreAudioControlKind::Selector && !std::holds_alternative<AM::EnumDomain>(domain))) continue;
-        const auto placement = Place(t, state, p.target);
+        auto placement = Place(t, state, p.target);
+        // A clock source belongs to the whole device, not to a stream: the HAL
+        // takes the device's clock source list from a global-scope 'clck'
+        // control. Only a node-wide parameter on a node with no host path qualifies.
+        if (!placement && p.semantic == AM::ParameterSemantic::ClockSource &&
+            std::holds_alternative<AM::NodeId>(p.target) &&
+            std::ranges::none_of(t.ports, [&](const auto& port) { return AM::ParameterTarget{port.owner} == p.target; }))
+            placement = Placement{'glob', 0};
         if (!placement) continue; // no guessed channel numbers or private scope
         result.push_back({p.id, mapping->kind, mapping->classId, placement->scope, placement->element,
             p.access == AM::ParameterAccess::ReadWrite, p.name, domain, s->second.value,

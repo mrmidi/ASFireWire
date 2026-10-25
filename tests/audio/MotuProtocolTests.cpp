@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include "Audio/Protocols/MOTU/MotuProtocol.hpp"
+#include "Audio/Controls/CoreAudioProjection.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "tests/mocks/FakeTimerScheduler.hpp"
 #include "MotuChannelMappingFixtures.hpp"
@@ -1826,4 +1827,151 @@ TEST(MotuProtocolChannelLabelTests, EverySupportedModelPublishesConsistentNamesA
         }
     }
     EXPECT_EQ(models,12U);
+}
+
+//==============================================================================
+// V3 clock source control. Register values observed on hardware, 2026-10-25:
+// MOTU's driver (1.6 build 89555, macOS 15.8) on an UltraLite mk3 wrote these
+// to 0x0b14 when Internal, S/PDIF and SMPTE were chosen in Audio MIDI Setup,
+// streaming at 44.1 kHz (fetch bit set).
+//==============================================================================
+
+constexpr uint32_t kUltraLiteMk3SwVersion = 0x000019U;
+constexpr uint32_t kVendorInternal = 0x02000000U;
+constexpr uint32_t kVendorSpdif = 0x02000010U;
+constexpr uint32_t kVendorSmpte = 0x02000002U;
+
+TEST(MotuV3ClockSource, EncodeMatchesTheVendorDriversWrites) {
+    using ASFW::Audio::Motu::EncodeClockSourceV3;
+    EXPECT_EQ(EncodeClockSourceV3(kVendorInternal, ClockSourceV2::Spdif), kVendorSpdif);
+    EXPECT_EQ(EncodeClockSourceV3(kVendorInternal, ClockSourceV2::Sph), kVendorSmpte);
+    EXPECT_EQ(EncodeClockSourceV3(kVendorSpdif, ClockSourceV2::Internal), kVendorInternal);
+    // The rate field rides along untouched: 192 kHz stays 192 kHz.
+    EXPECT_EQ(EncodeClockSourceV3(0x02000500U, ClockSourceV2::Spdif), 0x02000510U);
+    // ADAT also selects a bank, which the source enum cannot express.
+    EXPECT_FALSE(EncodeClockSourceV3(kVendorInternal, ClockSourceV2::AdatOnOpt).has_value());
+    for (const uint32_t raw : {kVendorInternal, kVendorSpdif, kVendorSmpte}) {
+        const auto source = ASFW::Audio::Motu::DecodeClockSourceV3(raw);
+        ASSERT_TRUE(source.has_value());
+        EXPECT_EQ(EncodeClockSourceV3(raw, *source), raw);
+    }
+}
+
+TEST(MotuV3ClockSource, OnlyTheUltraLiteMk3OffersAControl) {
+    RecordingBus bus; RouteState routes;
+    MotuProtocol ultralite(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    EXPECT_EQ(ultralite.Controls(), &ultralite);
+    for (const uint32_t version : {0x03U, 0x0dU, 0x15U, 0x17U, 0x1bU, 0x30U}) {
+        MotuProtocol other(bus, bus, routes.registry, routes.route, version);
+        EXPECT_EQ(other.Controls(), nullptr) << std::hex << version;
+    }
+}
+
+TEST(MotuV3ClockSource, PrepareReportsTheDevicesSourceAsAGlobalClockSelector) {
+    namespace AM = ASFW::AudioModel;
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = kVendorSpdif;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    std::optional<IOReturn> prepared;
+    protocol.Prepare([&](IOReturn status) { prepared = status; });
+    ASSERT_EQ(prepared, kIOReturnSuccess);
+    EXPECT_TRUE(bus.writes.empty());
+
+    const auto snapshot = protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    const auto controls = ASFW::Audio::Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state);
+    ASSERT_EQ(controls.size(), 1U);
+    const auto& clock = controls.front();
+    EXPECT_EQ(clock.classId, uint32_t{'clck'});
+    EXPECT_EQ(clock.scope, uint32_t{'glob'});
+    EXPECT_EQ(clock.element, 0U);
+    EXPECT_TRUE(clock.settable);
+    EXPECT_EQ(clock.value, AM::ParameterValue{int64_t{0x10}});
+    const auto& items = std::get<AM::EnumDomain>(clock.domain).values;
+    ASSERT_EQ(items.size(), 3U);
+    EXPECT_EQ(items[0], (AM::EnumItem{0x00, "Internal"}));
+    EXPECT_EQ(items[1], (AM::EnumItem{0x10, "S/PDIF"}));
+    EXPECT_EQ(items[2], (AM::EnumItem{0x02, "SMPTE"}));
+}
+
+TEST(MotuV3ClockSource, SettingSPdifWritesTheLowByteAndConfirmsByReading) {
+    namespace AM = ASFW::AudioModel;
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = kVendorInternal;
+    bus.onWrite = [&](uint32_t address, uint32_t value) { bus.readValues[address] = value; };
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    protocol.Prepare([](IOReturn) {});
+
+    std::optional<IOReturn> status;
+    AM::ParameterValue confirmed{false};
+    protocol.SetParameter(AM::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId},
+                          AM::ParameterValue{int64_t{0x10}},
+                          [&](IOReturn s, AM::ParameterValue v) { status = s; confirmed = v; });
+    ASSERT_EQ(status, kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(bus.writes[0].value, kVendorSpdif);
+    EXPECT_EQ(bus.reads.back(), LowOf(Reg::ClockStatusV2)); // read back after the write
+    EXPECT_EQ(confirmed, AM::ParameterValue{int64_t{0x10}});
+    const auto snapshot = protocol.CopySnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->state.parameters.at(AM::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId}).value,
+              AM::ParameterValue{int64_t{0x10}});
+}
+
+TEST(MotuV3ClockSource, TheDeviceNotTheRequestDecidesTheReportedSource) {
+    namespace AM = ASFW::AudioModel;
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = kVendorInternal; // the write never sticks
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    protocol.Prepare([](IOReturn) {});
+    AM::ParameterValue confirmed{false};
+    std::optional<IOReturn> status;
+    protocol.SetParameter(AM::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId},
+                          AM::ParameterValue{int64_t{0x02}},
+                          [&](IOReturn s, AM::ParameterValue v) { status = s; confirmed = v; });
+    EXPECT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(confirmed, AM::ParameterValue{int64_t{0x00}});
+}
+
+TEST(MotuV3ClockSource, RejectsAnUnlistedSourceWithoutTouchingTheDevice) {
+    namespace AM = ASFW::AudioModel;
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = kVendorInternal;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    protocol.Prepare([](IOReturn) {});
+    const auto readsBefore = bus.reads.size();
+    for (const int64_t code : {int64_t{0x01}, int64_t{0x08}, int64_t{0x18}}) {
+        std::optional<IOReturn> status;
+        protocol.SetParameter(AM::ParameterId{ASFW::Audio::Motu::kClockSourceParameterId},
+                              AM::ParameterValue{code}, [&](IOReturn s, AM::ParameterValue) { status = s; });
+        EXPECT_EQ(status, kIOReturnBadArgument) << code;
+    }
+    std::optional<IOReturn> wrongId;
+    protocol.SetParameter(AM::ParameterId{1}, AM::ParameterValue{int64_t{0x10}},
+                          [&](IOReturn s, AM::ParameterValue) { wrongId = s; });
+    EXPECT_EQ(wrongId, kIOReturnBadArgument);
+    EXPECT_TRUE(bus.writes.empty());
+    EXPECT_EQ(bus.reads.size(), readsBefore);
+}
+
+TEST(MotuV3ClockSource, AnUnlistedSourceOnTheDevicePublishesNoControl) {
+    RecordingBus bus; RouteState routes;
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x02000001U; // word clock: no BNC on this model
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    std::optional<IOReturn> prepared;
+    protocol.Prepare([&](IOReturn status) { prepared = status; });
+    EXPECT_EQ(prepared, kIOReturnUnsupported);
+    EXPECT_FALSE(protocol.CopySnapshot().has_value());
+}
+
+TEST(MotuV3ClockSource, AFailedReadPublishesNoControl) {
+    RecordingBus bus; RouteState routes;
+    bus.readStatus = AsyncStatus::kTimeout;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    std::optional<IOReturn> prepared;
+    protocol.Prepare([&](IOReturn status) { prepared = status; });
+    ASSERT_TRUE(prepared.has_value());
+    EXPECT_NE(*prepared, kIOReturnSuccess);
+    EXPECT_FALSE(protocol.CopySnapshot().has_value());
 }

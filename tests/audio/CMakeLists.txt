@@ -158,6 +158,8 @@ add_audio_test(MotuPayloadWriterTests
 add_audio_test(MotuProtocolTests
     MotuProtocolTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 

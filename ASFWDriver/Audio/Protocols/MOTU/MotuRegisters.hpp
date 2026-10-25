@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace ASFW::Audio::Motu {
 
@@ -224,6 +225,38 @@ struct V2PcmChunks {
     case 0x18: case 0x19: return ClockSourceV2::AdatOnOpt; // bank refinement is separate
     default: return std::nullopt;
     }
+}
+// V3 clock source write: the source code goes into the low byte of 0x0b14, with
+// the codes DecodeClockSourceV3 reads. Linux has no write path. Observed on
+// hardware, 2026-10-25: MOTU's driver (1.6 build 89555, macOS 15.8) on an
+// UltraLite mk3 wrote 0x00, 0x10 and 0x02 for Internal, S/PDIF and SMPTE, and
+// left the rate field and fetch bit (0x02000000) as they were. ADAT is refused:
+// its code also picks an optical bank, which a ClockSourceV2 cannot say.
+[[nodiscard]] constexpr std::optional<uint32_t> EncodeClockSourceV3(uint32_t raw, ClockSourceV2 source) noexcept {
+    uint32_t code = 0;
+    switch (source) {
+    case ClockSourceV2::Internal: code = 0; break;
+    case ClockSourceV2::WordOnBnc: code = 1; break;
+    case ClockSourceV2::Sph: code = 2; break;
+    case ClockSourceV2::AesEbuOnXlr: code = 8; break;
+    case ClockSourceV2::Spdif: code = 0x10; break;
+    default: return std::nullopt;
+    }
+    return (raw & ~0xffU) | code;
+}
+struct ClockSourceChoice {
+    ClockSourceV2 source;
+    const char* name;
+};
+inline constexpr ClockSourceChoice kUltraLiteMk3ClockSources[] = {
+    {ClockSourceV2::Internal, "Internal"}, {ClockSourceV2::Spdif, "S/PDIF"}, {ClockSourceV2::Sph, "SMPTE"}};
+// The clock sources a V3 model offers, in the order and with the names MOTU's
+// driver publishes them in Core Audio. Only models whose list was read from
+// MOTU's driver are here; any other model gets an empty list and so no clock
+// source control, rather than a guessed one.
+[[nodiscard]] constexpr std::span<const ClockSourceChoice> SelectableClockSourcesV3(uint32_t version) noexcept {
+    if (version == 0x19) return kUltraLiteMk3ClockSources;
+    return {};
 }
 [[nodiscard]] constexpr V2PcmChunks ResolvePcmChunks(uint32_t raw, uint32_t mode, uint32_t version) noexcept {
     const auto* model = Encoding::Motu::FindModel(version);

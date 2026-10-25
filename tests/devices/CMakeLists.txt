@@ -567,6 +567,7 @@ add_device_test(MotuFamilyAdapterTests
     MotuFamilyAdapterTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Host/MotuFamilyAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
     "${ASFW_DRIVER_DIR}/DeviceProfiles/Audio/AudioDeviceCatalog.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
@@ -598,6 +599,7 @@ add_device_test(AudioCoordinatorRoutingTests
     "${ASFW_DRIVER_DIR}/Audio/Host/AvcFamilyAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Host/MotuFamilyAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/AudioSessions.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/RestartRoutine.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Session/SessionScheduler.cpp"
