@@ -1975,3 +1975,63 @@ TEST(MotuV3ClockSource, AFailedReadPublishesNoControl) {
     EXPECT_NE(*prepared, kIOReturnSuccess);
     EXPECT_FALSE(protocol.CopySnapshot().has_value());
 }
+
+//==============================================================================
+// UltraLite mk3 at every rate against MOTU's own driver. Captured on hardware,
+// 2026-10-25, MOTU 1.6 build 89555 on macOS 15.8: the registers the driver left
+// while streaming at each rate, and the channels it published in Core Audio,
+// in order. ASFW names some ports differently (Main L for Main Out 1, ...); the
+// map below is the only translation, so order and membership must match.
+//==============================================================================
+
+TEST(MotuV3UltraLiteMk3, EveryRateMatchesTheVendorDriversRegistersAndChannels) {
+    struct VendorRate {
+        uint32_t rate;
+        uint32_t clockStatus;  // 0x0b14 while the vendor driver streamed
+        std::vector<std::string> inputs, outputs;
+    };
+    const std::vector<std::string> analog{"Analog 1", "Analog 2", "Analog 3", "Analog 4",
+                                          "Analog 5", "Analog 6", "Analog 7", "Analog 8"};
+    auto cat = [](std::initializer_list<std::vector<std::string>> parts) {
+        std::vector<std::string> out;
+        for (const auto& part : parts) out.insert(out.end(), part.begin(), part.end());
+        return out;
+    };
+    const std::vector<std::string> spdif{"S/PDIF 1", "S/PDIF 2"}, ret{"Return 1", "Return 2"},
+        reverb{"Reverb 1", "Reverb 2"}, main{"Main Out 1", "Main Out 2"}, phones{"Phones 1", "Phones 2"};
+    const auto in1x = cat({analog, spdif, ret, reverb}), in2x = cat({analog, spdif, ret}), in4x = cat({analog, ret});
+    const auto out12x = cat({main, analog, spdif, phones}), out4x = cat({main, analog, phones});
+    const std::vector<VendorRate> vendor{
+        {44100, 0x02000000U, in1x, out12x}, {48000, 0x02000100U, in1x, out12x},
+        {88200, 0x02000200U, in2x, out12x}, {96000, 0x02000300U, in2x, out12x},
+        {176400, 0x02000400U, in4x, out4x}, {192000, 0x02000500U, in4x, out4x}};
+    const std::map<std::string, std::string> asfwToVendor{
+        {"Main L", "Main Out 1"}, {"Main R", "Main Out 2"}, {"Return L", "Return 1"}, {"Return R", "Return 2"},
+        {"Reverb L", "Reverb 1"}, {"Reverb R", "Reverb 2"}, {"Phones L", "Phones 1"}, {"Phones R", "Phones 2"}};
+    auto translate = [&](std::vector<std::string> names) {
+        for (auto& name : names) if (const auto it = asfwToVendor.find(name); it != asfwToVendor.end()) name = it->second;
+        return names;
+    };
+
+    RecordingBus bus; RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraLiteMk3SwVersion);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+    for (const auto& row : vendor) {
+        SCOPED_TRACE(row.rate);
+        bus.readValues[LowOf(Reg::ClockStatusV2)] = row.clockStatus;
+        bus.readValues[LowOf(Reg::OpticalBanksV3)] = 0x00000000U; // as read: no optical on this model
+        bus.readValues[LowOf(Reg::PacketFormat)] = 0x00000002U;
+        EXPECT_EQ(ASFW::Audio::Motu::DecodeRateV3(row.clockStatus), row.rate);
+        EXPECT_EQ(ASFW::Audio::Motu::DecodeClockSourceV3(row.clockStatus), ClockSourceV2::Internal);
+        ASSERT_EQ(protocol.LoadGeometry(), kIOReturnSuccess);
+        const auto caps = protocol.RuntimeCaps();
+        ASSERT_TRUE(caps);
+        EXPECT_EQ(caps->sampleRateHz, row.rate);
+        EXPECT_EQ(caps->hostInputPcmChannels, row.inputs.size());
+        EXPECT_EQ(caps->hostOutputPcmChannels, row.outputs.size());
+        std::vector<std::string> inNames, outNames;
+        ASSERT_TRUE(protocol.GetChannelLabels(inNames, outNames));
+        EXPECT_EQ(translate(inNames), row.inputs);
+        EXPECT_EQ(translate(outNames), row.outputs);
+    }
+}
