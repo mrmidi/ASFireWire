@@ -118,27 +118,50 @@ uint32_t MotuProfile::RxDbs() const noexcept {
     return model ? ::ASFW::Encoding::Motu::DataBlockQuadlets(model->captureChunks[0], ::ASFW::Encoding::Motu::MessageChunks(unitSwVersion_, true)) : 0;
 }
 
+namespace {
+// 0 at 1x, 1 at 2x, 2 at 4x; an unknown rate counts as 1x.
+[[nodiscard]] constexpr uint32_t RateMode(double sampleRate) noexcept {
+    const auto index = ::ASFW::Encoding::Motu::RateToIndex(static_cast<uint32_t>(sampleRate));
+    return index < 0 ? 0U : ::ASFW::Encoding::Motu::IndexToMode(static_cast<uint32_t>(index));
+}
+
+// The latency MOTU's own driver declares for the UltraLite mk3, read from Core
+// Audio on macOS 15.8 (MOTUFireWireAudio 1.6 build 89555, 2026-10-25), by rate
+// mode: {input, output} = {19, 20}, {22, 24}, {25, 28} frames. As the Duet profile
+// takes its vendor kext's table, the device's latency is declared as its vendor
+// declares it. Models without such a reading keep 128.
+struct VendorLatency { uint32_t input, output; };
+constexpr VendorLatency kUltraLiteMk3Latency[] = {{19, 20}, {22, 24}, {25, 28}};
+constexpr uint32_t kUnmeasuredLatencyFrames = 128;
+
+// MOTU is duplex-always and the transmit cadence is replayed from the capture
+// stream, so playback trails capture by at least the replay depth. 64 frames is
+// the conservative 1x offset the other non-DICE profiles use until hardware says
+// otherwise. It doubles with each rate mode, as MOTU's driver's own offset does
+// (24/48/96), so the margin stays the same length of time at every rate instead
+// of shrinking to a quarter at 176.4/192 kHz.
+constexpr uint32_t kSafetyOffsetFrames1x = 64;
+static_assert(kSafetyOffsetFrames1x << RateMode(48000.0) == 64);
+static_assert(kSafetyOffsetFrames1x << RateMode(96000.0) == 128);
+static_assert(kSafetyOffsetFrames1x << RateMode(192000.0) == 256);
+} // namespace
+
 uint32_t MotuProfile::TxSafetyOffsetFrames(double sampleRate) const noexcept {
-    (void)sampleRate;
-    // MOTU is duplex-always and the transmit cadence is replayed from the capture
-    // stream, so playback trails capture by at least the replay depth. Match the
-    // conservative offset the other non-DICE profiles use until hardware says otherwise.
-    return 64;
+    return kSafetyOffsetFrames1x << RateMode(sampleRate);
 }
 
 uint32_t MotuProfile::RxSafetyOffsetFrames(double sampleRate) const noexcept {
-    (void)sampleRate;
-    return 64;
+    return kSafetyOffsetFrames1x << RateMode(sampleRate);
 }
 
 uint32_t MotuProfile::TxReportedLatencyFrames(double sampleRate) const noexcept {
-    (void)sampleRate;
-    return 128;
+    return unitSwVersion_ == 0x19 ? kUltraLiteMk3Latency[RateMode(sampleRate)].output
+                                  : kUnmeasuredLatencyFrames;
 }
 
 uint32_t MotuProfile::RxReportedLatencyFrames(double sampleRate) const noexcept {
-    (void)sampleRate;
-    return 128;
+    return unitSwVersion_ == 0x19 ? kUltraLiteMk3Latency[RateMode(sampleRate)].input
+                                  : kUnmeasuredLatencyFrames;
 }
 
 } // namespace ASFW::Isoch::Audio::MOTU::Profiles

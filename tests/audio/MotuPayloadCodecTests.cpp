@@ -304,6 +304,42 @@ TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLeadAndS
     }
 }
 
+// The UltraLite mk3 declares the latency MOTU's own driver declares, read from
+// Core Audio on macOS 15.8 (MOTUFireWireAudio 1.6 build 89555, 2026-10-25).
+TEST(MotuPayloadCodecTests, UltraLiteMk3DeclaresTheVendorLatencyAtEveryRate) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x19};
+    struct Row { double rate; uint32_t input, output; };
+    for (const Row row : {Row{44100, 19, 20}, Row{48000, 19, 20}, Row{88200, 22, 24},
+                          Row{96000, 22, 24}, Row{176400, 25, 28}, Row{192000, 25, 28}}) {
+        SCOPED_TRACE(row.rate);
+        EXPECT_EQ(profile.RxReportedLatencyFrames(row.rate), row.input);
+        EXPECT_EQ(profile.TxReportedLatencyFrames(row.rate), row.output);
+    }
+}
+
+// Unmeasured models keep the conservative 128 frames.
+TEST(MotuPayloadCodecTests, ModelsWithoutAVendorReadingKeepTheConservativeLatency) {
+    for (const uint32_t version : {0x3U, 0xdU, 0x15U}) {
+        const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{version};
+        EXPECT_EQ(profile.RxReportedLatencyFrames(48000), 128U) << version;
+        EXPECT_EQ(profile.TxReportedLatencyFrames(192000), 128U) << version;
+    }
+}
+
+// The safety offset is 64 frames at 1x, unchanged, and doubles per rate mode so
+// it covers the same time at 2x and 4x instead of a half and a quarter of it.
+TEST(MotuPayloadCodecTests, SafetyOffsetKeepsItsDurationAcrossRateModes) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x19};
+    struct Row { double rate; uint32_t frames; };
+    for (const Row row : {Row{44100, 64}, Row{48000, 64}, Row{88200, 128},
+                          Row{96000, 128}, Row{176400, 256}, Row{192000, 256}}) {
+        SCOPED_TRACE(row.rate);
+        EXPECT_EQ(profile.TxSafetyOffsetFrames(row.rate), row.frames);
+        EXPECT_EQ(profile.RxSafetyOffsetFrames(row.rate), row.frames);
+    }
+    EXPECT_EQ(profile.TxSafetyOffsetFrames(32000), 64U); // not a MOTU rate: the 1x value
+}
+
 TEST(MotuPayloadCodecTests, MotuRxDiagnosticCaptureRecordsStartupAndSteadyState) {
     MotuRxDiagnosticCapture capture{};
 
