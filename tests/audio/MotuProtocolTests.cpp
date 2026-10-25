@@ -2072,12 +2072,15 @@ std::vector<RecordingBus::Write> WritesTo(const RecordingBus& bus, uint32_t addr
     return out;
 }
 
-/// The message slot the protocol told the unit to use (0x0b38/0x0b3c).
+uint32_t Be32(const std::vector<uint8_t>& b, size_t at) {
+    return (uint32_t{b[at]} << 24) | (uint32_t{b[at + 1]} << 16) | (uint32_t{b[at + 2]} << 8) | b[at + 3];
+}
+
+/// The message slot the protocol told the unit to use: one 8-byte write to 0x0b38.
 uint64_t RegisteredDestination(const RecordingBus& bus) {
-    const auto hi = WritesTo(bus, LowOf(Reg::DspMessageDstHi));
-    const auto lo = WritesTo(bus, LowOf(Reg::DspMessageDstLo));
-    if (hi.empty() || lo.empty()) return 0;
-    return (uint64_t{hi.back().value & 0xffffU} << 32) | lo.back().value;
+    const auto writes = WritesTo(bus, LowOf(Reg::DspMessageDstHi));
+    if (writes.empty() || writes.back().bytes.size() != 8) return 0;
+    return (uint64_t{Be32(writes.back().bytes, 0) & 0xffffU} << 32) | Be32(writes.back().bytes, 4);
 }
 
 /// A frame from the unit, delivered the way the local request dispatch does.
@@ -2116,9 +2119,12 @@ struct CueMixRig {
 
 TEST(MotuCueMix, PrepareRegistersTheMessageDestinationAndBeginsMessaging) {
     CueMixRig rig;
-    const auto hi = WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi));
-    ASSERT_EQ(hi.size(), 1u);
-    EXPECT_EQ(hi[0].value >> 16, 0xffc0u) << "the host's node ID, in the top 16 bits";
+    // One 8-byte block write covering 0x0b38 and 0x0b3c, as MOTU's driver sends it.
+    const auto destinationWrites = WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi));
+    ASSERT_EQ(destinationWrites.size(), 1u);
+    ASSERT_EQ(destinationWrites[0].bytes.size(), 8u);
+    EXPECT_EQ(Be32(destinationWrites[0].bytes, 0) >> 16, 0xffc0u) << "the host's node ID, in the top 16 bits";
+    EXPECT_TRUE(WritesTo(rig.bus, LowOf(Reg::DspMessageDstLo)).empty());
     EXPECT_TRUE(CD::Messages::Owns(rig.destination)) << std::hex << rig.destination;
     // Begin messaging: tag 1 then tag 2, empty, sequence 0 and 1.
     const auto frames = WritesTo(rig.bus, kDspCommandLo);
@@ -2129,7 +2135,7 @@ TEST(MotuCueMix, PrepareRegistersTheMessageDestinationAndBeginsMessaging) {
     const auto at = [&](uint32_t lo) {
         return std::ranges::find(rig.bus.writes, lo, &RecordingBus::Write::addressLo) - rig.bus.writes.begin();
     };
-    EXPECT_LT(at(LowOf(Reg::DspMessageDstLo)), at(kDspCommandLo));
+    EXPECT_LT(at(LowOf(Reg::DspMessageDstHi)), at(kDspCommandLo));
 }
 
 TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
@@ -2227,16 +2233,15 @@ TEST(MotuCueMix, AFrameTooLongOrOffSlotIsRefused) {
               ASFW::Async::ResponseCode::AddressError);
 }
 
-TEST(MotuCueMix, ShutdownCancelsMessagingAndClearsTheDestination) {
+TEST(MotuCueMix, ShutdownCancelsMessagingAndClearsTheDestinationToAllOnes) {
     CueMixRig rig;
     const auto before = rig.bus.writes.size();
     ASSERT_EQ(rig.protocol.Shutdown(), kIOReturnSuccess);
     std::vector<RecordingBus::Write> after(rig.bus.writes.begin() + static_cast<std::ptrdiff_t>(before),
                                            rig.bus.writes.end());
-    ASSERT_GE(after.size(), 3u);
+    ASSERT_GE(after.size(), 2u);
     const auto cancel = std::ranges::find(after, kDspCommandLo, &RecordingBus::Write::addressLo);
     ASSERT_NE(cancel, after.end());
     EXPECT_EQ(cancel->bytes[0], CD::kTagCancel);
-    EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi)).back().value, 0u);
-    EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstLo)).back().value, 0u);
+    EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi)).back().bytes, std::vector<uint8_t>(8, 0xff));
 }

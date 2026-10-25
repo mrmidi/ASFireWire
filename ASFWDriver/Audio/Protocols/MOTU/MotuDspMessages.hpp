@@ -166,7 +166,10 @@ inline IOLock* Lock() { static IOLock* lock = IOLockAlloc(); return lock; }
 
 /// The two quadlets that tell the unit where to send its messages: the host's
 /// node ID in the top 16 bits, then the 48-bit offset (command_dsp.rs
-/// register_message_destination_address).
+/// register_message_destination_address). MOTU's driver writes them as one
+/// 8-byte block to 0x0b38, and all ones to stop (MOTUFireWireAudio 1.6 build
+/// 89555, BoxWithFxDSP::SendCueMixPacketReadAddress); it also sends its
+/// CueMix packets, 1 to 255 bytes, to 0xffff'0001'0000 (SetCueMixPacket).
 struct MessageDestination final {
     uint32_t hi;
     uint32_t lo;
@@ -175,6 +178,11 @@ struct MessageDestination final {
                                                                     uint64_t offset) noexcept {
     return {(uint32_t{hostNodeId} << 16) | static_cast<uint32_t>((offset >> 32) & 0xffffU),
             static_cast<uint32_t>(offset & 0xffffffffU)};
+}
+[[nodiscard]] constexpr std::array<uint8_t, 8> DestinationBytes(MessageDestination d) noexcept {
+    return {static_cast<uint8_t>(d.hi >> 24), static_cast<uint8_t>(d.hi >> 16), static_cast<uint8_t>(d.hi >> 8),
+            static_cast<uint8_t>(d.hi), static_cast<uint8_t>(d.lo >> 24), static_cast<uint8_t>(d.lo >> 16),
+            static_cast<uint8_t>(d.lo >> 8), static_cast<uint8_t>(d.lo)};
 }
 
 } // namespace ASFW::Audio::Motu::CommandDsp

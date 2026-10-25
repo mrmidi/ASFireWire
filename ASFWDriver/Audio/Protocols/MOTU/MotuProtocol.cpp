@@ -136,21 +136,21 @@ IOReturn MotuProtocol::Shutdown() {
             });
     }
 
-    // Stop DSP messaging and clear its destination (command_dsp.rs
-    // cancel_messaging, release_message_destination_address). Fire-and-forget
-    // for the same reason as above.
+    // Stop DSP messaging (command_dsp.rs cancel_messaging) and clear its
+    // destination to all ones, as MOTU's driver does
+    // (SendCueMixPacketReadAddress(false) writes 0xffffffff twice; the
+    // reference writes zeros). Fire-and-forget for the same reason as above.
     if (std::exchange(dspMessagingStarted_, false)) {
         const auto releaseIo = std::make_shared<Protocols::Ports::ProtocolRegisterIO>(io_);
         const std::vector<uint8_t> empty{0x00, 0x00};
         auto cancel = std::make_shared<std::vector<uint8_t>>(
             CommandDsp::BuildFrames(empty, CommandDsp::kTagCancel, dspSequence_).front());
+        auto cleared = std::make_shared<std::array<uint8_t, 8>>();
+        cleared->fill(0xff);
         (void)releaseIo->WriteBlock(kDspCommandFWAddress, *cancel,
-            [releaseIo, cancel](Async::AsyncStatus) {
-                (void)releaseIo->WriteQuadBE(AddressOf(Reg::DspMessageDstHi), 0,
-                    [releaseIo](Async::AsyncStatus) {
-                        (void)releaseIo->WriteQuadBE(AddressOf(Reg::DspMessageDstLo), 0,
-                                                     [releaseIo](Async::AsyncStatus) {});
-                    });
+            [releaseIo, cancel, cleared](Async::AsyncStatus) {
+                (void)releaseIo->WriteBlock(AddressOf(Reg::DspMessageDstHi), *cleared,
+                                            [releaseIo, cleared](Async::AsyncStatus) {});
             });
     }
 
@@ -321,26 +321,26 @@ void MotuProtocol::StartDspMessaging(CompletionCallback callback) {
         if (callback) callback(kIOReturnNotReady);
         return;
     }
+    // Both quadlets in one 8-byte block write, big-endian, as MOTU's driver
+    // sends them (MOTUFireWireAudio 1.6 build 89555,
+    // BoxWithFxDSP::SendCueMixPacketReadAddress: one write of 8 bytes to
+    // 0xf0000b38).
     const auto destination = CommandDsp::EncodeMessageDestination(
         static_cast<uint16_t>(0xffc0U | (node.value & 0x3fU)), dspMessageAddress_);
-    WriteRegister(AddressOf(Reg::DspMessageDstHi), destination.hi,
-        [this, destination, callback = std::move(callback)](Async::AsyncStatus status) mutable {
-            const auto hi = Protocols::Ports::MapAsyncStatusToIOReturn(status);
-            if (hi != kIOReturnSuccess) { if (callback) callback(hi); return; }
-            WriteRegister(AddressOf(Reg::DspMessageDstLo), destination.lo,
-                [this, callback = std::move(callback)](Async::AsyncStatus status) mutable {
-                    const auto lo = Protocols::Ports::MapAsyncStatusToIOReturn(status);
-                    if (lo != kIOReturnSuccess) { if (callback) callback(lo); return; }
-                    const std::vector<uint8_t> empty{0x00, 0x00};
-                    auto frames = std::make_shared<std::vector<std::vector<uint8_t>>>(
-                        CommandDsp::BuildFrames(empty, CommandDsp::kTagBegin, dspSequence_));
-                    const auto second = CommandDsp::BuildFrames(empty, CommandDsp::kTagCommands, dspSequence_);
-                    frames->insert(frames->end(), second.begin(), second.end());
-                    SendDspFrames(std::move(frames), 0, [this, callback = std::move(callback)](IOReturn status) {
-                        if (status == kIOReturnSuccess) dspMessagingStarted_ = true;
-                        if (callback) callback(status);
-                    });
-                });
+    auto payload = std::make_shared<std::array<uint8_t, 8>>(CommandDsp::DestinationBytes(destination));
+    (void)io_.WriteBlock(AddressOf(Reg::DspMessageDstHi), *payload,
+        [this, payload, callback = std::move(callback)](Async::AsyncStatus status) mutable {
+            const auto registered = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (registered != kIOReturnSuccess) { if (callback) callback(registered); return; }
+            const std::vector<uint8_t> empty{0x00, 0x00};
+            auto frames = std::make_shared<std::vector<std::vector<uint8_t>>>(
+                CommandDsp::BuildFrames(empty, CommandDsp::kTagBegin, dspSequence_));
+            const auto second = CommandDsp::BuildFrames(empty, CommandDsp::kTagCommands, dspSequence_);
+            frames->insert(frames->end(), second.begin(), second.end());
+            SendDspFrames(std::move(frames), 0, [this, callback = std::move(callback)](IOReturn status) {
+                if (status == kIOReturnSuccess) dspMessagingStarted_ = true;
+                if (callback) callback(status);
+            });
         });
 }
 
