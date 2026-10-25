@@ -2,23 +2,26 @@
 // Copyright (c) 2026 ASFireWire Project
 //
 // MotuControlModel.hpp - the controls a MOTU unit publishes: the clock source
-// (MotuRegisters.hpp) and, on a command-DSP model, CueMix's mixer
-// (MotuCommandDsp.hpp). Pure: builds the control snapshot and maps a
-// parameter write back to a register value or a DSP command.
+// (MotuRegisters.hpp) and, on a command-DSP model, everything CueMix drives
+// (MotuDspParameters.hpp). Pure: builds the control snapshot and maps a
+// parameter write back to a DSP command.
 //
-// The mixer is a MixerNode of the model's sources by eight mixes. Gains, mutes,
-// solos and pans sit on the crosspoints, each mix's volume, mute and
-// destination on its output port. None of them reaches a host stream, so the
-// Core Audio projection publishes none of them; they are for the ASFW app, as
-// CueMix is. The clock source sits on a port-less node, which the projection
-// publishes as the device's clock source.
+// The mixer is a MixerNode of the model's sources by eight mixes: per-source
+// parameters sit on the crosspoints, per-mix ones on the mix outputs. Input
+// strips, output strips, the monitor and the reverb are port-less nodes. None
+// of it reaches a host stream, so the Core Audio projection publishes none of
+// it; it is for the ASFW app, as CueMix is. The clock source sits on its own
+// port-less node, which the projection publishes as the device's clock source.
 
 #pragma once
 
 #include "MotuCommandDsp.hpp"
+#include "MotuDspParameters.hpp"
 #include "MotuRegisters.hpp"
 #include "../../Controls/IControlProvider.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -30,44 +33,34 @@ namespace ASFW::Audio::Motu {
 namespace MotuControl {
 /// The clock source ('MCLK'); its values are the 0x0b14 source codes.
 inline constexpr uint32_t kClockSource = 0x4d434c4bU;
-/// CueMix ('MX'): kMixerBase | mixer << 8 | field.
-inline constexpr uint32_t kMixerBase = 0x4d580000U;
-inline constexpr uint32_t kMainVolume = kMixerBase | 0xff00U;
-namespace Field {
-inline constexpr uint32_t kOutputAssign = 0x00;
-inline constexpr uint32_t kOutputMute = 0x01;
-inline constexpr uint32_t kOutputVolume = 0x02;
-/// 0x10 + source * 4 + one of these.
-inline constexpr uint32_t kSourceBase = 0x10;
-inline constexpr uint32_t kSourceMute = 0;
-inline constexpr uint32_t kSourceSolo = 1;
-inline constexpr uint32_t kSourceGain = 2;
-inline constexpr uint32_t kSourcePan = 3;
-} // namespace Field
-[[nodiscard]] constexpr uint32_t Mixer(uint32_t mixer, uint32_t field) noexcept {
-    return kMixerBase | (mixer << 8) | field;
-}
-[[nodiscard]] constexpr uint32_t Source(uint32_t mixer, uint32_t source, uint32_t field) noexcept {
-    return Mixer(mixer, Field::kSourceBase + source * 4 + field);
-}
 } // namespace MotuControl
 
 struct MotuControlsState final {
     /// The clock source code 0x0b14 reports, when the model has a source list.
     std::optional<int64_t> clockCode{};
     std::span<const ClockSourceChoice> clockChoices{};
-    /// The DSP mixer, on a command-DSP model this code knows.
-    std::optional<CommandDsp::ModelMixerPorts> mixerPorts{};
-    CommandDsp::MixerState mixer{};
+    /// The DSP, on a command-DSP model this code knows.
+    std::optional<CommandDsp::ModelDspPorts> dspPorts{};
+    CommandDsp::DspState dsp{};
 };
 
 [[nodiscard]] inline int64_t ClockSourceCode(ClockSourceV2 source) noexcept {
     return static_cast<int64_t>(EncodeClockSourceV3(0, source).value_or(0));
 }
 
+namespace Detail {
+/// The items of an enum parameter: its own, or the model's outputs for the
+/// two destination parameters whose list depends on the model.
+[[nodiscard]] inline std::span<const char* const> ItemsOf(const CommandDsp::ParamSpec& spec,
+                                                          const CommandDsp::ModelDspPorts& ports) noexcept {
+    return spec.items.empty() ? ports.outputs : spec.items;
+}
+} // namespace Detail
+
 inline Controls::ControlSnapshot BuildMotuControls(const MotuControlsState& native, uint64_t revision,
                                                    uint64_t sequence) {
     namespace AM = ::ASFW::AudioModel;
+    namespace CD = CommandDsp;
     Controls::ControlSnapshot result;
     result.family = "motu";
     result.topology.revision = result.state.topologyRevision = revision;
@@ -88,91 +81,130 @@ inline Controls::ControlSnapshot BuildMotuControls(const MotuControlsState& nati
         param(MotuControl::kClockSource, AM::NodeId{1}, AM::ParameterSemantic::ClockSource, std::move(domain),
               "Clock Source", *native.clockCode);
     }
+    if (!native.dspPorts) return result;
+    const auto& ports = *native.dspPorts;
 
-    if (native.mixerPorts) {
-        const auto& ports = *native.mixerPorts;
-        const auto& m = native.mixer;
-        AM::MixerNode mixer;
-        auto port = [&](AM::PortDirection direction, std::string name) {
-            const AM::PortId id{nextPort++};
-            t.ports.push_back({id, AM::NodeId{10}, direction, 1, std::move(name), {}});
-            return id;
-        };
-        for (const char* source : ports.sources) mixer.inputs.push_back(port(AM::PortDirection::Input, source));
-        AM::EnumDomain destinations;
-        for (size_t i = 0; i < ports.outputs.size(); ++i)
-            destinations.values.push_back({static_cast<int64_t>(i), ports.outputs[i]});
-        const AM::ScalarDomain unit{0, 1, std::nullopt, AM::ScalarUnit::Generic};
-        const AM::ScalarDomain balance{-1, 1, std::nullopt, AM::ScalarUnit::Generic};
-        for (uint32_t mix = 0; mix < CommandDsp::kMixerCount; ++mix) {
-            const std::string mixName = "Mix " + std::to_string(mix + 1);
-            const auto out = port(AM::PortDirection::Output, mixName);
-            mixer.outputs.push_back(out);
-            const auto& mx = m.mixers[mix];
-            param(MotuControl::Mixer(mix, MotuControl::Field::kOutputAssign), out, AM::ParameterSemantic::Source,
-                  destinations, mixName + " Destination", int64_t{mx.outputAssign});
-            param(MotuControl::Mixer(mix, MotuControl::Field::kOutputMute), out, AM::ParameterSemantic::Mute,
-                  AM::BooleanDomain{}, mixName + " Mute", mx.outputMute);
-            param(MotuControl::Mixer(mix, MotuControl::Field::kOutputVolume), out, AM::ParameterSemantic::Level,
-                  unit, mixName + " Volume", double(mx.outputVolume));
-            for (uint32_t src = 0; src < ports.sources.size(); ++src) {
-                const AM::CrosspointId cp{mix * 64 + src + 1};
-                mixer.crosspoints.push_back({cp, mixer.inputs[src], out});
-                const std::string name = mixName + " ← " + ports.sources[src];
-                const auto& strip = src < mx.sources.size() ? mx.sources[src] : CommandDsp::MixerSource{};
-                param(MotuControl::Source(mix, src, MotuControl::Field::kSourceGain), cp,
-                      AM::ParameterSemantic::Level, unit, name, double(strip.gain));
-                param(MotuControl::Source(mix, src, MotuControl::Field::kSourcePan), cp,
-                      AM::ParameterSemantic::Unknown, balance, name + " Pan", double(strip.pan));
-                param(MotuControl::Source(mix, src, MotuControl::Field::kSourceMute), cp,
-                      AM::ParameterSemantic::Mute, AM::BooleanDomain{}, name + " Mute", strip.mute);
-                param(MotuControl::Source(mix, src, MotuControl::Field::kSourceSolo), cp,
-                      AM::ParameterSemantic::Unknown, AM::BooleanDomain{}, name + " Solo", strip.solo);
+    // Mixer ports and crosspoints.
+    AM::MixerNode mixer;
+    auto port = [&](AM::PortDirection direction, std::string name) {
+        const AM::PortId id{nextPort++};
+        t.ports.push_back({id, AM::NodeId{10}, direction, 1, std::move(name), {}});
+        return id;
+    };
+    for (const char* source : ports.sources) mixer.inputs.push_back(port(AM::PortDirection::Input, source));
+    std::vector<AM::PortId> mixOutputs;
+    for (uint32_t mix = 0; mix < CD::kMixerCount; ++mix) {
+        mixOutputs.push_back(port(AM::PortDirection::Output, "Mix " + std::to_string(mix + 1)));
+        mixer.outputs.push_back(mixOutputs.back());
+        for (uint32_t src = 0; src < ports.sources.size(); ++src)
+            mixer.crosspoints.push_back({AM::CrosspointId{mix * 64 + src + 1}, mixer.inputs[src], mixOutputs.back()});
+    }
+    t.nodes.push_back({AM::NodeId{10}, "CueMix", std::move(mixer)});
+    t.nodes.push_back({AM::NodeId{11}, "Inputs", AM::EndpointNode{AM::EndpointKind::Host}});
+    t.nodes.push_back({AM::NodeId{12}, "Outputs", AM::EndpointNode{AM::EndpointKind::Host}});
+    t.nodes.push_back({AM::NodeId{13}, "Monitor", AM::EndpointNode{AM::EndpointKind::Host}});
+    t.nodes.push_back({AM::NodeId{14}, "Reverb", AM::EndpointNode{AM::EndpointKind::Host}});
+
+    for (const auto& spec : CD::kParams) {
+        const auto items = Detail::ItemsOf(spec, ports);
+        AM::ParameterDomain domain = AM::BooleanDomain{};
+        if (spec.kind == CD::Kind::Enum) {
+            AM::EnumDomain e;
+            for (size_t i = 0; i < items.size(); ++i) e.values.push_back({static_cast<int64_t>(i), items[i]});
+            domain = std::move(e);
+        } else if (spec.kind == CD::Kind::Float) {
+            domain = AM::ScalarDomain{spec.min, spec.max,
+                                      spec.step > 0 ? std::optional<double>{spec.step} : std::nullopt,
+                                      AM::ScalarUnit::Generic};
+        }
+        const size_t channels = ports.Count(spec.scope);
+        const size_t sources = spec.scope == CD::Scope::MixerSource ? ports.sources.size() : 1;
+        for (size_t ch = 0; ch < channels; ++ch) {
+            for (size_t src = 0; src < sources; ++src) {
+                const uint32_t id = CD::ParameterId(spec, static_cast<uint8_t>(ch), static_cast<uint8_t>(src));
+                const auto reported = native.dsp.Get(id);
+                // A value the unit has not reported, or one outside the domain,
+                // shows as the domain's own floor rather than invalidating the
+                // whole snapshot.
+                AM::ParameterValue value{false};
+                if (spec.kind == CD::Kind::Bool) {
+                    value = reported && reported->byte != 0;
+                } else if (spec.kind == CD::Kind::Enum) {
+                    const int64_t raw = reported ? reported->byte : 0;
+                    value = raw < static_cast<int64_t>(items.size()) ? raw : int64_t{0};
+                } else {
+                    double v = reported ? double(reported->value) : 0.0;
+                    if (!std::isfinite(v)) v = spec.min;
+                    value = std::clamp(v, double(spec.min), double(spec.max));
+                }
+                AM::ParameterTarget target = AM::NodeId{13};
+                std::string name = spec.name;
+                AM::ParameterSemantic semantic = AM::ParameterSemantic::Unknown;
+                const std::string mixName = "Mix " + std::to_string(ch + 1);
+                switch (spec.scope) {
+                case CD::Scope::Global:
+                    target = AM::NodeId{spec.block == CD::Block::Reverb ? 14u : 13u};
+                    break;
+                case CD::Scope::Input:
+                    target = AM::NodeId{11};
+                    name = std::string(ports.inputs[ch]) + " " + spec.name;
+                    break;
+                case CD::Scope::Output:
+                    target = AM::NodeId{12};
+                    name = std::string(ports.outputs[ch]) + " " + spec.name;
+                    break;
+                case CD::Scope::Mixer:
+                    target = mixOutputs[ch];
+                    name = mixName + " " + spec.name;
+                    if (spec.third == CD::MixerThird::kOutputMute && spec.second == 0) semantic = AM::ParameterSemantic::Mute;
+                    if (spec.third == CD::MixerThird::kOutputVolume && spec.second == 0) semantic = AM::ParameterSemantic::Level;
+                    if (spec.third == CD::MixerThird::kOutputAssign && spec.second == 0) semantic = AM::ParameterSemantic::Source;
+                    break;
+                case CD::Scope::MixerSource:
+                    target = AM::CrosspointId{static_cast<uint32_t>(ch * 64 + src + 1)};
+                    name = mixName + " ← " + ports.sources[src] + " " + spec.name;
+                    if (spec.third == CD::MixerThird::kSourceGain) semantic = AM::ParameterSemantic::Level;
+                    if (spec.third == CD::MixerThird::kSourceMute) semantic = AM::ParameterSemantic::Mute;
+                    break;
+                }
+                param(id, target, semantic, domain, std::move(name), std::move(value));
             }
         }
-        t.nodes.push_back({AM::NodeId{10}, "CueMix", std::move(mixer)});
-        param(MotuControl::kMainVolume, AM::NodeId{10}, AM::ParameterSemantic::Unknown, unit, "Main Volume",
-              double(m.mainVolume));
     }
     return result;
 }
 
-/// The DSP command a mixer parameter write becomes, or nothing for an id that
-/// is not a mixer parameter of this model or a value of the wrong kind.
-[[nodiscard]] inline std::optional<CommandDsp::Command> MixerCommandFor(
-    const CommandDsp::ModelMixerPorts& ports, uint32_t id, const AudioModel::ParameterValue& value) noexcept {
-    using namespace CommandDsp;
-    const auto* scalar = std::get_if<double>(&value);
+/// The DSP command a parameter write becomes, or nothing for an id that is not
+/// a DSP parameter of this model or a value of the wrong kind or range.
+[[nodiscard]] inline std::optional<CommandDsp::Command> DspCommandFor(
+    const CommandDsp::ModelDspPorts& ports, uint32_t id, const AudioModel::ParameterValue& value) noexcept {
+    namespace CD = CommandDsp;
+    if (!CD::IsDspParameterId(id)) return std::nullopt;
+    auto command = CD::AddressOf(id);
     const auto* flag = std::get_if<bool>(&value);
     const auto* item = std::get_if<int64_t>(&value);
-    if (id == MotuControl::kMainVolume)
-        return scalar ? std::optional{Set::MainVolume(static_cast<float>(*scalar))} : std::nullopt;
-    if ((id & 0xffff0000U) != MotuControl::kMixerBase) return std::nullopt;
-    const uint32_t mix = (id >> 8) & 0xffU;
-    const uint32_t field = id & 0xffU;
-    if (mix >= kMixerCount) return std::nullopt;
-    const auto m = static_cast<uint8_t>(mix);
-    switch (field) {
-    case MotuControl::Field::kOutputAssign:
-        if (!item || *item < 0 || static_cast<size_t>(*item) >= ports.outputs.size()) return std::nullopt;
-        return Set::OutputAssign(m, static_cast<uint8_t>(*item));
-    case MotuControl::Field::kOutputMute:
-        return flag ? std::optional{Set::OutputMute(m, *flag)} : std::nullopt;
-    case MotuControl::Field::kOutputVolume:
-        return scalar ? std::optional{Set::OutputVolume(m, static_cast<float>(*scalar))} : std::nullopt;
-    default: break;
-    }
-    if (field < MotuControl::Field::kSourceBase) return std::nullopt;
-    const uint32_t source = (field - MotuControl::Field::kSourceBase) / 4;
-    if (source >= ports.sources.size()) return std::nullopt;
-    const auto src = static_cast<uint8_t>(source);
-    switch ((field - MotuControl::Field::kSourceBase) % 4) {
-    case MotuControl::Field::kSourceMute: return flag ? std::optional{Set::SourceMute(m, src, *flag)} : std::nullopt;
-    case MotuControl::Field::kSourceSolo: return flag ? std::optional{Set::SourceSolo(m, src, *flag)} : std::nullopt;
-    case MotuControl::Field::kSourceGain:
-        return scalar ? std::optional{Set::SourceGain(m, src, static_cast<float>(*scalar))} : std::nullopt;
-    case MotuControl::Field::kSourcePan:
-        return scalar ? std::optional{Set::SourcePan(m, src, static_cast<float>(*scalar))} : std::nullopt;
+    const auto* scalar = std::get_if<double>(&value);
+    // The address must name a parameter on a channel the model has; ask with
+    // the width the spec expects.
+    for (const bool quadlet : {false, true}) {
+        command.quadlet = quadlet;
+        const auto at = CD::Lookup(ports, command);
+        if (!at || CD::ParameterId(*at->spec, at->channel, at->source) != id) continue;
+        const auto& spec = *at->spec;
+        switch (spec.kind) {
+        case CD::Kind::Bool:
+            if (!flag) return std::nullopt;
+            command.byte = *flag ? 1 : 0;
+            return command;
+        case CD::Kind::Enum:
+            if (!item || *item < 0 || static_cast<size_t>(*item) >= Detail::ItemsOf(spec, ports).size()) return std::nullopt;
+            command.byte = static_cast<uint8_t>(*item);
+            return command;
+        case CD::Kind::Float:
+            if (!scalar || !std::isfinite(*scalar) || *scalar < spec.min || *scalar > spec.max) return std::nullopt;
+            command.value = static_cast<float>(*scalar);
+            return command;
+        }
     }
     return std::nullopt;
 }

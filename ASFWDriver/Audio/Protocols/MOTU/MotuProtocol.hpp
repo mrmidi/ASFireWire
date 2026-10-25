@@ -50,9 +50,10 @@ inline constexpr uint32_t kClockSourceParameterId = MotuControl::kClockSource;
 /// implement to be driven at all.
 ///
 /// For a V3 model with a known clock source list (SelectableClockSourcesV3) or
-/// known command-DSP mixer ports (CommandDsp::MixerPortsFor) it is also the
-/// control provider (MotuControlModel.hpp): the clock source, which the Core
-/// Audio projection publishes as the device's clock source, and CueMix's mixer.
+/// known command-DSP ports (CommandDsp::DspPortsFor) it is also the control
+/// provider (MotuControlModel.hpp): the clock source, which the Core Audio
+/// projection publishes as the device's clock source, and everything CueMix
+/// drives (MotuDspParameters.hpp).
 class MotuProtocol final : public IDeviceProtocol, public FamilyDriver,
                            public ::ASFW::Audio::Controls::IControlProvider {
 public:
@@ -68,8 +69,8 @@ public:
     void Prepare(std::function<void(IOReturn)> done) override;
     [[nodiscard]] std::optional<::ASFW::Audio::Controls::ControlSnapshot> CopySnapshot() const override;
     /// The clock source: write the low byte of 0x0b14, then re-read the register;
-    /// the completion carries the source the device reports. A mixer parameter:
-    /// send its DSP command, and record the value once the unit acknowledged it.
+    /// the completion carries the source the device reports. A DSP parameter:
+    /// send its command, and record the value once the unit acknowledged it.
     void SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
                       Completion done) override;
 

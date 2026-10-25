@@ -1307,6 +1307,7 @@
 		98E4B62FD8A7189DA0D52590 /* TopologyMapBuilder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyMapBuilder.hpp; sourceTree = "<group>"; };
 		995A7D4375AC880332B47286 /* AudioTelemetryWireTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTelemetryWireTests.swift; sourceTree = "<group>"; };
 		9973FB82737B88019A0BCF45 /* BridgeCoPlugInfo.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BridgeCoPlugInfo.cpp; sourceTree = "<group>"; };
+		99C719C0E62BBE63BF4C392A /* MotuDspParameters.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuDspParameters.hpp; sourceTree = "<group>"; };
 		9A17820A3A580BFA5594E937 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		9A1C22634720D239BA82B050 /* WatchdogCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WatchdogCoordinator.hpp; sourceTree = "<group>"; };
 		9A2503DFA1EBC34385BF8701 /* MusicSubunitDescriptor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MusicSubunitDescriptor.cpp; sourceTree = "<group>"; };
@@ -2298,6 +2299,7 @@
 				DD35BC29224B2B0AADDC17EF /* MotuCommandDsp.hpp */,
 				65B329E37EE2E482DBD3ABD6 /* MotuControlModel.hpp */,
 				5D8FA9DEDAB17D032D3D4E3C /* MotuDspMessages.hpp */,
+				99C719C0E62BBE63BF4C392A /* MotuDspParameters.hpp */,
 				5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */,
 				00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */,
 				C5E583C7BF3E87EA0C34C09C /* MotuProtocol.hpp */,

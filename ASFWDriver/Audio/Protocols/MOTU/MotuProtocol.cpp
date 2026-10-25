@@ -72,8 +72,8 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
     }
     // A command-DSP model whose mixer ports are known also gets a slot for the
     // DSP messages that carry its mixer state.
-    if (const auto ports = CommandDsp::MixerPortsFor(unitSwVersion_)) {
-        auto mailbox = std::make_shared<CommandDsp::MessageMailbox>(route, ports->sources.size());
+    if (const auto ports = CommandDsp::DspPortsFor(unitSwVersion_)) {
+        auto mailbox = std::make_shared<CommandDsp::MessageMailbox>(route, *ports);
         if (mailbox->Valid()) {
             dspMessageAddress_ = CommandDsp::Messages::Register(mailbox);
             if (dspMessageAddress_ != 0) dspMessages_ = std::move(mailbox);
@@ -241,10 +241,10 @@ std::optional<::ASFW::Audio::Controls::ControlSnapshot> MotuProtocol::CopySnapsh
     state.clockCode = clockCode_;
     state.clockChoices = SelectableClockSourcesV3(unitSwVersion_);
     if (dspMessages_) {
-        state.mixerPorts = CommandDsp::MixerPortsFor(unitSwVersion_);
-        state.mixer = dspMessages_->Snapshot();
+        state.dspPorts = CommandDsp::DspPortsFor(unitSwVersion_);
+        state.dsp = dspMessages_->Snapshot();
     }
-    if (!state.clockCode && !state.mixerPorts) return std::nullopt;
+    if (!state.clockCode && !state.dspPorts) return std::nullopt;
     auto snapshot = BuildMotuControls(state, route_.routeEpoch, 0);
     if (!AM::validate(snapshot.topology) || !AM::validateState(snapshot.topology, snapshot.state))
         return std::nullopt;
@@ -291,8 +291,8 @@ void MotuProtocol::SetClockSourceParameter(const AudioModel::ParameterValue& val
 
 void MotuProtocol::SetMixerParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
                                      Completion done) {
-    const auto ports = CommandDsp::MixerPortsFor(unitSwVersion_);
-    const auto command = ports && dspMessages_ ? MixerCommandFor(*ports, id.value, value) : std::nullopt;
+    const auto ports = CommandDsp::DspPortsFor(unitSwVersion_);
+    const auto command = ports && dspMessages_ ? DspCommandFor(*ports, id.value, value) : std::nullopt;
     if (!command) {
         done(kIOReturnBadArgument, false);
         return;
@@ -304,7 +304,7 @@ void MotuProtocol::SetMixerParameter(AudioModel::ParameterId id, const AudioMode
     SendDspFrames(std::move(frames), 0,
         [this, command = *command, id, value, done = std::move(done)](IOReturn status) mutable {
             if (status != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "[MOTU] mixer write 0x%08x failed: 0x%x", id.value, status);
+                ASFW_LOG(Audio, "[MOTU] DSP write 0x%08x failed: 0x%x", id.value, status);
                 done(status, false);
                 return;
             }

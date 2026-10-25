@@ -12,13 +12,15 @@
 //
 // Lifetime and threading follow NotificationMailbox: the dispatch holds weak
 // references, Deliver runs on the receive path, and the mixer state is read
-// and written only under the mailbox's lock. A message that changed the state
+// and written only under the mailbox's lock; it holds every parameter of the
+// table (MotuDspParameters.hpp) the unit has reported. A message that changed the state
 // is announced to control listeners as "re-read" (kind 4), outside the lock,
 // from the route the mailbox holds, so nothing here points at the protocol.
 
 #pragma once
 
 #include "MotuCommandDsp.hpp"
+#include "MotuDspParameters.hpp"
 #include "MotuRegisters.hpp"
 #include "../../Controls/ControlNotifications.hpp"
 #include "../../../Async/Rx/LocalRequestDispatch.hpp"
@@ -39,8 +41,8 @@ inline constexpr size_t kMessageSlots = 16;
 
 class MessageMailbox final {
 public:
-    MessageMailbox(Discovery::DeviceRouteToken route, size_t sourceCount)
-        : lock_(IOLockAlloc()), route_(route), state_(sourceCount) {}
+    MessageMailbox(Discovery::DeviceRouteToken route, ModelDspPorts ports)
+        : lock_(IOLockAlloc()), route_(route), state_(ports) {}
     ~MessageMailbox() { if (lock_) IOLockFree(lock_); }
     MessageMailbox(const MessageMailbox&) = delete;
     MessageMailbox& operator=(const MessageMailbox&) = delete;
@@ -54,8 +56,7 @@ public:
         if (!(route_ == route)) {
             route_ = route;
             reassembler_ = {};
-            const size_t sources = state_.mixers[0].sources.size();
-            state_ = MixerState(sources);
+            state_ = DspState(*state_.Ports());
             ++version_;
         }
         IOLockUnlock(lock_);
@@ -80,7 +81,7 @@ public:
                 std::vector<Command> commands;
                 (void)Decode(*message, commands);
                 out.commands = static_cast<uint32_t>(commands.size());
-                const MixerState before = state_;
+                const DspState before = state_;
                 for (const auto& command : commands) (void)state_.Apply(command);
                 out.changed = !(state_ == before);
                 if (out.changed) { ++version_; announce = route_; }
@@ -101,9 +102,9 @@ public:
         IOLockUnlock(lock_);
     }
 
-    [[nodiscard]] MixerState Snapshot(uint64_t* version = nullptr) const {
+    [[nodiscard]] DspState Snapshot(uint64_t* version = nullptr) const {
         IOLockLock(lock_);
-        MixerState copy = state_;
+        DspState copy = state_;
         if (version) *version = version_;
         IOLockUnlock(lock_);
         return copy;
@@ -120,7 +121,7 @@ private:
     IOLock* lock_;
     Discovery::DeviceRouteToken route_;
     MessageReassembler reassembler_{};
-    MixerState state_;
+    DspState state_;
     uint64_t version_{0};
 };
 

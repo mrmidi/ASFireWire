@@ -278,74 +278,6 @@ inline constexpr uint8_t kMainVolume = 0x00;    // float 0..1
 inline constexpr uint8_t kReturnAssign = 0x08;  // byte
 } // namespace MonitorThird
 
-struct MixerSource final {
-    bool mute{false};
-    bool solo{false};
-    float gain{0.0f};
-    float pan{0.0f};
-    friend bool operator==(const MixerSource&, const MixerSource&) noexcept = default;
-};
-
-struct Mixer final {
-    uint8_t outputAssign{0};
-    bool outputMute{false};
-    float outputVolume{0.0f};
-    std::vector<MixerSource> sources;
-    friend bool operator==(const Mixer&, const Mixer&) noexcept = default;
-};
-
-/// The part of the DSP state CueMix's mixer page shows: eight mixes, each with
-/// a destination, a mute, a volume and one strip per source, plus the main
-/// (monitor) volume.
-struct MixerState final {
-    std::array<Mixer, kMixerCount> mixers;
-    float mainVolume{0.0f};
-    /// Which values the unit has reported since messaging began.
-    bool seenAny{false};
-
-    explicit MixerState(size_t sourceCount = 0) {
-        for (auto& m : mixers) m.sources.resize(sourceCount);
-    }
-    friend bool operator==(const MixerState&, const MixerState&) noexcept = default;
-
-    /// Fold one command in. Returns whether it addressed this state.
-    bool Apply(const Command& c) noexcept {
-        if (c.First() == static_cast<uint8_t>(Block::Monitor)) {
-            if (c.Second() == 0 && c.Third() == MonitorThird::kMainVolume && c.quadlet) {
-                mainVolume = c.value;
-                seenAny = true;
-                return true;
-            }
-            return false;
-        }
-        if (c.First() != static_cast<uint8_t>(Block::Mixer) || c.Channel() >= kMixerCount) return false;
-        Mixer& m = mixers[c.Channel()];
-        if (c.Second() == 0) {
-            switch (c.Third()) {
-            case MixerThird::kOutputAssign: if (c.quadlet) return false; m.outputAssign = c.byte; break;
-            case MixerThird::kOutputMute: if (c.quadlet) return false; m.outputMute = c.byte != 0; break;
-            case MixerThird::kOutputVolume: if (!c.quadlet) return false; m.outputVolume = c.value; break;
-            default: return false;
-            }
-        } else if (c.Second() >= kMixerSourceSecondLevelBase) {
-            const size_t source = c.Second() - kMixerSourceSecondLevelBase;
-            if (source >= m.sources.size()) return false;
-            MixerSource& s = m.sources[source];
-            switch (c.Third()) {
-            case MixerThird::kSourceMute: if (c.quadlet) return false; s.mute = c.byte != 0; break;
-            case MixerThird::kSourceSolo: if (c.quadlet) return false; s.solo = c.byte != 0; break;
-            case MixerThird::kSourcePan: if (!c.quadlet) return false; s.pan = c.value; break;
-            case MixerThird::kSourceGain: if (!c.quadlet) return false; s.gain = c.value; break;
-            default: return false;
-            }
-        } else {
-            return false;  // reverb send/return: not part of this state
-        }
-        seenAny = true;
-        return true;
-    }
-};
-
 /// Commands that set one mixer value.
 namespace Set {
 [[nodiscard]] constexpr Command OutputAssign(uint8_t mixer, uint8_t index) noexcept {
@@ -377,26 +309,5 @@ namespace Set {
     return Command::Float(Block::Monitor, 0, MonitorThird::kMainVolume, 0, v);
 }
 } // namespace Set
-
-//==============================================================================
-// Per-model port lists (snd-firewire-ctl-services protocols/motu/src/version_3.rs).
-//==============================================================================
-
-struct ModelMixerPorts final {
-    std::span<const char* const> sources;  ///< mixer inputs, in source index order
-    std::span<const char* const> outputs;  ///< destinations, in assign index order
-};
-
-inline constexpr const char* kUltraLiteMk3MixerSources[] = {
-    "Analog 1", "Analog 2", "Analog 3", "Analog 4", "Analog 5",
-    "Analog 6", "Analog 7", "Analog 8", "S/PDIF 1", "S/PDIF 2"};
-inline constexpr const char* kUltraLiteMk3MixerOutputs[] = {
-    "Main Out", "Analog 1-2", "Analog 3-4", "Analog 5-6", "Analog 7-8", "S/PDIF", "Phones"};
-
-/// The mixer ports of a command-DSP model this code knows, or nothing.
-[[nodiscard]] constexpr std::optional<ModelMixerPorts> MixerPortsFor(uint32_t unitSwVersion) noexcept {
-    if (unitSwVersion == 0x19) return ModelMixerPorts{kUltraLiteMk3MixerSources, kUltraLiteMk3MixerOutputs};
-    return std::nullopt;
-}
 
 } // namespace ASFW::Audio::Motu::CommandDsp

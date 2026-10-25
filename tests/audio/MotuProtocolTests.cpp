@@ -2061,8 +2061,12 @@ TEST(MotuV3UltraLiteMk3, EveryRateMatchesTheVendorDriversRegistersAndChannels) {
 
 namespace {
 
-namespace MC = ASFW::Audio::Motu::MotuControl;
 namespace CD = ASFW::Audio::Motu::CommandDsp;
+uint32_t SourceId(uint8_t mix, uint8_t source, uint8_t third) {
+    return CD::Id(CD::Block::Mixer, static_cast<uint8_t>(CD::kMixerSourceSecondLevelBase + source), third, mix);
+}
+uint32_t MixId(uint8_t mix, uint8_t third) { return CD::Id(CD::Block::Mixer, 0, third, mix); }
+const uint32_t kMainVolumeId = CD::Id(CD::Block::Monitor, 0, CD::MonitorThird::kMainVolume, 0);
 constexpr uint32_t kDspCommandLo = 0x00010000U;
 
 std::vector<RecordingBus::Write> WritesTo(const RecordingBus& bus, uint32_t addressLo) {
@@ -2142,8 +2146,14 @@ TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
     CueMixRig rig;
     const auto snapshot = rig.protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
-    // 8 mixes x (destination, mute, volume + 10 sources x 4) + main volume + clock.
-    EXPECT_EQ(snapshot->topology.parameters.size(), 8u * (3 + 10 * 4) + 1 + 1);
+    // The clock, then every table parameter on every channel the model has.
+    const auto ports = CD::DspPortsFor(kUltraLiteMk3SwVersion);
+    ASSERT_TRUE(ports.has_value());
+    size_t expected = 1;
+    for (const auto& spec : CD::kParams)
+        expected += ports->Count(spec.scope) * (spec.scope == CD::Scope::MixerSource ? ports->sources.size() : 1);
+    EXPECT_EQ(snapshot->topology.parameters.size(), expected);
+    EXPECT_GT(expected, 1400u);
     EXPECT_TRUE(ASFW::AudioModel::validate(snapshot->topology));
     const auto controls = ASFW::Audio::Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state);
     ASSERT_EQ(controls.size(), 1u);
@@ -2153,7 +2163,7 @@ TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
 TEST(MotuCueMix, AMixerWriteIsOneCommandFrameAndIsRecorded) {
     CueMixRig rig;
     std::optional<IOReturn> status;
-    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{MC::Source(1, 3, MC::Field::kSourceGain)},
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{SourceId(1, 3, CD::MixerThird::kSourceGain)},
                               ASFW::AudioModel::ParameterValue{0.5},
                               [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
     ASSERT_EQ(status, kIOReturnSuccess);
@@ -2164,29 +2174,29 @@ TEST(MotuCueMix, AMixerWriteIsOneCommandFrameAndIsRecorded) {
                                                      0x00, 0x00, 0x00, 0x3f, 0x00}));
     const auto snapshot = rig.protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
-    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::Source(1, 3, MC::Field::kSourceGain)), 0.5);
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, SourceId(1, 3, CD::MixerThird::kSourceGain)), 0.5);
 }
 
 TEST(MotuCueMix, AFailedWriteRecordsNothing) {
     CueMixRig rig;
     rig.bus.writeStatus = AsyncStatus::kTimeout;
     std::optional<IOReturn> status;
-    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{MC::Mixer(0, MC::Field::kOutputMute)},
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{MixId(0, CD::MixerThird::kOutputMute)},
                               ASFW::AudioModel::ParameterValue{true},
                               [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
     ASSERT_TRUE(status.has_value());
     EXPECT_NE(*status, kIOReturnSuccess);
-    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), MC::Mixer(0, MC::Field::kOutputMute)));
+    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), MixId(0, CD::MixerThird::kOutputMute)));
 }
 
 TEST(MotuCueMix, InvalidMixerWritesNeverReachTheUnit) {
     CueMixRig rig;
     const auto before = rig.bus.writes.size();
     const std::vector<std::pair<uint32_t, ASFW::AudioModel::ParameterValue>> bad{
-        {MC::Source(0, 10, MC::Field::kSourceGain), ASFW::AudioModel::ParameterValue{0.5}},  // no 11th source
-        {MC::Mixer(8, MC::Field::kOutputVolume), ASFW::AudioModel::ParameterValue{0.5}},    // no 9th mix
-        {MC::Mixer(0, MC::Field::kOutputAssign), ASFW::AudioModel::ParameterValue{int64_t{7}}},  // 7 outputs
-        {MC::Mixer(0, MC::Field::kOutputMute), ASFW::AudioModel::ParameterValue{0.5}},      // wrong kind
+        {SourceId(0, 10, CD::MixerThird::kSourceGain), ASFW::AudioModel::ParameterValue{0.5}},  // no 11th source
+        {MixId(8, CD::MixerThird::kOutputVolume), ASFW::AudioModel::ParameterValue{0.5}},    // no 9th mix
+        {MixId(0, CD::MixerThird::kOutputAssign), ASFW::AudioModel::ParameterValue{int64_t{7}}},  // 7 outputs
+        {MixId(0, CD::MixerThird::kOutputMute), ASFW::AudioModel::ParameterValue{0.5}},      // wrong kind
     };
     for (const auto& [id, value] : bad) {
         std::optional<IOReturn> status;
@@ -2210,9 +2220,9 @@ TEST(MotuCueMix, TheUnitsMessagesUpdateTheMixer) {
     EXPECT_EQ(result.rcode, ASFW::Async::ResponseCode::Complete);
     const auto snapshot = rig.protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
-    EXPECT_TRUE(BoolParameter(*snapshot, MC::Source(0, 0, MC::Field::kSourceMute)));
-    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::Mixer(2, MC::Field::kOutputVolume)), 0.25);
-    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MC::kMainVolume), 0.75);
+    EXPECT_TRUE(BoolParameter(*snapshot, SourceId(0, 0, CD::MixerThird::kSourceMute)));
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, MixId(2, CD::MixerThird::kOutputVolume)), 0.25);
+    EXPECT_DOUBLE_EQ(ScalarParameter(*snapshot, kMainVolumeId), 0.75);
 }
 
 TEST(MotuCueMix, FramesFromAnotherNodeAreIgnored) {
@@ -2222,7 +2232,7 @@ TEST(MotuCueMix, FramesFromAnotherNodeAreIgnored) {
     uint8_t sequence = 0;
     const auto frame = CD::BuildFrames(message, CD::kTagCommands, sequence)[0];
     (void)FromUnit(rig.routes, rig.destination, frame, /*node=*/5);
-    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), MC::Source(0, 0, MC::Field::kSourceMute)));
+    EXPECT_FALSE(BoolParameter(*rig.protocol.CopySnapshot(), SourceId(0, 0, CD::MixerThird::kSourceMute)));
 }
 
 TEST(MotuCueMix, AFrameTooLongOrOffSlotIsRefused) {
@@ -2244,4 +2254,24 @@ TEST(MotuCueMix, ShutdownCancelsMessagingAndClearsTheDestinationToAllOnes) {
     ASSERT_NE(cancel, after.end());
     EXPECT_EQ(cancel->bytes[0], CD::kTagCancel);
     EXPECT_EQ(WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi)).back().bytes, std::vector<uint8_t>(8, 0xff));
+}
+
+TEST(MotuCueMix, AnEqWriteIsTheSameKindOfFrame) {
+    CueMixRig rig;
+    // Analog 3 (input 2) LF gain -6 dB: input block 1, LF at second level 3, gain third 3.
+    const uint32_t id = CD::Id(CD::Block::Input, 3, 3, 2);
+    std::optional<IOReturn> status;
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{id}, ASFW::AudioModel::ParameterValue{-6.0},
+                              [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
+    ASSERT_EQ(status, kIOReturnSuccess);
+    const auto frames = WritesTo(rig.bus, kDspCommandLo);
+    // -6.0f is 0xc0c00000.
+    EXPECT_EQ(frames.back().bytes, (std::vector<uint8_t>{0x02, 0x02, 0x66, 0x02, 0x03, 0x03, 0x01,
+                                                         0x00, 0x00, 0xc0, 0xc0, 0x00}));
+    EXPECT_DOUBLE_EQ(ScalarParameter(*rig.protocol.CopySnapshot(), id), -6.0);
+    // Out of the reference's range (-20..20 dB): refused before the wire.
+    status.reset();
+    rig.protocol.SetParameter(ASFW::AudioModel::ParameterId{id}, ASFW::AudioModel::ParameterValue{24.0},
+                              [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
+    EXPECT_EQ(status, kIOReturnBadArgument);
 }

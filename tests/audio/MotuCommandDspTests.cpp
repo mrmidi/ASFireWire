@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "Audio/Protocols/MOTU/MotuCommandDsp.hpp"
+#include "Audio/Protocols/MOTU/MotuDspParameters.hpp"
 
 #include <vector>
 
@@ -180,38 +181,72 @@ TEST(MotuCommandDsp, TheReceiveSequenceWrapsFrom255ToZero) {
     EXPECT_EQ(reassembler.DroppedFrames(), 0u);
 }
 
-TEST(MotuCommandDsp, TheMixerStateFollowsTheUnitsMessages) {
-    const auto ports = MixerPortsFor(0x19);
+// The parameter table and state (MotuDspParameters.hpp).
+
+TEST(MotuCommandDsp, TheStateFollowsTheUnitsMessages) {
+    const auto ports = DspPortsFor(0x19);
     ASSERT_TRUE(ports.has_value());
     EXPECT_EQ(ports->sources.size(), 10u);
     EXPECT_EQ(ports->outputs.size(), 7u);
-    MixerState state(ports->sources.size());
+    EXPECT_EQ(ports->inputs.size(), 10u);
+    DspState state(*ports);
     for (const auto& c : {Set::OutputAssign(1, 6), Set::OutputMute(1, true), Set::OutputVolume(1, 0.8f),
                           Set::SourceGain(1, 9, 0.3f), Set::SourcePan(1, 9, 0.5f),
                           Set::SourceSolo(1, 2, true), Set::MainVolume(0.6f)})
         EXPECT_TRUE(state.Apply(c));
-    EXPECT_EQ(state.mixers[1].outputAssign, 6);
-    EXPECT_TRUE(state.mixers[1].outputMute);
-    EXPECT_FLOAT_EQ(state.mixers[1].outputVolume, 0.8f);
-    EXPECT_FLOAT_EQ(state.mixers[1].sources[9].gain, 0.3f);
-    EXPECT_FLOAT_EQ(state.mixers[1].sources[9].pan, 0.5f);
-    EXPECT_TRUE(state.mixers[1].sources[2].solo);
-    EXPECT_FLOAT_EQ(state.mainVolume, 0.6f);
-    EXPECT_TRUE(state.seenAny);
+    EXPECT_EQ(state.Get(Id(Block::Mixer, 0, MixerThird::kOutputAssign, 1))->byte, 6);
+    EXPECT_FLOAT_EQ(state.Get(Id(Block::Mixer, 11, MixerThird::kSourceGain, 1))->value, 0.3f);
+    EXPECT_FLOAT_EQ(state.Get(Id(Block::Monitor, 0, MonitorThird::kMainVolume, 0))->value, 0.6f);
+    EXPECT_EQ(state.Size(), 7u);
 }
 
-TEST(MotuCommandDsp, CommandsOutsideTheStateOrOfTheWrongWidthAreIgnored) {
-    MixerState state(10);
-    const MixerState before = state;
+TEST(MotuCommandDsp, EveryBlockOfTheTableIsAddressable) {
+    const auto ports = *DspPortsFor(0x19);
+    DspState state(ports);
+    // Input 3 LF gain (input EQ starts at second level 1: LF is 3), output 2
+    // compressor threshold (output dynamics: compressor is 9), reverb decay,
+    // a mixer source's stereo width.
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Input, 3, 3, 2, -6.0f)));
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Output, 9, 1, 1, -12.0f)));
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Reverb, 0, 5, 0, 2500.0f)));
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Mixer, 4, 6, 0, 0.5f)));
+    EXPECT_TRUE(state.Apply(Command::Byte(Block::Input, 7, 1, 9, 4)));  // input 10 HF type Shelf
+    EXPECT_EQ(state.Size(), 5u);
+}
+
+TEST(MotuCommandDsp, CommandsOutsideTheTableOrOfTheWrongWidthAreIgnored) {
+    DspState state(*DspPortsFor(0x19));
     EXPECT_FALSE(state.Apply(Set::SourceGain(0, 10, 1.0f)));  // no 11th source
     EXPECT_FALSE(state.Apply(Set::SourceMute(8, 0, true)));   // no 9th mixer
     EXPECT_FALSE(state.Apply(Command::Byte(Block::Mixer, 0, MixerThird::kOutputVolume, 0, 1)));
-    EXPECT_FALSE(state.Apply(Command::Float(Block::Input, 3, 1, 0, 1.0f)));
-    EXPECT_FALSE(state.Apply(Command::Float(Block::Mixer, 1, MixerThird::kReverbSend, 0, 1.0f)));
-    EXPECT_EQ(state, before);
+    EXPECT_FALSE(state.Apply(Command::Float(Block::Input, 0, 0x09, 0, 1.0f)));  // pad: not on this model
+    EXPECT_FALSE(state.Apply(Command::Float(Block::Output, 0, 0, 7, 1.0f)));    // no 8th output
+    EXPECT_FALSE(state.Apply(Command::Byte(Block::Monitor, 0, 0x07, 0, 1)));    // focus: not a parameter
+    EXPECT_EQ(state.Size(), 0u);
 }
 
-TEST(MotuCommandDsp, OnlyTheUltraLiteMk3HasKnownMixerPorts) {
+TEST(MotuCommandDsp, OnlyTheUltraLiteMk3HasKnownDspPorts) {
     for (const uint32_t version : {0x15U, 0x17U, 0x1bU, 0x30U, 0x39U, 0x03U})
-        EXPECT_FALSE(MixerPortsFor(version).has_value()) << version;
+        EXPECT_FALSE(DspPortsFor(version).has_value()) << version;
+}
+
+TEST(MotuCommandDsp, EveryParameterIdRoundTripsToItsAddress) {
+    const auto ports = *DspPortsFor(0x19);
+    size_t checked = 0;
+    for (const auto& spec : kParams) {
+        const size_t sources = spec.scope == Scope::MixerSource ? ports.sources.size() : 1;
+        for (size_t ch = 0; ch < ports.Count(spec.scope); ++ch)
+            for (size_t src = 0; src < sources; ++src) {
+                const uint32_t id = ParameterId(spec, static_cast<uint8_t>(ch), static_cast<uint8_t>(src));
+                ASSERT_TRUE(IsDspParameterId(id)) << std::hex << id;
+                ASSERT_EQ(id & 0x80000000U, 0u);
+                auto c = AddressOf(id);
+                c.quadlet = spec.kind == Kind::Float;
+                const auto at = Lookup(ports, c);
+                ASSERT_TRUE(at.has_value()) << spec.name << " " << ch;
+                EXPECT_EQ(at->spec, &spec) << spec.name;
+                ++checked;
+            }
+    }
+    EXPECT_GT(checked, 1400u);
 }
