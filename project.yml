@@ -130,8 +130,8 @@ targets:
         shell: /bin/sh
         basedOnDependencyAnalysis: false
         script: |
-          ls ${SRCROOT}
-          $SRCROOT/bump.sh
+          ls "${SRCROOT}"
+          "${SRCROOT}/bump.sh"
     settings:
       base:
         HEADER_SEARCH_PATHS:
