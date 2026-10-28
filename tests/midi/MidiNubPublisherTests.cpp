@@ -115,3 +115,18 @@ TEST(MidiNubPublisherTests, OneNubPerEndpointAndTerminateRetiresIt) {
     publisher.MidiReceived(kGuid);
     EXPECT_EQ(provider.nub->notifications, 1U);
 }
+
+// A full stop of ASFWDriver: the kernel has already terminated the nubs, and
+// Terminate() on one aborts the dext (adapter unplug, 2026-10-28). Release
+// forgets them without terminating; a suspend still terminates (TerminateAll).
+TEST(MidiNubPublisherTests, ReleaseAllForgetsWithoutTerminating) {
+    NubProvider provider;
+    MidiNubPublisher publisher(&provider);
+    ASSERT_TRUE(publisher.EnsureNub(OnePortEachWay(kGuid), kGuid, "Dev", "Model", "Maker"));
+
+    publisher.ReleaseAll();
+    EXPECT_EQ(provider.nub->terminations, 0U);
+    EXPECT_FALSE(publisher.HasNub(kGuid));
+    publisher.MidiReceived(kGuid);
+    EXPECT_EQ(provider.nub->notifications, 0U);
+}
