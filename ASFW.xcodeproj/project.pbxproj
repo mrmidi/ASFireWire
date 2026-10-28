@@ -4342,7 +4342,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "ls ${SRCROOT}\n$SRCROOT/bump.sh\n";
+			shellScript = "ls \"${SRCROOT}\"\n\"${SRCROOT}/bump.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
