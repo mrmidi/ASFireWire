@@ -248,13 +248,23 @@ extension ASFWDriverConnector {
 
             buffer.withUnsafeBytes { rawPtr in
                 let base = rawPtr.baseAddress!
-                let scalarCountOffset = MemoryLayout<mach_msg_header_t>.size + MemoryLayout<mach_msg_body_t>.size + MemoryLayout<mach_msg_port_descriptor_t>.size
-                let count = base.load(fromByteOffset: scalarCountOffset, as: UInt32.self).littleEndian
-                let scalarsOffset = scalarCountOffset + MemoryLayout<UInt32>.size
+                // An async completion arrives as IOKit lays it out (OSMessageNotification.h):
+                // mach_msg_header_t, OSNotificationHeader64 { size of the content, type,
+                // 64-byte OSAsyncReference64 }, then IOAsyncCompletionContent { IOReturn
+                // result, then the scalars }. The count is not sent; it follows from the
+                // content size. (Reading a count after a body and a port descriptor, as
+                // before, found 0 and dropped every notification.)
+                let headerOffset = MemoryLayout<mach_msg_header_t>.size
+                let contentOffset = headerOffset + 2 * MemoryLayout<UInt32>.size + MemoryLayout<OSAsyncReference64>.size
+                let scalarsOffset = contentOffset + MemoryLayout<IOReturn>.size
                 let messageBytes = Int(base.load(as: mach_msg_header_t.self).msgh_size)
-                guard count >= 2, count <= 16,
-                      scalarsOffset + Int(count) * MemoryLayout<UInt64>.size <= messageBytes,
-                      messageBytes <= rawPtr.count else { return }
+                guard messageBytes <= rawPtr.count, scalarsOffset <= messageBytes else { return }
+                let contentSize = Int(base.loadUnaligned(fromByteOffset: headerOffset, as: UInt32.self))
+                let type = base.loadUnaligned(fromByteOffset: headerOffset + 4, as: UInt32.self)
+                let count = (contentSize - MemoryLayout<IOReturn>.size) / MemoryLayout<UInt64>.size
+                guard type & UInt32(kIOKitNoticationTypeMask) == UInt32(kIOAsyncCompletionNotificationType),
+                      contentSize >= MemoryLayout<IOReturn>.size, count >= 2, count <= 16,
+                      scalarsOffset + count * MemoryLayout<UInt64>.size <= messageBytes else { return }
                 // Packed Mach data is not guaranteed to align UInt64 values.
                 let scalars = (0..<Int(count)).map {
                     base.loadUnaligned(fromByteOffset: scalarsOffset + $0 * 8, as: UInt64.self)
