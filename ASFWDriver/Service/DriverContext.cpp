@@ -93,8 +93,14 @@ void ServiceContext::Reset(ResetMode mode) {
     // the MIDI nubs: their services hold a retained view of a seam that the
     // endpoints below are about to drop, and a rebuild (wake) publishes the
     // endpoints again with a fresh seam, which needs fresh nubs.
+    // A full reset runs while ASFWDriver itself stops, after the kernel has
+    // terminated the nubs (adapter unplug aborted the dext in Terminate():
+    // QueueForObject, 2026-10-28), so only the bookkeeping goes.
     if (audioCoordinator) audioCoordinator->SetEndpointObserver(nullptr);
-    if (midiNubPublisher) midiNubPublisher->TerminateAll();
+    if (midiNubPublisher) {
+        if (mode == ResetMode::Full) midiNubPublisher->ReleaseAll();
+        else midiNubPublisher->TerminateAll();
+    }
     midiPublication.reset();
     ASFW_LOG(Controller, "[Teardown] release audio coordinator begin");
     audioCoordinator.reset();
