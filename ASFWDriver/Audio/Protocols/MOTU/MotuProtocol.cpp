@@ -246,8 +246,18 @@ std::optional<::ASFW::Audio::Controls::ControlSnapshot> MotuProtocol::CopySnapsh
     }
     if (!state.clockCode && !state.dspPorts) return std::nullopt;
     auto snapshot = BuildMotuControls(state, route_.routeEpoch, 0);
-    if (!AM::validate(snapshot.topology) || !AM::validateState(snapshot.topology, snapshot.state))
-        return std::nullopt;
+    std::string rejected;
+    if (const auto topology = AM::validate(snapshot.topology); !topology)
+        rejected = "topology: " + topology.error().message;
+    else if (const auto values = AM::validateState(snapshot.topology, snapshot.state); !values)
+        rejected = "state: " + values.error().message;
+    // Cold path (control reads and writes); one line per new reason.
+    if (rejected != lastSnapshotRejection_) {
+        if (!rejected.empty())
+            ASFW_LOG(Audio, "[MOTU] controls snapshot rejected: %{public}s", rejected.c_str());
+        lastSnapshotRejection_ = rejected;
+    }
+    if (!rejected.empty()) return std::nullopt;
     return snapshot;
 }
 
@@ -321,6 +331,27 @@ void MotuProtocol::StartDspMessaging(CompletionCallback callback) {
         if (callback) callback(kIOReturnNotReady);
         return;
     }
+    // A unit that stayed powered keeps the previous host session (a driver
+    // restart, a Mac reboot) and ignored every command of the new one until it
+    // was power-cycled (hardware, 2026-10-28). End that session first, as the
+    // reference does on stop: cancel messaging (tag 0, command_dsp.rs
+    // cancel_messaging), then release the destination, all ones as MOTU's
+    // driver writes it. Either may fail on a fresh unit; that is fine.
+    auto cancel = std::make_shared<std::vector<std::vector<uint8_t>>>(
+        CommandDsp::BuildFrames(std::vector<uint8_t>{0x00, 0x00}, CommandDsp::kTagCancel, dspSequence_));
+    SendDspFrames(std::move(cancel), 0, [this, callback = std::move(callback)](IOReturn) mutable {
+        auto release = std::make_shared<std::array<uint8_t, 8>>();
+        release->fill(0xff);
+        (void)io_.WriteBlock(AddressOf(Reg::DspMessageDstHi), *release,
+            [this, release, callback = std::move(callback)](Async::AsyncStatus) mutable {
+                RegisterDspMessaging(std::move(callback));
+            });
+    });
+}
+
+void MotuProtocol::RegisterDspMessaging(CompletionCallback callback) {
+    const auto node = busInfo_.GetLocalNodeID();
+    if (node == FW::kInvalidNodeId) { if (callback) callback(kIOReturnNotReady); return; }
     // Both quadlets in one 8-byte block write, big-endian, as MOTU's driver
     // sends them (MOTUFireWireAudio 1.6 build 89555,
     // BoxWithFxDSP::SendCueMixPacketReadAddress: one write of 8 bytes to
@@ -338,6 +369,8 @@ void MotuProtocol::StartDspMessaging(CompletionCallback callback) {
             const auto second = CommandDsp::BuildFrames(empty, CommandDsp::kTagCommands, dspSequence_);
             frames->insert(frames->end(), second.begin(), second.end());
             SendDspFrames(std::move(frames), 0, [this, callback = std::move(callback)](IOReturn status) {
+                ASFW_LOG(Audio, "[MotuDsp] messaging begin status=0x%x destination=0x%012llx node=0x%04x",
+                         status, dspMessageAddress_, busInfo_.GetLocalNodeID().value);
                 if (status == kIOReturnSuccess) dspMessagingStarted_ = true;
                 if (callback) callback(status);
             });

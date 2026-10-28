@@ -214,6 +214,22 @@ TEST(MotuCommandDsp, EveryBlockOfTheTableIsAddressable) {
     EXPECT_EQ(state.Size(), 5u);
 }
 
+TEST(MotuCommandDsp, SteppedValuesAreTruncatedAndClampedAsTheUnitSendsThemOffStep) {
+    DspState state(*DspPortsFor(0x19));
+    const auto trim = [&](uint8_t channel) { return state.Get(Id(Block::Input, 0, 0x02, channel))->value; };
+    // An UltraLite mk3 reported Analog 1 Trim as 0.12 (hardware, 2026-10-28);
+    // the reference truncates to i32.
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Input, 0, 0x02, 0, 0.12f)));
+    EXPECT_FLOAT_EQ(trim(0), 0.0f);
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Input, 0, 0x02, 1, -3.7f)));
+    EXPECT_FLOAT_EQ(trim(1), -3.0f);
+    EXPECT_TRUE(state.Apply(Command::Float(Block::Input, 0, 0x02, 2, 30.0f)));
+    EXPECT_FLOAT_EQ(trim(2), 22.0f);
+    // Continuous parameters keep their value inside the range.
+    EXPECT_TRUE(state.Apply(Set::MainVolume(0.33f)));
+    EXPECT_FLOAT_EQ(state.Get(Id(Block::Monitor, 0, MonitorThird::kMainVolume, 0))->value, 0.33f);
+}
+
 TEST(MotuCommandDsp, CommandsOutsideTheTableOrOfTheWrongWidthAreIgnored) {
     DspState state(*DspPortsFor(0x19));
     EXPECT_FALSE(state.Apply(Set::SourceGain(0, 10, 1.0f)));  // no 11th source
@@ -249,4 +265,76 @@ TEST(MotuCommandDsp, EveryParameterIdRoundTripsToItsAddress) {
             }
     }
     EXPECT_GT(checked, 1400u);
+}
+
+// ---- Mailbox: what the unit sends, as control listeners see it ----
+
+#include "Audio/Protocols/MOTU/MotuDspMessages.hpp"
+
+namespace {
+
+std::vector<ASFW::Audio::Controls::ParameterChanged> gEvents;
+int gListener = 0;
+
+ASFW::Discovery::DeviceRouteToken UltraLiteRoute() {
+    ASFW::Discovery::DeviceRouteToken route{};
+    route.guid = 0x0001f2000008be94ULL;
+    route.deviceIncarnation = 1;
+    route.routeEpoch = 7;
+    route.generation = decltype(route.generation){3};
+    route.nodeId = 0;  // the unit sends from 0xffc0: bus 0x3ff, node 0
+    return route;
+}
+
+// The unit's frames: tag 2, a running sequence number, then the message.
+void Send(MessageMailbox& mailbox, const std::vector<Command>& commands, uint8_t& sequence) {
+    std::vector<uint8_t> message;
+    for (const auto& c : commands) Encode(c, message);
+    for (const auto& frame : BuildFrames(message, 0x02, sequence))
+        ASSERT_TRUE(mailbox.Deliver(3, 0xffc0, frame).accepted);
+}
+
+struct Listening {
+    Listening() {
+        gEvents.clear();
+        EXPECT_TRUE(ASFW::Audio::Controls::ControlNotifications::Shared().Register(
+            &gListener, [](void*, const auto& event) { gEvents.push_back(event); }));
+    }
+    ~Listening() { ASFW::Audio::Controls::ControlNotifications::Shared().Unregister(&gListener); }
+};
+
+} // namespace
+
+TEST(MotuDspMailbox, AFrontPanelChangeAnnouncesTheValueNotAReread) {
+    Listening listening;
+    MessageMailbox mailbox(UltraLiteRoute(), *DspPortsFor(0x19));
+    uint8_t sequence = 0;
+    // The main volume knob, as an UltraLite mk3 sent it (hardware, 2026-10-28).
+    Send(mailbox, {Set::MainVolume(0.2304f)}, sequence);
+    ASSERT_EQ(gEvents.size(), 1u);
+    const auto& event = gEvents.front();
+    EXPECT_EQ(event.guid, 0x0001f2000008be94ULL);
+    EXPECT_EQ(event.revision, 7u);
+    EXPECT_EQ(event.parameterId, Id(Block::Monitor, 0, MonitorThird::kMainVolume, 0));
+    EXPECT_EQ(event.kind, 1u);
+    EXPECT_FLOAT_EQ(static_cast<float>(std::bit_cast<double>(event.bits)), 0.2304f);
+    // The same value again changes nothing and announces nothing.
+    Send(mailbox, {Set::MainVolume(0.2304f)}, sequence);
+    EXPECT_EQ(gEvents.size(), 1u);
+}
+
+TEST(MotuDspMailbox, TheStateDumpAsksForOneRereadOfEverything) {
+    Listening listening;
+    MessageMailbox mailbox(UltraLiteRoute(), *DspPortsFor(0x19));
+    uint8_t sequence = 0;
+    std::vector<Command> dump;
+    for (uint8_t mix = 0; mix < 8; ++mix) {
+        dump.push_back(Set::OutputVolume(mix, 0.5f));
+        dump.push_back(Set::OutputMute(mix, true));
+        dump.push_back(Set::SourceGain(mix, 0, 0.25f));
+    }
+    Send(mailbox, dump, sequence);
+    ASSERT_EQ(gEvents.size(), 1u);
+    EXPECT_EQ(gEvents.front().kind, 4u);
+    EXPECT_EQ(gEvents.front().parameterId, 0u);
 }

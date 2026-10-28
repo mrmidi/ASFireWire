@@ -268,7 +268,7 @@ public:
         if (!ports_) return false;
         const auto at = Lookup(*ports_, c);
         if (!at) return false;
-        values_[ParameterId(*at->spec, at->channel, at->source)] = {c.quadlet, c.byte, c.value};
+        values_[ParameterId(*at->spec, at->channel, at->source)] = {c.quadlet, c.byte, Conform(*at->spec, c)};
         return true;
     }
     [[nodiscard]] std::optional<Value> Get(uint32_t id) const {
@@ -280,6 +280,18 @@ public:
     friend bool operator==(const DspState& a, const DspState& b) noexcept { return a.values_ == b.values_; }
 
 private:
+    /// A float as the table can hold it. The unit sends stepped parameters as
+    /// floats off the step (an UltraLite mk3 reported Analog 1 Trim as 0.12 on
+    /// hardware, 2026-10-28); the reference casts them to i32, truncating
+    /// (command_dsp.rs to_i32). Clamped to the range so that one value cannot
+    /// invalidate the whole mixer snapshot.
+    [[nodiscard]] static float Conform(const ParamSpec& spec, const Command& c) noexcept {
+        if (!c.quadlet || spec.kind != Kind::Float) return c.value;
+        float value = c.value;
+        if (spec.step > 0.0f) value = std::trunc(value / spec.step) * spec.step;
+        return std::clamp(value, spec.min, spec.max);
+    }
+
     std::optional<ModelDspPorts> ports_{};
     std::map<uint32_t, Value> values_{};
 };

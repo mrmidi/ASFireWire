@@ -300,6 +300,8 @@ private:
     /// Register the DSP message destination, then begin messaging (tag 1, then
     /// tag 2, both empty, as command_dsp.rs begin_messaging does).
     void StartDspMessaging(CompletionCallback callback);
+    /// Register this host as the message destination, then begin messaging.
+    void RegisterDspMessaging(CompletionCallback callback);
     /// Block-write `frames` to the DSP command address, one after another.
     void SendDspFrames(std::shared_ptr<std::vector<std::vector<uint8_t>>> frames, size_t index,
                        CompletionCallback callback);
@@ -307,6 +309,7 @@ private:
     // Controller queue only, like every IControlProvider call.
     std::optional<int64_t> clockCode_{};
     uint64_t controlRevision_{0};
+    mutable std::string lastSnapshotRejection_;
     // Command-DSP models. The mailbox is shared with the receive path.
     std::shared_ptr<CommandDsp::MessageMailbox> dspMessages_;
     uint64_t dspMessageAddress_{0};

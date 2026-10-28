@@ -2123,23 +2123,29 @@ struct CueMixRig {
 
 TEST(MotuCueMix, PrepareRegistersTheMessageDestinationAndBeginsMessaging) {
     CueMixRig rig;
-    // One 8-byte block write covering 0x0b38 and 0x0b3c, as MOTU's driver sends it.
+    // First the previous session ends: cancel (tag 0, sequence 0), then the
+    // destination is released, all ones as MOTU's driver writes it. A unit that
+    // stayed powered otherwise ignores the new session (hardware, 2026-10-28).
+    // Then one 8-byte block write covering 0x0b38 and 0x0b3c, as MOTU's driver sends it.
     const auto destinationWrites = WritesTo(rig.bus, LowOf(Reg::DspMessageDstHi));
-    ASSERT_EQ(destinationWrites.size(), 1u);
-    ASSERT_EQ(destinationWrites[0].bytes.size(), 8u);
-    EXPECT_EQ(Be32(destinationWrites[0].bytes, 0) >> 16, 0xffc0u) << "the host's node ID, in the top 16 bits";
+    ASSERT_EQ(destinationWrites.size(), 2u);
+    EXPECT_EQ(destinationWrites[0].bytes, std::vector<uint8_t>(8, 0xff));
+    ASSERT_EQ(destinationWrites[1].bytes.size(), 8u);
+    EXPECT_EQ(Be32(destinationWrites[1].bytes, 0) >> 16, 0xffc0u) << "the host's node ID, in the top 16 bits";
     EXPECT_TRUE(WritesTo(rig.bus, LowOf(Reg::DspMessageDstLo)).empty());
     EXPECT_TRUE(CD::Messages::Owns(rig.destination)) << std::hex << rig.destination;
-    // Begin messaging: tag 1 then tag 2, empty, sequence 0 and 1.
+    // Cancel, then begin messaging: tag 1 then tag 2, empty, sequence 1 and 2.
     const auto frames = WritesTo(rig.bus, kDspCommandLo);
-    ASSERT_EQ(frames.size(), 2u);
-    EXPECT_EQ(frames[0].bytes, (std::vector<uint8_t>{0x01, 0x00, 0x00, 0x00}));
-    EXPECT_EQ(frames[1].bytes, (std::vector<uint8_t>{0x02, 0x01, 0x00, 0x00}));
-    // Registration precedes the frames.
-    const auto at = [&](uint32_t lo) {
-        return std::ranges::find(rig.bus.writes, lo, &RecordingBus::Write::addressLo) - rig.bus.writes.begin();
-    };
-    EXPECT_LT(at(LowOf(Reg::DspMessageDstHi)), at(kDspCommandLo));
+    ASSERT_EQ(frames.size(), 3u);
+    EXPECT_EQ(frames[0].bytes, (std::vector<uint8_t>{0x00, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(frames[1].bytes, (std::vector<uint8_t>{0x01, 0x01, 0x00, 0x00}));
+    EXPECT_EQ(frames[2].bytes, (std::vector<uint8_t>{0x02, 0x02, 0x00, 0x00}));
+    // Order on the wire: cancel, release, register, begin.
+    std::vector<uint32_t> order;
+    for (const auto& w : rig.bus.writes)
+        if (w.addressLo == kDspCommandLo || w.addressLo == LowOf(Reg::DspMessageDstHi)) order.push_back(w.addressLo);
+    EXPECT_EQ(order, (std::vector<uint32_t>{kDspCommandLo, LowOf(Reg::DspMessageDstHi), LowOf(Reg::DspMessageDstHi),
+                                            kDspCommandLo, kDspCommandLo}));
 }
 
 TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
@@ -2168,9 +2174,9 @@ TEST(MotuCueMix, AMixerWriteIsOneCommandFrameAndIsRecorded) {
                               [&](IOReturn s, ASFW::AudioModel::ParameterValue) { status = s; });
     ASSERT_EQ(status, kIOReturnSuccess);
     const auto frames = WritesTo(rig.bus, kDspCommandLo);
-    ASSERT_EQ(frames.size(), 3u);
-    // Tag 2, sequence 2, then mix 2 / source 4 gain 0.5 (0x3f000000, little-endian), padded.
-    EXPECT_EQ(frames[2].bytes, (std::vector<uint8_t>{0x02, 0x02, 0x66, 0x01, 0x03, 0x05, 0x02,
+    ASSERT_EQ(frames.size(), 4u);
+    // Tag 2, sequence 3, then mix 2 / source 4 gain 0.5 (0x3f000000, little-endian), padded.
+    EXPECT_EQ(frames[3].bytes, (std::vector<uint8_t>{0x02, 0x03, 0x66, 0x01, 0x03, 0x05, 0x02,
                                                      0x00, 0x00, 0x00, 0x3f, 0x00}));
     const auto snapshot = rig.protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
@@ -2266,7 +2272,7 @@ TEST(MotuCueMix, AnEqWriteIsTheSameKindOfFrame) {
     ASSERT_EQ(status, kIOReturnSuccess);
     const auto frames = WritesTo(rig.bus, kDspCommandLo);
     // -6.0f is 0xc0c00000.
-    EXPECT_EQ(frames.back().bytes, (std::vector<uint8_t>{0x02, 0x02, 0x66, 0x02, 0x03, 0x03, 0x01,
+    EXPECT_EQ(frames.back().bytes, (std::vector<uint8_t>{0x02, 0x03, 0x66, 0x02, 0x03, 0x03, 0x01,
                                                          0x00, 0x00, 0xc0, 0xc0, 0x00}));
     EXPECT_DOUBLE_EQ(ScalarParameter(*rig.protocol.CopySnapshot(), id), -6.0);
     // Out of the reference's range (-20..20 dB): refused before the wire.

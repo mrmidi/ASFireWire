@@ -25,13 +25,18 @@
 #include "../../Controls/ControlNotifications.hpp"
 #include "../../../Async/Rx/LocalRequestDispatch.hpp"
 #include "../../../Discovery/DeviceRouteToken.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <bit>
 #include <memory>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace ASFW::Audio::Motu::CommandDsp {
 
@@ -66,14 +71,18 @@ public:
         bool accepted{false};
         uint32_t commands{0};
         bool changed{false};
+        uint32_t routeGeneration{0};
+        uint16_t routeNode{0};
     };
 
     /// One frame from the unit. Accepted only from this unit's node in the
     /// current generation.
     Delivery Deliver(uint32_t generation, uint16_t source, std::span<const uint8_t> frame) {
         Delivery out{};
-        Discovery::DeviceRouteToken announce{};
+        std::vector<Controls::ParameterChanged> events;
         IOLockLock(lock_);
+        out.routeGeneration = route_.generation.value;
+        out.routeNode = route_.nodeId;
         if (route_ && route_.generation.value == generation &&
             (route_.nodeId & 0x3f) == (source & 0x3f)) {
             out.accepted = true;
@@ -84,13 +93,14 @@ public:
                 const DspState before = state_;
                 for (const auto& command : commands) (void)state_.Apply(command);
                 out.changed = !(state_ == before);
-                if (out.changed) { ++version_; announce = route_; }
+                if (out.changed) {
+                    ++version_;
+                    events = ChangeEvents(before, commands);
+                }
             }
         }
         IOLockUnlock(lock_);
-        if (out.changed)
-            Controls::ControlNotifications::Shared().Publish(
-                {announce.guid, announce.routeEpoch, 0, 0, 4, 0});
+        for (const auto& event : events) Controls::ControlNotifications::Shared().Publish(event);
         return out;
     }
 
@@ -118,6 +128,36 @@ public:
     }
 
 private:
+    /// A front-panel change is a few commands, sent about every 30 ms while a
+    /// knob turns; announce each changed value in the control model's encoding
+    /// (MotuControlModel.hpp) so listeners update it in place. A larger
+    /// message (the state dump) asks them to re-read everything (kind 4).
+    /// Under the lock.
+    static constexpr size_t kPerValueEvents = 16;
+    [[nodiscard]] std::vector<Controls::ParameterChanged> ChangeEvents(
+        const DspState& before, const std::vector<Command>& commands) const {
+        std::vector<Controls::ParameterChanged> events;
+        const auto& ports = state_.Ports();
+        if (!ports || commands.size() > kPerValueEvents)
+            return {{route_.guid, route_.routeEpoch, 0, 0, 4, 0}};
+        for (const auto& command : commands) {
+            const auto at = Lookup(*ports, command);
+            if (!at) continue;
+            const uint32_t id = ParameterId(*at->spec, at->channel, at->source);
+            const auto now = state_.Get(id);
+            if (!now || before.Get(id) == now) continue;
+            if (std::ranges::any_of(events, [id](const auto& e) { return e.parameterId == id; })) continue;
+            Controls::ParameterChanged event{route_.guid, route_.routeEpoch, 0, id, 0, 0};
+            switch (at->spec->kind) {
+            case Kind::Bool: event.kind = 0; event.bits = now->byte != 0; break;
+            case Kind::Enum: event.kind = 2; event.bits = now->byte; break;
+            case Kind::Float: event.kind = 1; event.bits = std::bit_cast<uint64_t>(double(now->value)); break;
+            }
+            events.push_back(event);
+        }
+        return events;
+    }
+
     IOLock* lock_;
     Discovery::DeviceRouteToken route_;
     MessageReassembler reassembler_{};
@@ -160,7 +200,19 @@ inline IOLock* Lock() { static IOLock* lock = IOLockAlloc(); return lock; }
     IOLockLock(lock);
     const auto held = Slots()[(ctx.destOffset - kMessageRegionStart) / kMessageSlotBytes].lock();
     IOLockUnlock(lock);
-    if (held) (void)held->Deliver(ctx.generation, ctx.sourceID, ctx.writePayload);
+    if (held) {
+        const auto delivery = held->Deliver(ctx.generation, ctx.sourceID, ctx.writePayload);
+        // The unit sends active-sensing frames about 30 times a second: log
+        // only the first few rejections (wrong node or generation).
+        static std::atomic<uint32_t> rejected{0};
+        if (!delivery.accepted && rejected.fetch_add(1, std::memory_order_relaxed) < 4)
+            ASFW_LOG(Audio, "[MotuDsp] frame rejected bytes=%zu src=0x%04x gen=%u route(gen=%u node=0x%04x)",
+                     ctx.writePayload.size(), ctx.sourceID, ctx.generation, delivery.routeGeneration,
+                     delivery.routeNode);
+    } else {
+        ASFW_LOG(Audio, "[MotuDsp] frame for an empty slot at offset=0x%llx bytes=%zu",
+                 ctx.destOffset, ctx.writePayload.size());
+    }
     return Async::LocalRequestResult::Write(Async::ResponseCode::Complete);
 }
 } // namespace Messages
