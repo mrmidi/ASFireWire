@@ -105,6 +105,25 @@ inline Controls::ControlSnapshot BuildMotuControls(const MotuControlsState& nati
     t.nodes.push_back({AM::NodeId{13}, "Monitor", AM::EndpointNode{AM::EndpointKind::Host}});
     t.nodes.push_back({AM::NodeId{14}, "Reverb", AM::EndpointNode{AM::EndpointKind::Host}});
 
+    // The main volume scales the Main outputs, which carry playback 1-2 (the
+    // UltraLite mk3's "Main L/R"). Modelled as a channel-preserving stage on
+    // that path, it is node-wide over every modelled playback channel, so the
+    // Core Audio projection publishes it as the output master volume: the one
+    // the Mac's volume keys drive.
+    AM::ProcessorNode main{{}, {}, true};
+    for (uint32_t ch = 0; ch < 2; ++ch) {
+        const AM::PortId playback{nextPort++}, in{nextPort++}, out{nextPort++};
+        t.ports.push_back({playback, AM::NodeId{15}, AM::PortDirection::Output, 1, ch ? "Playback 2" : "Playback 1",
+                           {AM::SignalKind::HostStream, ch + 1}});
+        t.ports.push_back({in, AM::NodeId{16}, AM::PortDirection::Input, 1, ch ? "In R" : "In L", {}});
+        t.ports.push_back({out, AM::NodeId{16}, AM::PortDirection::Output, 1, ch ? "Main R" : "Main L", {}});
+        main.inputs.push_back(in);
+        main.outputs.push_back(out);
+        t.fixedLinks.push_back({playback, in});
+    }
+    t.nodes.push_back({AM::NodeId{15}, "Computer", AM::EndpointNode{AM::EndpointKind::Host}});
+    t.nodes.push_back({AM::NodeId{16}, "Main Volume", std::move(main)});
+
     for (const auto& spec : CD::kParams) {
         const auto items = Detail::ItemsOf(spec, ports);
         AM::ParameterDomain domain = AM::BooleanDomain{};
@@ -144,6 +163,10 @@ inline Controls::ControlSnapshot BuildMotuControls(const MotuControlsState& nati
                 switch (spec.scope) {
                 case CD::Scope::Global:
                     target = AM::NodeId{spec.block == CD::Block::Reverb ? 14u : 13u};
+                    if (spec.block == CD::Block::Monitor && spec.third == CD::MonitorThird::kMainVolume) {
+                        target = AM::NodeId{16};
+                        semantic = AM::ParameterSemantic::Level;
+                    }
                     break;
                 case CD::Scope::Input:
                     target = AM::NodeId{11};

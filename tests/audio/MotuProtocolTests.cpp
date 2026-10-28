@@ -1883,9 +1883,11 @@ TEST(MotuV3ClockSource, PrepareReportsTheDevicesSourceAsAGlobalClockSelector) {
     const auto snapshot = protocol.CopySnapshot();
     ASSERT_TRUE(snapshot.has_value());
     const auto controls = ASFW::Audio::Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state);
-    ASSERT_EQ(controls.size(), 1U);
-    const auto& clock = controls.front();
-    EXPECT_EQ(clock.classId, uint32_t{'clck'});
+    // The clock source, and the main volume the CueMix model publishes as master.
+    ASSERT_EQ(controls.size(), 2U);
+    const auto found = std::ranges::find(controls, uint32_t{'clck'}, &ASFW::Audio::Controls::CoreAudioControl::classId);
+    ASSERT_NE(found, controls.end());
+    const auto& clock = *found;
     EXPECT_EQ(clock.scope, uint32_t{'glob'});
     EXPECT_EQ(clock.element, 0U);
     EXPECT_TRUE(clock.settable);
@@ -2161,9 +2163,17 @@ TEST(MotuCueMix, TheSnapshotHasEveryMixAndStaysOutOfCoreAudio) {
     EXPECT_EQ(snapshot->topology.parameters.size(), expected);
     EXPECT_GT(expected, 1400u);
     EXPECT_TRUE(ASFW::AudioModel::validate(snapshot->topology));
+    // Core Audio sees the clock source and the main volume, as the output
+    // master the Mac's volume keys drive; the rest of the mixer stays in the app.
     const auto controls = ASFW::Audio::Controls::ProjectCoreAudioControls(snapshot->topology, snapshot->state);
-    ASSERT_EQ(controls.size(), 1u);
-    EXPECT_EQ(controls[0].classId, uint32_t{'clck'});
+    ASSERT_EQ(controls.size(), 2u);
+    EXPECT_TRUE(std::ranges::any_of(controls, [](const auto& c) { return c.classId == uint32_t{'clck'}; }));
+    const auto volume = std::ranges::find(controls, uint32_t{'vlme'}, &ASFW::Audio::Controls::CoreAudioControl::classId);
+    ASSERT_NE(volume, controls.end());
+    EXPECT_EQ(volume->parameter.value, CD::Id(CD::Block::Monitor, 0, CD::MonitorThird::kMainVolume, 0));
+    EXPECT_EQ(volume->scope, uint32_t{'outp'});
+    EXPECT_EQ(volume->element, 0u);
+    EXPECT_TRUE(volume->settable);
 }
 
 TEST(MotuCueMix, AMixerWriteIsOneCommandFrameAndIsRecorded) {
