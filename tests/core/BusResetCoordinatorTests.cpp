@@ -392,6 +392,26 @@ TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
 }
 
+// Regression (2026-10-30, FW643 Thunderbolt adapter hot-unplug): the adapter
+// vanished mid-reset; Rearming then polled NodeID.valid every 1 ms on the
+// Default queue forever (~860 wakes/s) and Stop never ran.
+TEST(BusResetCoordinatorTests, HardwareGoneMidResetEndsTheCycleWithoutPolling) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+    rig.hardware.LatchProviderRevokedAndDrain();
+
+    for (int i = 0; i < 40; ++i) {
+        rig.AdvanceMs(100U);
+    }
+
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_EQ(rig.async.rearmAtContextsCount, 0U);
+}
+
 TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {
     BusResetTestRig rig;
     rig.Initialize();

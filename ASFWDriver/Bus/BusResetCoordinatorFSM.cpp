@@ -306,6 +306,19 @@ void BusResetCoordinator::RunStateMachine() {
         return;
     }
 
+    // Removed or revoked hardware never reports a valid NodeID, so Rearming
+    // would poll on the Default queue forever and starve Stop. A revoked
+    // interface stays closed until Detach/Attach, so the cycle cannot resume.
+    if (!hardware_->IsAvailable()) {
+        if (state_ != State::Idle) {
+            ASFW_LOG(BusReset, "[FSM] hardware unavailable in %{public}s; abandoning reset cycle",
+                     StateString());
+            TransitionTo(State::Idle, "hardware unavailable");
+        }
+        CompleteCurrentRun();
+        return;
+    }
+
     constexpr int kMaxIterations = 12;
     int iteration = 0;
 
