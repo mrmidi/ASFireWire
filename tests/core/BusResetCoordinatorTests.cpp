@@ -392,6 +392,58 @@ TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
 }
 
+TEST(BusResetCoordinatorTests, HardwareGoneMidResetEndsTheCycleWithoutPolling) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+    rig.hardware.LatchProviderRevokedAndDrain();
+
+    for (int i = 0; i < 40; ++i) {
+        rig.AdvanceMs(100U);
+    }
+
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_EQ(rig.async.rearmAtContextsCount, 0U);
+}
+
+// Regression (2026-10-30, FW643 Thunderbolt adapter hot-unplug): the adapter
+// vanished mid-reset; Rearming then polled NodeID.valid every 1 ms on the
+// Default queue forever (~860 wakes/s) and Stop never ran.
+TEST(BusResetCoordinatorTests, HardwareGoneWhileRearmingStopsPollingNodeID) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    // Hold the cycle in QuiescingAT so NodeID can go invalid after the decode
+    // that needs it, the way it does when the adapter vanishes.
+    const auto atReqControl =
+        Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet);
+    rig.hardware.SetTestRegister(atReqControl, kContextControlActiveBit);
+    rig.TriggerStickyCompletion();
+    ASSERT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::QuiescingAT);
+
+    rig.hardware.SetTestRegister(Register32::kNodeID, 0U);
+    rig.hardware.SetTestRegister(atReqControl, 0U);
+    rig.AdvanceMs(10U);
+    ASSERT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Rearming);
+
+    rig.hardware.LatchProviderRevokedAndDrain();
+    for (int i = 0; i < 40; ++i) {
+        rig.AdvanceMs(100U);
+    }
+
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_EQ(rig.async.rearmAtContextsCount, 0U);
+}
+
 TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {
     BusResetTestRig rig;
     rig.Initialize();
