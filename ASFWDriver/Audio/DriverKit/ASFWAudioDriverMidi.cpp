@@ -3,7 +3,8 @@
 // ASFWDriver
 //
 // The audio driver's share of MIDI over AMDTP: compose host -> device MIDI
-// bytes into the primary playback stream's MPX slot.
+// bytes into the primary playback stream's MPX slot, or, for a MOTU stream,
+// into each data block's message bytes (MotuMidiTxComposer).
 //
 // The audio driver runs the TX preparation pump and holds the mapped TX slab, so
 // this is where the packets are, and it is the only reason it knows MIDI exists.
@@ -22,6 +23,71 @@
 #include <DriverKit/DriverKit.h>
 
 namespace ASFW::Audio::DriverKit {
+
+namespace {
+
+// Map the endpoint's MIDI seam held in ivars.midiBuffer. Null, with the buffer
+// and mapping released, when it cannot be used.
+ASFW::Midi::MidiTransportBlock* MapMidiSeam(ASFWAudioDriver_IVars& ivars) noexcept {
+    if (ASFW::Common::CreateSharedMapping(ivars.midiBuffer, ivars.midiMap) != kIOReturnSuccess ||
+        !ivars.midiMap ||
+        ivars.midiMap->GetLength() < sizeof(ASFW::Midi::MidiTransportBlock)) {
+        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: cannot map the MIDI seam");
+        ivars.midiMap.reset();
+        ivars.midiBuffer.reset();
+        return nullptr;
+    }
+    auto* block = reinterpret_cast<ASFW::Midi::MidiTransportBlock*>(
+        static_cast<uintptr_t>(ivars.midiMap->GetAddress()));
+    if (block->layoutVersion.load(std::memory_order_relaxed) !=
+        ASFW::Midi::MidiTransportBlock::kLayoutVersion) {
+        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: seam layout version %u, expected %u",
+                       block->layoutVersion.load(std::memory_order_relaxed),
+                       ASFW::Midi::MidiTransportBlock::kLayoutVersion);
+        ivars.midiMap.reset();
+        ivars.midiBuffer.reset();
+        return nullptr;
+    }
+    return block;
+}
+
+// A MOTU stream: the seam's AM824 geometry is empty by design (MOTU reports no
+// MIDI in its registers), so the slot comes from the model this run armed,
+// and the data block size from the stream itself.
+void BindMotuMidiTx(ASFWAudioDriver_IVars& ivars,
+                    const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept {
+    const uint32_t version = ivars.runtime.txMotuUnitVersion;
+    const auto slot = ASFW::Encoding::Motu::OffsetsOf(
+        ASFW::Encoding::Motu::MidiSlotFor(version, /*capture=*/false));
+    if (!slot) {
+        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: MOTU 0x%x has no MIDI slot", version);
+        ivars.midiBuffer.reset();
+        return;
+    }
+    auto* block = MapMidiSeam(ivars);
+    if (block == nullptr) return;
+    ASFW::AudioEngine::Direct::Tx::MotuMidiTxComposerConfig config{};
+    config.slot = *slot;
+    config.dbs = txConfig.dbs;
+    config.sampleRateHz = txConfig.sampleRate;
+    config.framesPerDataPacket = txConfig.framesPerDataPacket;
+    if (!ivars.runtime.motuMidiTxComposer.Configure(config)) {
+        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: MOTU composer refused dbs=%u rate=%u",
+                       static_cast<uint32_t>(txConfig.dbs), txConfig.sampleRate);
+        ivars.midiMap.reset();
+        ivars.midiBuffer.reset();
+        return;
+    }
+    ivars.runtime.midiTxMotu = true;
+    ivars.runtime.midiTxReportedBytes = 0;
+    ivars.runtime.midiTxReportedAnomalies = 0;
+    ivars.runtime.midiTxBlock = block;
+    ASFW_LOG(Midi, "[MidiTx] composing MOTU 0x%x flag=%u byte=%u dbs=%u rate=%u",
+             version, slot->flag, slot->byte, static_cast<uint32_t>(txConfig.dbs),
+             txConfig.sampleRate);
+}
+
+} // namespace
 
 void BindMidiTx(ASFWAudioDriver_IVars& ivars,
                 const ASFW::Isoch::Audio::AudioStreamConfig& txConfig) noexcept {
@@ -45,6 +111,11 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
         return;
     }
 
+    if (ivars.runtime.txMotuUnitVersion != 0) {
+        BindMotuMidiTx(ivars, txConfig);
+        return;
+    }
+
     // The MIDI slot was projected from the device's stream table. The playback
     // stream this run actually framed must be the same stream, or the slot index
     // would point into a different block layout and MIDI would overwrite audio.
@@ -61,25 +132,8 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
         return;
     }
 
-    if (ASFW::Common::CreateSharedMapping(ivars.midiBuffer, ivars.midiMap) != kIOReturnSuccess ||
-        !ivars.midiMap ||
-        ivars.midiMap->GetLength() < sizeof(ASFW::Midi::MidiTransportBlock)) {
-        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: cannot map the MIDI seam");
-        ivars.midiMap.reset();
-        ivars.midiBuffer.reset();
-        return;
-    }
-    auto* block = reinterpret_cast<ASFW::Midi::MidiTransportBlock*>(
-        static_cast<uintptr_t>(ivars.midiMap->GetAddress()));
-    if (block->layoutVersion.load(std::memory_order_relaxed) !=
-        ASFW::Midi::MidiTransportBlock::kLayoutVersion) {
-        ASFW_LOG_ERROR(Midi, "[MidiTx] not composing: seam layout version %u, expected %u",
-                       block->layoutVersion.load(std::memory_order_relaxed),
-                       ASFW::Midi::MidiTransportBlock::kLayoutVersion);
-        ivars.midiMap.reset();
-        ivars.midiBuffer.reset();
-        return;
-    }
+    auto* block = MapMidiSeam(ivars);
+    if (block == nullptr) return;
 
     ASFW::AudioEngine::Direct::Tx::MidiTxComposerConfig config{};
     config.geometry = ASFW::Encoding::MpxMidiGeometry{
@@ -97,6 +151,7 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
         ivars.midiBuffer.reset();
         return;
     }
+    ivars.runtime.midiTxMotu = false;
     ivars.runtime.midiTxReportedBytes = 0;
     ivars.runtime.midiTxReportedAnomalies = 0;
     ivars.runtime.midiTxBlock = block;
@@ -115,28 +170,39 @@ void ComposeMidiTx(ASFWAudioDriver_IVars& ivars) noexcept {
     // where PCM stops being written. MIDI works in between, never outside it.
     const uint64_t armedEnd = queue->committedEnd.load(std::memory_order_acquire);
     const uint64_t firstWritable = TxFirstWritablePacket(*queue);
+    if (ivars.runtime.midiTxMotu) {
+        (void)ivars.runtime.motuMidiTxComposer.Compose(
+            block, ivars.runtime.txStreamEngine.Timeline(), firstWritable, armedEnd);
+        return;
+    }
     (void)ivars.runtime.midiTxComposer.Compose(
         block, ivars.runtime.txStreamEngine.Timeline(), firstWritable, armedEnd);
 }
 
 void ReportMidiTx(ASFWAudioDriver_IVars& ivars) noexcept {
     if (ivars.runtime.midiTxBlock == nullptr) return;
-    const auto& counters = ivars.runtime.midiTxComposer.Counters();
-    const auto& reservation = ivars.runtime.midiTxComposer.ReservationCounters();
-    const uint64_t anomalies = counters.geometryMismatches + reservation.staleEpochCommits +
-                               reservation.mismatchedCommits;
-    if (counters.bytesComposed == ivars.runtime.midiTxReportedBytes &&
-        anomalies == ivars.runtime.midiTxReportedAnomalies) {
-        return;  // a clean idle stream prints nothing
+    const auto report = [&](const auto& counters, const auto& reservation) {
+        const uint64_t anomalies = counters.geometryMismatches + reservation.staleEpochCommits +
+                                   reservation.mismatchedCommits;
+        if (counters.bytesComposed == ivars.runtime.midiTxReportedBytes &&
+            anomalies == ivars.runtime.midiTxReportedAnomalies) {
+            return;  // a clean idle stream prints nothing
+        }
+        ivars.runtime.midiTxReportedBytes = counters.bytesComposed;
+        ivars.runtime.midiTxReportedAnomalies = anomalies;
+        ASFW_LOG(Midi,
+                 "[MidiTx] bytes=%llu packets=%llu pastFrontier=%llu geometry=%llu staleCommit=%llu "
+                 "mismatchCommit=%llu epochs=%llu",
+                 counters.bytesComposed, counters.packetsComposed, counters.packetsPastFrontier,
+                 counters.geometryMismatches, reservation.staleEpochCommits,
+                 reservation.mismatchedCommits, counters.epochChanges);
+    };
+    if (ivars.runtime.midiTxMotu) {
+        report(ivars.runtime.motuMidiTxComposer.Counters(),
+               ivars.runtime.motuMidiTxComposer.ReservationCounters());
+    } else {
+        report(ivars.runtime.midiTxComposer.Counters(), ivars.runtime.midiTxComposer.ReservationCounters());
     }
-    ivars.runtime.midiTxReportedBytes = counters.bytesComposed;
-    ivars.runtime.midiTxReportedAnomalies = anomalies;
-    ASFW_LOG(Midi,
-             "[MidiTx] bytes=%llu packets=%llu pastFrontier=%llu geometry=%llu staleCommit=%llu "
-             "mismatchCommit=%llu epochs=%llu",
-             counters.bytesComposed, counters.packetsComposed, counters.packetsPastFrontier,
-             counters.geometryMismatches, reservation.staleEpochCommits,
-             reservation.mismatchedCommits, counters.epochChanges);
 }
 
 } // namespace ASFW::Audio::DriverKit

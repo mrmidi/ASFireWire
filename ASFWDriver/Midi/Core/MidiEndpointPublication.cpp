@@ -8,6 +8,7 @@
 #include "../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../Audio/Protocols/AudioTypes.hpp"
+#include "../../Audio/DriverKit/Config/AudioProfileRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Capabilities/MidiEndpointCapabilities.hpp"
 
@@ -47,10 +48,20 @@ MidiEndpointCapabilities MidiEndpointPublication::Project(
 void MidiEndpointPublication::OnEndpointPublished(
     const uint64_t guid, const ASFW::Audio::AudioBackendKind kind,
     const ASFW::Audio::Model::ASFWAudioDevice& description) noexcept {
-    // Family gate: the MIDI geometry comes from DICE's stream-format registers.
-    if (kind != ASFW::Audio::AudioBackendKind::Dice) return;
-
-    const MidiEndpointCapabilities caps = Project(guid, description);
+    // Family gate. DICE reports its MIDI geometry in its stream-format
+    // registers. MOTU reports none: the model decides, and the model is the
+    // unit version of the profile this endpoint was published with.
+    MidiEndpointCapabilities caps{};
+    if (kind == ASFW::Audio::AudioBackendKind::Dice) {
+        caps = Project(guid, description);
+    } else if (kind == ASFW::Audio::AudioBackendKind::MotuRegister) {
+        const uint32_t version = ASFW::Isoch::Audio::AudioProfileRegistry::MotuUnitVersionForBuilderId(
+            description.profileBuilderId);
+        if (version == 0) return;
+        caps = ProjectMotuMidiCapabilities(version, guid, /*streamEpoch=*/0);
+    } else {
+        return;
+    }
     if (!caps.AnyUsable()) {
         // A device that reports no MIDI is the ordinary case and says nothing.
         // A device that reports some but whose geometry is rejected is not: say

@@ -510,6 +510,7 @@ public:
                 .portCount = midiAttachment_.sources.portCount,
                 .dbcAligned = midiAttachment_.sources.dbcAligned,
             };
+            out.midiRx.motuSlot = midiAttachment_.sources.motuSlot;
         }
         IOLockUnlock(lock_);
         return true;

@@ -16,6 +16,14 @@
 #include "../../../Logging/Logging.hpp"
 #include "../../DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
+#include "../../Controls/ControlNotifications.hpp"
+#include "../../Model/Topology/Validate.hpp"
+
+#include <algorithm>
+#include <bit>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 namespace ASFW::Audio::Motu {
 
@@ -31,6 +39,10 @@ constexpr Async::TransactionRetryPolicy kControlCommandRecovery{
 constexpr Async::TransactionRetryPolicy kAsyncReadRecovery{
     .repeat = Async::CommandRepeat::Timeout, .commandAttempts = 16,
     .repeatDelayNs = 10'000'000, .coalescedDelayNs = 5'000'000};
+// Command-DSP models take their commands here (MotuCommandDsp.hpp).
+const Async::FWAddress kDspCommandFWAddress(Async::FWAddress::AddressParts{
+    .addressHi = static_cast<uint16_t>(CommandDsp::kDspCommandAddress >> 32),
+    .addressLo = static_cast<uint32_t>(CommandDsp::kDspCommandAddress)});
 } // namespace
 
 Async::FWAddress MotuProtocol::AddressOf(Reg reg) noexcept {
@@ -57,6 +69,15 @@ MotuProtocol::MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
     if (Encoding::Motu::FireWireOnly(unitSwVersion_)) {
         notifications_ = std::make_shared<NotificationMailbox>(route, IsV3() ? 0x2U : 0U);
         notificationAddress_ = Notifications::Register(notifications_);
+    }
+    // A command-DSP model whose mixer ports are known also gets a slot for the
+    // DSP messages that carry its mixer state.
+    if (const auto ports = CommandDsp::DspPortsFor(unitSwVersion_)) {
+        auto mailbox = std::make_shared<CommandDsp::MessageMailbox>(route, *ports);
+        if (mailbox->Valid()) {
+            dspMessageAddress_ = CommandDsp::Messages::Register(mailbox);
+            if (dspMessageAddress_ != 0) dspMessages_ = std::move(mailbox);
+        }
     }
 }
 MotuProtocol::~MotuProtocol() {
@@ -115,6 +136,24 @@ IOReturn MotuProtocol::Shutdown() {
             });
     }
 
+    // Stop DSP messaging (command_dsp.rs cancel_messaging) and clear its
+    // destination to all ones, as MOTU's driver does
+    // (SendCueMixPacketReadAddress(false) writes 0xffffffff twice; the
+    // reference writes zeros). Fire-and-forget for the same reason as above.
+    if (std::exchange(dspMessagingStarted_, false)) {
+        const auto releaseIo = std::make_shared<Protocols::Ports::ProtocolRegisterIO>(io_);
+        const std::vector<uint8_t> empty{0x00, 0x00};
+        auto cancel = std::make_shared<std::vector<uint8_t>>(
+            CommandDsp::BuildFrames(empty, CommandDsp::kTagCancel, dspSequence_).front());
+        auto cleared = std::make_shared<std::array<uint8_t, 8>>();
+        cleared->fill(0xff);
+        (void)releaseIo->WriteBlock(kDspCommandFWAddress, *cancel,
+            [releaseIo, cancel, cleared](Async::AsyncStatus) {
+                (void)releaseIo->WriteBlock(AddressOf(Reg::DspMessageDstHi), *cleared,
+                                            [releaseIo, cleared](Async::AsyncStatus) {});
+            });
+    }
+
     return kIOReturnSuccess;
 }
 
@@ -126,11 +165,228 @@ void MotuProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route
     route_ = route;
     io_.UpdateRoute(route);
     if (notifications_ && notifications_->Valid()) notifications_->UpdateRoute(route);
+    // The unit forgets the message destination on a bus reset: register again.
+    if (dspMessages_) dspMessages_->UpdateRoute(route);
+    dspMessagingStarted_ = false;
     asyncAddressRegistered_.store(false, std::memory_order_release);
     opticalSnapshot_.store(0, std::memory_order_release);
     cachedSampleRateHz_.store(0, std::memory_order_release);
     preparedRateHz_.store(0, std::memory_order_release);
     if (!shuttingDown_.load(std::memory_order_acquire)) registerCommands_.Reopen();
+}
+
+namespace {
+namespace AM = ::ASFW::AudioModel;
+namespace C = ::ASFW::Audio::Controls;
+
+} // namespace
+
+bool MotuProtocol::CommitClockControl(uint32_t raw) {
+    const auto choices = SelectableClockSourcesV3(unitSwVersion_);
+    const auto code = static_cast<int64_t>(raw & 0xffU);
+    const bool known = std::ranges::any_of(choices, [code](const auto& choice) {
+        return ClockSourceCode(choice.source) == code;
+    });
+    auto& notifications = C::ControlNotifications::Shared();
+    const bool rebound = controlRevision_ != 0 && controlRevision_ != route_.routeEpoch;
+    const bool changed = clockCode_.has_value() != known || (known && clockCode_ && *clockCode_ != code);
+    controlRevision_ = route_.routeEpoch;
+    clockCode_ = known ? std::optional<int64_t>{code} : std::nullopt;
+    if (rebound || (changed && !known)) {
+        // A new route, or the control appears or goes: listeners re-read
+        // everything (kind 4, as the Duet does).
+        notifications.Publish({route_.guid, controlRevision_, 0, 0, 4, 0});
+    } else if (changed) {
+        PublishParameter(kClockSourceParameterId, AM::ParameterValue{code});
+    }
+    return known;
+}
+
+void MotuProtocol::PublishParameter(uint32_t id, const AM::ParameterValue& value) {
+    C::ParameterChanged event{route_.guid, route_.routeEpoch, 0, id, 0, 0};
+    std::visit([&](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, bool>) { event.kind = 0; event.bits = v; }
+        else if constexpr (std::is_same_v<T, double>) { event.kind = 1; event.bits = std::bit_cast<uint64_t>(v); }
+        else if constexpr (std::is_same_v<T, int64_t>) { event.kind = 2; event.bits = static_cast<uint64_t>(v); }
+    }, value);
+    C::ControlNotifications::Shared().Publish(event);
+}
+
+void MotuProtocol::Prepare(std::function<void(IOReturn)> done) {
+    if (!Controls()) { done(kIOReturnUnsupported); return; }
+    // The clock first; then, on a command-DSP model, messaging. A unit that
+    // will not send its state still takes mixer commands, so a messaging
+    // failure is logged and costs the readback, not the controls.
+    auto messaging = [this, done = std::move(done)](IOReturn status) mutable {
+        if (status != kIOReturnSuccess || !dspMessages_ || dspMessagingStarted_) { done(status); return; }
+        StartDspMessaging([done = std::move(done)](IOReturn result) {
+            if (result != kIOReturnSuccess)
+                ASFW_LOG(Audio, "[MOTU] DSP messaging not started: 0x%x; mixer state not read back", result);
+            done(kIOReturnSuccess);
+        });
+    };
+    if (!HasClockControl()) { messaging(kIOReturnSuccess); return; }
+    ReadClockStatus([this, messaging = std::move(messaging)](IOReturn status, ClockStatus clock) mutable {
+        if (status != kIOReturnSuccess) { messaging(status); return; }
+        // A source outside the list cannot be shown: no clock control, but
+        // the mixer stays.
+        const bool known = CommitClockControl(clock.raw);
+        messaging(known || dspMessages_ ? kIOReturnSuccess : kIOReturnUnsupported);
+    });
+}
+
+std::optional<::ASFW::Audio::Controls::ControlSnapshot> MotuProtocol::CopySnapshot() const {
+    MotuControlsState state{};
+    state.clockCode = clockCode_;
+    state.clockChoices = SelectableClockSourcesV3(unitSwVersion_);
+    if (dspMessages_) {
+        state.dspPorts = CommandDsp::DspPortsFor(unitSwVersion_);
+        state.dsp = dspMessages_->Snapshot();
+    }
+    if (!state.clockCode && !state.dspPorts) return std::nullopt;
+    auto snapshot = BuildMotuControls(state, route_.routeEpoch, 0);
+    std::string rejected;
+    if (const auto topology = AM::validate(snapshot.topology); !topology)
+        rejected = "topology: " + topology.error().message;
+    else if (const auto values = AM::validateState(snapshot.topology, snapshot.state); !values)
+        rejected = "state: " + values.error().message;
+    // Cold path (control reads and writes); one line per new reason.
+    if (rejected != lastSnapshotRejection_) {
+        if (!rejected.empty())
+            ASFW_LOG(Audio, "[MOTU] controls snapshot rejected: %{public}s", rejected.c_str());
+        lastSnapshotRejection_ = rejected;
+    }
+    if (!rejected.empty()) return std::nullopt;
+    return snapshot;
+}
+
+void MotuProtocol::SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                                Completion done) {
+    if (id.value == kClockSourceParameterId) { SetClockSourceParameter(value, std::move(done)); return; }
+    SetMixerParameter(id, value, std::move(done));
+}
+
+void MotuProtocol::SetClockSourceParameter(const AudioModel::ParameterValue& value, Completion done) {
+    const auto choices = SelectableClockSourcesV3(unitSwVersion_);
+    const auto* code = std::get_if<int64_t>(&value);
+    const auto choice = std::ranges::find_if(choices, [code](const auto& choice) {
+        return code && ClockSourceCode(choice.source) == *code;
+    });
+    if (choice == choices.end()) {
+        done(kIOReturnBadArgument, false);
+        return;
+    }
+    // Read-modify-write the low byte only; the rate field and fetch bit stay, as
+    // MOTU's driver leaves them (EncodeClockSourceV3). Then read the register
+    // back: the device, not the request, decides what is reported.
+    const auto source = choice->source;
+    ModifyRegister(ClockRegister(),
+        [source](uint32_t raw) { return EncodeClockSourceV3(raw, source).value_or(raw); },
+        [this, done = std::move(done)](IOReturn writeStatus) mutable {
+            ReadClockStatus([this, writeStatus, done = std::move(done)](IOReturn readStatus, ClockStatus clock) {
+                if (readStatus != kIOReturnSuccess) {
+                    done(writeStatus != kIOReturnSuccess ? writeStatus : readStatus, false);
+                    return;
+                }
+                const bool known = CommitClockControl(clock.raw);
+                ASFW_LOG(Audio, "[MOTU] clock source write status=0x%x now raw=0x%08x known=%u",
+                         writeStatus, clock.raw, known);
+                const IOReturn status = writeStatus != kIOReturnSuccess ? writeStatus
+                    : known ? kIOReturnSuccess : kIOReturnError;
+                done(status, AM::ParameterValue{static_cast<int64_t>(clock.raw & 0xffU)});
+            });
+        });
+}
+
+void MotuProtocol::SetMixerParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                                     Completion done) {
+    const auto ports = CommandDsp::DspPortsFor(unitSwVersion_);
+    const auto command = ports && dspMessages_ ? DspCommandFor(*ports, id.value, value) : std::nullopt;
+    if (!command) {
+        done(kIOReturnBadArgument, false);
+        return;
+    }
+    std::vector<uint8_t> message;
+    CommandDsp::Encode(*command, message);
+    auto frames = std::make_shared<std::vector<std::vector<uint8_t>>>(
+        CommandDsp::BuildFrames(message, CommandDsp::kTagCommands, dspSequence_));
+    SendDspFrames(std::move(frames), 0,
+        [this, command = *command, id, value, done = std::move(done)](IOReturn status) mutable {
+            if (status != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "[MOTU] DSP write 0x%08x failed: 0x%x", id.value, status);
+                done(status, false);
+                return;
+            }
+            // The unit reports only its own changes; record what it acknowledged.
+            dspMessages_->ApplyLocal(command);
+            PublishParameter(id.value, value);
+            done(kIOReturnSuccess, value);
+        });
+}
+
+void MotuProtocol::StartDspMessaging(CompletionCallback callback) {
+    const auto node = busInfo_.GetLocalNodeID();
+    if (!dspMessages_ || dspMessageAddress_ == 0 || node == FW::kInvalidNodeId) {
+        if (callback) callback(kIOReturnNotReady);
+        return;
+    }
+    // A unit that stayed powered keeps the previous host session (a driver
+    // restart, a Mac reboot) and ignored every command of the new one until it
+    // was power-cycled (hardware, 2026-10-28). End that session first, as the
+    // reference does on stop: cancel messaging (tag 0, command_dsp.rs
+    // cancel_messaging), then release the destination, all ones as MOTU's
+    // driver writes it. Either may fail on a fresh unit; that is fine.
+    auto cancel = std::make_shared<std::vector<std::vector<uint8_t>>>(
+        CommandDsp::BuildFrames(std::vector<uint8_t>{0x00, 0x00}, CommandDsp::kTagCancel, dspSequence_));
+    SendDspFrames(std::move(cancel), 0, [this, callback = std::move(callback)](IOReturn) mutable {
+        auto release = std::make_shared<std::array<uint8_t, 8>>();
+        release->fill(0xff);
+        (void)io_.WriteBlock(AddressOf(Reg::DspMessageDstHi), *release,
+            [this, release, callback = std::move(callback)](Async::AsyncStatus) mutable {
+                RegisterDspMessaging(std::move(callback));
+            });
+    });
+}
+
+void MotuProtocol::RegisterDspMessaging(CompletionCallback callback) {
+    const auto node = busInfo_.GetLocalNodeID();
+    if (node == FW::kInvalidNodeId) { if (callback) callback(kIOReturnNotReady); return; }
+    // Both quadlets in one 8-byte block write, big-endian, as MOTU's driver
+    // sends them (MOTUFireWireAudio 1.6 build 89555,
+    // BoxWithFxDSP::SendCueMixPacketReadAddress: one write of 8 bytes to
+    // 0xf0000b38).
+    const auto destination = CommandDsp::EncodeMessageDestination(
+        static_cast<uint16_t>(0xffc0U | (node.value & 0x3fU)), dspMessageAddress_);
+    auto payload = std::make_shared<std::array<uint8_t, 8>>(CommandDsp::DestinationBytes(destination));
+    (void)io_.WriteBlock(AddressOf(Reg::DspMessageDstHi), *payload,
+        [this, payload, callback = std::move(callback)](Async::AsyncStatus status) mutable {
+            const auto registered = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (registered != kIOReturnSuccess) { if (callback) callback(registered); return; }
+            const std::vector<uint8_t> empty{0x00, 0x00};
+            auto frames = std::make_shared<std::vector<std::vector<uint8_t>>>(
+                CommandDsp::BuildFrames(empty, CommandDsp::kTagBegin, dspSequence_));
+            const auto second = CommandDsp::BuildFrames(empty, CommandDsp::kTagCommands, dspSequence_);
+            frames->insert(frames->end(), second.begin(), second.end());
+            SendDspFrames(std::move(frames), 0, [this, callback = std::move(callback)](IOReturn status) {
+                ASFW_LOG(Audio, "[MotuDsp] messaging begin status=0x%x destination=0x%012llx node=0x%04x",
+                         status, dspMessageAddress_, busInfo_.GetLocalNodeID().value);
+                if (status == kIOReturnSuccess) dspMessagingStarted_ = true;
+                if (callback) callback(status);
+            });
+        });
+}
+
+void MotuProtocol::SendDspFrames(std::shared_ptr<std::vector<std::vector<uint8_t>>> frames, size_t index,
+                                 CompletionCallback callback) {
+    if (index >= frames->size()) { if (callback) callback(kIOReturnSuccess); return; }
+    const auto& frame = (*frames)[index];
+    (void)io_.WriteBlock(kDspCommandFWAddress, frame,
+        [this, frames, index, callback = std::move(callback)](Async::AsyncStatus status) mutable {
+            const auto result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
+            if (result != kIOReturnSuccess) { if (callback) callback(result); return; }
+            SendDspFrames(std::move(frames), index + 1, std::move(callback));
+        });
 }
 
 void MotuProtocol::ReadRegister(Async::FWAddress address,

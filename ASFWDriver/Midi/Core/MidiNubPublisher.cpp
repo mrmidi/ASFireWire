@@ -233,6 +233,18 @@ void MidiNubPublisher::TerminateAll() noexcept {
     }
 }
 
+void MidiNubPublisher::ReleaseAll() noexcept {
+    if (lock_ == nullptr) return;
+    IOLockLock(lock_);
+    for (auto& entry : entries_) {
+        if (!entry.used) continue;
+        ASFW_LOG(Midi, "MidiNubPublisher: releasing endpoint=%llx during shutdown (kernel terminates it)",
+                 entry.endpointId);
+        entry = {};
+    }
+    IOLockUnlock(lock_);
+}
+
 void MidiNubPublisher::MidiReceived(const uint64_t endpointId) noexcept {
     if (lock_ == nullptr) return;
     // The lock is held across the notify so a concurrent TerminateNub cannot

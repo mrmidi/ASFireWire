@@ -63,6 +63,17 @@ add_midi_test(MidiTxComposerTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
+# MOTU: MIDI into the message bytes of armed packets.
+add_midi_test(MotuMidiTxComposerTests
+    MotuMidiTxComposerTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+)
+
 # Nub publication order: endpoint id explicitly after Create, before Publish.
 add_midi_test(MidiNubPublisherTests
     MidiNubPublisherTests.cpp

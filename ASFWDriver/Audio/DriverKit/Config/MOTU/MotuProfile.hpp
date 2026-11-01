@@ -43,6 +43,9 @@ public:
     explicit MotuProfile(uint32_t unitSwVersion = 3) noexcept
         : unitSwVersion_(unitSwVersion) {}
 
+    /// The model this profile serves (Unit_Sw_Version).
+    [[nodiscard]] uint32_t UnitSwVersion() const noexcept { return unitSwVersion_; }
+
     [[nodiscard]] const char* Name() const noexcept override;
     [[nodiscard]] Encoding::AudioWireFormat TxWireFormat() const noexcept override;
     [[nodiscard]] Encoding::AudioWireFormat RxWireFormat() const noexcept override;

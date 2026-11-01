@@ -1067,7 +1067,7 @@ TEST(AudioDeviceHostTests, FailedAudioPublicationIsNotReportedToTheMidiObserver)
     f.host.SetEndpointObserver(nullptr);
 }
 
-TEST(AudioDeviceHostTests, NonDiceFamiliesNeverGetMidiFromThisPath) {
+TEST(AudioDeviceHostTests, OnlyDiceAndMotuFamiliesGetMidiFromThisPath) {
     HostFixture f;
     RecordingMidiNubs nubs;
     NullMidiWake wake;
@@ -1075,12 +1075,56 @@ TEST(AudioDeviceHostTests, NonDiceFamiliesNeverGetMidiFromThisPath) {
     ASFWAudioDevice desc = MakeDescription("AV/C", 8, 8);
     desc.playbackStreams = {{.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1}};
     desc.captureStreams = desc.playbackStreams;
+    // A MOTU endpoint without a MOTU builder names no model, so no MIDI either.
     for (const auto kind : {AudioBackendKind::Avc, AudioBackendKind::MotuRegister,
                             AudioBackendKind::RmeRegister}) {
         publication.OnEndpointPublished(kGuid, kind, desc);
     }
     EXPECT_TRUE(nubs.ensured.empty());
     EXPECT_EQ(f.runtime.FindEndpointRuntime(kGuid), nullptr);
+}
+
+// MOTU reports no MIDI in its stream registers: the model's slot table decides
+// (MotuMidi.hpp). The UltraLite mk3 has one port each way, in the third quadlet.
+TEST(AudioDeviceHostTests, MotuUltraLiteMk3GetsOneMidiPortEachWayInTheThirdQuadlet) {
+    HostFixture f;
+    RecordingMidiNubs nubs;
+    NullMidiWake wake;
+    ASFW::Midi::MidiEndpointPublication publication{f.runtime, nubs, wake};
+    ASFWAudioDevice desc = MakeDescription("MOTU UltraLite mk3", 14, 14);
+    desc.profileBuilderId = static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::MotuUltraliteMk3);
+    publication.OnEndpointPublished(kGuid, AudioBackendKind::MotuRegister, desc);
+
+    ASSERT_EQ(nubs.ensured.size(), 1U);
+    const auto& caps = nubs.ensured[0].caps;
+    for (const auto* direction : {&caps.deviceToHost, &caps.hostToDevice}) {
+        EXPECT_TRUE(direction->Usable());
+        EXPECT_EQ(direction->portCount, 1U);
+        ASSERT_TRUE(direction->motuSlot.has_value());
+        EXPECT_EQ(direction->motuSlot->flag, 8U);
+        EXPECT_EQ(direction->motuSlot->byte, 7U);
+    }
+    auto endpoint = f.runtime.FindEndpointRuntime(kGuid);
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_TRUE(endpoint->HasMidi());
+    IOMemoryDescriptor* memory = nullptr;
+    ASFW::Audio::MidiEndpointAttachment attachment{};
+    ASSERT_EQ(endpoint->CopyMidiTransportMemory(&memory, attachment), kIOReturnSuccess);
+    ASSERT_NE(memory, nullptr);
+    memory->release();
+    EXPECT_EQ(attachment.destinations.portCount, 1U);  // the nub hands the driver one port
+    ASSERT_TRUE(attachment.sources.motuSlot.has_value());
+}
+
+TEST(AudioDeviceHostTests, MotuModelsWithoutMidiGetNone) {
+    HostFixture f;
+    RecordingMidiNubs nubs;
+    NullMidiWake wake;
+    ASFW::Midi::MidiEndpointPublication publication{f.runtime, nubs, wake};
+    ASFWAudioDevice desc = MakeDescription("MOTU 896mk3", 18, 18);
+    desc.profileBuilderId = static_cast<uint32_t>(ASFW::DeviceProfiles::Audio::ProfileBuilderId::Motu896mk3);
+    publication.OnEndpointPublished(kGuid, AudioBackendKind::MotuRegister, desc);
+    EXPECT_TRUE(nubs.ensured.empty());
 }
 
 TEST(AudioDeviceHostTests, MidiGeometryThatWouldOverwriteAudioIsNotPublished) {

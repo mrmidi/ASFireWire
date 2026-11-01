@@ -17,11 +17,14 @@
 
 #include "MotuRegisters.hpp"
 #include "MotuNotificationMailbox.hpp"
+#include "MotuControlModel.hpp"
+#include "MotuDspMessages.hpp"
 #include "../../../Scheduling/ITimerScheduler.hpp"
 #include "../IDeviceProtocol.hpp"
 #include "../Duplex/FamilyDriver.hpp"
 #include "../Duplex/FamilyStageWait.hpp"
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
+#include "../../Controls/IControlProvider.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -37,15 +40,39 @@ struct ClockStatus {
     std::optional<ClockSourceV2> source{};   ///< nullopt for reserved source codes.
 };
 
+/// Parameter id of the clock source control ('MCLK').
+inline constexpr uint32_t kClockSourceParameterId = MotuControl::kClockSource;
+
 /// Shared MOTU register adapter for FireWire-only V1, V2 and V3 models.
 ///
 /// Also serves as its own FamilyDriver: the audio session reaches every protocol
 /// through IDeviceProtocol::AsFamilyDriver(), so that is the seam a new family must
 /// implement to be driven at all.
-class MotuProtocol final : public IDeviceProtocol, public FamilyDriver {
+///
+/// For a V3 model with a known clock source list (SelectableClockSourcesV3) or
+/// known command-DSP ports (CommandDsp::DspPortsFor) it is also the control
+/// provider (MotuControlModel.hpp): the clock source, which the Core Audio
+/// projection publishes as the device's clock source, and everything CueMix
+/// drives (MotuDspParameters.hpp).
+class MotuProtocol final : public IDeviceProtocol, public FamilyDriver,
+                           public ::ASFW::Audio::Controls::IControlProvider {
 public:
     using ClockStatusCallback = std::function<void(IOReturn, ClockStatus)>;
     using CompletionCallback = std::function<void(IOReturn)>;
+
+    // ---- IControlProvider (controller queue) ----
+    ::ASFW::Audio::Controls::IControlProvider* Controls() noexcept override {
+        return HasClockControl() || dspMessages_ ? this : nullptr;
+    }
+    /// Read 0x0b14 for the clock source, and on a command-DSP model register the
+    /// message destination and start messaging, so the unit sends its mixer state.
+    void Prepare(std::function<void(IOReturn)> done) override;
+    [[nodiscard]] std::optional<::ASFW::Audio::Controls::ControlSnapshot> CopySnapshot() const override;
+    /// The clock source: write the low byte of 0x0b14, then re-read the register;
+    /// the completion carries the source the device reports. A DSP parameter:
+    /// send its command, and record the value once the unit acknowledged it.
+    void SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                      Completion done) override;
 
     MotuProtocol(Protocols::Ports::FireWireBusOps& busOps,
                    Protocols::Ports::FireWireBusInfo& busInfo,
@@ -258,6 +285,36 @@ private:
 
     /// Fill the runtime capability block from the geometry resolved by PrepareDuplex.
     [[nodiscard]] AudioStreamRuntimeCaps MakeRuntimeCaps() const noexcept;
+
+    [[nodiscard]] bool HasClockControl() const noexcept {
+        return !SelectableClockSourcesV3(unitSwVersion_).empty();
+    }
+    /// Record the clock source `raw` reports, and announce a changed value.
+    /// False when the source is not in the model's list (chosen elsewhere);
+    /// the clock control is then withdrawn.
+    bool CommitClockControl(uint32_t raw);
+    void SetClockSourceParameter(const AudioModel::ParameterValue& value, Completion done);
+    void SetMixerParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                           Completion done);
+    void PublishParameter(uint32_t id, const AudioModel::ParameterValue& value);
+    /// Register the DSP message destination, then begin messaging (tag 1, then
+    /// tag 2, both empty, as command_dsp.rs begin_messaging does).
+    void StartDspMessaging(CompletionCallback callback);
+    /// Register this host as the message destination, then begin messaging.
+    void RegisterDspMessaging(CompletionCallback callback);
+    /// Block-write `frames` to the DSP command address, one after another.
+    void SendDspFrames(std::shared_ptr<std::vector<std::vector<uint8_t>>> frames, size_t index,
+                       CompletionCallback callback);
+
+    // Controller queue only, like every IControlProvider call.
+    std::optional<int64_t> clockCode_{};
+    uint64_t controlRevision_{0};
+    mutable std::string lastSnapshotRejection_;
+    // Command-DSP models. The mailbox is shared with the receive path.
+    std::shared_ptr<CommandDsp::MessageMailbox> dspMessages_;
+    uint64_t dspMessageAddress_{0};
+    uint8_t dspSequence_{0};
+    bool dspMessagingStarted_{false};
 };
 
 } // namespace ASFW::Audio::Motu

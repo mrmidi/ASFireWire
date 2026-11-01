@@ -15,6 +15,7 @@ add_executable(IsochReceiveContextTests
     IsochRxDmaRingTests.cpp
     IsochRxTimingTests.cpp
     MidiReceivePathTests.cpp
+    MotuMidiTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
@@ -151,6 +152,9 @@ add_audio_test(MotuPayloadWriterTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
 )
 
+# MOTU mk3 command DSP: command bytes, framing, reassembly, mixer state.
+add_audio_test(MotuCommandDspTests MotuCommandDspTests.cpp)
+
 # MOTU v2 Protocol Adapter Tests
 # DeviceRegistry is linked because the protocol now takes a registry-issued route token
 # (ProtocolRegisterIO validates the route on every transaction), so the test fixture has
@@ -158,6 +162,8 @@ add_audio_test(MotuPayloadWriterTests
 add_audio_test(MotuProtocolTests
     MotuProtocolTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 

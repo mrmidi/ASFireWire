@@ -874,7 +874,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
     ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
     const auto txPolicy = profile.TxStreamPolicy();
-    if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
+    const bool motuStream =
+        txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked;
+    ivars.runtime.txMotuUnitVersion = motuStream ? txPolicy.motuUnitVersion : 0U;
+    if (motuStream) {
         // Every MOTU model is timed by the SPH regulator; a rate it has no
         // configuration for cannot be timed at all.
         if (!ivars.runtime.motuTxTimingStamper.Configure(

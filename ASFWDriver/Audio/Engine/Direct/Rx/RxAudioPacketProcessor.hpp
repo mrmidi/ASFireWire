@@ -5,10 +5,12 @@
 #include "RxCaptureChannelMap.hpp"
 #include "../../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../../Wire/AM824/MpxMidiDemux.hpp"
+#include "../../../Wire/MOTU/MotuMidi.hpp"
 #include "../../../Ports/IMidiByteSink.hpp"
 
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 
 namespace ASFW::Audio {
 class IRxPayloadCodec;
@@ -31,9 +33,17 @@ struct RxMidiExtraction final {
     /// not depend on the audio drain cadence.
     uint32_t drainCycleTimer{0};
     uint64_t drainHostTicks{0};
+    /// A MOTU stream has no MPX slot: its one port rides in each data block's
+    /// message bytes (MotuMidi.hpp). When set, this is used instead of
+    /// `geometry`, and bytes are counted in `motuCounters`.
+    std::optional<ASFW::Encoding::Motu::MidiSlotOffsets> motuSlot{};
+    ASFW::Encoding::Motu::MotuMidiDemuxCounters* motuCounters{nullptr};
 
     [[nodiscard]] bool Enabled() const noexcept {
-        return sink != nullptr && geometry.Valid();
+        return sink != nullptr && (motuSlot.has_value() || geometry.Valid());
+    }
+    [[nodiscard]] uint8_t PortCount() const noexcept {
+        return motuSlot.has_value() ? 1 : geometry.portCount;
     }
 };
 

@@ -253,6 +253,14 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
 
 } // namespace
 
+uint32_t AudioProfileRegistry::MotuUnitVersionForBuilderId(uint32_t profileBuilderId) noexcept {
+    // Only MotuProfile reports the packed MOTU wire format, so the format names
+    // the type; DriverKit has no RTTI to ask it directly.
+    const auto* profile = ProfileForBuilderId(profileBuilderId);
+    if (profile == nullptr || profile->TxWireFormat() != Encoding::AudioWireFormat::kMotuPacked) return 0;
+    return static_cast<const MOTU::Profiles::MotuProfile*>(profile)->UnitSwVersion();
+}
+
 const IAudioDeviceProfile* AudioProfileRegistry::ProfileForBuilderId(
     uint32_t profileBuilderId) noexcept {
     using Builder = DeviceProfiles::Audio::ProfileBuilderId;

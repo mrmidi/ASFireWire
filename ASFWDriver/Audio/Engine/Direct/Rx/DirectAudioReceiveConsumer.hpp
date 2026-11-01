@@ -136,6 +136,7 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool midiBytesThisBatch_{false};
     ::ASFW::Midi::MidiRingByteSink midiSink_{};
     ::ASFW::Encoding::MpxMidiDemuxCounters midiCounters_{};
+    ::ASFW::Encoding::Motu::MotuMidiDemuxCounters motuMidiCounters_{};
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
