@@ -689,3 +689,20 @@ add_device_test(OrpheusProtocolTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
 )
 
+
+# FW-203 Stage 1: Saffire Pro 40 D3 (TCD3070) DCP mailbox, host-only.
+# Codec validation against the Stage 0 descriptor capture, with independently
+# derived frame layouts (no reference-derived byte vectors; report section 2.4a).
+add_device_test(SPro40D3MailboxCodecTests
+    SPro40D3MailboxCodecTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro40D3MailboxTypes.cpp"
+)
+
+# Serialized mailbox engine vs the deterministic simulated TCD3070: timeouts,
+# counter-reset ritual, stale notifications, counter wraparound, ownership and
+# bus-reset lifecycle, provenance transitions, response-area pairing.
+add_device_test(SPro40D3MailboxEngineTests
+    SPro40D3MailboxEngineTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro40D3MailboxTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SPro40D3MailboxEngine.cpp"
+)
