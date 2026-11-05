@@ -323,4 +323,53 @@ TEST(ChannelMapPermutationTests, TxInjectedMapDemonstrablyChangesWirePlacement) 
     EXPECT_EQ(slot3_permuted, slot0_identity);
 }
 
+TEST(ChannelMapPermutationTests, NonAudioSlotsAreTheSlotsTheMapLeavesFree) {
+    // 3 PCM channels mapped to slots 0, 2, 3; slot 1 carries no PCM (a MIDI
+    // slot in the middle of the block). Armed defaults must follow the map:
+    // PCM silence in 0, 2, 3 and the non-audio word in 1.
+    AmdtpStreamConfig config{};
+    config.sampleRate = 48000;
+    config.streamMode = StreamMode::Blocking;
+    config.dbs = 4;
+    config.pcmChannels = 3;
+    config.framesPerDataPacket = 8;
+    config.maxPacketBytes = 256;
+
+    AmdtpTxPolicy policy{};
+    policy.initializeNonAudioSlots = true;
+    policy.defaultNonAudioSlotWord = 0x80000000U;
+    const std::array<uint8_t, 3> slots = {0, 2, 3};
+    ASSERT_TRUE(policy.playbackChannelMap.SetSlots(slots));
+
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x1234;
+    timing.replayValid = true;
+    timing.replayDataBlocks = 2;
+    std::array<uint8_t, 256> bytes{};
+    PreparedTxPacket prepared{};
+    uint64_t nextFrame = 0;
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(packetizer,
+        {0, bytes.data(), static_cast<uint32_t>(bytes.size())}, timing, nextFrame, prepared));
+
+    const auto word = [&](uint32_t frame, uint32_t slot) {
+        const uint8_t* p = bytes.data() + 8 + (frame * 4 + slot) * 4;
+        return (uint32_t{p[0]} << 24) | (uint32_t{p[1]} << 16) | (uint32_t{p[2]} << 8) | p[3];
+    };
+    for (uint32_t frame = 0; frame < 2; ++frame) {
+        EXPECT_EQ(word(frame, 0), 0x40000000U) << frame;
+        EXPECT_EQ(word(frame, 1), 0x80000000U) << frame;
+        EXPECT_EQ(word(frame, 2), 0x40000000U) << frame;
+        EXPECT_EQ(word(frame, 3), 0x40000000U) << frame;
+    }
+}
+
 } // namespace ASFW::Audio::Tests

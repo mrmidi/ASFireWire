@@ -326,11 +326,25 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
 
     if (txPolicy_.initializeNonAudioSlots &&
         streamConfig_.dbs > streamConfig_.pcmChannels) {
-        const uint32_t frames = payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
+        // The non-audio slots are the ones the playback map does not give to
+        // PCM, as for the silence above and WriteCadencePacketFill below. With
+        // an identity map they are [pcmChannels, dbs); a device whose map puts
+        // a MIDI data channel first (Digi 002/003) needs slot 0 initialized
+        // and its last PCM slot left as armed silence.
+        const uint32_t dbs = streamConfig_.dbs;
+        const uint32_t pcmSlots = streamConfig_.pcmChannels;
+        const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, dbs);
+        uint64_t pcmSlotMask = 0;
+        for (uint32_t channel = 0; channel < pcmSlots; ++channel) {
+            const uint32_t slot =
+                mapUsable ? txPolicy_.playbackChannelMap.SlotFor(channel) : channel;
+            if (slot < 64U) pcmSlotMask |= uint64_t{1} << slot;
+        }
+        const uint32_t frames = payloadBytes / (dbs * kBytesPerSlot);
         for (uint32_t frame = 0; frame < frames; ++frame) {
-            for (uint32_t s = streamConfig_.pcmChannels; s < streamConfig_.dbs;
-                 ++s) {
-                WriteBE32(payload + (frame * streamConfig_.dbs + s) * kBytesPerSlot,
+            for (uint32_t s = 0; s < dbs; ++s) {
+                if ((pcmSlotMask >> s) & 1U) continue;
+                WriteBE32(payload + (frame * dbs + s) * kBytesPerSlot,
                           txPolicy_.defaultNonAudioSlotWord);
             }
         }
