@@ -9,6 +9,9 @@
 #include <map>
 #include <array>
 #include "Audio/Controls/ControlNotifications.hpp"
+#include "Audio/Controls/CoreAudioProjection.hpp"
+#include "Audio/Model/Topology/Validate.hpp"
+#include <string>
 #include <span>
 #include <type_traits>
 #include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
@@ -926,6 +929,11 @@ struct DuetControlDevice {
             if (command[9] == uint8_t(VendorCmdCode::OutVolume)) {
                 values[{uint8_t(VendorCmdCode::HwState), 0xff, 0xff}][3] = command[12];
             }
+            // Real Duet FW (2026-11-05): an XLR input switched to a fixed line
+            // level reads its gain register back as 0.
+            if (command[9] == uint8_t(VendorCmdCode::XlrIsMicLevel) && command[12] == 0x60) {
+                MoveGain(command[11], 0);
+            }
             return AvcReply::Accepted();
         }
         const auto found = values.find(key);
@@ -1073,5 +1081,107 @@ TEST(DuetControlProvider, RejectedWriteNeverPublishesItsIntendedValueAndShutdown
     r.rig.Timers().Advance(1'000'000'000); r.rig.Drain(2048);
     EXPECT_EQ(r.rig.Target().Commands().size(), count);
     EXPECT_FALSE(r.protocol->CopySnapshot());
+}
+// Every source x level combination on both inputs.
+TEST(DuetControlProvider, SourceAndLevelSweepIsConfirmed) {
+    DuetControlRig r;
+    r.Prepare();
+    for (uint32_t ch = 0; ch < 2; ++ch) {
+        const ASFW::AudioModel::NodeId router{DuetControl::InputRouter + ch};
+        for (int source = 0; source < 2; ++source) {
+            const auto snap = *r.protocol->CopySnapshot();
+            const auto node = std::ranges::find(snap.topology.nodes, router, &ASFW::AudioModel::Node::id);
+            const auto& body = std::get<ASFW::AudioModel::RouterNode>(node->body);
+            IOReturn routeStatus = kIOReturnNotReady;
+            r.protocol->SetRoute(router, body.outputs.front(), body.inputs[source], [&](auto s, auto) { routeStatus = s; });
+            r.rig.Drain(4096);
+            EXPECT_EQ(routeStatus, kIOReturnSuccess) << "ch=" << ch << " source=" << source << " status=0x" << std::hex << routeStatus;
+            for (const int64_t level : {int64_t(1), int64_t(2), int64_t(0), int64_t(2), int64_t(1)}) {
+                IOReturn status = kIOReturnNotReady;
+                r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::InputLevel + ch}, level,
+                    [&](auto s, auto) { status = s; });
+                r.rig.Drain(4096);
+                EXPECT_EQ(status, kIOReturnSuccess) << "ch=" << ch << " source=" << source << " level=" << level
+                                                    << " status=0x" << std::hex << status;
+            }
+        }
+    }
+}
+// The app's "Input Type" picker, step for step as ControlService runs the
+// composite (level on the XLR connector first, then the source route), for
+// every choice on both inputs; gain applies on Mic/Inst only.
+TEST(DuetControlProvider, InputTypeCompositeIsConfirmed) {
+    namespace AM = ASFW::AudioModel;
+    namespace C = ASFW::Audio::Controls;
+    DuetControlRig r;
+    r.Prepare();
+    for (int pass = 0; pass < 2; ++pass)
+    for (uint32_t ch = 0; ch < 2; ++ch) {
+        for (int64_t pick : {int64_t(0), int64_t(1), int64_t(2), int64_t(3), int64_t(0), int64_t(3), int64_t(1)}) {
+            const auto snap = *r.protocol->CopySnapshot();
+            const auto types = C::ProjectInputTypes(snap.topology, snap.state);
+            const auto type = std::ranges::find(types, AM::NodeId{DuetControl::InputRouter + ch}, &C::CompositeInputType::router);
+            ASSERT_NE(type, types.end());
+            const auto choice = std::ranges::find(type->choices, pick, &C::InputTypeChoice::value);
+            ASSERT_NE(choice, type->choices.end());
+            const std::string where = "pass=" + std::to_string(pass) + " ch=" + std::to_string(ch) + " pick=" + choice->name;
+            if (choice->levelParameter) {
+                const auto valid = AM::validateParameterWrite(snap.topology, snap.state, *choice->levelParameter, *choice->levelValue);
+                EXPECT_TRUE(valid) << where << " level refused: " << (valid ? "" : valid.error().message);
+                if (!valid) continue;
+                IOReturn status = kIOReturnNotReady;
+                r.protocol->SetParameter(*choice->levelParameter, *choice->levelValue, [&](auto s, auto) { status = s; });
+                r.rig.Drain(4096);
+                EXPECT_EQ(status, kIOReturnSuccess) << where << " level status=0x" << std::hex << status;
+            }
+            const auto now = *r.protocol->CopySnapshot();
+            const auto& router = std::get<AM::RouterNode>(std::ranges::find(now.topology.nodes, type->router, &AM::Node::id)->body);
+            const auto bundle = std::ranges::find(router.legalBundles, choice->bundle, &AM::RouteBundle::id);
+            const auto input = bundle->routes.front().input;
+            const auto route = AM::prepareRouteWrite(now.topology, now.state, type->router, type->output, input);
+            EXPECT_TRUE(route) << where << " route refused: " << (route ? "" : route.error().message);
+            IOReturn status = kIOReturnNotReady;
+            r.protocol->SetRoute(type->router, type->output, input, [&](auto s, auto) { status = s; });
+            r.rig.Drain(4096);
+            EXPECT_EQ(status, kIOReturnSuccess) << where << " route status=0x" << std::hex << status;
+            const auto after = *r.protocol->CopySnapshot();
+            const auto types2 = C::ProjectInputTypes(after.topology, after.state);
+            const auto type2 = std::ranges::find(types2, type->router, &C::CompositeInputType::router);
+            EXPECT_EQ(type2->selected, std::optional<int64_t>{pick}) << where << " readback mismatch";
+            const bool lineLevel = choice->name.find("dB") != std::string::npos;
+            const auto& gain = after.state.parameters.at(AM::ParameterId{DuetControl::Gain + ch});
+            EXPECT_EQ(gain.applicable, !lineLevel) << where << " gain applicability is stale";
+        }
+    }
+}
+// Found on hardware 2026-11-05: the Duet held XlrIsMicLevel and
+// XlrIsConsumerLevel both on (decoded as Mic). Choosing +4 dBu must clear both.
+TEST(DuetControlProvider, LevelWriteClearsHiddenConsumerBit) {
+    DuetControlRig r;
+    r.device.values[{uint8_t(VendorCmdCode::XlrIsMicLevel), 0x80, 0x01}] = {0x70};
+    r.device.values[{uint8_t(VendorCmdCode::XlrIsConsumerLevel), 0x80, 0x01}] = {0x70};
+    r.Prepare();
+    IOReturn status = kIOReturnNotReady;
+    ASFW::AudioModel::ParameterValue confirmed = false;
+    r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::InputLevel + 1}, int64_t(1),
+        [&](auto s, auto v) { status = s; confirmed = v; });
+    r.rig.Drain(4096);
+    ASSERT_EQ(status, kIOReturnSuccess);
+    EXPECT_EQ(std::get<int64_t>(confirmed), 1);
+    EXPECT_EQ((r.device.values[{uint8_t(VendorCmdCode::XlrIsConsumerLevel), 0x80, 0x01}].front()), 0x60);
+}
+// Reported on hardware 2026-11-05 (macOS 15 port): choosing +4 dBu for input 1
+// failed with "The device did not confirm the write".
+TEST(DuetControlProvider, InputLevelProfessionalIsConfirmed) {
+    DuetControlRig r; r.Prepare();
+    for (const int64_t level : {int64_t(1), int64_t(2), int64_t(0)}) {
+        IOReturn status = kIOReturnNotReady;
+        ASFW::AudioModel::ParameterValue confirmed = false;
+        r.protocol->SetParameter(ASFW::AudioModel::ParameterId{DuetControl::InputLevel}, level,
+            [&](auto result, auto value) { status = result; confirmed = value; });
+        r.rig.Drain(4096);
+        EXPECT_EQ(status, kIOReturnSuccess) << "level=" << level << " status=0x" << std::hex << status;
+        if (status == kIOReturnSuccess) EXPECT_EQ(std::get<int64_t>(confirmed), level);
+    }
 }
 }
