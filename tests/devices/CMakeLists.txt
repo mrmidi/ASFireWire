@@ -40,6 +40,12 @@ add_device_test(FirefaceFamilyDriverTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/RME/FirefaceSettings.cpp"
 )
 
+# Scripted Digi 002/003 register sequencing and clock health.
+add_device_test(Digi00xFamilyDriverTests
+    Digi00xFamilyDriverTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
 # Fireface settings flash decode and configuration-register encode (pure, no bus).
 add_device_test(FirefaceSettingsTests
     FirefaceSettingsTests.cpp
