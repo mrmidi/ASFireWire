@@ -84,6 +84,11 @@ add_audio_test(MotuBlockCodecTests
     MotuBlockCodecTests.cpp
 )
 
+# Digi 002/003 playback scrambler
+add_audio_test(Digi00xDotScramblerTests
+    Digi00xDotScramblerTests.cpp
+)
+
 # MOTU v2 Register Plane Tests
 add_audio_test(MotuV2RegisterTests
     MotuV2RegisterTests.cpp
