@@ -164,6 +164,12 @@ final class DeviceControlsViewModel: ObservableObject {
                 content = .loaded(snapshot)
                 let ids = Set(snapshot.parameters.map(\.id))
                 writeStates = writeStates.filter { ids.contains($0.key) }
+                // A "not applicable" refusal is moot once the mode changed
+                // and the control applies again.
+                let applicable = Set(snapshot.parameters.filter(\.isWritable).map(\.id))
+                writeStates = writeStates.filter {
+                    if case .failed = $0.value, applicable.contains($0.key) { false } else { true }
+                }
                 lastUpdated = Date()
             } catch {
                 content = .failed("The driver's control document could not be read: \(error.localizedDescription)")
@@ -254,6 +260,12 @@ final class DeviceControlsViewModel: ObservableObject {
             }
             writeStates[parameterId] = .idle
             message = nil
+            // Level and source changes alter other controls (gain becomes
+            // fixed at line level, its range moves): reload the whole model.
+            if let semantic = snapshot?.parameters.first(where: { $0.id == parameterId })?.semantic,
+               semantic == .nominalLevel || semantic == .source {
+                refreshSnapshot()
+            }
         case .failure(let failure):
             queued[parameterId] = nil
             writeStates[parameterId] = .failed(failure.text)
