@@ -26,6 +26,7 @@
 #include "../../../Protocols/Ports/ProtocolRegisterIO.hpp"
 #include "../../Session/SessionClock.hpp"
 #include "../../../Logging/Logging.hpp"
+#include "Digi00xMessages.hpp"
 #include "Digi00xRegisters.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -71,6 +72,8 @@ public:
         if (!IsStreamedRate(clock.sampleRateHz)) return std::unexpected(kIOReturnUnsupported);
         if (const IOReturn kr = CheckRoute(); kr != kIOReturnSuccess) return std::unexpected(kr);
         channels_ = channels;
+        if (const IOReturn kr = PublishMessageAddress(); kr == kIOReturnAborted)
+            return std::unexpected(kr);
         // A previous host may have left the device streaming; Linux finishes
         // the session before every new reservation.
         if (const IOReturn kr = FinishSession("configure"); kr != kIOReturnSuccess)
@@ -254,6 +257,32 @@ private:
             return stopped != kIOReturnSuccess ? stopped : released;
         }
         return Sleep(kStopSettleMs);
+    }
+
+    // Tell the device where to send its messages (Messages::kHostAddress).
+    // Linux does this at probe and after every bus reset; doing it at the
+    // start of each session also covers a device power-cycled since. What the
+    // device needs the address for is unknown, so a failure is logged and the
+    // session goes on; only a teardown cancel stops it.
+    [[nodiscard]] IOReturn PublishMessageAddress() {
+        if (Cancelled()) return kIOReturnAborted;
+        const auto block = Messages::AddressBlock(io_.LocalNodeId());
+        if (!block) {
+            ASFW_LOG(Audio, "[Digi00x] message address not sent: local node unknown");
+            return kIOReturnNotReady;
+        }
+        const IOReturn status = AwaitStageStatus([&](auto cb) {
+            const auto handle = io_.WriteBlock(Address(Register::kMessageAddress),
+                std::span<const uint8_t>(block->data(), block->size()),
+                [cb = std::move(cb)](Async::AsyncStatus s) mutable {
+                    cb(Protocols::Ports::MapAsyncStatusToIOReturn(s));
+                });
+            (void)handle;
+        }, cancel_, kRegisterTimeoutMs);
+        if (Cancelled()) return kIOReturnAborted;
+        if (status != kIOReturnSuccess)
+            ASFW_LOG(Audio, "[Digi00x] message address write failed kr=0x%08x; continuing", status);
+        return status;
     }
 
     [[nodiscard]] IOReturn ProgramRate(uint32_t hz) {

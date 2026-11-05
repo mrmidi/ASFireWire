@@ -1224,6 +1224,7 @@
 		83B54945C20A1F523BBA72E5 /* BusInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusInspectorView.swift; sourceTree = "<group>"; };
 		843CA51BDFE95281367C3A8D /* DMASafeCopy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DMASafeCopy.hpp; sourceTree = "<group>"; };
 		8485E39E1457C2EA049F4DA7 /* ARContextBase.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARContextBase.hpp; sourceTree = "<group>"; };
+		84AE26A20A66554DB492FCC7 /* Digi00xMessages.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Digi00xMessages.hpp; sourceTree = "<group>"; };
 		8544FF023E801CA773F297ED /* OxfwVendorDependent.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OxfwVendorDependent.hpp; sourceTree = "<group>"; };
 		8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochDmaGeometry.hpp; sourceTree = "<group>"; };
 		85B459C6BE789ECDDE3EE684 /* MCPSDKBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSDKBridgeTests.swift; sourceTree = "<group>"; };
@@ -2823,6 +2824,7 @@
 			children = (
 				25AC86243AA92BAFDCF46369 /* Digi00xDeviceProtocol.hpp */,
 				835C55095C29FFAEE9CC71BA /* Digi00xFamilyDriver.hpp */,
+				84AE26A20A66554DB492FCC7 /* Digi00xMessages.hpp */,
 				66ACC17E907243CA0E53E374 /* Digi00xRegisters.hpp */,
 			);
 			path = Digi00x;

@@ -7,7 +7,9 @@
 // begin_session, finish_session).
 
 #include "DICEDuplexTestSupport.hpp"
+#include "Audio/Protocols/Digi00x/Digi00xDeviceProtocol.hpp"
 #include "Audio/Protocols/Digi00x/Digi00xFamilyDriver.hpp"
+#include "Audio/Protocols/Digi00x/Digi00xMessages.hpp"
 
 #include <atomic>
 #include <map>
@@ -21,6 +23,8 @@ namespace Reg = ASFW::Audio::Digi00x::Register;
 
 // Big-endian register file. Reads answer from `regs`; quadlet writes update it
 // (except the write-only streaming-set register) and are recorded in order.
+// Block writes (the message address) are recorded apart from them, with the
+// number of quadlet writes that preceded each.
 class Digi00xScriptBus final : public IFireWireBus {
 public:
     struct Write {
@@ -36,10 +40,17 @@ public:
         {Reg::kDetectExternal, 0},
         {Reg::kExternalRate, 0xf},
     };
+    struct Block {
+        uint64_t address;
+        std::vector<uint8_t> bytes;
+        size_t afterQuadletWrites;
+    };
     std::vector<Write> writes;
+    std::vector<Block> blocks;
     std::vector<uint64_t> reads;
     uint64_t failWriteAddress{0};
     uint64_t failReadAddress{0};
+    NodeId localNode{0};
 
     AsyncHandle ReadBlock(Generation, NodeId, FWAddress address, uint32_t length, FwSpeed,
                           InterfaceCompletionCallback callback) override {
@@ -59,7 +70,8 @@ public:
                            FwSpeed, InterfaceCompletionCallback callback) override {
         const uint64_t key = Key(address);
         if (bytes.size() != 4) {
-            callback(AsyncStatus::kHardwareError, {});
+            blocks.push_back({key, {bytes.begin(), bytes.end()}, writes.size()});
+            callback(key == failWriteAddress ? AsyncStatus::kHardwareError : AsyncStatus::kSuccess, {});
             return {};
         }
         const uint32_t v = (uint32_t{bytes[0]} << 24) | (uint32_t{bytes[1]} << 16) |
@@ -82,7 +94,7 @@ public:
     FwSpeed GetSpeed(NodeId) const override { return FwSpeed::S400; }
     uint32_t HopCount(NodeId, NodeId) const override { return 1; }
     Generation GetGeneration() const override { return Generation{1}; }
-    NodeId GetLocalNodeID() const override { return NodeId{0}; }
+    NodeId GetLocalNodeID() const override { return localNode; }
 
 private:
     static uint64_t Key(FWAddress a) {
@@ -285,6 +297,100 @@ TEST(Digi00xFamilyDriver, ResourcesAreReservedByTheHostBothWays) {
     EXPECT_TRUE(policy.playback.reserveHostResources);
     EXPECT_TRUE(policy.capture.reserveHostResources);
     EXPECT_TRUE(rig.driver.GetStopPolicy().stopHostContextsBeforeDevice);
+}
+
+// ---- Device messages ----
+
+// Node 2 on the local bus, then kHostAddress 0xffffe0001000.
+constexpr std::array<uint8_t, 8> kAddressFromNode2{0xff, 0xc2, 0xff, 0xff, 0xe0, 0x00, 0x10, 0x00};
+
+TEST(Digi00xMessages, TheAddressBlockNamesTheHostNodeAndAddress) {
+    const auto block = Digi::Messages::AddressBlock(ASFW::FW::NodeId{2});
+    ASSERT_TRUE(block.has_value());
+    EXPECT_EQ(*block, kAddressFromNode2);
+    EXPECT_FALSE(Digi::Messages::AddressBlock(ASFW::FW::kInvalidNodeId).has_value());
+}
+
+TEST(Digi00xFamilyDriver, ConfigureSendsTheMessageAddressFirst) {
+    Rig rig;
+    rig.bus.localNode = NodeId{2};
+    ASSERT_TRUE(rig.driver.Configure(Rig::Channels(0, 1), {.sampleRateHz = 48000}).has_value());
+    ASSERT_EQ(rig.bus.blocks.size(), 1U);
+    EXPECT_EQ(rig.bus.blocks[0].address, Reg::kMessageAddress);
+    EXPECT_EQ(rig.bus.blocks[0].bytes,
+              std::vector<uint8_t>(kAddressFromNode2.begin(), kAddressFromNode2.end()));
+    EXPECT_EQ(rig.bus.blocks[0].afterQuadletWrites, 0U);
+}
+
+TEST(Digi00xFamilyDriver, AFailedMessageAddressDoesNotStopTheSession) {
+    Rig rig;
+    rig.bus.failWriteAddress = Reg::kMessageAddress;
+    rig.StartAt(48000);
+    EXPECT_EQ(rig.bus.blocks.size(), 1U);
+    EXPECT_TRUE(rig.driver.Confirm().has_value());
+}
+
+TEST(Digi00xFamilyDriver, AnUnknownLocalNodeSkipsTheMessageAddress) {
+    Rig rig;
+    rig.bus.localNode = ASFW::FW::kInvalidNodeId;
+    rig.StartAt(48000);
+    EXPECT_TRUE(rig.bus.blocks.empty());
+}
+
+TEST(Digi00xDeviceProtocol, RebindResendsTheMessageAddress) {
+    Digi00xScriptBus bus;
+    bus.localNode = NodeId{2};
+    RouteState route;
+    Digi::Digi00xDeviceProtocol protocol{bus, bus, route.registry, route.route, "Digi 003"};
+    IOReturn result = kIOReturnError;
+    protocol.RebindNotifications([&](IOReturn kr) { result = kr; });
+    EXPECT_EQ(result, kIOReturnSuccess);
+    ASSERT_EQ(bus.blocks.size(), 1U);
+    EXPECT_EQ(bus.blocks[0].address, Reg::kMessageAddress);
+    EXPECT_EQ(bus.blocks[0].bytes,
+              std::vector<uint8_t>(kAddressFromNode2.begin(), kAddressFromNode2.end()));
+    EXPECT_TRUE(bus.writes.empty());
+
+    bus.localNode = ASFW::FW::kInvalidNodeId;
+    protocol.RebindNotifications([&](IOReturn kr) { result = kr; });
+    EXPECT_EQ(result, kIOReturnNotReady);
+    EXPECT_EQ(bus.blocks.size(), 1U);
+}
+
+ASFW::Async::LocalRequestContext MessageTo(uint64_t address, uint8_t tCode,
+                                           std::span<const uint8_t> payload) {
+    return {.destOffset = address, .tCode = tCode, .sourceID = 0xffc2, .generation = 1,
+            .writePayload = payload, .dataLength = static_cast<uint32_t>(payload.size())};
+}
+
+TEST(Digi00xMessages, AQuadletToTheHostAddressIsAnsweredComplete) {
+    using ASFW::Async::ResponseCode;
+    constexpr std::array<uint8_t, 4> message{0x00, 0x00, 0x00, 0x01};
+    for (const uint8_t tCode : {uint8_t{0x0}, uint8_t{0x1}}) {  // write quadlet, write block
+        const auto r = Digi::Messages::Handle(MessageTo(Digi::Messages::kHostAddress, tCode, message));
+        EXPECT_TRUE(r.claimed) << int{tCode};
+        EXPECT_EQ(r.rcode, ResponseCode::Complete) << int{tCode};
+    }
+}
+
+TEST(Digi00xMessages, OtherRequestsToTheHostAddressAreTypeErrors) {
+    using ASFW::Async::ResponseCode;
+    constexpr std::array<uint8_t, 8> tooLong{};
+    const auto block = Digi::Messages::Handle(MessageTo(Digi::Messages::kHostAddress, 0x1, tooLong));
+    EXPECT_TRUE(block.claimed);
+    EXPECT_EQ(block.rcode, ResponseCode::TypeError);
+    const auto read = Digi::Messages::Handle(MessageTo(Digi::Messages::kHostAddress, 0x4, {}));
+    EXPECT_TRUE(read.claimed);
+    EXPECT_EQ(read.rcode, ResponseCode::TypeError);
+}
+
+TEST(Digi00xMessages, OtherAddressesAreNotClaimed) {
+    constexpr std::array<uint8_t, 4> message{};
+    for (const uint64_t address : {0xffffe0000000ULL,   // MOTU mailbox slot 0
+                                   Digi::Messages::kHostAddress - 4,
+                                   Digi::Messages::kHostAddress + 4}) {
+        EXPECT_FALSE(Digi::Messages::Handle(MessageTo(address, 0x0, message)).claimed) << std::hex << address;
+    }
 }
 
 } // namespace

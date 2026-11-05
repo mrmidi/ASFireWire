@@ -24,6 +24,7 @@
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DiceNotificationRouter.hpp"
 #include "../Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "../Audio/Protocols/Digi00x/Digi00xMessages.hpp"
 #include "../Audio/Protocols/Fireworks/EfcResponseMailbox.hpp"
 #include "../Audio/Protocols/MOTU/MotuNotificationMailbox.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
@@ -191,6 +192,15 @@ public:
     }
 };
 
+// --- Digi 002 / 003: device messages (one host quadlet for every unit) ---------
+class Digi00xLocalHandler final : public ILocalAddressHandler {
+public:
+    [[nodiscard]] const char* Name() const noexcept override { return "Digi00x"; }
+    [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
+        return ASFW::Audio::Digi00x::Messages::Handle(ctx);
+    }
+};
+
 // --- Fireworks: EFC response window (device -> host block writes) --------------
 // A Fireworks unit answers every EFC command by block-writing the response frame
 // to 0xECC0'8000'0000 in the host's address space (Linux fireworks_transaction.c
@@ -348,6 +358,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     dispatch->AddHandler(std::make_unique<DiceLocalHandler>(d.diceNotifications.get()));
     dispatch->AddHandler(std::make_unique<FireworksEfcLocalHandler>());
     dispatch->AddHandler(std::make_unique<MotuLocalHandler>());
+    dispatch->AddHandler(std::make_unique<Digi00xLocalHandler>());
     if (d.sbp2AddressSpaceManager) {
         dispatch->AddHandler(std::make_unique<Sbp2LocalHandler>(d.sbp2AddressSpaceManager.get()));
     }
@@ -356,7 +367,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     d.localRequestDispatch = dispatch;
 
     ASFW_LOG(Controller,
-             "✅ LocalRequestDispatch wired: %zu handlers (IRMResourceCSR/CSR/FCP/DICE/MOTU/SBP2), tCodes 0x0/0x1/0x4/0x5/0x9",
+             "✅ LocalRequestDispatch wired: %zu handlers (IRMResourceCSR/CSR/FCP/DICE/EFC/MOTU/Digi00x/SBP2), tCodes 0x0/0x1/0x4/0x5/0x9",
              dispatch->HandlerCount());
 }
 
