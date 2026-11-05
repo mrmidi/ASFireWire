@@ -55,15 +55,23 @@ struct AudioConsoleVerticalFader: View {
             let thumbOffset = (1 - normalizedValue) * travel
 
             ZStack(alignment: .top) {
+                // An explicit hit surface: on macOS 15 only the drawn thumb
+                // took clicks, so the fader could barely be grabbed.
+                Color.clear
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .contentShape(Rectangle())
+
                 track(height: travel)
                     .offset(y: thumbSize.height / 2)
+                    .allowsHitTesting(false)
 
                 thumb
                     .offset(y: thumbOffset)
+                    .allowsHitTesting(false)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .contentShape(Rectangle())
-            .gesture(dragGesture(travel: travel))
+            .gesture(dragGesture(travel: travel, thumbOffset: thumbOffset))
         }
         .frame(width: max(trackWidth, thumbSize.width))
         .opacity(isEnabled ? 1 : 0.45)
@@ -114,13 +122,27 @@ struct AudioConsoleVerticalFader: View {
         .frame(width: trackWidth, height: height)
     }
 
-    private func dragGesture(travel: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+    /// Grabbing the thumb drags it relative to where it was; clicking the
+    /// track elsewhere first jumps the thumb there, then drags from there.
+    private func dragGesture(travel: CGFloat, thumbOffset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { gesture in
                 guard isEnabled else { return }
-                let start = dragStartValue ?? shownValue
-                dragStartValue = start
                 let span = range.upperBound - range.lowerBound
+                let start: Double
+                if let dragStartValue {
+                    start = dragStartValue
+                } else {
+                    let y = gesture.startLocation.y
+                    let onThumb = y >= thumbOffset && y <= thumbOffset + thumbSize.height
+                    if onThumb {
+                        start = shownValue
+                    } else {
+                        let centre = min(max(y - thumbSize.height / 2, 0), travel)
+                        start = clamped(range.upperBound - Double(centre / travel) * span)
+                    }
+                    dragStartValue = start
+                }
                 let next = start - Double(gesture.translation.height / travel) * span
                 shownValue = clamped(next)
                 onValueChanged(shownValue)
