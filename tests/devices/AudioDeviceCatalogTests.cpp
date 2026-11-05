@@ -16,6 +16,7 @@
 
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "DeviceProfiles/Audio/DiceIdentity.hpp"
 #include "Discovery/DiscoveryTypes.hpp"
 
 #include <gtest/gtest.h>
@@ -397,6 +398,125 @@ TEST(AudioDeviceCatalog, RmeRealHardwareMatchesFromUnitDirectoryModelId) {
         EXPECT_FALSE(AudioDeviceCatalog::Resolve(missingUnitModel,
                                                   missingUnitModel.identity.units[0]).has_value());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Digidesign Digi 002 / 003 (issue #249)
+// ---------------------------------------------------------------------------
+
+// Identity exactly as read from four units' Config ROMs: no root model_id,
+// the unit directory at quadlet 11 (byte 0x2C) with a per-product specifier.
+struct Digi00xCapture {
+    const char* label;
+    uint64_t guid;
+    uint32_t specifierId;
+    uint32_t unitModelId;
+    DeviceDefinitionId expected;
+    const char* modelName;
+};
+
+constexpr Digi00xCapture kDigi00xCaptures[] = {
+    {"002 Console", 0x00a07e0000a30000ULL, 0x0000A3, 0x000001,
+     DeviceDefinitionId::Digi002Console, "Digi 002"},
+    {"002 Rack", 0x00a07e0000a40000ULL, 0x0000A4, 0x000002,
+     DeviceDefinitionId::Digi002Rack, "Digi 002 Rack"},
+    {"003 Console", 0x00a07e0000aa0000ULL, 0x0000AA, 0x000001,
+     DeviceDefinitionId::Digi003Console, "Digi 003"},
+    {"003 Rack", 0x00a07e0000ab0000ULL, 0x0000AB, 0x000002,
+     DeviceDefinitionId::Digi003Rack, "Digi 003 Rack"},
+};
+
+[[nodiscard]] Discovery::DeviceRecord MakeDigi00x(uint64_t guid, uint32_t specifierId,
+                                                  std::optional<uint32_t> unitModelId) {
+    return MakeDevice(guid, kAvidVendorId, /*rootModelId=*/std::nullopt,
+                      {{.offset = 11,
+                        .specifierId = specifierId,
+                        .version = kDigi00xUnitVersion,
+                        .modelId = unitModelId}});
+}
+
+TEST(AudioDeviceCatalog, CapturedDigi00xUnitsAreRecognisedButNeverDriven) {
+    for (const auto& capture : kDigi00xCaptures) {
+        SCOPED_TRACE(capture.label);
+        const auto device = MakeDigi00x(capture.guid, capture.specifierId, capture.unitModelId);
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        ASSERT_TRUE(plan.has_value());
+        ASSERT_EQ(plan->candidates.size(), 1U);
+        EXPECT_EQ(plan->candidates[0], capture.expected);
+        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
+        EXPECT_FALSE(AllowsAudioRuntime(plan->support));
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
+        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
+        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+        EXPECT_EQ(plan->guidReliability, GuidReliability::KnownNonUnique);
+        EXPECT_EQ(plan->vendorName, kDigidesignVendorName);
+        EXPECT_EQ(plan->modelName, capture.modelName);
+        // Not an AV/C unit: no FCP frame may reach it.
+        EXPECT_EQ(AudioDeviceCatalog::CommandFilterFor(*plan),
+                  Discovery::AvcCommandFilterId::BlockAll);
+
+        const auto devicePlan = AudioDeviceCatalog::Resolve(device);
+        ASSERT_TRUE(devicePlan.has_value());
+        EXPECT_EQ(devicePlan->candidates, plan->candidates);
+    }
+}
+
+TEST(AudioDeviceCatalog, Digi00xRowsRequireVendorVersionSpecifierAndUnitModel) {
+    const auto device = MakeDigi00x(0x00a07e0000aa0000ULL, 0x0000AA, kDigi00xConsoleModelId);
+
+    auto wrongVendor = device;
+    wrongVendor.identity.rootVendorId = kAvidVendorId + 1;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongVendor,
+                                              wrongVendor.identity.units[0]).has_value());
+
+    auto wrongVersion = device;
+    wrongVersion.identity.units[0].version = 0x000002;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(wrongVersion,
+                                              wrongVersion.identity.units[0]).has_value());
+
+    auto otherModel = device;
+    otherModel.identity.units[0].modelId = 0x000003;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(otherModel,
+                                              otherModel.identity.units[0]).has_value());
+
+    auto missingModel = device;
+    missingModel.identity.units[0].modelId = std::nullopt;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(missingModel,
+                                              missingModel.identity.units[0]).has_value());
+
+    // A specifier no capture has shown is not recognised.
+    auto unlistedSpecifier = device;
+    unlistedSpecifier.identity.units[0].specifierId = 0x0000AC;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(unlistedSpecifier,
+                                              unlistedSpecifier.identity.units[0]).has_value());
+
+    // Specifier and model must agree: a 003 Console code with the Rack model
+    // is neither row.
+    auto mismatched = device;
+    mismatched.identity.units[0].modelId = kDigi00xRackModelId;
+    EXPECT_FALSE(AudioDeviceCatalog::Resolve(mismatched,
+                                              mismatched.identity.units[0]).has_value());
+}
+
+// Same OUI and unit version as the Mbox Pro (DICE). Neither row may claim the
+// other's unit, and the generic DICE rule must not claim a 00x.
+TEST(AudioDeviceCatalog, Digi00xAndMboxProDoNotClaimEachOther) {
+    for (const auto& capture : kDigi00xCaptures) {
+        SCOPED_TRACE(capture.label);
+        EXPECT_FALSE(IsDiceIdentity(capture.guid, capture.specifierId, kDigi00xUnitVersion,
+                                    capture.unitModelId));
+    }
+
+    const auto mboxPro = MakeDevice(0x00a07e0400000001ULL, kAvidVendorId, kMboxProModelId,
+                                    {{.offset = 5,
+                                      .specifierId = kAvidVendorId,
+                                      .version = kDiceInterfaceVersion,
+                                      .modelId = kMboxProModelId}});
+    const auto plan = AudioDeviceCatalog::Resolve(mboxPro, mboxPro.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    ASSERT_EQ(plan->candidates.size(), 1U);
+    EXPECT_EQ(plan->candidates[0], DeviceDefinitionId::AvidMboxPro);
 }
 
 TEST(AudioDeviceCatalog, TableBackedEightPreGetsItsOwnAllocatorProfile) {

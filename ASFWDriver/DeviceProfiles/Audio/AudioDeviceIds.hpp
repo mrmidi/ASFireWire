@@ -37,6 +37,35 @@ inline constexpr uint32_t kMboxProModelId = 0x000004;
 inline constexpr const char* kAvidVendorName   = "Avid";
 inline constexpr const char* kMboxProModelName = "Mbox Pro";
 
+// ---- Digidesign Digi 002 / 003 (vendor register protocol, not DICE) ----
+// Same OUI as the Mbox Pro. The root directory carries vendor 0x00A07E and no
+// model_id; the unit directory carries version 0x000001 and the model. Config
+// ROMs read from hardware 2026-11-05 (issue #249):
+//   002 Console  GUID 0x00a07e0000a30000  unit spec 0x0000A3 ver 1 model 1  "Digi 002"
+//   002 Rack     GUID 0x00a07e0000a40000  unit spec 0x0000A4 ver 1 model 2  "Digi 002Rack"
+//   003 Console  GUID 0x00a07e0000aa0000  unit spec 0x0000AA ver 1 model 1  " 003"
+//   003 Rack     GUID 0x00a07e0000ab0000  unit spec 0x0000AB ver 1 model 2  " 003Rack"
+// The 002 and 003 share model ids; Linux matches vendor + version + model
+// (sound/firewire/digi00x/digi00x.c:14-17,131-150). The model id alone cannot
+// tell a 002 from a 003, but the specifier is a per-product code (it equals
+// GUID bits [23:16]), so each row keys on specifier + model. A unit with a
+// specifier not listed here is not recognised.
+// The specifier is never the OUI and the GUID category byte is 0x00, so
+// IsDiceIdentity() rejects these units.
+inline constexpr uint32_t kDigi00xUnitVersion    = 0x000001;
+inline constexpr uint32_t kDigi00xConsoleModelId = 0x000001;
+inline constexpr uint32_t kDigi00xRackModelId    = 0x000002;
+inline constexpr uint32_t kDigi002ConsoleSpecifierId = 0x0000A3;
+inline constexpr uint32_t kDigi002RackSpecifierId    = 0x0000A4;
+inline constexpr uint32_t kDigi003ConsoleSpecifierId = 0x0000AA;
+inline constexpr uint32_t kDigi003RackSpecifierId    = 0x0000AB;
+
+inline constexpr const char* kDigidesignVendorName     = "Digidesign";
+inline constexpr const char* kDigi002ConsoleModelName  = "Digi 002";
+inline constexpr const char* kDigi002RackModelName     = "Digi 002 Rack";
+inline constexpr const char* kDigi003ConsoleModelName  = "Digi 003";
+inline constexpr const char* kDigi003RackModelName     = "Digi 003 Rack";
+
 inline constexpr const char* kRmeVendorName = "RME";
 inline constexpr const char* kRmeFireface400ModelName = "Fireface 400";
 inline constexpr const char* kRmeFireface800ModelName = "Fireface 800";
