@@ -11,6 +11,7 @@
 #include "AVC/ApogeeDuetProfile.hpp"
 #include "AVC/MAudioSpecialProfile.hpp"
 #include "RME/FirefaceProfile.hpp"
+#include "Digi00x/Digi00xProfile.hpp"
 
 #include "DICE/DiceProfile.hpp"
 #include "../../../Logging/Logging.hpp"
@@ -31,6 +32,7 @@ using DICE::DiceRangeMember;
 
 RME::Profiles::FirefaceProfile gRmeFireface400Profile{18U, "RME Fireface 400"};
 RME::Profiles::FirefaceProfile gRmeFireface800Profile{28U, "RME Fireface 800"};
+Digi00x::Profiles::Digi00xProfile gDigi00xProfile{"Digidesign Digi 002/003"};
 
 // One Venice identity covers the F16, F24 and F32; the model number is the
 // capture width (documentation/fixtures/DICE/midasF24.txt).
@@ -170,6 +172,7 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
         case Builder::MAudioProjectMix:
         case Builder::RmeFireface400:
         case Builder::RmeFireface800:
+        case Builder::Digi00x:
         case Builder::None:
             break;
     }
@@ -227,6 +230,8 @@ MOTU::Profiles::MotuProfile gMotu828mk2Profile{
             return &gRmeFireface400Profile;
         case Builder::RmeFireface800:
             return &gRmeFireface800Profile;
+        case Builder::Digi00x:
+            return &gDigi00xProfile;
 
         // Handled by DiceProfileForBuilder above, or carrying no profile object
         // on this branch.

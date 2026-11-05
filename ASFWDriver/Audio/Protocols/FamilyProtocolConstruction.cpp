@@ -15,6 +15,7 @@
 #include "BeBoB/MAudioSpecialProtocol.hpp"
 #include "MOTU/MotuProtocol.hpp"
 #include "RME/FirefaceDeviceProtocol.hpp"
+#include "Digi00x/Digi00xDeviceProtocol.hpp"
 #include "Prism/Orpheus/OrpheusProtocol.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../Logging/Logging.hpp"
@@ -24,12 +25,12 @@ namespace ASFW::Audio {
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister),
+    static_cast<uint8_t>(DeviceProfiles::Audio::AudioFamilyProviderId::Digi00xRegister),
     "AudioFamilyProviderId member added without updating family protocol construction");
 
 static_assert(
     static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::kLastValid) ==
-    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::Orpheus),
+    static_cast<uint8_t>(DeviceProfiles::Audio::ProtocolImplementationId::Digi00x),
     "ProtocolImplementationId member added without updating family protocol construction");
 
 std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
@@ -58,7 +59,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
     using DeviceProfiles::Audio::AudioFamilyProviderId;
     using DeviceProfiles::Audio::ProtocolImplementationId;
 
-    // Family guard: exhaustive switch over all 7 families with no default: arm.
+    // Family guard: exhaustive switch over all 8 families with no default: arm.
     // Adding an AudioFamilyProviderId without updating this switch must not compile.
     switch (plan.family) {
         case AudioFamilyProviderId::DICE:
@@ -67,6 +68,7 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
         case AudioFamilyProviderId::BeBoB:
         case AudioFamilyProviderId::MotuRegister:
         case AudioFamilyProviderId::RmeRegister:
+        case AudioFamilyProviderId::Digi00xRegister:
         case AudioFamilyProviderId::GenericAvc:
             break;
 
@@ -217,6 +219,14 @@ std::unique_ptr<IDeviceProtocol> CreateFamilyDeviceProtocol(
             return std::make_unique<RME::FirefaceDeviceProtocol>(
                 busOps, busInfo, routeRegistry, route, model, isS800, timerScheduler);
         }
+
+        // --- Digi00xRegister Family ---
+        // One protocol for all four models; the catalog names the product.
+        case ProtocolImplementationId::Digi00x:
+            ASFW_LOG(Audio, "Creating Digi00xDeviceProtocol node=0x%04x", nodeId);
+            return std::make_unique<Digi00x::Digi00xDeviceProtocol>(
+                busOps, busInfo, routeRegistry, route,
+                plan.modelName.empty() ? std::string{"Digi 002/003"} : plan.modelName);
 
         case ProtocolImplementationId::GenericAvc:
             ASFW_LOG(Audio, "[AvcRuntime] generic CMP backend node=0x%04x", nodeId);

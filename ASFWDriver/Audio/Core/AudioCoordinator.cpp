@@ -44,6 +44,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     host_.Install(AudioBackendKind::RmeRegister, rmeAdapter_);
     host_.Install(AudioBackendKind::Avc, avcAdapter_);
     host_.Install(AudioBackendKind::MotuRegister, motuAdapter_);
+    host_.Install(AudioBackendKind::Digi00xRegister, digi00xAdapter_);
 
     sessions_.SetStartGuard([this](uint64_t guid) {
         return !publisher_.IsGeometryChangeBlocked(guid);
@@ -386,6 +387,11 @@ IOReturn AudioCoordinator::RequestClockConfig(
         desiredClock.sampleRateHz != 48000U) {
         // Fireface control does not expose a software rate switch. Refuse at
         // the coordinator boundary before any protocol read/write is queued.
+        return kIOReturnUnsupported;
+    }
+    if (policy && policy->plan.family == DeviceProfiles::Audio::AudioFamilyProviderId::Digi00xRegister &&
+        !Digi00x::IsStreamedRate(desiredClock.sampleRateHz)) {
+        // The Digi 002/003 streams 44.1 and 48 kHz here (1x only).
         return kIOReturnUnsupported;
     }
 

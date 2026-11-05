@@ -199,7 +199,9 @@ private:
     Session::AudioSessions& sessions_;
     IIsochDuplexHostTransport& hostTransport_;
 
-    std::array<FamilyAdapter*, 4> adapters_{};
+    // One slot per AudioBackendKind; sized from the enum so a new kind always
+    // has a slot (Install() would otherwise drop it without a word).
+    std::array<FamilyAdapter*, static_cast<size_t>(AudioBackendKind::kLastValid) + 1> adapters_{};
     std::atomic<IAudioEndpointObserver*> endpointObserver_{nullptr};
 
     OSSharedPtr<IODispatchQueue> workQueue_{};

@@ -91,9 +91,11 @@ enum class AudioFamilyProviderId : uint8_t {
     MotuRegister,
     /// RME Fireface direct-register protocol. AV/C/FCP stays blocked.
     RmeRegister,
+    /// Digidesign Digi 002/003 register protocol. No AV/C at all.
+    Digi00xRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = RmeRegister,
+    kLastValid = Digi00xRegister,
 };
 
 enum class ProbePolicyId : uint8_t {
@@ -117,9 +119,11 @@ enum class ProbePolicyId : uint8_t {
     /// MOTU: clock/format registers, read directly. No FCP is ever sent.
     MotuRegister,
     RmeRegister,
+    /// Digi 002/003: rate and streaming registers, read directly. No FCP.
+    Digi00xRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = RmeRegister,
+    kLastValid = Digi00xRegister,
 };
 
 /// Device preparation that must run before an identity can become anything
@@ -182,7 +186,9 @@ enum class ProfileBuilderId : uint16_t {
     Motu828, Motu896, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuTrack16,
     Orpheus,
-    kLastValid = Orpheus,
+    /// All four Digi 002/003 models: one fixed geometry.
+    Digi00x,
+    kLastValid = Digi00x,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -204,7 +210,8 @@ enum class ProtocolImplementationId : uint8_t {
     RmeFireface,
     GenericAvc,
     Orpheus,
-    kLastValid = Orpheus,
+    Digi00x,
+    kLastValid = Digi00x,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.

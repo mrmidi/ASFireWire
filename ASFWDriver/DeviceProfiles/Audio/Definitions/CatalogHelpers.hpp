@@ -56,6 +56,7 @@ constexpr AudioDeviceDefinition Definition(
                 break;
             case AudioFamilyProviderId::MotuRegister:
             case AudioFamilyProviderId::RmeRegister:
+            case AudioFamilyProviderId::Digi00xRegister:
                 break;
             case AudioFamilyProviderId::None:
                 break;

@@ -16,6 +16,7 @@
 #include "../Host/DiceFamilyAdapter.hpp"
 #include "../Host/MotuFamilyAdapter.hpp"
 #include "../Host/RmeFamilyAdapter.hpp"
+#include "../Host/Digi00xFamilyAdapter.hpp"
 
 #include "../../Logging/Logging.hpp"
 
@@ -127,6 +128,7 @@ private:
     Host::RmeFamilyAdapter rmeAdapter_;
     Host::AvcFamilyAdapter avcAdapter_;
     Host::MotuFamilyAdapter motuAdapter_;
+    Host::Digi00xFamilyAdapter digi00xAdapter_;
     Host::AudioDeviceHost host_;
 
     IOLock* lock_{nullptr};

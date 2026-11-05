@@ -55,6 +55,10 @@ enum class AudioBackendKind : uint8_t {
     Dice,
     MotuRegister,
     RmeRegister,
+    Digi00xRegister,
+
+    /// Alias for the last real member: AudioDeviceHost sizes its adapter table from it.
+    kLastValid = Digi00xRegister,
 };
 
 [[nodiscard]] std::optional<AudioBackendKind>

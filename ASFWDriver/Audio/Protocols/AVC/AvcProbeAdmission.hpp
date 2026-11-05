@@ -69,6 +69,7 @@ enum class AvcProbeDecision : uint8_t {
         case ProbeBootstrap::DiceProtocol:
         case ProbeBootstrap::MotuRegister:
         case ProbeBootstrap::RmeRegister:
+        case ProbeBootstrap::Digi00xRegister:
             return AvcProbeDecision::RegisterDriven;
         case ProbeBootstrap::Unsupported:
             return AvcProbeDecision::Refused;

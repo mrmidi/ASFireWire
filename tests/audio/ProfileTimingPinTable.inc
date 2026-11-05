@@ -260,3 +260,11 @@
     {38, 96000, 256, 256, 384, 512},  // Generic AV/C (Orpheus)
     {38, 176400, 256, 256, 706, 941},  // Generic AV/C (Orpheus)
     {38, 192000, 256, 256, 768, 1024},  // Generic AV/C (Orpheus)
+    // Digi 002/003 (issue #249): RME/MOTU's untuned values, constant across rates.
+    {39, 32000, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 44100, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 48000, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 88200, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 96000, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 176400, 128, 128, 64, 64},  // Digidesign Digi 002/003
+    {39, 192000, 128, 128, 64, 64},  // Digidesign Digi 002/003

@@ -287,6 +287,7 @@ Discovery::AvcCommandFilterId AudioDeviceCatalog::CommandFilterFor(
     // operation. It does not grant permission for generic or user-client FCP.
     if (plan.probePolicy == ProbePolicyId::NoAutomaticTraffic ||
         plan.probePolicy == ProbePolicyId::RmeRegister ||
+        plan.probePolicy == ProbePolicyId::Digi00xRegister ||
         plan.bootloaderCue != BootloaderCuePolicy::None ||
         plan.support == SupportDisposition::Quarantined) {
         return Discovery::AvcCommandFilterId::BlockAll;

@@ -453,7 +453,8 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
             ASSERT_TRUE(backend.has_value());
             ASSERT_TRUE(protocolFromPlan.has_value());
             EXPECT_NE(plan->protocolImplementation, ProtocolImplementationId::None);
-            if (plan->family != AudioFamilyProviderId::RmeRegister) {
+            if (plan->family != AudioFamilyProviderId::RmeRegister &&
+                plan->family != AudioFamilyProviderId::Digi00xRegister) {
                 EXPECT_NE(AudioDeviceCatalog::CommandFilterFor(*plan),
                           Discovery::AvcCommandFilterId::BlockAll);
             } else {
@@ -501,6 +502,11 @@ TEST(CatalogMatcherAgreement, HistoricalDecisionsRegressionTable) {
                     EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::RmeRegister);
                     EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::RmeFireface);
                     EXPECT_EQ(ASFW::Audio::ChooseDeviceProtocol(*plan)->builder, plan->profileBuilder);
+                    break;
+                case AudioFamilyProviderId::Digi00xRegister:
+                    EXPECT_EQ(*backend, Audio::AudioBackendKind::Digi00xRegister);
+                    EXPECT_EQ(bootstrap, Audio::ProbeBootstrap::Digi00xRegister);
+                    EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::Digi00x);
                     break;
                 case AudioFamilyProviderId::GenericAvc:
                 case AudioFamilyProviderId::None:
