@@ -74,6 +74,19 @@ add_audio_test(MotuPayloadCodecTests
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
+# Digi 002/003 playback on the wire: slot layout, scrambler, idle MIDI, SYT.
+add_audio_test(Digi00xTxWriterTests
+    Digi00xTxWriterTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Tx/DiceTxStreamEngine.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
+)
+
 # CIP Header Builder Tests
 add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp

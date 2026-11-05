@@ -10,9 +10,8 @@
 // the host's packets, and transmits nothing until it has received packets, so
 // transmit starts from a nominal cadence and then replays capture's sequence
 // (Linux digi00x-stream.c:375-386: amdtp_domain_start(..., replay_seq = true)).
-//
-// The playback scrambler and SYT 0xFFFF are not applied yet: until they are,
-// this profile streams capture correctly and playback as noise.
+// Outgoing packets carry SYT 0xFFFF (amdtp-dot.c:393 CIP_UNAWARE_SYT) and
+// scrambled PCM (Wire/Digi00x/DotScrambler.hpp).
 
 #pragma once
 
@@ -49,6 +48,8 @@ public:
         policy.defaultNonAudioSlotWord = Encoding::Digi00x::kIdleMidiWord;
         policy.initializeNonAudioSlots = true;
         policy.playbackChannelMap = PcmMap();
+        policy.sytUnaware = true;      // SYT 0xFFFF (Linux CIP_UNAWARE_SYT)
+        policy.dotScramblePcm = true;  // playback PCM is scrambled
         return policy;
     }
     [[nodiscard]] TxClockSource TransmitClockSource() const noexcept override {

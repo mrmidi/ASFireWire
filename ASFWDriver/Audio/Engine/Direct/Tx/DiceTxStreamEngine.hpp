@@ -78,9 +78,11 @@ public:
     [[nodiscard]] uint64_t CursorEpoch() const noexcept { return cursorEpoch_; }
 
     /// True for families that carry no presentation time in the CIP SYT field -- Linux's
-    /// CIP_UNAWARE_SYT (e.g. SPH-based timing).
+    /// CIP_UNAWARE_SYT: SPH-based timing (the stamper says so) or a profile that
+    /// declares it (Digi 002/003).
     [[nodiscard]] bool IsSytUnaware() const noexcept {
-        return timingStamper_ != nullptr && timingStamper_->IsSytUnaware();
+        return txPolicy_.sytUnaware ||
+               (timingStamper_ != nullptr && timingStamper_->IsSytUnaware());
     }
 
     [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(

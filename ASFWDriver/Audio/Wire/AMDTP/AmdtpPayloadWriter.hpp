@@ -3,6 +3,7 @@
 #include "AmdtpPacketTimeline.hpp"
 #include "AmdtpTypes.hpp"
 #include "../../Ports/IWirePayloadCodec.hpp"
+#include "../Digi00x/DotScrambler.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -46,6 +47,10 @@ public:
 
     void BindTimeline(AmdtpPacketTimeline* timeline) noexcept;
 
+    /// A new stream starts: per-stream wire state (the Digi 002/003
+    /// scrambler) begins again.
+    void ResetStreamState() noexcept { dot_.Reset(); }
+
     void WriteFloat32Interleaved(const HostAudioBufferView& hostBuffer,
                                  uint64_t firstWritablePacket) noexcept override;
 
@@ -68,6 +73,12 @@ private:
 
     AmdtpPacketTimeline* timeline_{nullptr};
     AmdtpPayloadWriterCounters counters_{};
+    // Runs across every PCM slot written, in wire order (frames ascend; a
+    // frame's slots are written in channel order, which for the Digi 00x slot
+    // map is slot order). A frame that is not written is not scrambled: the
+    // device then mis-decodes at most two middle bytes before both sides
+    // agree again.
+    ::ASFW::Encoding::Digi00x::DotScrambler dot_{};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
