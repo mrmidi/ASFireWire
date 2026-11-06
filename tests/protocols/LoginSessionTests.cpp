@@ -1000,3 +1000,97 @@ TEST(LoginSessionTests, PhysicalDmaFailureSuspendsInsteadOfLoggingIn) {
     EXPECT_EQ(0, loginCallbacks);
     EXPECT_EQ(0u, rig.bus.PendingWriteCount());  // no busy-timeout write
 }
+
+namespace {
+
+struct LoginAddresses {
+    uint64_t response{0};
+    uint64_t status{0};
+};
+
+LoginAddresses AddressesOfLoginWrite(SessionRig& rig, size_t writeIndex) {
+    const uint64_t orb = DecodeOrbAddressFromPayload(rig.bus.WriteAt(writeIndex).data);
+    return {
+        .response = ReadORBAddress(rig.addressManager, orb, offsetof(LoginORB, loginResponseAddressHi),
+                                   offsetof(LoginORB, loginResponseAddressLo)),
+        .status = ReadORBAddress(rig.addressManager, orb, offsetof(LoginORB, statusFIFOAddressHi),
+                                 offsetof(LoginORB, statusFIFOAddressLo)),
+    };
+}
+
+void PostLoginStatus(SessionRig& rig, uint64_t statusAddress, uint8_t details) {
+    StatusBlock status{};
+    status.details = details;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        statusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+}
+
+void WriteLoginResponse(SessionRig& rig, uint64_t responseAddress) {
+    LoginResponse response{};
+    response.length = OSSwapHostToBigInt16(LoginResponse::kSize);
+    response.loginID = OSSwapHostToBigInt16(0x0007);
+    response.commandBlockAgentAddressHi = OSSwapHostToBigInt32(0x0000'FFFFu);
+    response.commandBlockAgentAddressLo = OSSwapHostToBigInt32(0xF001'0010u);
+    response.reconnectHold = OSSwapHostToBigInt16(1);
+    rig.addressManager.ApplyRemoteWrite(
+        responseAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&response), sizeof(response)});
+}
+
+} // namespace
+
+// HW 2026-11-06 (Leaf Valeo 11): login inside the previous login's
+// reconnect_hold answered with sbp_status 0 and no response written. That is
+// not acceptance; the session retries on its normal 1 s pacing.
+TEST(LoginSessionTests, LoginStatusWithoutWrittenResponseIsRetriedNotAccepted) {
+    SessionRig rig;
+    ASSERT_TRUE(rig.session.Login());
+    const auto first = AddressesOfLoginWrite(rig, 0);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+
+    PostLoginStatus(rig, first.status, 0x00); // resp 0, sbp_status 0, nothing written
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    EXPECT_EQ(1u, rig.bus.WriteCount());
+
+    rig.AdvanceMs(1000);
+    ASSERT_EQ(2u, rig.bus.WriteCount()); // retry
+    const auto second = AddressesOfLoginWrite(rig, 1);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    WriteLoginResponse(rig, second.response);
+    PostLoginStatus(rig, second.status, 0x00);
+    EXPECT_EQ(LoginState::LoggedIn, rig.session.State());
+    EXPECT_EQ(0x0007u, rig.session.Snapshot().loginID);
+}
+
+TEST(LoginSessionTests, LoginStatusWithNonCompleteRespIsRetriedNotAccepted) {
+    SessionRig rig;
+    ASSERT_TRUE(rig.session.Login());
+    const auto first = AddressesOfLoginWrite(rig, 0);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+
+    WriteLoginResponse(rig, first.response);  // even with a response present
+    PostLoginStatus(rig, first.status, 0x20); // resp = 2 (illegal request)
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    rig.AdvanceMs(1000);
+    EXPECT_EQ(2u, rig.bus.WriteCount());
+}
+
+// The response area is cleared per attempt: a retry whose status arrives
+// without a fresh response must not reuse the previous attempt's bytes.
+TEST(LoginSessionTests, LoginRetryDoesNotReusePreviousAttemptsResponse) {
+    SessionRig rig;
+    ASSERT_TRUE(rig.session.Login());
+    const auto first = AddressesOfLoginWrite(rig, 0);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    WriteLoginResponse(rig, first.response);
+    PostLoginStatus(rig, first.status, 0x20); // rejected despite a response
+
+    rig.AdvanceMs(1000);
+    ASSERT_EQ(2u, rig.bus.WriteCount());
+    const auto second = AddressesOfLoginWrite(rig, 1);
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    PostLoginStatus(rig, second.status, 0x00); // no new response
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+}
