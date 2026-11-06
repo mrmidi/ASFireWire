@@ -126,4 +126,66 @@ TEST_F(SBP2NubPublisherTest, UnitRemovalWhileDriverRunsTerminatesTheNub) {
     EXPECT_EQ(1, driver.nubs[0]->terminateCalls);
 }
 
+// A Leaf Valeo 11 style unit directory: the nub carries the unit identity under
+// the names Apple's IOFireWireSBP2LUN publishes, plus the bus generation, which
+// is refreshed when the unit resumes in a later generation.
+TEST_F(SBP2NubPublisherTest, NubPublishesUnitIdentityAndRefreshesBusGeneration) {
+    DeviceRecord record{};
+    record.guid = kGuid;
+    record.vendorId = 0x0006CD;
+    record.modelId = 0x000000;
+    record.kind = DeviceKind::Unknown;
+    record.vendorName = "Leaf";
+    record.modelName = "Valeo";
+    record.gen = Generation{1};
+    record.nodeId = 0;
+    record.link = LinkPolicy{};
+    record.state = LifeState::Ready;
+
+    ConfigROM rom{};
+    rom.bib.guid = kGuid;
+    rom.gen = Generation{1};
+    rom.nodeId = 0;
+    rom.vendorName = record.vendorName;
+    rom.modelName = record.modelName;
+    rom.rootDirMinimal = {
+        RomEntry{CfgKey::Unit_Spec_Id, ASFW::Protocols::SBP2::kSBP2UnitSpecId, 0, 0},
+        RomEntry{CfgKey::Unit_Sw_Version, ASFW::Protocols::SBP2::kSBP2UnitSwVersion, 0, 0},
+        RomEntry{CfgKey::Command_Set_Spec_Id, 0x00609E, 0, 0},
+        RomEntry{CfgKey::Command_Set, 0x0104D8, 0, 0},
+        RomEntry{CfgKey::Unit_Characteristics, 0x00A008, 0, 0},
+        RomEntry{CfgKey::Command_Set_Revision, 0x000001, 0, 0},
+        RomEntry{CfgKey::Firmware_Revision, 0x000000, 0, 0},
+        RomEntry{CfgKey::Management_Agent_Offset, 0x004000, 1, 0},
+        RomEntry{CfgKey::Logical_Unit_Number, 0x020000, 0, 0},
+    };
+    (void)deviceRegistry.UpsertFromROM(rom, record.link);
+    ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
+    Drain();
+    ASSERT_EQ(1u, driver.nubs.size());
+
+    const auto& n = driver.nubs[0]->numbers;
+    EXPECT_EQ(0x0006CDu, n.at("Vendor_ID"));
+    EXPECT_EQ(kGuid, n.at("GUID"));
+    EXPECT_EQ(0x00609Eu, n.at("Unit_Spec_ID"));
+    EXPECT_EQ(0x00609Eu, n.at("Command_Set_Spec_ID"));
+    EXPECT_EQ(0x0104D8u, n.at("Command_Set"));
+    EXPECT_EQ(0x00A008u, n.at("Unit_Characteristics"));
+    EXPECT_EQ(1u, n.at("Command_Set_Revision"));
+    EXPECT_EQ(0u, n.at("Firmware_Revision"));
+    EXPECT_EQ(0x004000u, n.at("Management_Agent_Offset"));
+    EXPECT_EQ(2u, n.at("Device_Type"));
+    EXPECT_EQ(1u, n.at("ASFWBusGeneration"));
+
+    // Bus reset: the unit is suspended, then rediscovered in generation 2.
+    deviceManager.MarkDeviceLost(kGuid);
+    Drain();
+    record.gen = Generation{2};
+    rom.gen = Generation{2};
+    ASSERT_NE(nullptr, deviceManager.UpsertDevice(record, rom));
+    Drain();
+    ASSERT_EQ(1u, driver.nubs.size()) << "resume must not republish the nub";
+    EXPECT_EQ(2u, driver.nubs[0]->numbers.at("ASFWBusGeneration"));
+}
+
 } // namespace

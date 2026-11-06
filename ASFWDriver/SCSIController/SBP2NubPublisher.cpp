@@ -21,6 +21,47 @@ namespace {
 constexpr const char* kFireWireGuidProperty = "ASFWFireWireGUID";
 constexpr const char* kUnitDirectoryOffsetProperty = "ASFWUnitDirectoryOffset";
 constexpr const char* kLogicalUnitNumberProperty = "ASFWLogicalUnitNumber";
+// Bus generation the unit was last (re)discovered in. Refreshed on every
+// resume, so a SCSITaskLib client can notice a bus reset between its commands.
+constexpr const char* kBusGenerationProperty = "ASFWBusGeneration";
+
+bool SetNumber(OSDictionary* properties, const char* key, uint64_t value, uint32_t bits) {
+    auto number = OSSharedPtr(OSNumber::withNumber(value, bits), OSNoRetain);
+    if (!number) {
+        return false;
+    }
+    properties->setObject(key, number.get());
+    return true;
+}
+
+// The SBP-2 unit identity, under the property names Apple's IOFireWireSBP2LUN
+// publishes (IOFireWireSBP2Target.cpp createLUN), so SCSITaskLib clients that
+// identified a unit on Apple's stack can identify it the same way here. Only
+// fields present in the unit directory are published.
+void AddUnitIdentityProperties(OSDictionary* properties, const Discovery::FWUnit& unit) {
+    if (const auto device = unit.GetDevice()) {
+        (void)SetNumber(properties, "Vendor_ID", device->GetVendorID(), 32);
+        (void)SetNumber(properties, "GUID", device->GetGUID(), 64);
+    }
+    (void)SetNumber(properties, "Unit_Spec_ID", unit.GetUnitSpecID(), 32);
+    (void)SetNumber(properties, "Unit_SW_Version", unit.GetUnitSwVersion(), 32);
+    if (const auto v = unit.GetCommandSetSpecID()) (void)SetNumber(properties, "Command_Set_Spec_ID", *v, 32);
+    if (const auto v = unit.GetCommandSet()) (void)SetNumber(properties, "Command_Set", *v, 32);
+    if (const auto v = unit.GetCommandSetRevision()) (void)SetNumber(properties, "Command_Set_Revision", *v, 32);
+    if (const auto v = unit.GetFirmwareRevision()) (void)SetNumber(properties, "Firmware_Revision", *v, 32);
+    if (const auto v = unit.GetUnitCharacteristics()) (void)SetNumber(properties, "Unit_Characteristics", *v, 32);
+    if (const auto v = unit.GetManagementAgentOffset()) (void)SetNumber(properties, "Management_Agent_Offset", *v, 32);
+    if (const auto lun = unit.GetLUN()) {
+        // Logical_Unit_Number entry: device_type in bits 20..16 (as Apple's
+        // IOFireWireSBP2Target scanForLUNs decodes it), LUN in bits 15..0.
+        (void)SetNumber(properties, "Device_Type", (*lun >> 16) & 0x1Fu, 32);
+    }
+}
+
+uint32_t UnitGeneration(const Discovery::FWUnit& unit) {
+    const auto device = unit.GetDevice();
+    return device ? device->GetGeneration().value : 0;
+}
 
 } // namespace
 
@@ -177,7 +218,23 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
     const auto existing = nubsByUnit_.find(*key);
     if (existing != nubsByUnit_.end()) {
         if (existing->second.unit.lock() == unit) {
+            // Same incarnation resumed after a bus reset: refresh only the
+            // generation so clients can tell a reset happened.
+            ASFWSBP2Nub* live = existing->second.nub;
+            if (live != nullptr) {
+                live->retain();
+            }
             IOLockUnlock(lock_);
+            if (live != nullptr) {
+                OSDictionary* currentRaw = nullptr;
+                if (live->CopyProperties(&currentRaw) == kIOReturnSuccess && currentRaw != nullptr) {
+                    OSSharedPtr<OSDictionary> current(currentRaw, OSNoRetain);
+                    if (SetNumber(current.get(), kBusGenerationProperty, UnitGeneration(*unit), 32)) {
+                        (void)live->SetProperties(current.get());
+                    }
+                }
+                live->release();
+            }
             return;
         }
         replaced = existing->second.nub;
@@ -216,6 +273,8 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
                     properties->setObject(kLogicalUnitNumberProperty, lunNumber.get());
                 }
             }
+            AddUnitIdentityProperties(properties.get(), *unit);
+            (void)SetNumber(properties.get(), kBusGenerationProperty, UnitGeneration(*unit), 32);
             propertiesReady = nubService->SetProperties(properties.get()) == kIOReturnSuccess;
         }
     }
