@@ -9,16 +9,22 @@
 
 namespace ASFW::DeviceProfiles::Audio::Definitions {
 
-// Digidesign Digi 002 / 003: recognised, not yet streamed (issue #249).
+// Digidesign Digi 002 / 003 (issue #249): the Digi00x register family.
 //
 // The model id lives in the unit directory only (the root directory has none),
 // so the generic Definition() helper, which constrains the root model, cannot
 // express these rows. The 002 and 003 share model ids; the per-product unit
 // specifier tells them apart (AudioDeviceIds.hpp). They use a vendor register
-// protocol, not AV/C: the unit is not a TA 61883 unit, so no FCP may be sent,
-// and NoAutomaticTraffic makes CommandFilterFor() return BlockAll. Every
+// protocol, not AV/C: the unit is not a TA 61883 unit, so no FCP may be sent
+// (CommandFilterFor() returns BlockAll for the Digi00xRegister probe). Every
 // captured GUID has a zero serial field, so two identical units would share a
 // GUID.
+//
+// Stream traits, cross-validated with Linux sound/firewire/digi00x
+// (digi00x-stream.c): the IRM may pick any channel for either direction, and
+// the family driver writes both to the device (6 bits each); the device sends
+// nothing until it receives, so host transmit starts first. Rates, geometry
+// and the wire format come from the Digi00x profile builder.
 constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
                                                   uint32_t unitSpecifierId,
                                                   uint32_t unitModelId,
@@ -34,13 +40,17 @@ constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
                     },
                     IdentityMatchClause{}},
         .clauseCount = 1,
-        .family = AudioFamilyProviderId::None,
-        .probePolicy = ProbePolicyId::NoAutomaticTraffic,
-        .profileBuilder = ProfileBuilderId::None,
-        .protocolImplementation = ProtocolImplementationId::None,
-        .support = SupportDisposition::RecognizedUnsupported,
+        .family = AudioFamilyProviderId::Digi00xRegister,
+        .probePolicy = ProbePolicyId::Digi00xRegister,
+        .profileBuilder = ProfileBuilderId::Digi00x,
+        .protocolImplementation = ProtocolImplementationId::Digi00x,
+        .support = SupportDisposition::Supported,
         .guidReliability = GuidReliability::KnownNonUnique,
         .persistentKeyRecipe = PersistentKeyRecipeId::None,
+        .streamTraits = DeviceStreamTraits{
+            .resource = IsochResourcePolicy{.irmChannelMask = kAnyIsoChannel},
+            .start = StreamStartPolicy{.startShape = StreamStartShape::TransmitFirst},
+        },
         .vendorName = kDigidesignVendorName,
         .modelName = modelName,
     };

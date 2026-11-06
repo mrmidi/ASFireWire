@@ -435,7 +435,7 @@ constexpr Digi00xCapture kDigi00xCaptures[] = {
                         .modelId = unitModelId}});
 }
 
-TEST(AudioDeviceCatalog, CapturedDigi00xUnitsAreRecognisedButNeverDriven) {
+TEST(AudioDeviceCatalog, CapturedDigi00xUnitsResolveToTheRegisterFamily) {
     for (const auto& capture : kDigi00xCaptures) {
         SCOPED_TRACE(capture.label);
         const auto device = MakeDigi00x(capture.guid, capture.specifierId, capture.unitModelId);
@@ -443,12 +443,16 @@ TEST(AudioDeviceCatalog, CapturedDigi00xUnitsAreRecognisedButNeverDriven) {
         ASSERT_TRUE(plan.has_value());
         ASSERT_EQ(plan->candidates.size(), 1U);
         EXPECT_EQ(plan->candidates[0], capture.expected);
-        EXPECT_EQ(plan->support, SupportDisposition::RecognizedUnsupported);
-        EXPECT_FALSE(AllowsAudioRuntime(plan->support));
-        EXPECT_EQ(plan->family, AudioFamilyProviderId::None);
-        EXPECT_EQ(plan->probePolicy, ProbePolicyId::NoAutomaticTraffic);
-        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::None);
-        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::None);
+        EXPECT_EQ(plan->support, SupportDisposition::Supported);
+        EXPECT_TRUE(AllowsAudioRuntime(plan->support));
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::Digi00xRegister);
+        EXPECT_EQ(plan->probePolicy, ProbePolicyId::Digi00xRegister);
+        EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::Digi00x);
+        EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::Digi00x);
+        // Host transmit first; the IRM picks both channels.
+        EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::TransmitFirst);
+        EXPECT_EQ(plan->streamTraits.resource.irmChannelMask, kAnyIsoChannel);
+        EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 0U);
         EXPECT_EQ(plan->guidReliability, GuidReliability::KnownNonUnique);
         EXPECT_EQ(plan->vendorName, kDigidesignVendorName);
         EXPECT_EQ(plan->modelName, capture.modelName);

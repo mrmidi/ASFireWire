@@ -394,6 +394,39 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedStartShape = StreamStartShape::CmpReceiveThenTransmit,
             .expectedChannelMask = kAnyIsoChannel,
         },
+        // 21. Digi 003 Console (Config ROM read from the unit: no root model,
+        //     per-product unit specifier)
+        {
+            .description = "Digi 003 Console (Digi00x register family)",
+            .evidence = MakeEvidence(kAvidVendorId, std::nullopt, 0x00a07e0000aa0000ULL,
+                                     kDigi003ConsoleSpecifierId, kDigi00xUnitVersion,
+                                     kDigi00xConsoleModelId),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::Digi00xRegister,
+            .expectedProfileBuilder = ProfileBuilderId::Digi00x,
+            .expectedModelName = kDigi003ConsoleModelName,
+            .expectedBackend = Audio::AudioBackendKind::Digi00xRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::Digi00xRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+            .expectedStartShape = StreamStartShape::TransmitFirst,
+            .expectedIrmChoosesAnyChannel = true,
+        },
+        // 22. Digi 002 Rack (Config ROM read from the unit)
+        {
+            .description = "Digi 002 Rack (Digi00x register family)",
+            .evidence = MakeEvidence(kAvidVendorId, std::nullopt, 0x00a07e0000a40000ULL,
+                                     kDigi002RackSpecifierId, kDigi00xUnitVersion,
+                                     kDigi00xRackModelId),
+            .expectedSupport = SupportDisposition::Supported,
+            .expectedFamily = AudioFamilyProviderId::Digi00xRegister,
+            .expectedProfileBuilder = ProfileBuilderId::Digi00x,
+            .expectedModelName = kDigi002RackModelName,
+            .expectedBackend = Audio::AudioBackendKind::Digi00xRegister,
+            .expectedBootstrap = Audio::ProbeBootstrap::Digi00xRegister,
+            .expectedFilter = Discovery::AvcCommandFilterId::BlockAll,
+            .expectedStartShape = StreamStartShape::TransmitFirst,
+            .expectedIrmChoosesAnyChannel = true,
+        },
     };
     return kTable;
 }

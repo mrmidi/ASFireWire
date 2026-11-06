@@ -4,8 +4,9 @@
 // Digi00xWiringTests.cpp - the Digi 002/003 family as the rest of the stack
 // sees it: backend and probe selection, the AV/C bound, catalog validation of a
 // supported row, the protocol object, the published nub description and the
-// stream profile. The catalog rows stay RecognizedUnsupported until playback
-// is scrambled (issue #249), so these tests build their plans directly.
+// stream profile (issue #249). The catalog rows themselves are pinned in
+// AudioDeviceCatalogTests and CatalogMatcherAgreementTests; these tests build
+// their plans directly.
 
 #include "DICEDuplexTestSupport.hpp"
 #include "Audio/Protocols/Digi00x/Digi00xDeviceProtocol.hpp"
