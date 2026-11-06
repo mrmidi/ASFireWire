@@ -113,6 +113,9 @@ struct DuplexStreamProfile {
     // the RX decode takes its stride from the configured AM824 slot count instead
     // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).
     bool captureTrustConfiguredStride{false};
+    // The capture SYT is not a presentation time: receive timing comes from
+    // packet continuity (StreamWirePolicy::captureSytUnaware).
+    bool captureSytUnaware{false};
 
     // MOTU only: PCM chunks per data block, per direction. Its samples are 3-byte chunks
     // rather than quadlet slots, so the am824Slots geometry above does not describe them
@@ -365,6 +368,7 @@ class DuplexStreamProfileResolver final {
             // wrong dbs above 88.2 kHz.
             profile.captureTrustConfiguredStride = true;
         }
+        profile.captureSytUnaware = traits.wire.captureSytUnaware;
 
         // The special-firmware personas cannot answer the BridgeCo channel
         // position query. Their model-specific AM824 slot order is resolved

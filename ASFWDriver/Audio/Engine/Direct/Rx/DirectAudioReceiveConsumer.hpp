@@ -40,6 +40,10 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         // Loud OXFW quirk: take the RX stride from the configured slot count,
         // not the packet's CIP dbs field (snd-oxfw SND_OXFW_QUIRK_WRONG_DBS).
         bool trustConfiguredStride{false};
+        // The CIP SYT is not a presentation time: never feed it to the SYT
+        // cadence, and establish timing from an unbroken run of packets, one
+        // per cycle, as for headerless framing.
+        bool sytUnaware{false};
         RxCaptureChannelMap captureChannelMap{};
     };
 
@@ -176,7 +180,13 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
-    uint32_t headerlessContinuousCycles_{0};
+    // Packets received on consecutive cycles since the last gap; the timing
+    // authority for headerless and SYT-unaware streams.
+    uint32_t continuousCycles_{0};
+    // Raw SYT of the first packets of an SYT-unaware stream, logged once per
+    // start so a hardware run shows what the device sends.
+    static constexpr uint32_t kSytUnawareLogPackets = 8;
+    uint32_t sytUnawareLogged_{0};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};
     uint64_t prevLoggedAnchorHostTicks_{0};

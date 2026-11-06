@@ -453,6 +453,8 @@ TEST(AudioDeviceCatalog, CapturedDigi00xUnitsResolveToTheRegisterFamily) {
         EXPECT_EQ(plan->streamTraits.start.startShape, StreamStartShape::TransmitFirst);
         EXPECT_EQ(plan->streamTraits.resource.irmChannelMask, kAnyIsoChannel);
         EXPECT_EQ(plan->streamTraits.start.startRatePinHz, 0U);
+        // Capture SYT is not a presentation time.
+        EXPECT_TRUE(plan->streamTraits.wire.captureSytUnaware);
         EXPECT_EQ(plan->guidReliability, GuidReliability::KnownNonUnique);
         EXPECT_EQ(plan->vendorName, kDigidesignVendorName);
         EXPECT_EQ(plan->modelName, capture.modelName);

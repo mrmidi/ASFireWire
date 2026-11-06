@@ -101,7 +101,8 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     replayResetForStart_ = false;
     replayCycleInitialized_ = false;
     lastReplayCycleOrdinal_ = 0;
-    headerlessContinuousCycles_ = 0;
+    continuousCycles_ = 0;
+    sytUnawareLogged_ = 0;
     ztsTelemetry_.Reset();
     ztsTelemetryLogGate_.Reset();
     prevLoggedAnchorFrame_ = 0;
@@ -347,7 +348,9 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 break;
         }
         if (result.hasValidCip) {
-            if (result.syt == 0xffff) {
+            // An SYT-unaware device's SYT says nothing about data; an empty
+            // packet does.
+            if (configuration_.sytUnaware ? result.framesDecoded == 0 : result.syt == 0xffff) {
                 counters->rxNoDataPackets.fetch_add(1, std::memory_order_relaxed);
             } else {
                 counters->rxDataPackets.fetch_add(1, std::memory_order_relaxed);
@@ -428,6 +431,15 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         ::ASFW::Timing::kFWTimeWrapSeconds * ::ASFW::Timing::kCyclesPerSecond;
     const bool headerless = configuration_.framing ==
         ::ASFW::Encoding::AudioPacketFraming::kHeaderless;
+    // Streams whose timing is their packet continuity rather than SYT.
+    const bool continuityTimed = headerless || configuration_.sytUnaware;
+    if (configuration_.sytUnaware && result.hasValidCip &&
+        sytUnawareLogged_ < kSytUnawareLogPackets && !configuration_.isSecondary) {
+        ++sytUnawareLogged_;
+        ASFW_LOG(DirectAudio, "[RxSytUnaware] packet=%u syt=0x%04x dbc=%u frames=%u cycle=%u",
+                 sytUnawareLogged_, result.syt, result.dbc, result.framesDecoded,
+                 cycleFields.cycle);
+    }
     const uint32_t cycleDelta = replayCycleInitialized_
         ? (cycleOrdinal + kCycleDomain - lastReplayCycleOrdinal_) % kCycleDomain
         : 1U;
@@ -435,8 +447,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (replayCycleInitialized_ && cycleDelta != 1U) {
         if (headerless && cycleDelta == 2U) {
             reconstructOneCycle = true;
-            if (headerlessContinuousCycles_ != UINT32_MAX) {
-                ++headerlessContinuousCycles_;
+            if (continuousCycles_ != UINT32_MAX) {
+                ++continuousCycles_;
             }
         } else {
         ResetReplayEpochForDiscontinuity(
@@ -451,10 +463,10 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 .observedCycleOrdinal = cycleOrdinal,
                 .sampleFrame = absoluteFrameCursor_,
             });
-            headerlessContinuousCycles_ = 0;
+            continuousCycles_ = 0;
         }
-    } else if (headerless && headerlessContinuousCycles_ != UINT32_MAX) {
-        ++headerlessContinuousCycles_;
+    } else if (continuityTimed && continuousCycles_ != UINT32_MAX) {
+        ++continuousCycles_;
     }
     lastReplayCycleOrdinal_ = cycleOrdinal;
     replayCycleInitialized_ = true;
@@ -493,7 +505,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             result.strideQuadlets, result.framesDecoded, cycleFields.cycle, replayEntry.firstAudioFrame);
     }
 
-    if (result.hasValidCip && result.syt != 0xffff) {
+    if (!configuration_.sytUnaware && result.hasValidCip && result.syt != 0xffff) {
         const bool cadenceAccepted = inputView_.control->rxSytCadence.Observe(
             result.syt, timestamp.cycleTimer);
         if (!cadenceAccepted && inputView_.control->rxSequenceReplay.IsEstablished()) {
@@ -519,8 +531,8 @@ void DirectAudioReceiveConsumer::ConsumePacket(
 
     ::ASFW::Driver::RxSytCadence::Snapshot cadence{};
     (void)inputView_.control->rxSytCadence.TrySnapshot(cadence);
-    const bool timingEstablished = headerless
-        ? headerlessContinuousCycles_ >=
+    const bool timingEstablished = continuityTimed
+        ? continuousCycles_ >=
               ::ASFW::Audio::Runtime::RxSequenceReplayState::kReadDelay
         : timingObserver_ != nullptr
         ? timingObserver_->IsTimingEstablished()
@@ -780,7 +792,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
     }
     cadenceEstablishedLogged_ = false;
     replayCycleInitialized_ = false;
-    headerlessContinuousCycles_ = 0;
+    continuousCycles_ = 0;
     // Before this was gated on `wasEstablished` alone, which made the one record
     // that explains a reset unreachable in the only case where nothing else
     // explains it: a stream that never established. A device that is rejected on

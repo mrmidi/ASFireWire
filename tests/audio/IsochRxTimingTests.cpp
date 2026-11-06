@@ -568,6 +568,72 @@ TEST(IsochRxTimingTests, SyntheticHeaderlessReplayHandlesWrapOneGapAndLargeLoss)
     EXPECT_FALSE(control.rxSequenceReplay.IsEstablished());
 }
 
+// Digi 002 / 003 (issue #249): the capture SYT is not a presentation time. A
+// 002 Console sends SYT 0x0000 in every packet; ~19,000 of them in 2 s never
+// established an SYT cadence, so StartIO timed out waiting for the first clock
+// anchor. An
+// SYT-unaware stream establishes from packet continuity instead and publishes
+// the anchor; the same stream timed by SYT never does.
+TEST(IsochRxTimingTests, SytUnawareCaptureEstablishesFromContinuityNotSyt) {
+    for (const bool sytUnaware : {false, true}) {
+        SCOPED_TRACE(sytUnaware ? "syt-unaware" : "syt-timed");
+        std::array<float, 4096> input{};
+        ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+        const uint64_t epoch = control.hardwareTimeline.BeginEpoch(
+            ASFW::Audio::Runtime::HardwareTimelineSource::Receive,
+            ASFW::Audio::Runtime::HardwareTimelineDiscontinuity::StartIO, 48000, 0);
+        FixedDirectAudioBindingSource source({
+            .generation = 1, .inputBase = input.data(), .inputBytes = sizeof(input),
+            .inputFrames = 2048, .inputChannels = 2, .control = &control,
+            .sampleRateHz = 48000, .valid = true,
+        });
+        ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer(
+            &source, {.am824Slots = 2, .streamChannels = 2, .sytUnaware = sytUnaware});
+        consumer.OnReceiveActivated();
+
+        // Prefix (receive timestamp in bytes 0-1), CIP header, two frames of
+        // two AM824 slots. The SYT is the same in every packet.
+        std::array<uint8_t, 32> bytes{};
+        const ASFW::Isoch::IsochReceivePacket packet{.descriptorIndex = 0, .payload = bytes};
+        uint8_t dbc = 0;
+        auto deliver = [&](uint32_t seconds, uint32_t cycle) {
+            const uint16_t raw = static_cast<uint16_t>(((seconds & 7U) << 13) | cycle);
+            bytes[0] = static_cast<uint8_t>(raw);
+            bytes[1] = static_cast<uint8_t>(raw >> 8);
+            WriteBE32(bytes.data() + 8, 0x02020000U | dbc);
+            WriteBE32(bytes.data() + 12, 0x90021234U);
+            for (size_t q = 0; q < 4; ++q) WriteBE32(bytes.data() + 16 + q * 4, 0x40000100U);
+            dbc = static_cast<uint8_t>(dbc + 2);
+            const ASFW::Isoch::IsochReceiveBatch batch{
+                .drainCycleTimer = EncodeCycleTimer(seconds, cycle, 0),
+                .drainHostTicks = uint64_t{seconds} * 1'000'000'000ULL + uint64_t{cycle} * 125'000ULL,
+            };
+            consumer.BeginReceiveBatch(batch);
+            consumer.ConsumePacket(batch, packet);
+        };
+
+        // Enough packets to establish (256) and to reach the first ZTS
+        // boundary (12288 frames at two frames a packet).
+        uint32_t seconds = 3;
+        uint32_t cycle = 0;
+        for (uint32_t i = 0; i < 6400; ++i) {
+            deliver(seconds, cycle);
+            if (++cycle == 8000) { cycle = 0; ++seconds; }
+        }
+
+        EXPECT_EQ(control.rxSequenceReplay.IsEstablished(), sytUnaware);
+        ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
+        EXPECT_EQ(control.hostClockAnchor.TryReadLatest(0, anchor), sytUnaware);
+        if (sytUnaware) {
+            EXPECT_EQ(anchor.timelineEpoch, epoch);
+            EXPECT_NE(anchor.hostTicks, 0U);
+        }
+        // With SYT ignored, packets count as data by their frames.
+        EXPECT_EQ(control.rxDataPackets.load(), 6400U);
+        EXPECT_EQ(control.rxNoDataPackets.load(), 0U);
+    }
+}
+
 TEST(IsochRxTimingTests, PacketProcessorAddsAM824LabelForRawSaffireCapture) {
     constexpr size_t kFrames = 1;
     constexpr size_t kDbs = 2;

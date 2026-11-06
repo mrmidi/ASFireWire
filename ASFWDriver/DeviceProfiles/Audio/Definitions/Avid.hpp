@@ -23,7 +23,9 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 // Stream traits, cross-validated with Linux sound/firewire/digi00x
 // (digi00x-stream.c): the IRM may pick any channel for either direction, and
 // the family driver writes both to the device (6 bits each); the device sends
-// nothing until it receives, so host transmit starts first. Rates, geometry
+// nothing until it receives, so host transmit starts first. Capture SYT is not
+// a presentation time (amdtp-dot.c CIP_UNAWARE_SYT; a 002 Console sends 0x0000
+// in every packet), so receive timing comes from packet continuity. Rates, geometry
 // and the wire format come from the Digi00x profile builder.
 constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
                                                   uint32_t unitSpecifierId,
@@ -48,6 +50,7 @@ constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
         .guidReliability = GuidReliability::KnownNonUnique,
         .persistentKeyRecipe = PersistentKeyRecipeId::None,
         .streamTraits = DeviceStreamTraits{
+            .wire = StreamWirePolicy{.captureSytUnaware = true},
             .resource = IsochResourcePolicy{.irmChannelMask = kAnyIsoChannel},
             .start = StreamStartPolicy{.startShape = StreamStartShape::TransmitFirst},
         },

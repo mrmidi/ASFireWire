@@ -267,6 +267,13 @@ struct StreamWirePolicy final {
 
     /// RME Fireface headerless LE PCM with signed data in the upper 24 bits.
     bool headerlessUpper24LE{false};
+
+    /// The capture-side CIP SYT is not a presentation time, so receive timing
+    /// is established from an unbroken run of packets, one per cycle, instead
+    /// of from SYT cadence. Digi 002 / 003: Linux amdtp-dot.c gives both
+    /// directions CIP_UNAWARE_SYT, and a 002 Console sends SYT 0x0000 in every
+    /// capture packet (hardware, 2026-11-05).
+    bool captureSytUnaware{false};
 };
 
 /// Any of the 64 isochronous channels.
