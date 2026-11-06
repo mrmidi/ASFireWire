@@ -9,7 +9,7 @@
 #define ASFW_BRIDGING_HEADER_H
 
 #import "ASFWDiagnosticsABI.h"
-#import "DVCaptureAtomics.h"
+#import "VideoCaptureAtomics.h"
 // Round-Trip Latency: the platform-neutral core and the shared CoreAudio session
 // (tools/rtl). The IOProc stays in C; Swift only creates, runs and reads sessions.
 #import "rtl_session.h"

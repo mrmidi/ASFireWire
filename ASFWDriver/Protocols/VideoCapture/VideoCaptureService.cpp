@@ -1,4 +1,4 @@
-#include "DVCaptureService.hpp"
+#include "VideoCaptureService.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -12,7 +12,7 @@
 #include "../../Logging/Logging.hpp"
 #include "../AVC/CMP/CMPClient.hpp"
 
-namespace ASFW::Protocols::DV {
+namespace ASFW::Protocols::VideoCapture {
 namespace {
 
 constexpr uint32_t kOperationTimeoutMs = 750;
@@ -122,9 +122,9 @@ struct PlugSelection {
 
 } // namespace
 
-DVCaptureService::DVCaptureService() : lock_(IOLockAlloc()) {}
+VideoCaptureService::VideoCaptureService() : lock_(IOLockAlloc()) {}
 
-DVCaptureService::~DVCaptureService() {
+VideoCaptureService::~VideoCaptureService() {
     // ServiceContext quiesces the receive context before destruction.
     ResetState();
     if (lock_) {
@@ -133,7 +133,7 @@ DVCaptureService::~DVCaptureService() {
     }
 }
 
-kern_return_t DVCaptureService::Start(
+kern_return_t VideoCaptureService::Start(
     uint64_t deviceGuid,
     uint64_t ownerToken,
     Driver::IsochService& isoch,
@@ -234,7 +234,7 @@ kern_return_t DVCaptureService::Start(
                         } else {
                             ASFW_LOG_WARNING(
                                 Isoch,
-                                "[DV] IRM allocation failed status=%{public}s; using broadcast channel %u",
+                                "[VideoCapture] IRM allocation failed status=%{public}s; using broadcast channel %u",
                                 IRM::ToString(status), channel);
                         }
                     }
@@ -243,7 +243,7 @@ kern_return_t DVCaptureService::Start(
         }
     } else {
         ASFW_LOG_WARNING(Isoch,
-                         "[DV] oMPR unavailable for GUID=0x%llx; using broadcast channel 63",
+                         "[VideoCapture] oMPR unavailable for GUID=0x%llx; using broadcast channel 63",
                          deviceGuid);
     }
 
@@ -259,7 +259,7 @@ kern_return_t DVCaptureService::Start(
     // One record per DV chunk (~7.5k/s, ~2.2 s here) or per TS packet. HDV at
     // ~25 Mbit/s is ~16.6k TS packets/s, so this holds ~1 s between app drains.
     constexpr uint32_t kRingRecords = 16384;
-    const uint64_t ringBytes = DVCaptureSink::RequiredBytes(kRingRecords);
+    const uint64_t ringBytes = VideoCaptureSink::RequiredBytes(kRingRecords);
 
     IOBufferMemoryDescriptor* rawMemory = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(
@@ -327,13 +327,13 @@ kern_return_t DVCaptureService::Start(
     active_ = true;
     sink_.MarkActive(channel, static_cast<uint8_t>(mode));
     ASFW_LOG(Isoch,
-             "[DV] capture started GUID=0x%llx channel=%u mode=%u plug=%u bandwidth=%u owner=0x%llx",
+             "[VideoCapture] capture started GUID=0x%llx channel=%u mode=%u plug=%u bandwidth=%u owner=0x%llx",
              deviceGuid, channel, static_cast<unsigned>(mode), outputPlug,
              bandwidthUnits, ownerToken);
     return kIOReturnSuccess;
 }
 
-kern_return_t DVCaptureService::Stop(uint64_t ownerToken,
+kern_return_t VideoCaptureService::Stop(uint64_t ownerToken,
                                      Driver::IsochService& isoch) {
     if (!lock_) return kIOReturnNotReady;
     LockGuard guard(lock_);
@@ -349,13 +349,13 @@ kern_return_t DVCaptureService::Stop(uint64_t ownerToken,
     sink_.MarkTerminal(CaptureState::Stopped);
     sink_.LogSessionSummary();
     const kern_return_t kr = TeardownConnection(false);
-    ASFW_LOG(Isoch, "[DV] capture stopped owner=0x%llx kr=0x%x",
+    ASFW_LOG(Isoch, "[VideoCapture] capture stopped owner=0x%llx kr=0x%x",
              ownerToken, kr);
     ResetState();
     return kr;
 }
 
-void DVCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
+void VideoCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
     if (!lock_) return;
     LockGuard guard(lock_);
     if (active_) {
@@ -363,7 +363,7 @@ void DVCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
         if (stopStatus != kIOReturnSuccess) {
             ASFW_LOG_ERROR(
                 Isoch,
-                "[DV] capture stop-all could not quiesce IR kr=0x%x; retaining session",
+                "[VideoCapture] capture stop-all could not quiesce IR kr=0x%x; retaining session",
                 stopStatus);
             return;
         }
@@ -374,7 +374,7 @@ void DVCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
     ResetState();
 }
 
-void DVCaptureService::HandleBusReset(
+void VideoCaptureService::HandleBusReset(
     Driver::IsochService& isoch) noexcept {
     if (!lock_) return;
     LockGuard guard(lock_);
@@ -387,19 +387,19 @@ void DVCaptureService::HandleBusReset(
     if (stopStatus != kIOReturnSuccess) {
         ASFW_LOG_ERROR(
             Isoch,
-            "[DV] bus-reset stop could not quiesce IR kr=0x%x; retaining session",
+            "[VideoCapture] bus-reset stop could not quiesce IR kr=0x%x; retaining session",
             stopStatus);
         return;
     }
     sink_.LogSessionSummary();
     (void)TeardownConnection(true);
     ASFW_LOG_WARNING(Isoch,
-                     "[DV] capture terminated by bus reset GUID=0x%llx",
+                     "[VideoCapture] capture terminated by bus reset GUID=0x%llx",
                      route_.guid);
     ResetState();
 }
 
-kern_return_t DVCaptureService::TeardownConnection(
+kern_return_t VideoCaptureService::TeardownConnection(
     bool generationInvalid) noexcept {
     kern_return_t result = kIOReturnSuccess;
     bool mayReleaseResources = !pcrConnected_;
@@ -441,7 +441,7 @@ kern_return_t DVCaptureService::TeardownConnection(
     return result;
 }
 
-kern_return_t DVCaptureService::CopyMemory(
+kern_return_t VideoCaptureService::CopyMemory(
     uint64_t ownerToken,
     uint64_t* options,
     IOMemoryDescriptor** memory) const {
@@ -459,13 +459,13 @@ kern_return_t DVCaptureService::CopyMemory(
     return kIOReturnSuccess;
 }
 
-bool DVCaptureService::IsActive() const noexcept {
+bool VideoCaptureService::IsActive() const noexcept {
     if (!lock_) return false;
     LockGuard guard(lock_);
     return active_;
 }
 
-void DVCaptureService::ResetState() noexcept {
+void VideoCaptureService::ResetState() noexcept {
     sink_.Detach();
     ring_.Reset();
     ownerToken_ = 0;
@@ -481,4 +481,4 @@ void DVCaptureService::ResetState() noexcept {
     active_ = false;
 }
 
-} // namespace ASFW::Protocols::DV
+} // namespace ASFW::Protocols::VideoCapture

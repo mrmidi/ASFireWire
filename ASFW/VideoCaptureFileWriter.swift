@@ -1,6 +1,6 @@
 import Foundation
 
-actor DVFileWriter {
+actor VideoCaptureFileWriter {
     private let handle: FileHandle
     private var closed = false
 

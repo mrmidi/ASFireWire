@@ -1,4 +1,4 @@
-// DVCaptureSink.hpp
+// VideoCaptureSink.hpp
 // ASFW - camcorder stream sink for payload-normalized isoch packets.
 //
 // Carries the two formats a tape camcorder sends on its output plug:
@@ -24,7 +24,7 @@
 #include "../../Isoch/Core/IsochTypes.hpp"
 #include "../../Logging/Logging.hpp"
 
-namespace ASFW::Protocols::DV {
+namespace ASFW::Protocols::VideoCapture {
 
 enum class CaptureState : uint32_t {
     Initializing = 0,
@@ -50,8 +50,8 @@ enum class StreamFormat : uint32_t {
 }
 
 // Shared-memory layout. Offsets are fixed and mirrored by
-// ASFW/DriverConnector+DVCapture.swift.
-struct DVRingHeader {
+// ASFW/DriverConnector+VideoCapture.swift.
+struct VideoCaptureRingHeader {
     uint32_t magic;            // +0   'ASDV'
     uint16_t version;          // +4
     uint8_t channel;           // +6   negotiated receive channel
@@ -83,21 +83,21 @@ struct DVRingHeader {
     uint8_t pad2[60];
 };
 
-static_assert(sizeof(DVRingHeader) == 192,
-              "DVRingHeader layout is ABI with the app");
+static_assert(sizeof(VideoCaptureRingHeader) == 192,
+              "VideoCaptureRingHeader layout is ABI with the app");
 static_assert(std::atomic<uint32_t>::is_always_lock_free &&
                   sizeof(std::atomic<uint32_t>) == sizeof(uint32_t),
-              "DV ring ABI requires lock-free 32-bit shared atomics");
-static_assert(offsetof(DVRingHeader, writeIndex) == 64,
+              "Capture ring ABI requires lock-free 32-bit shared atomics");
+static_assert(offsetof(VideoCaptureRingHeader, writeIndex) == 64,
               "writeIndex offset is ABI");
-static_assert(offsetof(DVRingHeader, streamFormat) == 68,
+static_assert(offsetof(VideoCaptureRingHeader, streamFormat) == 68,
               "streamFormat offset is ABI");
-static_assert(offsetof(DVRingHeader, droppedFragments) == 76,
+static_assert(offsetof(VideoCaptureRingHeader, droppedFragments) == 76,
               "droppedFragments offset is ABI");
-static_assert(offsetof(DVRingHeader, readIndex) == 128,
+static_assert(offsetof(VideoCaptureRingHeader, readIndex) == 128,
               "readIndex offset is ABI");
 
-class DVCaptureSink final : public ASFW::Isoch::IIsochReceiveConsumer {
+class VideoCaptureSink final : public ASFW::Isoch::IIsochReceiveConsumer {
 public:
     static constexpr uint32_t kMagic = 0x41534456; // 'ASDV'
     static constexpr uint16_t kVersion = 4;
@@ -119,7 +119,7 @@ public:
     static_assert(kTsPacketBytes <= kRecordBytes);
 
     [[nodiscard]] static uint64_t RequiredBytes(uint32_t numRecords) noexcept {
-        return sizeof(DVRingHeader) + uint64_t(numRecords) * kRecordBytes;
+        return sizeof(VideoCaptureRingHeader) + uint64_t(numRecords) * kRecordBytes;
     }
 
     [[nodiscard]] bool InitializeAndAttach(void* base,
@@ -131,13 +131,13 @@ public:
         }
 
         std::memset(base, 0, size_t(RequiredBytes(numRecords)));
-        auto* hdr = ::new (base) DVRingHeader{};
+        auto* hdr = ::new (base) VideoCaptureRingHeader{};
         hdr->magic = kMagic;
         hdr->version = kVersion;
         hdr->channel = 0xFF;
         hdr->numRecords = numRecords;
         hdr->recordBytes = kRecordBytes;
-        hdr->dataOffsetBytes = sizeof(DVRingHeader);
+        hdr->dataOffsetBytes = sizeof(VideoCaptureRingHeader);
         hdr->state.store(static_cast<uint32_t>(CaptureState::Initializing),
                          std::memory_order_relaxed);
         hdr->writeIndex.store(0, std::memory_order_relaxed);
@@ -180,7 +180,7 @@ public:
     void LogSessionSummary() const noexcept {
         if (!hdr_) return;
         ASFW_LOG(Isoch,
-                 "[DV] session summary format=%{public}s packets=%u records=%u rejected=%u "
+                 "[VideoCapture] session summary format=%{public}s packets=%u records=%u rejected=%u "
                  "dbcGaps=%u invalid=%u droppedFragments=%u overruns=%u "
                  "lastReject len=%u q0=0x%08x q1=0x%08x",
                  ToString(format_),
@@ -280,7 +280,7 @@ private:
             std::memory_order_relaxed);
         hdr_->streamFormat.store(static_cast<uint32_t>(format),
                                  std::memory_order_release);
-        ASFW_LOG(Isoch, "[DV] stream format locked: %{public}s",
+        ASFW_LOG(Isoch, "[VideoCapture] stream format locked: %{public}s",
                  ToString(format));
     }
 
@@ -428,7 +428,7 @@ private:
         hdr_->sourcePackets.fetch_add(1, std::memory_order_relaxed);
     }
 
-    DVRingHeader* hdr_{nullptr};
+    VideoCaptureRingHeader* hdr_{nullptr};
     uint8_t* data_{nullptr};
     uint32_t numRecords_{0};
     uint8_t expectedDbc_{0};
@@ -438,4 +438,4 @@ private:
     size_t tsPartialBlocks_{0};
 };
 
-} // namespace ASFW::Protocols::DV
+} // namespace ASFW::Protocols::VideoCapture

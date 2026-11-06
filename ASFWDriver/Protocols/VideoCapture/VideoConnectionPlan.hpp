@@ -6,7 +6,7 @@
 #include "../../Bus/IRM/IRMClient.hpp"
 #include "../AVC/CMP/PCRCodec.hpp"
 
-namespace ASFW::Protocols::DV {
+namespace ASFW::Protocols::VideoCapture {
 
 enum class ConnectionMode : uint8_t {
     Initializing = 0,
@@ -51,4 +51,4 @@ CalculateBandwidthUnits(uint32_t opcr, uint8_t effectiveSpeed) noexcept {
     return units;
 }
 
-} // namespace ASFW::Protocols::DV
+} // namespace ASFW::Protocols::VideoCapture

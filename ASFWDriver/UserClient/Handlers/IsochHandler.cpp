@@ -46,9 +46,9 @@ kern_return_t IsochHandler::MotuCapture(IOUserClientMethodArguments* args) {
 }
 
 void IsochHandler::ReleaseOwner() noexcept {
-    if (driver_ && ownsDVCapture_) {
-        (void)driver_->StopDVCapture(ownerToken_);
-        ownsDVCapture_ = false;
+    if (driver_ && ownsVideoCapture_) {
+        (void)driver_->StopVideoCapture(ownerToken_);
+        ownsVideoCapture_ = false;
     }
 }
 
@@ -325,10 +325,10 @@ kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) 
 }
 
 // ============================================================================
-// DV Capture Control
+// Video Capture Control
 // ============================================================================
 
-kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
+kern_return_t IsochHandler::StartVideoCapture(IOUserClientMethodArguments* args) {
     // Arguments: [0] = stable device GUID. The driver resolves the current
     // node/generation and negotiates the receive channel through CMP/IRM.
     if (args->scalarInputCount < 1)
@@ -337,20 +337,20 @@ kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
     if (deviceGuid == 0)
         return kIOReturnBadArgument;
 
-    ASFW_LOG(UserClient, "StartDVCapture called for GUID 0x%llx", deviceGuid);
-    const kern_return_t kr = driver_->StartDVCapture(
+    ASFW_LOG(UserClient, "StartVideoCapture called for GUID 0x%llx", deviceGuid);
+    const kern_return_t kr = driver_->StartVideoCapture(
         deviceGuid, ownerToken_);
     if (kr == kIOReturnSuccess) {
-        ownsDVCapture_ = true;
+        ownsVideoCapture_ = true;
     }
     return kr;
 }
 
-kern_return_t IsochHandler::StopDVCapture(IOUserClientMethodArguments* args) {
-    ASFW_LOG(UserClient, "StopDVCapture called");
-    const kern_return_t kr = driver_->StopDVCapture(ownerToken_);
+kern_return_t IsochHandler::StopVideoCapture(IOUserClientMethodArguments* args) {
+    ASFW_LOG(UserClient, "StopVideoCapture called");
+    const kern_return_t kr = driver_->StopVideoCapture(ownerToken_);
     if (kr == kIOReturnSuccess) {
-        ownsDVCapture_ = false;
+        ownsVideoCapture_ = false;
     }
     return kr;
 }

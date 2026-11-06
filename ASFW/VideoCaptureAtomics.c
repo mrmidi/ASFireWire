@@ -1,4 +1,4 @@
-#include "DVCaptureAtomics.h"
+#include "VideoCaptureAtomics.h"
 
 uint32_t ASFWAtomicLoadU32Acquire(const volatile uint32_t* value) {
     return __atomic_load_n(value, __ATOMIC_ACQUIRE);

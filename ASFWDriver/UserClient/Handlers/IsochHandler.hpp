@@ -40,9 +40,9 @@ public:
     kern_return_t StartIsochReceive(IOUserClientMethodArguments* args);
     kern_return_t StopIsochReceive(IOUserClientMethodArguments* args);
 
-    // DV Capture Control
-    kern_return_t StartDVCapture(IOUserClientMethodArguments* args);
-    kern_return_t StopDVCapture(IOUserClientMethodArguments* args);
+    // Video Capture Control
+    kern_return_t StartVideoCapture(IOUserClientMethodArguments* args);
+    kern_return_t StopVideoCapture(IOUserClientMethodArguments* args);
     
     // Isoch Metrics
     
@@ -53,7 +53,7 @@ public:
 private:
     ::ASFWDriver* driver_;
     uint64_t ownerToken_{0};
-    bool ownsDVCapture_{false};
+    bool ownsVideoCapture_{false};
 };
 
 } // namespace ASFW::UserClient

@@ -25,11 +25,11 @@ struct BusInspectorTests {
 
     @Test func everydayFeaturesAndReportsStayOutsideAdvancedTools() {
         let sections: [ModernContentView.SidebarSection] = [
-            .dvCapture, .busInspector, .avcUnits, .deviceControls, .audioAnalyzer,
+            .videoCapture, .busInspector, .avcUnits, .deviceControls, .audioAnalyzer,
             .diagnostics, .diceReport, .avcReport, .logs, .loggingSettings
         ]
         #expect(sections.allSatisfy { !$0.requiresAdvancedTools })
-        #expect(ModernContentView.SidebarSection.dvCapture.group == .video)
+        #expect(ModernContentView.SidebarSection.videoCapture.group == .video)
         #expect(ModernContentView.SidebarSection.avcCommands.requiresAdvancedTools)
         #expect(ModernContentView.SidebarSection.busReset.requiresAdvancedTools)
         #expect(!ModernContentView.SidebarSection.allCases.contains { $0.rawValue == "Saffire" })

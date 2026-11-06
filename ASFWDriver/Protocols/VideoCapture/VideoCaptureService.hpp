@@ -9,8 +9,8 @@
 
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Discovery/DeviceRouteToken.hpp"
-#include "DVConnectionPlan.hpp"
-#include "DVCaptureSink.hpp"
+#include "VideoConnectionPlan.hpp"
+#include "VideoCaptureSink.hpp"
 
 namespace ASFW::Driver {
 class HardwareInterface;
@@ -29,17 +29,17 @@ namespace ASFW::CMP {
 class CMPClient;
 }
 
-namespace ASFW::Protocols::DV {
+namespace ASFW::Protocols::VideoCapture {
 
-/// Owns the DV content sink and its shared-memory session. The OHCI transport
+/// Owns the content sink and its shared-memory session. The OHCI transport
 /// remains payload-opaque and is borrowed only while this service is active.
-class DVCaptureService final {
+class VideoCaptureService final {
 public:
-    DVCaptureService();
-    ~DVCaptureService();
+    VideoCaptureService();
+    ~VideoCaptureService();
 
-    DVCaptureService(const DVCaptureService&) = delete;
-    DVCaptureService& operator=(const DVCaptureService&) = delete;
+    VideoCaptureService(const VideoCaptureService&) = delete;
+    VideoCaptureService& operator=(const VideoCaptureService&) = delete;
 
     [[nodiscard]] kern_return_t Start(uint64_t deviceGuid,
                                       uint64_t ownerToken,
@@ -84,7 +84,7 @@ private:
 
     mutable IOLock* lock_{nullptr};
     RingMapping ring_{};
-    DVCaptureSink sink_{};
+    VideoCaptureSink sink_{};
     uint64_t ownerToken_{0};
     // dev2 route/nub model: identity and liveness travel together in one token
     // (Discovery::DeviceRouteToken), replacing the separate guid/nodeId/generation
@@ -101,4 +101,4 @@ private:
     bool active_{false};
 };
 
-} // namespace ASFW::Protocols::DV
+} // namespace ASFW::Protocols::VideoCapture

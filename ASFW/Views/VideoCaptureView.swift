@@ -1,5 +1,5 @@
 //
-//  DVCaptureView.swift
+//  VideoCaptureView.swift
 //  ASFW
 //
 //  Capture DV or HDV video from a tape camcorder to a raw file.
@@ -19,7 +19,7 @@ import Combine
 // MARK: - Capture Controller
 
 @MainActor
-final class DVCaptureController: ObservableObject {
+final class VideoCaptureController: ObservableObject {
     @Published var isCapturing = false
     @Published var bytesWritten: UInt64 = 0
     @Published var framesSeen: Int = 0
@@ -27,12 +27,12 @@ final class DVCaptureController: ObservableObject {
     @Published var droppedFrames: Int = 0
     @Published var duplicateBlocks: Int = 0
     @Published var invalidBlocks: Int = 0
-    @Published var stats = DVCaptureStats()
+    @Published var stats = VideoCaptureStats()
     @Published var systemLabel = "—"
     @Published var lastError: String?
 
-    private var ring: DVCaptureRing?
-    private var fileWriter: DVFileWriter?
+    private var ring: VideoCaptureRing?
+    private var fileWriter: VideoCaptureFileWriter?
     private var captureTask: Task<Void, Never>?
     private var assembler = DVFrameAssembler()
 
@@ -42,23 +42,23 @@ final class DVCaptureController: ObservableObject {
         guard !isCapturing else { return }
         lastError = nil
 
-        guard connector.startDVCapture(deviceGUID: deviceGUID) else {
-            lastError = connector.lastError ?? "startDVCapture failed (is audio receive running?)"
+        guard connector.startVideoCapture(deviceGUID: deviceGUID) else {
+            lastError = connector.lastError ?? "startVideoCapture failed (is audio receive running?)"
             return
         }
 
-        guard let mappedRing = connector.mapDVCaptureRing() else {
-            lastError = "Failed to map DV ring"
-            _ = connector.stopDVCapture()
+        guard let mappedRing = connector.mapVideoCaptureRing() else {
+            lastError = "Failed to map capture ring"
+            _ = connector.stopVideoCapture()
             return
         }
 
-        let writer: DVFileWriter
+        let writer: VideoCaptureFileWriter
         do {
-            writer = try DVFileWriter(url: url)
+            writer = try VideoCaptureFileWriter(url: url)
         } catch {
             lastError = "Could not create \(url.lastPathComponent): \(error.localizedDescription)"
-            _ = connector.stopDVCapture()
+            _ = connector.stopVideoCapture()
             mappedRing.unmap()
             return
         }
@@ -113,13 +113,13 @@ final class DVCaptureController: ObservableObject {
             break
         }
         stats = ring.stats
-        if DVCaptureSessionState(rawValue: stats.sessionState) == .busReset {
+        if VideoCaptureSessionState(rawValue: stats.sessionState) == .busReset {
             lastError = "Capture stopped because the FireWire bus reset. Select the camcorder again and restart capture."
             await shutdown(connector: connector)
         }
     }
 
-    private func drainDV(_ ring: DVCaptureRing,
+    private func drainDV(_ ring: VideoCaptureRing,
                          connector: ASFWDriverConnector) async {
         var completedFrames: [Data] = []
         var dropped = 0
@@ -147,7 +147,7 @@ final class DVCaptureController: ObservableObject {
 
     // HDV: the driver has already checked each 188-byte packet's sync byte;
     // they are written back to back as an MPEG-2 transport stream.
-    private func drainTransportStream(_ ring: DVCaptureRing,
+    private func drainTransportStream(_ ring: VideoCaptureRing,
                                       connector: ASFWDriverConnector) async {
         var stream = Data()
         var packets = 0
@@ -192,14 +192,14 @@ final class DVCaptureController: ObservableObject {
     private func shutdown(connector: ASFWDriverConnector) async {
         captureTask?.cancel()
         captureTask = nil
-        _ = connector.stopDVCapture()
+        _ = connector.stopVideoCapture()
         ring?.unmap()
         ring = nil
         if let fileWriter {
             do {
                 try await fileWriter.close()
             } catch where lastError == nil {
-                lastError = "Could not finalize DV file: \(error.localizedDescription)"
+                lastError = "Could not finalize capture file: \(error.localizedDescription)"
             } catch { }
         }
         self.fileWriter = nil
@@ -209,9 +209,9 @@ final class DVCaptureController: ObservableObject {
 
 // MARK: - View
 
-struct DVCaptureView: View {
+struct VideoCaptureView: View {
     @ObservedObject var viewModel: DebugViewModel
-    @StateObject private var controller = DVCaptureController()
+    @StateObject private var controller = VideoCaptureController()
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?

@@ -203,11 +203,11 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->BeginTeardown();
     }
-    // DV capture holds an isoch receive consumer and a shared ring mapping, so it
+    // Video capture holds an isoch receive consumer and a shared ring mapping, so it
     // must stop before buffers, mappings or hardware are released. In the merged
     // lifecycle this belongs here rather than in ServiceContext::Reset, which only
     // releases resources after the quiesce executor has stopped them.
-    ctx.dvCapture.StopAll(ctx.isoch);
+    ctx.videoCapture.StopAll(ctx.isoch);
     if (ctx.deps.avcDiscovery) {
         ctx.deps.avcDiscovery->Shutdown();
     }
@@ -1339,7 +1339,7 @@ kern_return_t ASFWDriver::StopIsochReceive() {
     if (!ivars || !ivars->context || !ivars->context->isoch.ReceiveContext()) {
         return kIOReturnNotReady;
     }
-    if (ivars->context->dvCapture.IsActive()) {
+    if (ivars->context->videoCapture.IsActive()) {
         return kIOReturnExclusiveAccess;
     }
     return ivars->context->isoch.StopReceive();
@@ -1353,17 +1353,17 @@ void* ASFWDriver::GetIsochReceiveContext() const {
 }
 
 // =============================================================================
-// MARK: - DV Capture (no audio nub required)
+// MARK: - Video Capture (no audio nub required)
 // =============================================================================
 
-kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
+kern_return_t ASFWDriver::StartVideoCapture(uint64_t deviceGuid,
                                          uint64_t ownerToken) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
     }
     auto& ctx = *ivars->context;
     if (!ctx.deps.hardware) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartDVCapture: hardware not ready");
+        ASFW_LOG(Controller, "[Isoch] ❌ StartVideoCapture: hardware not ready");
         return kIOReturnNotReady;
     }
     // dev2 replaced the ServiceContext::stopping flag with the lifecycle
@@ -1375,27 +1375,27 @@ kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
         !ctx.deps.cmpClient) {
         return kIOReturnNotReady;
     }
-    return ctx.dvCapture.Start(deviceGuid, ownerToken, ctx.isoch,
+    return ctx.videoCapture.Start(deviceGuid, ownerToken, ctx.isoch,
                                *ctx.deps.hardware, *ctx.deps.deviceRegistry,
                                *ctx.deps.irmClient, *ctx.deps.cmpClient);
 }
 
-kern_return_t ASFWDriver::StopDVCapture(uint64_t ownerToken) {
+kern_return_t ASFWDriver::StopVideoCapture(uint64_t ownerToken) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
     }
-    return ivars->context->dvCapture.Stop(ownerToken,
+    return ivars->context->videoCapture.Stop(ownerToken,
                                           ivars->context->isoch);
 }
 
-kern_return_t ASFWDriver::CopyDVCaptureMemory(
+kern_return_t ASFWDriver::CopyVideoCaptureMemory(
     uint64_t ownerToken,
     uint64_t* options,
     IOMemoryDescriptor** memory) const {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
     }
-    return ivars->context->dvCapture.CopyMemory(ownerToken, options, memory);
+    return ivars->context->videoCapture.CopyMemory(ownerToken, options, memory);
 }
 
 kern_return_t ASFWDriver::CopyAudioObserverMemory(

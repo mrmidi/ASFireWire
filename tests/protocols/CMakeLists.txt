@@ -298,8 +298,8 @@ add_protocols_test(PCRCodecTests
     PCRCodecTests.cpp
 )
 
-add_protocols_test(DVCaptureSinkTests
-    DVCaptureSinkTests.cpp
+add_protocols_test(VideoCaptureSinkTests
+    VideoCaptureSinkTests.cpp
 )
 
 # SBP2 ORB Tests

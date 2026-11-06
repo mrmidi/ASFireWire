@@ -54,9 +54,9 @@ final class ASFWDriverConnector: ObservableObject {
         case setIsochVerbosity = 40
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
-        // DV capture (raw DIF stream via shared ring, memory type 1)
-        case startDVCapture = 50
-        case stopDVCapture = 51
+        // Video capture (DV or HDV stream via shared ring, memory type 1)
+        case startVideoCapture = 50
+        case stopVideoCapture = 51
         // Developer-only local software bus reset, generation-pinned.
         case requestUserBusReset = 61
         case startAudioStreaming = 62

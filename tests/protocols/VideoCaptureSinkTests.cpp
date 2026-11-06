@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Protocols/DV/DVCaptureSink.hpp"
+#include "Protocols/VideoCapture/VideoCaptureSink.hpp"
 
 #include <array>
 #include <cstring>
@@ -40,12 +40,12 @@ ASFW::Isoch::IsochReceivePacket View(std::span<const uint8_t> payload,
     };
 }
 
-void Consume(ASFW::Protocols::DV::DVCaptureSink& sink,
+void Consume(ASFW::Protocols::VideoCapture::VideoCaptureSink& sink,
              const ASFW::Isoch::IsochReceivePacket& packet) {
     sink.ConsumePacket(ASFW::Isoch::IsochReceiveBatch{}, packet);
 }
 
-using Sink = ASFW::Protocols::DV::DVCaptureSink;
+using Sink = ASFW::Protocols::VideoCapture::VideoCaptureSink;
 using SourcePacket = std::array<uint8_t, Sink::kTsSourcePacketBytes>;
 
 // MPEG-2 TS CIP header as a Sony HVR-Z1U sends it while playing HDV:
@@ -97,8 +97,8 @@ struct TsFixture {
                                              records));
     }
 
-    ASFW::Protocols::DV::DVRingHeader& Header() {
-        return *reinterpret_cast<ASFW::Protocols::DV::DVRingHeader*>(
+    ASFW::Protocols::VideoCapture::VideoCaptureRingHeader& Header() {
+        return *reinterpret_cast<ASFW::Protocols::VideoCapture::VideoCaptureRingHeader*>(
             memory.data());
     }
 
@@ -109,7 +109,7 @@ struct TsFixture {
     // True when record `index` holds the 188-byte TS packet of `expected`.
     bool RecordHolds(uint32_t index, const SourcePacket& expected) {
         const uint8_t* record = memory.data() +
-                                sizeof(ASFW::Protocols::DV::DVRingHeader) +
+                                sizeof(ASFW::Protocols::VideoCapture::VideoCaptureRingHeader) +
                                 size_t(index) * Sink::kRecordBytes;
         return std::memcmp(record, expected.data() + Sink::kSphBytes,
                            Sink::kTsPacketBytes) == 0;
@@ -121,23 +121,23 @@ struct TsFixture {
 
 } // namespace
 
-TEST(DVCaptureSinkTests, PublishesValidatedDifChunk) {
+TEST(VideoCaptureSinkTests, PublishesValidatedDifChunk) {
     constexpr uint32_t records = 4;
     std::vector<uint8_t> memory(
-        ASFW::Protocols::DV::DVCaptureSink::RequiredBytes(records));
-    ASFW::Protocols::DV::DVCaptureSink sink;
+        ASFW::Protocols::VideoCapture::VideoCaptureSink::RequiredBytes(records));
+    ASFW::Protocols::VideoCapture::VideoCaptureSink sink;
     ASSERT_TRUE(sink.InitializeAndAttach(memory.data(), memory.size(), records));
 
     const auto packet = MakePacket();
     Consume(sink, View(packet));
 
-    auto* header = reinterpret_cast<ASFW::Protocols::DV::DVRingHeader*>(
+    auto* header = reinterpret_cast<ASFW::Protocols::VideoCapture::VideoCaptureRingHeader*>(
         memory.data());
     EXPECT_EQ(header->version,
-              ASFW::Protocols::DV::DVCaptureSink::kVersion);
+              ASFW::Protocols::VideoCapture::VideoCaptureSink::kVersion);
     EXPECT_EQ(header->writeIndex.load(std::memory_order_acquire), 1u);
     EXPECT_EQ(header->streamFormat.load(std::memory_order_acquire),
-              static_cast<uint32_t>(ASFW::Protocols::DV::StreamFormat::Dv));
+              static_cast<uint32_t>(ASFW::Protocols::VideoCapture::StreamFormat::Dv));
     EXPECT_EQ(header->sourcePacketBytes.load(std::memory_order_relaxed), 480u);
     EXPECT_EQ(header->sourcePackets.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header->rejectedPackets.load(std::memory_order_relaxed), 0u);
@@ -146,11 +146,11 @@ TEST(DVCaptureSinkTests, PublishesValidatedDifChunk) {
               0);
 }
 
-TEST(DVCaptureSinkTests, TracksDbcDiscontinuityAndBadCompletion) {
+TEST(VideoCaptureSinkTests, TracksDbcDiscontinuityAndBadCompletion) {
     constexpr uint32_t records = 4;
     std::vector<uint8_t> memory(
-        ASFW::Protocols::DV::DVCaptureSink::RequiredBytes(records));
-    ASFW::Protocols::DV::DVCaptureSink sink;
+        ASFW::Protocols::VideoCapture::VideoCaptureSink::RequiredBytes(records));
+    ASFW::Protocols::VideoCapture::VideoCaptureSink sink;
     ASSERT_TRUE(sink.InitializeAndAttach(memory.data(), memory.size(), records));
 
     const auto first = MakePacket(7);
@@ -159,64 +159,64 @@ TEST(DVCaptureSinkTests, TracksDbcDiscontinuityAndBadCompletion) {
     Consume(sink, View(gap));
     Consume(sink, View(gap, 0x1D));
 
-    auto* header = reinterpret_cast<ASFW::Protocols::DV::DVRingHeader*>(
+    auto* header = reinterpret_cast<ASFW::Protocols::VideoCapture::VideoCaptureRingHeader*>(
         memory.data());
     EXPECT_EQ(header->dbcDiscontinuities.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header->rejectedPackets.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header->writeIndex.load(std::memory_order_acquire), 2u);
 }
 
-TEST(DVCaptureSinkTests, RejectsChunkWithInvalidDifIdentifier) {
+TEST(VideoCaptureSinkTests, RejectsChunkWithInvalidDifIdentifier) {
     constexpr uint32_t records = 2;
     std::vector<uint8_t> memory(
-        ASFW::Protocols::DV::DVCaptureSink::RequiredBytes(records));
-    ASFW::Protocols::DV::DVCaptureSink sink;
+        ASFW::Protocols::VideoCapture::VideoCaptureSink::RequiredBytes(records));
+    ASFW::Protocols::VideoCapture::VideoCaptureSink sink;
     ASSERT_TRUE(sink.InitializeAndAttach(memory.data(), memory.size(), records));
 
     auto packet = MakePacket();
     packet[16] = 7u << 5;
     Consume(sink, View(packet));
 
-    auto* header = reinterpret_cast<ASFW::Protocols::DV::DVRingHeader*>(
+    auto* header = reinterpret_cast<ASFW::Protocols::VideoCapture::VideoCaptureRingHeader*>(
         memory.data());
     EXPECT_EQ(header->invalidSourcePackets.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header->writeIndex.load(std::memory_order_acquire), 0u);
 }
 
-TEST(DVCaptureSinkTests, PublishesConnectionAndBusResetState) {
+TEST(VideoCaptureSinkTests, PublishesConnectionAndBusResetState) {
     constexpr uint32_t records = 2;
     std::vector<uint8_t> memory(
-        ASFW::Protocols::DV::DVCaptureSink::RequiredBytes(records));
-    ASFW::Protocols::DV::DVCaptureSink sink;
+        ASFW::Protocols::VideoCapture::VideoCaptureSink::RequiredBytes(records));
+    ASFW::Protocols::VideoCapture::VideoCaptureSink sink;
     ASSERT_TRUE(sink.InitializeAndAttach(memory.data(), memory.size(), records));
 
-    auto* header = reinterpret_cast<ASFW::Protocols::DV::DVRingHeader*>(
+    auto* header = reinterpret_cast<ASFW::Protocols::VideoCapture::VideoCaptureRingHeader*>(
         memory.data());
     EXPECT_EQ(header->state.load(std::memory_order_acquire),
               static_cast<uint32_t>(
-                  ASFW::Protocols::DV::CaptureState::Initializing));
+                  ASFW::Protocols::VideoCapture::CaptureState::Initializing));
 
     sink.MarkActive(12, 3);
     EXPECT_EQ(header->state.load(std::memory_order_acquire),
               static_cast<uint32_t>(
-                  ASFW::Protocols::DV::CaptureState::Active));
+                  ASFW::Protocols::VideoCapture::CaptureState::Active));
     EXPECT_EQ(header->channel, 12u);
     EXPECT_EQ(header->connectionMode, 3u);
 
-    sink.MarkTerminal(ASFW::Protocols::DV::CaptureState::BusReset);
+    sink.MarkTerminal(ASFW::Protocols::VideoCapture::CaptureState::BusReset);
     EXPECT_EQ(header->state.load(std::memory_order_acquire),
               static_cast<uint32_t>(
-                  ASFW::Protocols::DV::CaptureState::BusReset));
+                  ASFW::Protocols::VideoCapture::CaptureState::BusReset));
 }
 
-TEST(DVCaptureSinkTests, PublishesTsPacketFromCapturedHvrZ1uHeader) {
+TEST(VideoCaptureSinkTests, PublishesTsPacketFromCapturedHvrZ1uHeader) {
     TsFixture fixture;
     const auto source = MakeSourcePacket(0x5A);
     fixture.Feed(MakeTsPacket(0xB8, Concat({source}), 0, 8));
 
     auto& header = fixture.Header();
     EXPECT_EQ(header.streamFormat.load(std::memory_order_acquire),
-              static_cast<uint32_t>(ASFW::Protocols::DV::StreamFormat::MpegTs));
+              static_cast<uint32_t>(ASFW::Protocols::VideoCapture::StreamFormat::MpegTs));
     EXPECT_EQ(header.sourcePacketBytes.load(std::memory_order_relaxed),
               Sink::kTsPacketBytes);
     EXPECT_EQ(header.writeIndex.load(std::memory_order_acquire), 1u);
@@ -225,7 +225,7 @@ TEST(DVCaptureSinkTests, PublishesTsPacketFromCapturedHvrZ1uHeader) {
     EXPECT_TRUE(fixture.RecordHolds(0, source));
 }
 
-TEST(DVCaptureSinkTests, PublishesEverySourcePacketInOneBusPacket) {
+TEST(VideoCaptureSinkTests, PublishesEverySourcePacketInOneBusPacket) {
     TsFixture fixture;
     const auto a = MakeSourcePacket(0x11);
     const auto b = MakeSourcePacket(0x22);
@@ -244,7 +244,7 @@ TEST(DVCaptureSinkTests, PublishesEverySourcePacketInOneBusPacket) {
     EXPECT_TRUE(fixture.RecordHolds(3, d));
 }
 
-TEST(DVCaptureSinkTests, ReassemblesSourcePacketSplitAcrossBusPackets) {
+TEST(VideoCaptureSinkTests, ReassemblesSourcePacketSplitAcrossBusPackets) {
     TsFixture fixture;
     const auto a = MakeSourcePacket(0x11);
     const auto b = MakeSourcePacket(0x22);
@@ -260,7 +260,7 @@ TEST(DVCaptureSinkTests, ReassemblesSourcePacketSplitAcrossBusPackets) {
     EXPECT_TRUE(fixture.RecordHolds(1, b));
 }
 
-TEST(DVCaptureSinkTests, EmptyPacketBetweenFragmentsKeepsReassembly) {
+TEST(VideoCaptureSinkTests, EmptyPacketBetweenFragmentsKeepsReassembly) {
     TsFixture fixture;
     const auto a = MakeSourcePacket(0x11);
     const auto stream = Concat({a});
@@ -274,7 +274,7 @@ TEST(DVCaptureSinkTests, EmptyPacketBetweenFragmentsKeepsReassembly) {
     EXPECT_TRUE(fixture.RecordHolds(0, a));
 }
 
-TEST(DVCaptureSinkTests, DbcGapDropsPartialSourcePacketAndResyncs) {
+TEST(VideoCaptureSinkTests, DbcGapDropsPartialSourcePacketAndResyncs) {
     TsFixture fixture;
     const auto a = MakeSourcePacket(0x11);
     const auto b = MakeSourcePacket(0x22);
@@ -288,7 +288,7 @@ TEST(DVCaptureSinkTests, DbcGapDropsPartialSourcePacketAndResyncs) {
     EXPECT_TRUE(fixture.RecordHolds(0, b));
 }
 
-TEST(DVCaptureSinkTests, SkipsTailOfSourcePacketWhoseStartWasNotSeen) {
+TEST(VideoCaptureSinkTests, SkipsTailOfSourcePacketWhoseStartWasNotSeen) {
     TsFixture fixture;
     const auto lost = MakeSourcePacket(0x11);
     const auto c = MakeSourcePacket(0x33);
@@ -301,7 +301,7 @@ TEST(DVCaptureSinkTests, SkipsTailOfSourcePacketWhoseStartWasNotSeen) {
     EXPECT_TRUE(fixture.RecordHolds(0, c));
 }
 
-TEST(DVCaptureSinkTests, CountsTsPacketWithoutSyncByte) {
+TEST(VideoCaptureSinkTests, CountsTsPacketWithoutSyncByte) {
     TsFixture fixture;
     auto bad = MakeSourcePacket(0x11);
     bad[Sink::kSphBytes] = 0x00;
@@ -312,7 +312,7 @@ TEST(DVCaptureSinkTests, CountsTsPacketWithoutSyncByte) {
     EXPECT_EQ(header.writeIndex.load(std::memory_order_acquire), 0u);
 }
 
-TEST(DVCaptureSinkTests, RejectsTsWithUnexpectedGeometry) {
+TEST(VideoCaptureSinkTests, RejectsTsWithUnexpectedGeometry) {
     TsFixture fixture;
     const auto a = MakeSourcePacket(0x11);
     constexpr uint32_t kFractionZero = kTsQ0WithoutDbc & ~(3u << 14);
@@ -321,13 +321,13 @@ TEST(DVCaptureSinkTests, RejectsTsWithUnexpectedGeometry) {
     auto& header = fixture.Header();
     EXPECT_EQ(header.rejectedPackets.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header.streamFormat.load(std::memory_order_acquire),
-              static_cast<uint32_t>(ASFW::Protocols::DV::StreamFormat::Unknown));
+              static_cast<uint32_t>(ASFW::Protocols::VideoCapture::StreamFormat::Unknown));
     EXPECT_EQ(header.lastRejectQ0.load(std::memory_order_relaxed),
               kFractionZero);
     EXPECT_EQ(header.lastRejectQ1.load(std::memory_order_relaxed), kTsQ1);
 }
 
-TEST(DVCaptureSinkTests, LockedTsSessionRejectsDvPackets) {
+TEST(VideoCaptureSinkTests, LockedTsSessionRejectsDvPackets) {
     TsFixture fixture;
     fixture.Feed(MakeTsPacket(0, Concat({MakeSourcePacket(0x11)}), 0, 8));
     const auto dv = MakePacket();
@@ -335,13 +335,13 @@ TEST(DVCaptureSinkTests, LockedTsSessionRejectsDvPackets) {
 
     auto& header = fixture.Header();
     EXPECT_EQ(header.streamFormat.load(std::memory_order_acquire),
-              static_cast<uint32_t>(ASFW::Protocols::DV::StreamFormat::MpegTs));
+              static_cast<uint32_t>(ASFW::Protocols::VideoCapture::StreamFormat::MpegTs));
     EXPECT_EQ(header.rejectedPackets.load(std::memory_order_relaxed), 1u);
     EXPECT_EQ(header.lastRejectQ1.load(std::memory_order_relaxed), 0x8000FFFFu);
     EXPECT_EQ(header.writeIndex.load(std::memory_order_acquire), 1u);
 }
 
-TEST(DVCaptureSinkTests, EmptyTsPacketDoesNotLockFormat) {
+TEST(VideoCaptureSinkTests, EmptyTsPacketDoesNotLockFormat) {
     TsFixture fixture;
     fixture.Feed(MakeTsPacket(0, {}, 0, 0));
     const auto dv = MakePacket();
@@ -349,12 +349,12 @@ TEST(DVCaptureSinkTests, EmptyTsPacketDoesNotLockFormat) {
 
     auto& header = fixture.Header();
     EXPECT_EQ(header.streamFormat.load(std::memory_order_acquire),
-              static_cast<uint32_t>(ASFW::Protocols::DV::StreamFormat::Dv));
+              static_cast<uint32_t>(ASFW::Protocols::VideoCapture::StreamFormat::Dv));
     EXPECT_EQ(header.rejectedPackets.load(std::memory_order_relaxed), 0u);
     EXPECT_EQ(header.writeIndex.load(std::memory_order_acquire), 1u);
 }
 
-TEST(DVCaptureSinkTests, TsOverrunIsCountedAndNotPublished) {
+TEST(VideoCaptureSinkTests, TsOverrunIsCountedAndNotPublished) {
     TsFixture fixture(2);
     const auto stream = Concat({MakeSourcePacket(0x11), MakeSourcePacket(0x22),
                                 MakeSourcePacket(0x33)});

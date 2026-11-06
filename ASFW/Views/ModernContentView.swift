@@ -79,7 +79,7 @@ struct ModernContentView: View {
         case async = "Async Commands"
         case audioTelemetry = "Audio Telemetry"
         case audioGeometry = "Audio Geometry"
-        case dvCapture = "DV Capture"
+        case videoCapture = "DV / HDV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
@@ -106,7 +106,7 @@ struct ModernContentView: View {
             case .async: return "bolt.horizontal.circle"
             case .audioTelemetry: return "waveform.path.ecg"
             case .audioGeometry: return "slider.horizontal.3"
-            case .dvCapture: return "video.fill"
+            case .videoCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
@@ -125,7 +125,7 @@ struct ModernContentView: View {
             switch self {
             case .overview, .about: .general
             case .busInspector, .avcUnits, .deviceControls, .audioAnalyzer: .devices
-            case .dvCapture: .video
+            case .videoCapture: .video
             case .diagnostics, .diceReport, .avcReport: .reports
             case .logs, .loggingSettings: .support
             default: .advanced
@@ -226,8 +226,8 @@ struct ModernContentView: View {
                     AudioTelemetryView(connector: debugVM.connector)
                 case .audioGeometry:
                     AudioGeometryView(connector: debugVM.connector)
-                case .dvCapture:
-                    DVCaptureView(viewModel: debugVM)
+                case .videoCapture:
+                    VideoCaptureView(viewModel: debugVM)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:

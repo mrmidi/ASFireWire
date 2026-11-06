@@ -18,7 +18,7 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Hardware/InterruptDispatcher.hpp"
 #include "../Isoch/IsochService.hpp"
-#include "../Protocols/DV/DVCaptureService.hpp"
+#include "../Protocols/VideoCapture/VideoCaptureService.hpp"
 #include "../Scheduling/WatchdogCoordinator.hpp"
 #include "Lifecycle/RuntimeLifecycleCoordinator.hpp"
 
@@ -67,7 +67,7 @@ struct ServiceContext {
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
-    ASFW::Protocols::DV::DVCaptureService dvCapture;
+    ASFW::Protocols::VideoCapture::VideoCaptureService videoCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
     // MIDI rides audio endpoints: the coordinator tells midiPublication when a
