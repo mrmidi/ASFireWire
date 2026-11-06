@@ -278,7 +278,8 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
             std::memory_order_acquire),
         std::memory_order_release);
     return !(bootstrapProfile &&
-             static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U) &&
+             !profile.RxReplayBootstrapSupportsRate(
+                 static_cast<uint32_t>(ivars.device.currentSampleRate))) &&
            !(ivars.runtime.mAudioInternalTxActive &&
              (!ivars.runtime.mAudioInternalTxTiming.Arm() ||
               static_cast<uint32_t>(ivars.device.currentSampleRate) != 48000U));

@@ -99,6 +99,12 @@ public:
     [[nodiscard]] virtual TxClockSource TransmitClockSource() const noexcept {
         return TxClockSource::kRxReplay;
     }
+    // The rates at which kRxReplayAfterBootstrap may start. Its bootstrap
+    // cadence was brought up at 48 kHz (RME); a profile that has run it at
+    // other rates says so here.
+    [[nodiscard]] virtual bool RxReplayBootstrapSupportsRate(uint32_t rateHz) const noexcept {
+        return rateHz == 48000U;
+    }
 
     // Profiles with unequal playback streams override this geometry. Uniform
     // streams retain their default shape at successive channel offsets.

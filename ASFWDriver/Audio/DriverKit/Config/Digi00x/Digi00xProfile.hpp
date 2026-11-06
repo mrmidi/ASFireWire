@@ -55,6 +55,11 @@ public:
     [[nodiscard]] TxClockSource TransmitClockSource() const noexcept override {
         return TxClockSource::kRxReplayAfterBootstrap;
     }
+    // The bootstrap is the generic non-blocking cadence, which covers both
+    // rates the family streams (Linux replays at every rate).
+    [[nodiscard]] bool RxReplayBootstrapSupportsRate(uint32_t rateHz) const noexcept override {
+        return rateHz == 44100U || rateHz == 48000U;
+    }
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
         return {44100U, 48000U};
     }

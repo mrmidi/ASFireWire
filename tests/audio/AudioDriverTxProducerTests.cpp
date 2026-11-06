@@ -22,6 +22,7 @@
 #include "Audio/DriverKit/ASFWAudioDriverPrivate.hpp"
 #include "Audio/DriverKit/Config/AVC/MAudioSpecialProfile.hpp"
 #include "Audio/DriverKit/Config/DICE/DiceProfile.hpp"
+#include "Audio/DriverKit/Config/Digi00x/Digi00xProfile.hpp"
 #include "Audio/DriverKit/Config/MOTU/MotuProfile.hpp"
 #include "Audio/DriverKit/Config/ResolvedStreamConfig.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
@@ -1884,4 +1885,36 @@ TEST(MidiTxThroughTheProducer, AStreamWhoseGeometryDiffersFromTheSeamIsNotCompos
     (void)midi.EnableMidi(6);
     StartSaffire(midi, profile);
     EXPECT_EQ(midi.Ivars().runtime.midiTxBlock, nullptr);
+}
+
+// The replay bootstrap's rate limit is the profile's: 48 kHz unless a profile
+// declares more. Digi 002 / 003 (issue #249) start at 44.1 kHz too, with the
+// generic non-blocking cadence (5 or 6 frames a packet) until RX replay.
+TEST(AudioDriverTxProducerTests, ReplayBootstrapRatesAreTheProfiles) {
+    SyntheticHeaderlessReplayProfile rme;
+    EXPECT_TRUE(rme.RxReplayBootstrapSupportsRate(48000));
+    EXPECT_FALSE(rme.RxReplayBootstrapSupportsRate(44100));
+
+    const ASFW::Isoch::Audio::Digi00x::Profiles::Digi00xProfile digi{"Digi 002"};
+    for (const uint32_t rate : {44100U, 48000U}) {
+        SCOPED_TRACE(rate);
+        TxProducerRig rig;
+        ASSERT_TRUE(rig.Start(digi, ProfileBuilderId::Digi00x, rate));
+        EXPECT_TRUE(rig.Ivars().runtime.rxReplayAfterBootstrap.load());
+        uint64_t frames = 0;
+        uint32_t dataPackets = 0;
+        for (uint64_t index = 0; index < Geometry::kTxSharedSlotPackets; ++index) {
+            const auto* slot = rig.Ivars().runtime.txStreamEngine.Timeline().SlotByIndex(index);
+            ASSERT_NE(slot, nullptr);
+            if (!slot->isData) continue;
+            ++dataPackets;
+            frames += slot->framesInPacket;
+            EXPECT_TRUE(slot->framesInPacket == rate / 8000 || slot->framesInPacket == rate / 8000 + 1)
+                << "frames=" << slot->framesInPacket;
+        }
+        ASSERT_GT(dataPackets, 0U);
+        // Non-blocking: about rate / 8000 frames per cycle on average.
+        EXPECT_NEAR(static_cast<double>(frames) / dataPackets, rate / 8000.0, 0.1);
+    }
+    EXPECT_FALSE(digi.RxReplayBootstrapSupportsRate(96000));
 }
