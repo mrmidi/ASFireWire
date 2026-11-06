@@ -74,6 +74,22 @@ void FWUnit::ParseEntries(const std::vector<RomEntry>& entries)
                 fastStart_ = entry.value;
                 break;
 
+            case CfgKey::Command_Set_Spec_Id:
+                commandSetSpecId_ = entry.value;
+                break;
+
+            case CfgKey::Command_Set:
+                commandSet_ = entry.value;
+                break;
+
+            case CfgKey::Command_Set_Revision:
+                commandSetRevision_ = entry.value;
+                break;
+
+            case CfgKey::Firmware_Revision:
+                firmwareRevision_ = entry.value;
+                break;
+
             // Other keys (CSR offsets, dependent directories) ignored for now
             default:
                 break;

@@ -1005,6 +1005,82 @@ TEST(SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey)
     EXPECT_EQ(*unit->GetLUN(), 0x060000u);
 }
 
+// Leaf Valeo 11 unit directory (values as Apple's IOFireWireSBP2LUN published
+// them for this unit on macOS 15, 2026-11-05). Key IDs per Apple's
+// IOFireWireSBP2Target: 0x38 Command_Set_Spec_ID, 0x39 Command_Set,
+// 0x3A Unit_Characteristics, 0x3B Command_Set_Revision, 0x3C Firmware_Revision.
+TEST(SessionRegistryTests, DeviceDiscoveryParsesSbp2CommandSetAndUnitCharacteristicsKeys) {
+    DeviceManager deviceManager;
+
+    DeviceRecord record{};
+    record.guid = SessionRegistryRig::kGuid + 2U;
+    record.vendorId = 0x0006CD;
+    record.modelId = 0x000000;
+    record.kind = DeviceKind::Unknown;
+    record.vendorName = "Leaf";
+    record.modelName = "Valeo";
+    record.gen = Generation{1};
+    record.nodeId = 0x00;
+    record.link = LinkPolicy{};
+    record.state = LifeState::Ready;
+
+    ConfigROM rom{};
+    rom.gen = Generation{1};
+    rom.nodeId = record.nodeId;
+    rom.bib.busInfoLength = 4;
+    rom.rootDirMinimal = {
+        RomEntry{CfgKey::Unit_Directory, 0x000001, 3, 1},
+    };
+    rom.rawQuadlets = {
+        OSSwapHostToBigInt32(0x04040000u),
+        OSSwapHostToBigInt32(0x31333934u),
+        OSSwapHostToBigInt32(0x00FF5012u),
+        OSSwapHostToBigInt32(0x00000001u),
+        OSSwapHostToBigInt32(0x00000002u),
+        OSSwapHostToBigInt32(0x00010000u),
+        OSSwapHostToBigInt32(0x00090000u),  // unit directory, 9 entries
+        OSSwapHostToBigInt32(0x1200609Eu),  // Unit_Spec_ID
+        OSSwapHostToBigInt32(0x13010483u),  // Unit_SW_Version
+        OSSwapHostToBigInt32(0x3800609Eu),  // Command_Set_Spec_ID
+        OSSwapHostToBigInt32(0x390104D8u),  // Command_Set
+        OSSwapHostToBigInt32(0x3A00A008u),  // Unit_Characteristics
+        OSSwapHostToBigInt32(0x3B000001u),  // Command_Set_Revision
+        OSSwapHostToBigInt32(0x3C000000u),  // Firmware_Revision
+        OSSwapHostToBigInt32(0x54004000u),  // Management_Agent_Offset
+        OSSwapHostToBigInt32(0x14020000u),  // Logical_Unit_Number: type 2, LUN 0
+    };
+
+    auto device = deviceManager.UpsertDevice(record, rom);
+    ASSERT_NE(device, nullptr);
+    ASSERT_EQ(device->GetUnits().size(), 1u);
+    const auto& unit = device->GetUnits().front();
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(unit->Matches(kSBP2UnitSpecId, kSBP2UnitSwVersion));
+    EXPECT_EQ(std::optional<uint32_t>{0x00609Eu}, unit->GetCommandSetSpecID());
+    EXPECT_EQ(std::optional<uint32_t>{0x0104D8u}, unit->GetCommandSet());
+    EXPECT_EQ(std::optional<uint32_t>{0x00A008u}, unit->GetUnitCharacteristics());
+    EXPECT_EQ(std::optional<uint32_t>{1u}, unit->GetCommandSetRevision());
+    EXPECT_EQ(std::optional<uint32_t>{0u}, unit->GetFirmwareRevision());
+    EXPECT_EQ(std::optional<uint32_t>{0x004000u}, unit->GetManagementAgentOffset());
+    EXPECT_EQ(std::optional<uint32_t>{0x020000u}, unit->GetLUN());
+    EXPECT_FALSE(unit->GetFastStart().has_value());
+}
+
+// Unit_Characteristics 0x00A008 (the Valeo 11's): mgt_ORB_timeout 0xA0 × 500 ms,
+// ORB_size 8 quadlets.
+TEST(SessionRegistryTests, UnitCharacteristicsDecodeValeoEightySecondManagementTimeout) {
+    SessionRegistryRig rig(0x00A008);
+
+    const uint64_t handle = rig.CreateSession();
+    auto* session = rig.registry.GetSessionForTesting(handle);
+    ASSERT_NE(nullptr, session);
+
+    const auto& targetInfo = session->TargetInfo();
+    EXPECT_EQ(80'000u, targetInfo.managementTimeoutMs);
+    EXPECT_EQ(32u, targetInfo.maxORBSize);
+    EXPECT_EQ(32u - NormalORB::kHeaderSize, targetInfo.maxCommandBlockSize);
+}
+
 // Reproduces the v45 HW sequence: push-mode command → ORB timeout → LUN-reset
 // management ORB → mgmt timeout (target never posts mgmt status). The task must
 // still be delivered to the initiator (otherwise the SCSI task leaks and the

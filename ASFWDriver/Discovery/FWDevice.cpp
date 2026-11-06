@@ -125,27 +125,36 @@ std::vector<RomEntry> FWDevice::ExtractUnitDirectory(
                     entries.push_back(RomEntry{CfgKey::Management_Agent_Offset, value, keyType, 0});
                 }
                 break;
-            case 0x38:  // Legacy non-standard fallback for Management_Agent_Offset
-                if (keyType == 1) {
+            case 0x38:  // Command_Set_Spec_ID (immediate); legacy CSR fallback for Management_Agent_Offset
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Command_Set_Spec_Id, value, keyType, 0});
+                } else if (keyType == 1) {
                     entries.push_back(RomEntry{CfgKey::Management_Agent_Offset, value, keyType, 0});
                 }
                 break;
-            case 0x39:  // Unit_Characteristics (SBP-2, immediate)
+            case 0x39:  // Command_Set (SBP-2, immediate)
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Command_Set, value, keyType, 0});
+                }
+                break;
+            case 0x3A:  // Unit_Characteristics (SBP-2, immediate)
                 if (keyType == 0) {
                     entries.push_back(RomEntry{CfgKey::Unit_Characteristics, value, keyType, 0});
                 }
                 break;
-            case 0x3A:  // Fast_Start (SBP-2, leaf)
-                if (keyType == 2) {
-                    // Compute leaf offset: value is a signed 24-bit offset from this entry
-                    const int32_t signedValue = ((value & 0x800000U) != 0U)
-                        ? static_cast<int32_t>(value | 0xFF000000U)
-                        : static_cast<int32_t>(value);
-                    const int32_t rel = static_cast<int32_t>(i) + signedValue;
-                    if (rel >= 0) {
-                        entries.push_back(RomEntry{CfgKey::Fast_Start, value, keyType,
-                                                   static_cast<uint32_t>(rel)});
-                    }
+            case 0x3B:  // Command_Set_Revision (SBP-2, immediate)
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Command_Set_Revision, value, keyType, 0});
+                }
+                break;
+            case 0x3C:  // Firmware_Revision (SBP-2, immediate)
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Firmware_Revision, value, keyType, 0});
+                }
+                break;
+            case 0x3E:  // Fast_Start (SBP-2, immediate)
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Fast_Start, value, keyType, 0});
                 }
                 break;
             default:

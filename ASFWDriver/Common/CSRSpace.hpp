@@ -169,8 +169,12 @@ inline constexpr uint8_t kUnitPollMask       = 0x16;
 inline constexpr uint8_t kModelId            = 0x17;
 inline constexpr uint8_t kGeneration         = 0x38; // Apple-specific (root dir, immediate)
 inline constexpr uint8_t kManagementAgentOffset = 0x38; // SBP-2 (unit dir, CSR offset type=1)
-inline constexpr uint8_t kUnitCharacteristics   = 0x39; // SBP-2 (unit dir, immediate)
-inline constexpr uint8_t kFastStart             = 0x3A; // SBP-2 (unit dir, leaf)
+inline constexpr uint8_t kCommandSetSpecId      = 0x38; // SBP-2 (unit dir, immediate)
+inline constexpr uint8_t kCommandSet            = 0x39; // SBP-2 (unit dir, immediate)
+inline constexpr uint8_t kUnitCharacteristics   = 0x3A; // SBP-2 (unit dir, immediate)
+inline constexpr uint8_t kCommandSetRevision    = 0x3B; // SBP-2 (unit dir, immediate)
+inline constexpr uint8_t kFirmwareRevision      = 0x3C; // SBP-2 (unit dir, immediate)
+inline constexpr uint8_t kFastStart             = 0x3E; // SBP-2 (unit dir, immediate)
 } // namespace ConfigKey
 
 // ============================================================================

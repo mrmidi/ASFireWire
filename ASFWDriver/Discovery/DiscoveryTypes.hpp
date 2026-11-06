@@ -121,8 +121,18 @@ enum class CfgKey : uint8_t {
     Node_Capabilities = 0x0C,
     Unit_Directory = 0xD1,  // IEEE 1212 Unit_Directory (keyId=0x11 when keyType=3)
     Management_Agent_Offset = 0x54,  // SBP-2 (keyType=CSR offset, keyId=0x14)
-    Unit_Characteristics   = 0x39,  // SBP-2 (immediate in unit directory)
-    Fast_Start             = 0x3A,  // SBP-2 (leaf in unit directory)
+    // SBP-2 unit directory immediates. Key IDs as Apple's IOFireWireSBP2Target
+    // "rom keys" (kCmdSpecIDKey 0x38, kCmdSetKey 0x39, kUnitCharacteristicsKey
+    // 0x3A, kSoftwareRevKey 0x3B, kFirmwareRevKey 0x3C, kFastStartKey 0x3E).
+    // HW-confirmed 2026-11-06 on a Leaf Valeo 11: Apple's IOFireWireSBP2LUN
+    // published Command_Set=0x0104D8 / Unit_Characteristics=0x00A008 for the
+    // same unit whose 0x39 entry ASFW had decoded as unit characteristics.
+    Command_Set_Spec_Id    = 0x38,
+    Command_Set            = 0x39,
+    Unit_Characteristics   = 0x3A,
+    Command_Set_Revision   = 0x3B,
+    Firmware_Revision      = 0x3C,
+    Fast_Start             = 0x3E,
 };
 
 struct RomEntry {
