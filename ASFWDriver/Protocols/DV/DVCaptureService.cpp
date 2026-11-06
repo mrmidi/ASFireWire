@@ -256,7 +256,9 @@ kern_return_t DVCaptureService::Start(
     connectionMode_ = mode;
     resourcesAllocated_ = allocatedResources;
 
-    constexpr uint32_t kRingRecords = 8192;
+    // One record per DV chunk (~7.5k/s, ~2.2 s here) or per TS packet. HDV at
+    // ~25 Mbit/s is ~16.6k TS packets/s, so this holds ~1 s between app drains.
+    constexpr uint32_t kRingRecords = 16384;
     const uint64_t ringBytes = DVCaptureSink::RequiredBytes(kRingRecords);
 
     IOBufferMemoryDescriptor* rawMemory = nullptr;
@@ -345,6 +347,7 @@ kern_return_t DVCaptureService::Stop(uint64_t ownerToken,
         return stopStatus;
     }
     sink_.MarkTerminal(CaptureState::Stopped);
+    sink_.LogSessionSummary();
     const kern_return_t kr = TeardownConnection(false);
     ASFW_LOG(Isoch, "[DV] capture stopped owner=0x%llx kr=0x%x",
              ownerToken, kr);
@@ -365,6 +368,7 @@ void DVCaptureService::StopAll(Driver::IsochService& isoch) noexcept {
             return;
         }
         sink_.MarkTerminal(CaptureState::Stopped);
+        sink_.LogSessionSummary();
         (void)TeardownConnection(false);
     }
     ResetState();
@@ -387,6 +391,7 @@ void DVCaptureService::HandleBusReset(
             stopStatus);
         return;
     }
+    sink_.LogSessionSummary();
     (void)TeardownConnection(true);
     ASFW_LOG_WARNING(Isoch,
                      "[DV] capture terminated by bus reset GUID=0x%llx",

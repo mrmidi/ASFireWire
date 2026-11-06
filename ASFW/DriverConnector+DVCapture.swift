@@ -2,25 +2,35 @@
 //  DriverConnector+DVCapture.swift
 //  ASFW
 //
-//  DV (IEC 61883-2) capture control and shared DIF ring access.
+//  Camcorder capture control and shared ring access: DV (IEC 61883-2) and
+//  MPEG-2 TS (IEC 61883-4, as sent by HDV camcorders).
 //
-//  The driver fills a shared-memory SPSC ring with raw 480-byte DIF chunks
-//  (one DV source packet each). This file maps the ring (memory type 1) and
-//  consumes records; the view layer concatenates them into a .dv file.
+//  The driver fills a shared-memory SPSC ring with one record per source
+//  packet: a 480-byte DIF chunk for DV, or a 188-byte TS packet for HDV. The
+//  driver locks the format from the stream and publishes it before the first
+//  record. This file maps the ring (memory type 1) and consumes records; the
+//  view layer writes them to a .dv or .m2t file.
 //
 //  Ring layout is ABI with ASFWDriver/Protocols/DV/DVCaptureSink.hpp:
 //    +0   magic 'ASDV' (0x41534456)
-//    +4   version (u16) = 3
+//    +4   version (u16) = 4
 //    +6   negotiated channel (u8), connection mode (u8)
 //    +8   numRecords (u32)
-//    +12  recordBytes (u32) = 480
+//    +12  recordBytes (u32) = 480, record stride
 //    +16  dataOffsetBytes (u32) = 192
 //    +20  session state (u32, driver-owned atomic)
 //    +24  packetsSeen (u32)
-//    +28  dvSourcePackets (u32)
-//    +32  nonDvPackets (u32)
+//    +28  sourcePackets (u32, records published)
+//    +32  rejectedPackets (u32)
 //    +36  overruns (u32)
+//    +40  lastRejectLen, +44 lastRejectQ0, +48 lastRejectQ1 (host order)
+//    +52  lastXferStatus (u32)
+//    +56  dbcDiscontinuities (u32)
+//    +60  invalidSourcePackets (u32, bad DIF ID or TS sync byte)
 //    +64  writeIndex (u32, driver-owned, free-running records)
+//    +68  streamFormat (u32, 0 unknown, 1 DV, 2 MPEG-2 TS)
+//    +72  sourcePacketBytes (u32, 480 or 188)
+//    +76  droppedFragments (u32, incomplete TS source packets)
 //    +128 readIndex (u32, app-owned, free-running records)
 //    +192 record data (numRecords × 480 bytes)
 //
@@ -30,20 +40,28 @@ import IOKit
 
 // MARK: - DV Ring Stats
 
+enum DVStreamFormat: UInt32 {
+    case unknown = 0
+    case dv = 1
+    case mpegTS = 2
+}
+
 struct DVCaptureStats {
     var sessionState: UInt32 = 0
     var channel: UInt8 = 0xFF
     var connectionMode: UInt8 = 0
     var packetsSeen: UInt32 = 0
-    var dvSourcePackets: UInt32 = 0
-    var nonDvPackets: UInt32 = 0
+    var sourcePackets: UInt32 = 0
+    var rejectedPackets: UInt32 = 0
     var overruns: UInt32 = 0
     var lastRejectLen: UInt32 = 0
     var lastRejectQ0: UInt32 = 0
     var lastRejectQ1: UInt32 = 0
     var lastXferStatus: UInt32 = 0
     var dbcDiscontinuities: UInt32 = 0
-    var invalidDifBlocks: UInt32 = 0
+    var invalidSourcePackets: UInt32 = 0
+    var streamFormat: DVStreamFormat = .unknown
+    var droppedFragments: UInt32 = 0
 }
 
 enum DVCaptureSessionState: UInt32 {
@@ -59,7 +77,7 @@ enum DVCaptureSessionState: UInt32 {
 /// Consumer-side view of the shared DV ring. Single consumer only.
 final class DVCaptureRing {
     static let magic: UInt32 = 0x41534456 // 'ASDV'
-    static let version: UInt16 = 3
+    static let version: UInt16 = 4
     static let headerBytes = 192
     static let recordBytes = 480
 
@@ -122,8 +140,14 @@ final class DVCaptureRing {
 
     deinit { unmap() }
 
-    /// Drain all available records, invoking the handler with each 480-byte chunk.
-    /// Returns the number of records consumed.
+    /// Stream format the driver locked, or `.unknown` before the first record.
+    var streamFormat: DVStreamFormat {
+        DVStreamFormat(rawValue: atomicLoad(68)) ?? .unknown
+    }
+
+    /// Drain all available records, invoking the handler with each source
+    /// packet (480 bytes for DV, 188 for MPEG-2 TS). Returns the number of
+    /// records consumed.
     ///
     @discardableResult
     func drain(_ handler: (UnsafeRawBufferPointer) -> Void) -> Int {
@@ -131,13 +155,19 @@ final class DVCaptureRing {
         let readPointer = (base + 128).assumingMemoryBound(to: UInt32.self)
         let w = ASFWAtomicLoadU32Acquire(writePointer)
         var r = ASFWAtomicLoadU32Acquire(readPointer)
+        // The driver publishes the record size before the first record, so it
+        // is visible once writeIndex has been acquired past that record.
+        let recordPayload = Int(atomicLoad(72))
+        guard recordPayload > 0, recordPayload <= DVCaptureRing.recordBytes else {
+            return 0
+        }
         var consumed = 0
 
         while r != w {
             let idx = Int(r % numRecords)
             let chunk = UnsafeRawBufferPointer(
                 start: base + dataOffset + idx * DVCaptureRing.recordBytes,
-                count: DVCaptureRing.recordBytes
+                count: recordPayload
             )
             handler(chunk)
             r &+= 1
@@ -151,25 +181,28 @@ final class DVCaptureRing {
     }
 
     var stats: DVCaptureStats {
-        func atomicLoad(_ offset: Int) -> UInt32 {
-            ASFWAtomicLoadU32Acquire(
-                (base + offset).assumingMemoryBound(to: UInt32.self))
-        }
-        return DVCaptureStats(
+        DVCaptureStats(
             sessionState: atomicLoad(20),
             channel: base.load(fromByteOffset: 6, as: UInt8.self),
             connectionMode: base.load(fromByteOffset: 7, as: UInt8.self),
             packetsSeen: atomicLoad(24),
-            dvSourcePackets: atomicLoad(28),
-            nonDvPackets: atomicLoad(32),
+            sourcePackets: atomicLoad(28),
+            rejectedPackets: atomicLoad(32),
             overruns: atomicLoad(36),
             lastRejectLen: atomicLoad(40),
             lastRejectQ0: atomicLoad(44),
             lastRejectQ1: atomicLoad(48),
             lastXferStatus: atomicLoad(52),
             dbcDiscontinuities: atomicLoad(56),
-            invalidDifBlocks: atomicLoad(60)
+            invalidSourcePackets: atomicLoad(60),
+            streamFormat: streamFormat,
+            droppedFragments: atomicLoad(76)
         )
+    }
+
+    private func atomicLoad(_ offset: Int) -> UInt32 {
+        ASFWAtomicLoadU32Acquire(
+            (base + offset).assumingMemoryBound(to: UInt32.self))
     }
 }
 
