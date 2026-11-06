@@ -338,6 +338,13 @@ TEST(DuplexStreamProfileTests, Digi00xCaptureIsSytUnawareAndTransmitStartsFirst)
 
     EXPECT_TRUE(profile.captureSytUnaware);
     EXPECT_FALSE(profile.captureTrustConfiguredStride);
+    // PCM follows the MIDI data channel: CoreAudio input N reads slot N
+    // (hardware, 2026-11-05: without the map, analog input 1 arrived on
+    // CoreAudio input 2 and input 1 read the MIDI slot).
+    ASSERT_EQ(profile.captureChannelMap.channelCount, 18U);
+    for (uint32_t channel = 0; channel < 18; ++channel)
+        EXPECT_EQ(profile.captureChannelMap.slotForChannel[channel], channel + 1) << channel;
+    EXPECT_FALSE(profile.captureChannelMap.HasDelay());
     EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
     EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit);

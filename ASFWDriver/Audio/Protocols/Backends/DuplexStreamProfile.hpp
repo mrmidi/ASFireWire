@@ -14,6 +14,7 @@
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../../Wire/Digi00x/Digi00xSlotLayout.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuModel.hpp"
@@ -377,6 +378,15 @@ class DuplexStreamProfileResolver final {
             profile.captureChannelMap =
                 Families::BeBoB::MAudio::CaptureChannelMapFor(
                     policy->plan.profileBuilder, caps.hostInputPcmChannels);
+            // Digi 002 / 003: a fixed layout with no graph to discover. PCM
+            // follows the MIDI data channel in capture as in playback; without
+            // this map CoreAudio input 1 read the MIDI slot (hardware,
+            // 2026-11-05: analog input 1 arrived on CoreAudio input 2).
+            if (policy->plan.family ==
+                DeviceProfiles::Audio::AudioFamilyProviderId::Digi00xRegister) {
+                static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) =
+                    Encoding::Digi00x::PcmAfterMidiSlotMap(caps.hostInputPcmChannels);
+            }
         }
 
         // A device's own capture slot order comes from its discovered graph;
