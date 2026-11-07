@@ -212,6 +212,12 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration, uint32_t
 
     // Write succeeded — the target may now fetch the ORB (its timeout has been
     // running since Submit).
+    if (activeFetchAgentORB_ != nullptr) {
+        if (const auto it = outstandingORBs_.find(MakeORBKey(activeFetchAgentORB_->GetORBAddress()));
+            it != outstandingORBs_.end()) {
+            it->second.pointerWriteAcked = true;
+        }
+    }
     activeFetchAgentORB_ = nullptr;
 
     if (!pendingImmediateORBs_.empty()) {
@@ -414,12 +420,15 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
                 return;
             }
             SBP2CommandORB* timedOut = entryIt->second.orb;
+            const bool pointerWriteAcked = entryIt->second.pointerWriteAcked;
             const bool writeStuck = activeFetchAgentORB_ == timedOut && fetchAgentWriteInUse_;
             // The agent is likely wedged mid-fetch (or dead) — revive it so the
             // NEXT command's ORB_POINTER is honored. Linux aborts timed-out
             // commands the same way (sbp2_scsi_abort → agent reset).
             ASFW_LOG(Async, "FetchAgent: ORB timeout%{public}s — agent reset before failing",
-                     writeStuck ? " (ORB_POINTER write never completed)" : "");
+                     writeStuck          ? " (ORB_POINTER write never completed)"
+                     : !pointerWriteAcked ? " (ORB_POINTER write not accepted)"
+                                          : "");
             if (writeStuck) {
                 // Free the write slot so the next ORB can go out, and retire
                 // the stuck write's tag: its kAborted completion is posted
@@ -432,7 +441,12 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
                 (void)bus_.Cancel(stuckWrite);
             }
             ResetNoWait();
-            FailORB(timedOut, -1, Wire::SBPStatus::kUnspecifiedError);
+            // kIOReturnTimeout only when the target had the ORB and wrote no
+            // status for it. Before the ORB_POINTER write is acknowledged (still
+            // in flight, or waiting to retry after an error response) the
+            // target may never have seen the ORB: -1, as for a failed write.
+            FailORB(timedOut, pointerWriteAcked ? kIOReturnTimeout : -1,
+                    Wire::SBPStatus::kUnspecifiedError);
         });
 }
 

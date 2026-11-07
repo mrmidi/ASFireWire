@@ -96,6 +96,10 @@ private:
     struct Outstanding {
         SBP2CommandORB* orb{nullptr};
         SchedulerToken timeoutToken{kInvalidSchedulerToken};
+        // The ORB_POINTER write naming this ORB completed: the target has it.
+        // The ORB timer runs from the write's issue, so an expiry before this
+        // is a delivery failure, not an ORB the target left unanswered.
+        bool pointerWriteAcked{false};
     };
 
     [[nodiscard]] bool AppendImmediate(SBP2CommandORB* orb) noexcept;

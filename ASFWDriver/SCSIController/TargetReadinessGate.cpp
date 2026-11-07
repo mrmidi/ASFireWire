@@ -30,6 +30,7 @@ void TargetReadinessGate::OnEdge(uint64_t guid, bool loggedIn) {
         CancelTimer();
         gateActive_ = false;
         notifiedUp_ = false;
+        attachProbeAnswer_.reset();
         notify_(guid, false);
         return;
     }
@@ -44,6 +45,8 @@ void TargetReadinessGate::OnEdge(uint64_t guid, bool loggedIn) {
     }
     gateActive_ = true;
     attempts_ = 0;
+    unansweredInARow_ = 0;
+    attachProbeAnswer_.reset();
     ProbeOnce(guid, ++epoch_);
 }
 
@@ -72,14 +75,34 @@ void TargetReadinessGate::OnProbeResult(uint64_t guid, uint64_t epoch,
     }
     const Probe probe = Classify(result);
     if (probe == Probe::Ready) {
-        Finish(guid, "device ready");
+        // Keep the target's own answer for the family's attach-probe TUR.
+        SCSI::CommandResult answer{};
+        answer.scsiStatusValid = true;
+        answer.scsiStatus = result.scsiStatusValid ? result.scsiStatus : 0x00;
+        answer.senseData = result.senseData;
+        Finish(guid, "device ready", std::move(answer));
         return;
+    }
+    if (probe == Probe::NoAnswer) {
+        if (++unansweredInARow_ >= kNoAnswerLimit) {
+            // The target does not answer TEST UNIT READY; the login is up, so
+            // it is present. The family's attach probe gets GOOD.
+            SCSI::CommandResult good{};
+            good.scsiStatusValid = true;
+            good.scsiStatus = 0x00;
+            Finish(guid, "no status for TEST UNIT READY", std::move(good));
+            return;
+        }
+    } else {
+        unansweredInARow_ = 0;
     }
     if (attempts_ >= kProbeBudget) {
-        Finish(guid, "probe budget exhausted — announcing anyway");
+        Finish(guid, "probe budget exhausted — announcing anyway", std::nullopt);
         return;
     }
-    if (probe == Probe::RetryNow) {
+    if (probe == Probe::RetryNow || probe == Probe::NoAnswer) {
+        // NoAnswer: the executor already reset the agent and the LUN before
+        // completing the probe, so the next one can go out at once.
         ProbeOnce(guid, epoch);
         return;
     }
@@ -91,9 +114,11 @@ void TargetReadinessGate::OnProbeResult(uint64_t guid, uint64_t epoch,
     });
 }
 
-void TargetReadinessGate::Finish(uint64_t guid, const char* reason) {
+void TargetReadinessGate::Finish(uint64_t guid, const char* reason,
+                                 std::optional<SCSI::CommandResult> attachProbeAnswer) {
     gateActive_ = false;
     notifiedUp_ = true;
+    attachProbeAnswer_ = std::move(attachProbeAnswer);
     ASFW_LOG(Controller,
              "[SBP2Bridge] readiness gate: %{public}s after %u probe(s) — announcing target",
              reason, attempts_);
@@ -109,6 +134,13 @@ void TargetReadinessGate::CancelTimer() noexcept {
 
 TargetReadinessGate::Probe
 TargetReadinessGate::Classify(const SCSI::CommandResult& result) noexcept {
+    if (result.transportStatus == kIOReturnTimeout) {
+        // The target had the probe's ORB (its ORB_POINTER write was
+        // acknowledged) and wrote no status block before the ORB timer
+        // expired. A write that failed or was never acknowledged is -1 and
+        // stays on the paced path below.
+        return Probe::NoAnswer;
+    }
     if (result.transportStatus != 0) {
         // Transport failure (bus-reset suspension window, abort): no sense
         // evidence either way — retry paced; a terminal edge or the budget

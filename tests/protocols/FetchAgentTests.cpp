@@ -204,7 +204,65 @@ TEST(FetchAgentTests, OrbTimeoutFailsCommandWhenNoStatusArrives) {
     EXPECT_EQ(0, completions);
     rig.scheduler.Advance(2 * kMs);                  // cross the 500 ms deadline
     EXPECT_EQ(1, completions);
+    EXPECT_EQ(kIOReturnTimeout, lastTransport);      // the target had the ORB
+}
+
+// The ORB timer runs from the ORB_POINTER write's issue (#139). An expiry before
+// the target acknowledged that write is a delivery failure, not the target
+// leaving the ORB unanswered: -1, as for a failed write.
+TEST(FetchAgentTests, OrbTimeoutWithPointerWriteInFlightIsNotATargetTimeout) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x5), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    int completions = 0;
+    int lastTransport = 0;
+    orb.SetCompletionCallback([&](int transport, uint8_t /*sbp*/) {
+        ++completions;
+        lastTransport = transport;
+    });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());      // ORB_POINTER write never completes
+    rig.scheduler.Advance(501 * kMs);
+    EXPECT_EQ(1, completions);
     EXPECT_EQ(-1, lastTransport);
+}
+
+// A target that refuses the ORB_POINTER write (error response) is retried 1 s
+// apart, so a short ORB timer expires during the retry backoff, long before the
+// retries run out. HW (2026-11-07, stale reconnect): every write refused with
+// hardware_error, each command ended by the ORB timer.
+TEST(FetchAgentTests, OrbTimeoutDuringPointerWriteRetryIsNotATargetTimeout) {
+    Rig rig;
+    FetchAgent agent(rig.bus, rig.bus, rig.scheduler);
+    agent.Bind(rig.Binding());
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x6), 16);
+    orb.SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kNormalORB);
+    orb.SetTimeout(500);
+    int completions = 0;
+    int lastTransport = 0;
+    orb.SetCompletionCallback([&](int transport, uint8_t /*sbp*/) {
+        ++completions;
+        lastTransport = transport;
+    });
+
+    ASSERT_TRUE(agent.Submit(&orb));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(AsyncStatus::kHardwareError));   // retry in 1 s
+    EXPECT_EQ(0, completions);
+    rig.scheduler.Advance(501 * kMs);
+    EXPECT_EQ(1, completions);
+    EXPECT_EQ(-1, lastTransport);
+
+    // The abandoned retry does not write the ORB_POINTER again.
+    const auto writesAfterTimeout = rig.bus.WriteCount();
+    rig.scheduler.Advance(1'000 * kMs);
+    EXPECT_EQ(writesAfterTimeout, rig.bus.WriteCount());
+    EXPECT_EQ(1, completions);
 }
 
 // Status can be processed before the fetch-agent write's own completion when the
