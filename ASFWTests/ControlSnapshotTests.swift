@@ -517,3 +517,51 @@ struct DeviceControlsRenderTests {
         }
     }
 }
+
+extension ControlSnapshotTests {
+    // Independent wire fixture from Apple's _sendAsyncResult64 contract:
+    // 24-byte Mach header, 72-byte notification header, packed 4-byte result.
+    static func statusMessage(_ scalars: [UInt64]) -> Data {
+        var data = Data(repeating: 0, count: 100 + scalars.count * 8)
+        func put<T>(_ value: T, at offset: Int) {
+            withUnsafeBytes(of: value) { data.replaceSubrange(offset..<(offset + $0.count), with: $0) }
+        }
+        put(UInt32(data.count), at: 4)
+        put(Int32(kOSNotificationMessageID), at: 20)
+        put(UInt32(4 + scalars.count * 8), at: 24)
+        put(UInt32(kIOAsyncCompletionNotificationType), at: 28)
+        for (i, value) in scalars.enumerated() { put(value, at: 100 + i * 8) }
+        return data
+    }
+
+    @Test func decodesIOKitStatusAndControlNotificationEnvelopes() {
+        let values: [[UInt64]] = [
+            [11, 1],
+            [22, ControlParameterChange.notificationReason, Self.guid, 7, 0, 4, 0, 0]
+        ]
+        for scalars in values {
+            let data = Self.statusMessage(scalars)
+            #expect(data.withUnsafeBytes { decodeStatusNotification($0) } == scalars)
+            // Receive buffers include a trailer/capacity beyond msgh_size.
+            #expect((data + Data(repeating: 0, count: 32)).withUnsafeBytes { decodeStatusNotification($0) } == scalars)
+        }
+        let change = Self.statusMessage(values[1]).withUnsafeBytes { decodeStatusNotification($0) }
+        #expect(change.flatMap(ControlParameterChange.init(scalars:))?.stateInvalidated == true)
+    }
+
+    @Test func rejectsTruncatedOrInvalidIOKitStatusEnvelopes() {
+        let valid = Self.statusMessage([11, 1])
+        for length in 0..<valid.count {
+            #expect(Data(valid.prefix(length)).withUnsafeBytes { decodeStatusNotification($0) } == nil)
+        }
+        for (offset, value) in [(0, UInt32(MACH_MSGH_BITS_COMPLEX)), (4, UInt32(4096)),
+                                (20, UInt32(0)), (24, UInt32(3)), (24, UInt32(21)),
+                                (24, UInt32(4096)), (28, UInt32(0)), (96, UInt32(1))] {
+            var data = valid
+            withUnsafeBytes(of: value) { data.replaceSubrange(offset..<(offset + 4), with: $0) }
+            #expect(data.withUnsafeBytes { decodeStatusNotification($0) } == nil)
+        }
+        #expect(Self.statusMessage([1]).withUnsafeBytes { decodeStatusNotification($0) } == nil)
+        #expect(Self.statusMessage(Array(repeating: 1, count: 17)).withUnsafeBytes { decodeStatusNotification($0) } == nil)
+    }
+}
