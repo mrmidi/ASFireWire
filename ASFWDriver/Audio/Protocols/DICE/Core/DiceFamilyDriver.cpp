@@ -63,7 +63,7 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
     caps.deviceToHostAm824Slots = tx.TotalAm824Slots();
     caps.hostOutputPcmChannels = rx.TotalPcmChannels();
     caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
-    caps.sampleRateHz = global.sampleRate;
+    caps.sampleRateHz = DiceConfiguredRate(global.sampleRate, global.status, global.clockSelect);
     caps.deviceRateMask = DiceDeviceRateMask(global.hasClockCaps, global.clockCaps);
     caps.deviceToHostIsoChannel =
         tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
@@ -381,6 +381,11 @@ IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
                  preClaim->version);
         return Rollback(kIOReturnUnsupported);
     }
+    // Rate changes preserve the live source (Linux dice-stream.c:60-85).
+    // Reuse this pre-claim read instead of adding a second GLOBAL transaction.
+    const auto source = preClaim->clockSelect & ClockSelect::kSourceMask;
+    if (!IsSupportedDiceClockSource(source)) return Rollback(kIOReturnUnsupported);
+    diceClock_.clockSelect = (diceClock_.clockSelect & ~ClockSelect::kSourceMask) | source;
     preClaimClockSelect_ = preClaim->clockSelect;
     preClaimStatus_ = preClaim->status;
     preClaimSampleRate_ = preClaim->sampleRate;
@@ -482,7 +487,7 @@ IOReturn DiceFamilyDriver::WriteClockSelect(const AudioDuplexChannels& channels)
     const uint32_t targetHz = session_.desiredClock.sampleRateHz;
     const bool requestedAtTarget = preClaimClockSelect_ == diceClock_.clockSelect;
     const bool achievedAtTarget =
-        NominalRateHz(preClaimStatus_) == targetHz && preClaimSampleRate_ == targetHz;
+        DiceClockAtRate(preClaimSampleRate_, preClaimStatus_, preClaimClockSelect_, targetHz);
     if (flowMode_ == FlowMode::kClockApply && requestedAtTarget && achievedAtTarget) {
         ASFW_LOG(DICE,
                  "ApplyClock: device already at target clockSelect=0x%08x rate=%u; skipping redundant write",
@@ -565,7 +570,7 @@ IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
     const bool sourceLockedAtTarget =
         IsSourceLocked(state->status) &&
         NominalRateHz(state->status) == session_.desiredClock.sampleRateHz;
-    const bool sampleRateAtTarget = state->sampleRate == session_.desiredClock.sampleRateHz;
+    const bool sampleRateAtTarget = DiceConfiguredRate(state->sampleRate, state->status, state->clockSelect) == session_.desiredClock.sampleRateHz;
 
     if (clockAccepted || (sourceLockedAtTarget && sampleRateAtTarget)) {
         ASFW_LOG(DICE,
@@ -639,7 +644,7 @@ IOReturn DiceFamilyDriver::ReadGlobalAfterClockAccepted(const AudioDuplexChannel
     const bool sourceLockedAtTarget =
         IsSourceLocked(state->status) &&
         NominalRateHz(state->status) == session_.desiredClock.sampleRateHz;
-    const bool sampleRateAtTarget = state->sampleRate == session_.desiredClock.sampleRateHz;
+    const bool sampleRateAtTarget = DiceConfiguredRate(state->sampleRate, state->status, state->clockSelect) == session_.desiredClock.sampleRateHz;
 
     if (state->clockSelect != diceClock_.clockSelect) {
         ASFW_LOG(DICE,
@@ -698,7 +703,7 @@ IOReturn DiceFamilyDriver::AwaitReconfigurationRelock(uint32_t observedNotify) {
         const bool lockChangedDuringRead = (lateNotify & Notify::kLockChange) != 0;
         const bool lockedAtTarget = IsSourceLocked(state->status) &&
                                     NominalRateHz(state->status) == targetHz &&
-                                    state->sampleRate == targetHz;
+                                    DiceConfiguredRate(state->sampleRate, state->status, state->clockSelect) == targetHz;
         const uint64_t waitedMs = io_.Clock().NowMs() - startMs;
         if (lockChanged && lockedAtTarget && !lockChangedDuringRead) {
             ASFW_LOG(DICE, "PrepareDuplex48k: device reconfigured and relocked at %u Hz after %llu ms",
@@ -740,7 +745,7 @@ IOReturn DiceFamilyDriver::AwaitIdleClockRate() {
         const auto state = io_.ReadGlobalStateFull(sections_);
         if (!state) return Rollback(state.error());
         const uint32_t targetHz = session_.desiredClock.sampleRateHz;
-        if (NominalRateHz(state->status) == targetHz && state->sampleRate == targetHz &&
+        if (NominalRateHz(state->status) == targetHz && DiceConfiguredRate(state->sampleRate, state->status, state->clockSelect) == targetHz &&
             (!bringupPolicy_.requireSourceLockBeforeStreamEnable || IsSourceLocked(state->status))) {
             if (attempt > 0) {
                 ASFW_LOG(DICE, "ApplyClock: prepared %u Hz after %u ms", targetHz,
@@ -776,7 +781,7 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
 
         const bool rateAtTarget =
             NominalRateHz(state->status) == session_.desiredClock.sampleRateHz &&
-            state->sampleRate == session_.desiredClock.sampleRateHz;
+            DiceConfiguredRate(state->sampleRate, state->status, state->clockSelect) == session_.desiredClock.sampleRateHz;
         const bool sourceLocked = IsSourceLocked(state->status);
         const bool readyForEnable =
             rateAtTarget && (sourceLocked || !bringupPolicy_.requireSourceLockBeforeStreamEnable);
@@ -816,7 +821,7 @@ bool DiceFamilyDriver::AfterClockWrite() {
     }
     const uint32_t rateHz = session_.desiredClock.sampleRateHz;
     const bool rateChanged =
-        NominalRateHz(preClaimStatus_) != rateHz || preClaimSampleRate_ != rateHz;
+        NominalRateHz(preClaimStatus_) != rateHz || DiceConfiguredRate(preClaimSampleRate_, preClaimStatus_, preClaimClockSelect_) != rateHz;
     bringupPolicy_.clockChangeObserver->AfterClockChange(io_, rateHz, rateChanged);
     return !TeardownRequested() && EnsureRouteCurrent();
 }
@@ -905,7 +910,7 @@ IOReturn DiceFamilyDriver::RefreshRuntimeCaps() {
     }
     CacheRuntimeCaps(runtimeCaps_, *global, *tx, *rx);
     session_.runtimeCaps = runtimeCaps_;
-    session_.appliedClock = AudioClockConfig{.sampleRateHz = global->sampleRate};
+    session_.appliedClock = AudioClockConfig{.sampleRateHz = runtimeCaps_.sampleRateHz};
     return kIOReturnSuccess;
 }
 

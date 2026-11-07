@@ -55,6 +55,9 @@ add_device_test(DuplexIRMReservationsTests
 # Generic DICE / TCAT protocol split tests
 add_device_test(DICETcatProtocolTests
     DICETcatProtocolTests.cpp
+    "${ASFW_DRIVER_DIR}/UserClient/WireFormats/ControlSnapshotDocument.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceDeviceIo.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Core/DiceNotificationRouter.cpp"

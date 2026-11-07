@@ -7,6 +7,7 @@
 
 #include "../../Duplex/FamilyStageWait.hpp"
 #include "../../../Runtime/RateValidation.hpp"
+#include "../../../Controls/ControlNotifications.hpp"
 #include "../Focusrite/SaffireproCommon.hpp"
 
 #include "../../../../Logging/Logging.hpp"
@@ -63,6 +64,8 @@ void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
 // two ticks at 0xaad9 before RestartStreaming at 0xa9e8, which writes
 // CLOCK_SELECT at 0xe3fe before allocating streams at 0xe656.
 struct DICETcatProtocol::InitialClockPreparation {
+    explicit InitialClockPreparation(std::atomic_flag& busy) : clockWrite(busy) {}
+    ClockWriteScope clockWrite;
     std::atomic<bool> active{true};
     Discovery::DeviceRouteToken route;
     std::vector<VoidCallback> callbacks;
@@ -101,8 +104,10 @@ void DICETcatProtocol::FinishInitialClock(const std::shared_ptr<InitialClockPrep
         selectedClock_ = {.sampleRateHz = state->clock.sampleRateHz};
     }
     if (initialClock_ == state) initialClock_.reset();
-    ASFW_LOG(DICE, "[DiceInit] completed guid=%016llx gen=%u rate=%u kr=0x%x",
-             guid_, state->route.generation.value, state->clock.sampleRateHz, status);
+    state->clockWrite.Release();
+    ASFW_LOG(DICE, "[DiceInit] completed guid=%016llx gen=%u rate=%u source=%u kr=0x%x",
+             guid_, state->route.generation.value, state->clock.sampleRateHz,
+             state->clock.clockSelect & ClockSelect::kSourceMask, status);
     auto callbacks = std::move(state->callbacks);
     for (auto& callback : callbacks) callback(status);
 }
@@ -129,11 +134,13 @@ void DICETcatProtocol::PrepareInitialClock(VoidCallback callback) {
         return;
     }
     CancelInitialClock();
+    auto state = std::make_shared<InitialClockPreparation>(clockWriteBusy_);
+    if (!state->clockWrite.acquired) { callback(kIOReturnBusy); return; }
+    ++controlObservation_;
     ResetRuntimeCaps();
     // A reset invalidates the live observation, not previously measured rate
     // layouts for this protocol instance. Shutdown clears the retained catalog.
     sectionsLoaded_ = false;
-    auto state = std::make_shared<InitialClockPreparation>();
     state->route = route;
     state->callbacks.push_back(std::move(callback));
     initialClock_ = state;
@@ -162,10 +169,16 @@ void DICETcatProtocol::InitialClockOwner(const std::shared_ptr<InitialClockPrepa
         // Inspect the observed mode before applying streaming admission. Its
         // geometry is needed to build the rate formations, including high rates.
         // Linux dice-stream.c:608-646 also reselects the current rate first.
-        const uint32_t rate = DiceRateMode(global.sampleRate)
-            ? global.sampleRate : DiceInitialRate(DiceDeviceRateMask(global.hasClockCaps, global.clockCaps));
+        const uint32_t observedRate = DiceConfiguredRate(global.sampleRate, global.status,
+            global.clockSelect);
+        const uint32_t rate = DiceRateMode(observedRate)
+            ? observedRate : DiceInitialRate(DiceDeviceRateMask(global.hasClockCaps, global.clockCaps));
+        const auto source = static_cast<ClockSource>(global.clockSelect & ClockSelect::kSourceMask);
+        if (!IsSupportedDiceClockSource(static_cast<uint32_t>(source))) {
+            FinishInitialClock(state, kIOReturnUnsupported); return;
+        }
         uint32_t clockSelect = 0;
-        if (!DiceClockSelectForRate(rate, ClockSource::Internal, clockSelect)) {
+        if (!DiceClockSelectForRate(rate, source, clockSelect)) {
             FinishInitialClock(state, kIOReturnUnsupported); return;
         }
         state->clock = {.sampleRateHz = rate, .clockSelect = clockSelect};
@@ -303,8 +316,8 @@ void DICETcatProtocol::InitialClockPoll(const std::shared_ptr<InitialClockPrepar
         // register bits or fresh mailbox writes belong to this transition.
         state->notifications |= (global.notification & ~state->priorGlobalNotifications) | late;
         const bool atTarget = global.clockSelect == state->clock.clockSelect &&
-            NominalRateHz(global.status) == state->clock.sampleRateHz &&
-            global.sampleRate == state->clock.sampleRateHz;
+            DiceClockAtRate(global.sampleRate, global.status, global.clockSelect,
+                            state->clock.sampleRateHz);
         const bool ready = atTarget &&
             (!runtimePolicy_.requireSourceLockBeforeStreamEnable || IsSourceLocked(global.status));
         if (!state->accepted && ((state->notifications & Notify::kClockAccepted) ||
@@ -341,7 +354,7 @@ bool DICETcatProtocol::MakeDiceClockConfiguration(
     // The DICE adapter owns the register encoding: Linux selects the requested
     // rate by updating GLOBAL_CLOCK_SELECT while preserving the source bits
     // (dice-stream.c:60-85; dice-interface.h:80-95). Encode the requested rate
-    // via the standard table; source stays Internal (bring-up policy).
+    // via the standard table; DiceFamilyDriver preserves the source at its pre-claim read.
     uint32_t clockSelect = 0;
     if (!DiceClockSelectForRate(requested.sampleRateHz, ClockSource::Internal,
                                 clockSelect)) {
@@ -381,13 +394,14 @@ DICETcatProtocol::~DICETcatProtocol() {
     if (driver_) driver_->CancelReceiverLockWatch();
     CancelInitialClock();
     if (rateFormatsLock_) IOLockFree(rateFormatsLock_);
+    if (controlsLock_) IOLockFree(controlsLock_);
     if (notificationRouter_) {
         notificationRouter_->Unregister(guid_, notifications_);
     }
 }
 
 IOReturn DICETcatProtocol::Initialize() {
-    if (!rateFormatsLock_) return kIOReturnNoMemory;
+    if (!rateFormatsLock_ || !controlsLock_) return kIOReturnNoMemory;
     if (!driver_) {
         driver_.emplace(deviceIo_, busInfo_, notifications_,
                         DICEBringupPolicy{
@@ -426,6 +440,11 @@ IOReturn DICETcatProtocol::Shutdown() {
     sections_ = {};
     sectionsLoaded_ = false;
     initialized_ = false;
+    duplexPreparing_.store(false);
+    ++controlObservation_;
+    IOLockLock(controlsLock_);
+    controlSnapshot_.reset();
+    IOLockUnlock(controlsLock_);
     ResetRuntimeCaps();
     PublishRateFormations({});
     return kIOReturnSuccess;
@@ -459,6 +478,136 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     return true;
 }
 
+// Device Controls uses the existing model and push notifications. Observations
+// carry a ticket: an older health read cannot overwrite a later source write.
+void DICETcatProtocol::ObserveClock(IOReturn status, const GlobalState& global,
+                                   const Discovery::DeviceRouteToken& route, uint64_t observation) {
+    if (!initialized_ || !observation ||
+        route != io_.Route() || !io_.IsRouteCurrent()) return;
+    namespace AM = AudioModel;
+    auto& notifications = Controls::ControlNotifications::Shared();
+    IOLockLock(controlsLock_);
+    if (observation != controlObservation_.load()) { IOLockUnlock(controlsLock_); return; }
+    Controls::ControlSnapshot next;
+    next.family = "dice";
+    next.topology.revision = next.state.topologyRevision = route.routeEpoch;
+    next.topology.nodes.push_back({AM::NodeId{1}, "Clock"});
+    AM::EnumDomain sources;
+    if (status == kIOReturnSuccess) {
+        for (const auto source : {ClockSource::Internal, ClockSource::ADAT}) {
+            const auto value = static_cast<uint32_t>(source);
+            if (source == ClockSource::Internal || (global.hasClockCaps && (global.clockCaps & (1U << (16U + value)))))
+                sources.values.push_back({value, source == ClockSource::Internal ? "Internal" : "ADAT"});
+        }
+    } else if (controlSnapshot_ && controlSnapshot_->topology.revision == route.routeEpoch) {
+        sources = std::get<AM::EnumDomain>(controlSnapshot_->topology.parameters.front().domain);
+    } else {
+        // No observation yet: do not invent support for an external source.
+        sources.values.push_back({int64_t(ClockSource::Internal), "Internal"});
+    }
+    next.topology.parameters = {
+        {AM::ParameterId{1}, AM::NodeId{1}, AM::ParameterSemantic::ClockSource,
+            std::move(sources), "Sync Source"},
+        {AM::ParameterId{2}, AM::NodeId{1}, AM::ParameterSemantic::Unknown,
+            AM::EnumDomain{{{0, "Unlocked"}, {1, "Locked"}}}, "System clock", AM::ParameterAccess::ReadOnly},
+    };
+    if (status == kIOReturnSuccess) {
+        const auto source = static_cast<ClockSource>(global.clockSelect & ClockSelect::kSourceMask);
+        const auto& choices = std::get<AM::EnumDomain>(next.topology.parameters[0].domain).values;
+        if (std::ranges::any_of(choices, [source](const auto& item) { return item.value == int64_t(source); })) {
+            next.state.parameters[AM::ParameterId{1}] = {int64_t(source)};
+        }
+        next.state.parameters[AM::ParameterId{2}] = {int64_t(IsSourceLocked(global.status))};
+    }
+    bool changed = !controlSnapshot_ || controlSnapshot_->topology.revision != route.routeEpoch ||
+        controlSnapshot_->topology.parameters[0].domain != next.topology.parameters[0].domain ||
+        controlSnapshot_->state.parameters.size() != next.state.parameters.size();
+    if (!changed) for (const auto& [id, value] : next.state.parameters) {
+        const auto old = controlSnapshot_->state.parameters.find(id);
+        if (old == controlSnapshot_->state.parameters.end() || old->second.value != value.value) changed = true;
+    }
+    if (!changed) { IOLockUnlock(controlsLock_); return; }
+    next.sequence = notifications.NextSequence();
+    const auto sequence = next.sequence;
+    controlSnapshot_ = std::move(next);
+    IOLockUnlock(controlsLock_);
+    // One coherent refresh also handles unknown values and changed capabilities.
+    notifications.Publish({guid_, route.routeEpoch, sequence, 0, 4, 0});
+}
+
+void DICETcatProtocol::Prepare(VoidCallback done) {
+    if (!initialized_ || !sectionsLoaded_) { done(kIOReturnNotReady); return; }
+    auto operation = std::make_shared<ClockWriteScope>(clockWriteBusy_);
+    if (!operation->acquired) { done(kIOReturnBusy); return; }
+    const auto route = io_.Route();
+    const auto observation = ++controlObservation_;
+    diceReader_.ReadGlobalStateFull(sections_, [this, route, observation, operation, done = std::move(done)](auto status, auto global) {
+        if (!initialized_) status = kIOReturnAborted;
+        if (status == kIOReturnSuccess && route != io_.Route()) status = kIOReturnOffline;
+        ObserveClock(status, global, route, observation);
+        operation->Release();
+        done(status);
+    });
+}
+
+std::optional<Controls::ControlSnapshot> DICETcatProtocol::CopySnapshot() const {
+    if (!initialized_ || !io_.IsRouteCurrent()) return {};
+    IOLockLock(controlsLock_);
+    auto snapshot = controlSnapshot_;
+    IOLockUnlock(controlsLock_);
+    if (snapshot && snapshot->topology.revision != io_.Route().routeEpoch) return {};
+    return snapshot;
+}
+
+void DICETcatProtocol::SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                                   Controls::IControlProvider::Completion done) {
+    if (id.value == 2) { done(kIOReturnNotWritable, false); return; }
+    const auto* source = std::get_if<int64_t>(&value);
+    if (id.value != 1 || !source || (*source != int64_t(ClockSource::Internal) && *source != int64_t(ClockSource::ADAT))) {
+        done(kIOReturnBadArgument, false); return;
+    }
+    if (!CopySnapshot()) { done(kIOReturnNotReady, false); return; }
+    auto operation = std::make_shared<ClockWriteScope>(clockWriteBusy_);
+    if (!operation->acquired || duplexPreparing_.load()) { done(kIOReturnBusy, false); return; }
+    const auto requested = uint32_t(*source);
+    const auto route = io_.Route();
+    const auto observation = ++controlObservation_;
+    auto finish = [this, route, observation, operation, done = std::move(done)]
+        (IOReturn status, const GlobalState& global) {
+        if (!initialized_) status = kIOReturnAborted;
+        if (status == kIOReturnSuccess && (route != io_.Route() || !io_.IsRouteCurrent())) status = kIOReturnOffline;
+        ObserveClock(status, global, route, observation);
+        operation->Release();
+        done(status, int64_t(global.clockSelect & ClockSelect::kSourceMask));
+    };
+    // ALSA common_ctl.rs:263-294 updates the source independently of lock.
+    // Linux dice-interface.h:84-88 permits CLOCK_SELECT while streaming;
+    // preserve every non-source bit and serialize against host clock changes.
+    diceReader_.ReadGlobalStateFull(sections_, [this, requested, route, finish](auto status, auto global) {
+        if (!initialized_) { finish(kIOReturnAborted, {}); return; }
+        if (status != kIOReturnSuccess) { finish(status, {}); return; }
+        if (route != io_.Route() || !io_.IsRouteCurrent()) { finish(kIOReturnOffline, {}); return; }
+        if (requested == uint32_t(ClockSource::ADAT) &&
+            (!global.hasClockCaps || !(global.clockCaps & (1U << (16U + requested))))) {
+            finish(kIOReturnUnsupported, {}); return;
+        }
+        const uint32_t selection = (global.clockSelect & ~ClockSelect::kSourceMask) | requested;
+        if (selection == global.clockSelect) { finish(kIOReturnSuccess, global); return; }
+        const auto address = MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect);
+        (void)io_.WriteQuadBE(address, selection, [this, selection, finish](auto status) {
+            if (!initialized_) { finish(kIOReturnAborted, {}); return; }
+            if (status != Async::AsyncStatus::kSuccess) {
+                finish(Protocols::Ports::MapAsyncStatusToIOReturn(status), {}); return;
+            }
+            // A successful bus write is not confirmation of the selected source.
+            diceReader_.ReadGlobalStateFull(sections_, [selection, finish](auto status, auto global) {
+                if (status == kIOReturnSuccess && global.clockSelect != selection) status = kIOReturnError;
+                finish(status, global);
+            });
+        });
+    });
+}
+
 void DICETcatProtocol::EnsureRuntimeStreamGeometry(VoidCallback callback) {
     PrepareInitialClock([this, callback = std::move(callback)](IOReturn status) mutable {
         if (status != kIOReturnSuccess) { callback(status); return; }
@@ -477,11 +626,15 @@ void DICETcatProtocol::ReadRateObservation(
         diceReader_.ReadGlobalState(sections_,
             [this, observed, callback = std::move(callback)](IOReturn status, GlobalState after) mutable {
                 if (status != kIOReturnSuccess) { callback(status, {}); return; }
-                const bool stable = after.sampleRate == observed.global.sampleRate &&
+                const auto observedRate = DiceConfiguredRate(observed.global.sampleRate, observed.global.status,
+                    observed.global.clockSelect);
+                const auto afterRate = DiceConfiguredRate(after.sampleRate, after.status,
+                    after.clockSelect);
+                const bool stable = afterRate != 0 && afterRate == observedRate &&
                     after.clockSelect == observed.global.clockSelect &&
-                    NominalRateHz(after.status) == after.sampleRate &&
+                    DiceClockAtRate(after.sampleRate, after.status, after.clockSelect, afterRate) &&
                     std::ranges::any_of(kDiceRateTable, [&](const auto& rate) {
-                        return rate.hz == after.sampleRate && rate.rateIndex ==
+                        return rate.hz == afterRate && rate.rateIndex ==
                             ((after.clockSelect & ClockSelect::kRateMask) >> ClockSelect::kRateShift);
                     });
                 const bool locked = (!runtimePolicy_.requireSourceLockAtConfirm || IsSourceLocked(after.status)) &&
@@ -542,6 +695,9 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
         return std::unexpected(kIOReturnNotReady);
     }
 
+    ClockWriteScope clockWrite(clockWriteBusy_);
+    if (!clockWrite.acquired) return std::unexpected(kIOReturnBusy);
+    ++controlObservation_; // invalidate health reads begun before this clock transaction
     DiceClockConfiguration diceClock{};
     if (!MakeDiceClockConfiguration(clock, diceClock)) {
         return std::unexpected(kIOReturnUnsupported);
@@ -553,7 +709,9 @@ std::expected<DuplexPrepareResult, IOReturn> DICETcatProtocol::Configure(
         selectedClock_ = clock;
     }
 
+    duplexPreparing_.store(true);
     const auto result = driver_->Prepare(channels, diceClock, /*refreshRuntimeCaps=*/true);
+    if (!result) duplexPreparing_.store(false);
     if (result) {
         CacheRuntimeCaps(result->runtimeCaps);
         // Device configuration, not a bring-up gate: a device that needs a
@@ -930,6 +1088,7 @@ std::expected<DuplexConfirmResult, IOReturn> DICETcatProtocol::Confirm() {
         return std::unexpected(kIOReturnNotReady);
     }
     const auto result = driver_->Confirm();
+    duplexPreparing_.store(false);
     if (result) {
         CacheRuntimeCaps(result->runtimeCaps);
         // The device has its clock and the stream is confirmed: the earliest
@@ -946,6 +1105,9 @@ std::expected<DuplexClockApplyResult, IOReturn> DICETcatProtocol::ApplyClockIdle
         return std::unexpected(kIOReturnNotReady);
     }
 
+    ClockWriteScope clockWrite(clockWriteBusy_);
+    if (!clockWrite.acquired) return std::unexpected(kIOReturnBusy);
+    ++controlObservation_; // invalidate health reads begun before this clock transaction
     DiceClockConfiguration diceClock{};
     if (!MakeDiceClockConfiguration(clock, diceClock)) {
         return std::unexpected(kIOReturnUnsupported);
@@ -1004,9 +1166,13 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
         // the watch alone issues the sparse destructive EXT_STATUS quad reads.
         auto observe = driver_ ? driver_->ReceiverLockObserver()
                                : std::function<void(IOReturn, uint32_t, uint32_t)>{};
+        const auto route = io_.Route();
+        const auto observation = !clockWriteBusy_.test()
+            ? ++controlObservation_ : 0;
         diceReader_.ReadGlobalState(
             sections_,
-            [this, observe = std::move(observe), callback = std::move(callback)](IOReturn status, GlobalState global) mutable {
+            [this, route, observation, observe = std::move(observe), callback = std::move(callback)](IOReturn status, GlobalState global) mutable {
+                ObserveClock(status, global, route, observation);
                 if (observe) observe(status, global.status, global.extStatus);
                 if (status != kIOReturnSuccess) {
                     callback(status, {});
@@ -1026,7 +1192,7 @@ void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
                              .generation = busInfo_.GetGeneration(),
                              .appliedClock =
                                  AudioClockConfig{
-                                     .sampleRateHz = global.sampleRate,
+                                     .sampleRateHz = DiceConfiguredRate(global.sampleRate, global.status, global.clockSelect),
                                  },
                              .runtimeCaps = caps,
                              .sourceLocked = IsSourceLocked(global.status),
@@ -1045,13 +1211,16 @@ IOReturn DICETcatProtocol::StopDuplex() {
     if (!driver_) {
         return kIOReturnSuccess;
     }
-    return driver_->Stop();
+    const auto status = driver_->Stop();
+    duplexPreparing_.store(false);
+    return status;
 }
 
 void DICETcatProtocol::UpdateRuntimeContext(const Discovery::DeviceRouteToken& route,
                                             std::shared_ptr<ASFW::AVC::IAvcUnit> avcUnit) {
     (void)avcUnit; // DICE is register-based; no AV/C.
     if (driver_ && route != io_.Route()) driver_->CancelReceiverLockWatch(Diagnostics::DiceLockPhase::Reset);
+    if (route != io_.Route()) ++controlObservation_;
     io_.UpdateRoute(route);
 }
 
@@ -1113,9 +1282,12 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
         };
 
         auto state = std::make_shared<RuntimeCapsState>();
+        const auto route = io_.Route();
+        const auto observation = ++controlObservation_;
         diceReader_.ReadGlobalState(
             sections_,
-            [this, state, callback = std::move(callback)](IOReturn globalStatus, GlobalState global) mutable {
+            [this, route, observation, state, callback = std::move(callback)](IOReturn globalStatus, GlobalState global) mutable {
+                ObserveClock(globalStatus, global, route, observation);
                 if (globalStatus != kIOReturnSuccess) {
                     ASFW_LOG(DICE, "DICETcatProtocol: failed to read global state: 0x%x", globalStatus);
                     callback(globalStatus);
