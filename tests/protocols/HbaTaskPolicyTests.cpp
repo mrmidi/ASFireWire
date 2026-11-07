@@ -115,3 +115,35 @@ TEST(HbaTaskPolicyTests, OnlyTarget0TURsInsideTheCreateCallAreAttachProbe) {
     EXPECT_FALSE(Policy::IsAttachProbeTUR(0, Policy::kOpRequestSense, true));
     EXPECT_FALSE(Policy::IsAttachProbeTUR(1, Policy::kOpTestUnitReady, true));
 }
+
+TEST(HbaTaskPolicyTests, ReportLunsListsTheOneLoginLunAsLun0) {
+    const auto all = Policy::BuildReportLunsData(0x00);
+    ASSERT_EQ(all.length, 16u);
+    const uint8_t expected[16] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(all.bytes[i], expected[i]) << "byte " << i;
+    }
+    const auto everything = Policy::BuildReportLunsData(0x02);
+    EXPECT_EQ(everything.length, 16u);
+    EXPECT_EQ(everything.bytes[3], 8u);
+    // Well-known LUNs only: none.
+    const auto wellKnown = Policy::BuildReportLunsData(0x01);
+    EXPECT_EQ(wellKnown.length, 8u);
+    EXPECT_EQ(wellKnown.bytes[3], 0u);
+}
+
+TEST(HbaTaskPolicyTests, ReportLunsCopyStopsAtTheAllocationLength) {
+    const auto data = Policy::BuildReportLunsData(0x00);
+    // The family asks for the 16-byte header first; a shorter allocation truncates.
+    EXPECT_EQ(Policy::CopyBackLength(16, data.length, 4096), 16u);
+    EXPECT_EQ(Policy::CopyBackLength(8, data.length, 4096), 8u);
+    EXPECT_EQ(Policy::CopyBackLength(64, data.length, 4096), 16u);
+    EXPECT_EQ(Policy::CopyBackLength(64, data.length, 4), 4u);
+}
+
+TEST(HbaTaskPolicyTests, CopyBackNeverExceedsRequestSourceOrMapping) {
+    EXPECT_EQ(Policy::CopyBackLength(6, 36, 16384), 6u);   // target delivered more
+    EXPECT_EQ(Policy::CopyBackLength(6, 4, 16384), 4u);    // target delivered less
+    EXPECT_EQ(Policy::CopyBackLength(6, 36, 5), 5u);       // short mapping
+    EXPECT_EQ(Policy::CopyBackLength(0, 36, 16384), 0u);
+}

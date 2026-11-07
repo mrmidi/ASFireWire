@@ -43,6 +43,7 @@
 #include <DriverKit/IOKitKeys.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
+#include <DriverKit/OSSharedPtr.h>
 
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
@@ -107,6 +108,26 @@ void FillResponseFromResult(SCSIUserParallelResponse& resp,
         ASFW::Protocols::SBP2::Wire::SBPStatus::kNoAdditionalInfo) {
         resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
     }
+}
+
+// The task's buffer mapped for the CPU (UserGetDataBuffer + CreateMapping).
+// Used only for data this HBA produces or relays itself (REPORT LUNS, bounced
+// transfers): per the SDK, UserGetDataBuffer invalidates fBufferIOVMAddr, so
+// such a task never hands that address to the target.
+struct TaskBufferMap {
+    OSSharedPtr<IOBufferMemoryDescriptor> buffer;
+    OSSharedPtr<IOMemoryMap> map;
+
+    [[nodiscard]] uint8_t* Bytes() const {
+        return map ? reinterpret_cast<uint8_t*>(map->GetAddress()) : nullptr;
+    }
+    [[nodiscard]] uint64_t Length() const { return map ? map->GetLength() : 0; }
+};
+
+// Takes over the references UserGetDataBuffer and CreateMapping returned.
+TaskBufferMap AdoptTaskBuffer(IOBufferMemoryDescriptor* buffer, IOMemoryMap* map) {
+    return TaskBufferMap{OSSharedPtr<IOBufferMemoryDescriptor>(buffer, OSNoRetain),
+                         OSSharedPtr<IOMemoryMap>(map, OSNoRetain)};
 }
 
 } // namespace
@@ -519,6 +540,41 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             }
             return kIOReturnSuccess;
         }
+    }
+
+    // REPORT LUNS: the LUN is bound at login, so the HBA answers it itself
+    // (HbaTaskPolicy::BuildReportLunsData), honouring the allocation length.
+    // Without a login it falls through to Classify (BUSY), as before.
+    if (ready && parallelRequest.fTargetID == SBP2::HbaTaskPolicy::kBridgedTargetID &&
+        opcode == SBP2::HbaTaskPolicy::kOpReportLuns) {
+        const auto data = SBP2::HbaTaskPolicy::BuildReportLunsData(
+            parallelRequest.fCommandSize > 2 ? parallelRequest.fCommandDescriptorBlock[2] : 0);
+        if (parallelRequest.fRequestedTransferCount > 0 &&
+            parallelRequest.fTransferDirection == kSCSIDataTransfer_FromTargetToInitiator) {
+            IOBufferMemoryDescriptor* bufferRaw = nullptr;
+            IOMemoryMap* mapRaw = nullptr;
+            kern_return_t kr = UserGetDataBuffer(parallelRequest.fTargetID,
+                                                 parallelRequest.fControllerTaskIdentifier,
+                                                 &bufferRaw);
+            if (kr == kIOReturnSuccess && bufferRaw != nullptr) {
+                kr = bufferRaw->CreateMapping(0, 0, 0, 0, 0, &mapRaw);
+            }
+            const TaskBufferMap task = AdoptTaskBuffer(bufferRaw, mapRaw);
+            if (kr != kIOReturnSuccess || task.Bytes() == nullptr) {
+                ASFW_LOG(Controller, "[SCSIHBA] REPORT LUNS: task buffer mapping failed kr=0x%x", kr);
+                resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+            } else {
+                const uint64_t copied = SBP2::HbaTaskPolicy::CopyBackLength(
+                    parallelRequest.fRequestedTransferCount, data.length, task.Length());
+                memcpy(task.Bytes(), data.bytes, static_cast<size_t>(copied));
+                resp.fBytesTransferred = copied;
+            }
+        }
+        ParallelTaskCompletion(completion, resp);
+        if (response != nullptr) {
+            *response = kIOReturnSuccess;
+        }
+        return kIOReturnSuccess;
     }
 
     using SBP2::HbaTaskPolicy::Disposition;

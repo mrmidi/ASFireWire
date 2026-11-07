@@ -98,4 +98,47 @@ inline constexpr uint8_t kOpRelease10     = 0x57;
     return creatingTarget && targetID == kBridgedTargetID && opcode == kOpTestUnitReady;
 }
 
+// ---------------------------------------------------------------------------
+// REPORT LUNS
+// ---------------------------------------------------------------------------
+
+inline constexpr uint8_t kOpReportLuns = 0xA0;
+inline constexpr uint8_t kReportLunsSelectWellKnownOnly = 0x01;
+inline constexpr uint32_t kReportLunsSingleLunBytes = 16;  // 8-byte header + one 8-byte entry
+
+// SBP-2 binds the logical unit at login (the login ORB names it; command ORBs
+// carry none), and the bridge maps that one login to SCSI LUN 0. The HBA
+// therefore answers REPORT LUNS itself for every SBP-2 target: LUN LIST LENGTH
+// 8 and one all-zero entry (peripheral device addressing, LUN 0); an empty
+// list for SELECT REPORT 01h (well-known LUNs only). Apple's SBP-2 stack takes
+// LUNs from the Config ROM and never sends REPORT LUNS. The caller copies at
+// most the allocation length.
+struct ReportLunsData {
+    uint8_t bytes[kReportLunsSingleLunBytes]{};
+    uint32_t length{0};
+};
+
+[[nodiscard]] constexpr ReportLunsData BuildReportLunsData(uint8_t selectReport) {
+    ReportLunsData data{};
+    data.length = kReportLunsSingleLunBytes;
+    if (selectReport == kReportLunsSelectWellKnownOnly) {
+        data.length = 8;  // header only, LUN LIST LENGTH 0
+        return data;
+    }
+    data.bytes[3] = 8;  // LUN LIST LENGTH, big-endian: one 8-byte entry
+    return data;
+}
+
+// Bytes to copy into the task buffer (REPORT LUNS data, a bounced data-in):
+// never more than the task asked for, the source holds, or the task buffer
+// maps.
+[[nodiscard]] constexpr uint64_t CopyBackLength(uint64_t requested,
+                                                  uint64_t delivered,
+                                                  uint64_t taskBufferLength) {
+    uint64_t n = requested;
+    if (delivered < n) n = delivered;
+    if (taskBufferLength < n) n = taskBufferLength;
+    return n;
+}
+
 } // namespace ASFW::Protocols::SBP2::HbaTaskPolicy
