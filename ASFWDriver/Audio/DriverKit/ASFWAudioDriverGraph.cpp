@@ -778,12 +778,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // controls can fail (FCP timeout, bus reset); that costs the controls,
     // never the audio device.
     bool providerControls = false;
+    bool restoreProviderControls = false;
     if (parameterStatus == kIOReturnSuccess && parameterProperties) {
         const auto descriptors = ASFW::Audio::Controls::DecodeControls(
             OSDynamicCast(OSArray, parameterProperties->getObject(ASFW::Audio::Controls::kControlsProperty)));
         ivars.device.parameterControls.clear();
         for (const auto& descriptor : descriptors) ivars.device.parameterControls.push_back({descriptor});
         providerControls = true;
+        restoreProviderControls = ASFW::Audio::Controls::ShouldRestoreProviderControls(descriptors);
     } else if (parameterStatus != kIOReturnUnsupported) {
         ASFW_LOG_ERROR(Audio, "[Controls] guid=0x%016llx provider controls unavailable kr=0x%x; "
                        "publishing the device without them", ivars.device.guid, parameterStatus);
@@ -815,12 +817,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             (error = ivars.audioDevice->AddControl(control.get())) != kIOReturnSuccess) return error;
     }
 
-    // Only AV/C feature controls opt in to the host's durable settings store;
-    // restoration travels through the same checked write/readback callbacks.
-    // A provider-backed device keeps its own settings (the Duet stores gain,
-    // phantom and levels), so the host must not re-apply stored values to it
-    // when it comes online.
-    const bool hostRestore = !providerControls && !ivars.device.parameterControls.empty();
+    // IOUserAudioClockDevice.h: SetWantsControlsRestored opts into saving and
+    // restoring controls and must be set before publication. Clock-only
+    // providers use the host store so a device power cycle can restore the
+    // selected source through the same checked write/readback callback.
+    // Providers with mixer controls keep their device-stored settings (Duet
+    // gain, phantom and levels); AV/C retains its existing host-restore policy.
+    const bool hostRestore = !ivars.device.parameterControls.empty() &&
+        (!providerControls || restoreProviderControls);
     ivars.audioDevice->SetWantsControlsRestored(hostRestore);
     ASFW_LOG(Audio, "[Controls] guid=0x%016llx published=%zu source=%{public}s hostRestore=%u",
              ivars.device.guid, ivars.device.parameterControls.size(),

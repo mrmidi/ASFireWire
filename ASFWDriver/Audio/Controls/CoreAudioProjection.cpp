@@ -9,6 +9,13 @@
 #include <tuple>
 
 namespace ASFW::Audio::Controls {
+bool ShouldRestoreProviderControls(std::span<const CoreAudioControl> controls) {
+    return !controls.empty() && std::ranges::all_of(controls, [](const auto& control) {
+        return control.kind == CoreAudioControlKind::Selector && control.classId == 'clck' &&
+            control.scope == 'glob' && control.element == 0 && control.settable;
+    });
+}
+
 namespace {
 namespace AM = AudioModel;
 struct Mapping { AM::ParameterSemantic semantic; uint32_t classId; CoreAudioControlKind kind; };
