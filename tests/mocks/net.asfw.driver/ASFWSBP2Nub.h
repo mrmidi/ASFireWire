@@ -21,6 +21,7 @@ public:
     // Record the numeric properties a publisher sets, for assertions.
     kern_return_t SetProperties(OSDictionary* properties) override {
         ++setPropertiesCalls;
+        lastPropertyCount = properties->getCount();
         for (const char* key : kRecordedKeys) {
             if (auto* number = OSDynamicCast(OSNumber, properties->getObject(key))) {
                 numbers[key] = number->unsigned64BitValue();
@@ -36,6 +37,7 @@ public:
 
     int terminateCalls{0};
     int setPropertiesCalls{0};
+    unsigned lastPropertyCount{0};
     std::map<std::string, uint64_t> numbers;
 
     static constexpr const char* kRecordedKeys[] = {

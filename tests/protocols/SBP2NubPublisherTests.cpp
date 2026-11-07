@@ -186,6 +186,7 @@ TEST_F(SBP2NubPublisherTest, NubPublishesUnitIdentityAndRefreshesBusGeneration) 
     Drain();
     ASSERT_EQ(1u, driver.nubs.size()) << "resume must not republish the nub";
     EXPECT_EQ(2u, driver.nubs[0]->numbers.at("ASFWBusGeneration"));
+    EXPECT_EQ(1u, driver.nubs[0]->lastPropertyCount) << "the refresh sets only ASFWBusGeneration";
 }
 
 } // namespace

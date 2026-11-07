@@ -226,11 +226,15 @@ void SBP2NubPublisher::EnsureNub(const std::shared_ptr<Discovery::FWUnit>& unit)
             }
             IOLockUnlock(lock_);
             if (live != nullptr) {
-                OSDictionary* currentRaw = nullptr;
-                if (live->CopyProperties(&currentRaw) == kIOReturnSuccess && currentRaw != nullptr) {
-                    OSSharedPtr<OSDictionary> current(currentRaw, OSNoRetain);
-                    if (SetNumber(current.get(), kBusGenerationProperty, UnitGeneration(*unit), 32)) {
-                        (void)live->SetProperties(current.get());
+                // SetProperties gets only the key that changes.
+                const uint32_t generation = UnitGeneration(*unit);
+                auto update = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
+                if (update && SetNumber(update.get(), kBusGenerationProperty, generation, 32)) {
+                    const kern_return_t kr = live->SetProperties(update.get());
+                    if (kr != kIOReturnSuccess) {
+                        ASFW_LOG_ERROR(Controller,
+                                       "[SBP2Nub] bus generation %u not published: SetProperties 0x%x",
+                                       generation, kr);
                     }
                 }
                 live->release();
