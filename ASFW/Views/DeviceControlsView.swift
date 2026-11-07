@@ -352,34 +352,45 @@ struct ParameterRow: View {
     }
 
     @ViewBuilder private var control: some View {
-        switch parameter.effectiveDomain {
-        case .action:
-            Button(parameter.name) { write(.action) }
-                .disabled({ if case .writing = state { true } else { false } }())
-        case .scalar(let domain):
-            scalar(domain)
-        case .bool:
-            Toggle(isOn: Binding(get: { parameter.value?.boolValue ?? false },
-                                 set: { write(.bool($0)) })) {
-                HStack(spacing: 6) {
-                    Text(Self.shortName(parameter))
-                    provenance
-                }
+        if !parameter.isWritable && parameter.domain != .action {
+            HStack {
+                Text(Self.shortName(parameter))
+                provenance
+                Spacer()
+                Text(parameter.value.map { Self.describe($0, parameter.effectiveDomain) } ?? "Unknown")
+                    .monospacedDigit()
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .disabled(parameter.value == nil)
-        case .enumeration(let items):
-            Picker(selection: Binding(get: { parameter.value?.intValue ?? items.first?.value ?? 0 },
-                                      set: { write(.int($0)) })) {
-                ForEach(items, id: \.value) { item in Text(item.name).tag(item.value) }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(Self.shortName(parameter))
-                    provenance
+        } else {
+            switch parameter.effectiveDomain {
+            case .action:
+                Button(parameter.name) { write(.action) }
+                    .disabled({ if case .writing = state { true } else { false } }())
+            case .scalar(let domain):
+                scalar(domain)
+            case .bool:
+                Toggle(isOn: Binding(get: { parameter.value?.boolValue ?? false },
+                                     set: { write(.bool($0)) })) {
+                    HStack(spacing: 6) {
+                        Text(Self.shortName(parameter))
+                        provenance
+                    }
                 }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(parameter.value == nil)
+            case .enumeration(let items):
+                Picker(selection: Binding(get: { parameter.value?.intValue },
+                                          set: { if let value = $0 { write(.int(value)) } })) {
+                    if parameter.value == nil { Text("Unknown").tag(Optional<Int64>.none) }
+                    ForEach(items, id: \.value) { item in Text(item.name).tag(Optional(item.value)) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(Self.shortName(parameter))
+                        provenance
+                    }
+                }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
         }
     }
 

@@ -518,6 +518,57 @@ struct DeviceControlsRenderTests {
     }
 }
 
+// Produced by DiceClockControlTests.ConfirmedSourceIsIndependentOfLockAndMeasurement.
+extension ControlSnapshotTests {
+    static let zedDocument = Data(#"{"schema":"asfw.controls.v1","guid":"0x0004c404000186a1","family":"dice","revision":7,"nodes":[{"id":1,"name":"Clock","kind":"endpoint","host":false}],"ports":[],"fixedLinks":[],"parameters":[{"id":1,"name":"Sync Source","semantic":"clockSource","target":{"node":1},"access":"readWrite","domain":{"kind":"enum","values":[{"value":12,"name":"Internal"},{"value":5,"name":"ADAT"}]},"applicable":true,"value":5,"origin":"observed"},{"id":2,"name":"System clock","semantic":"unknown","target":{"node":1},"access":"readOnly","domain":{"kind":"enum","values":[{"value":0,"name":"Unlocked"},{"value":1,"name":"Locked"}]},"applicable":true,"value":0,"origin":"observed"}]}"#.utf8)
+
+    @Test func zedClockControlsDecodeAndStayInDeviceSettings() async throws {
+        let driver = FakeControlsDriver()
+        driver.documentOverride = Self.zedDocument
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        let snapshot = try #require(model.snapshot)
+        #expect(ControlConsoleLayout(snapshot).settings == [1, 2])
+        #expect(snapshot.parameters[0].value == .int(5))
+        #expect(snapshot.parameters[1].value == .int(0))
+        #expect(ParameterRow.describe(.int(0), snapshot.parameters[1].domain) == "Unlocked")
+        await model.write(2, .int(1))
+        #expect(driver.writes.isEmpty)
+    }
+
+    @Test func zedUnreadableClockHasNoInventedValues() throws {
+        var document = try #require(JSONSerialization.jsonObject(with: Self.zedDocument) as? [String: Any])
+        var parameters = try #require(document["parameters"] as? [[String: Any]])
+        for index in parameters.indices { parameters[index].removeValue(forKey: "value") }
+        document["parameters"] = parameters
+        let snapshot = try ControlSnapshot.decode(JSONSerialization.data(withJSONObject: document))
+        #expect(snapshot.parameters.allSatisfy { $0.value == nil })
+        #expect(snapshot.parameters[0].isWritable)
+        #expect(!snapshot.parameters[1].isWritable)
+    }
+}
+
+extension DeviceControlsRenderTests {
+    @Test func rendersZedClockControls() throws {
+        let driver = FakeControlsDriver()
+        driver.documentOverride = ControlSnapshotTests.zedDocument
+        let model = DeviceControlsViewModel(source: driver)
+        model.reload()
+        for presentation in [DeviceControlsPresentation.console, .parameters] {
+            let view = DeviceControlsContent(model: model, presentation: presentation)
+                .padding(24).frame(width: 920)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, .light)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let image = try #require(renderer.nsImage)
+            let tiff = try #require(image.tiffRepresentation)
+            let png = try #require(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: "/private/tmp/asfw-zed-\(presentation.rawValue).png"))
+        }
+    }
+}
+
 extension ControlSnapshotTests {
     // Independent wire fixture from Apple's _sendAsyncResult64 contract:
     // 24-byte Mach header, 72-byte notification header, packed 4-byte result.
