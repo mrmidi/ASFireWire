@@ -31,6 +31,16 @@ uint32_t BuildCommandFlags(SCSI::DataDirection direction) {
 
 constexpr uint32_t kManagementTimeoutGraceMs = 1000;
 
+// A command buffer the executor owns covers whole 16 KiB pages (the Apple
+// Silicon DART page; four x86 pages). The target is still told the exact
+// transfer length, but one that writes past data_size can then only reach
+// this buffer, never memory that shares its page.
+constexpr uint32_t kCommandBufferGranule = 16 * 1024;
+
+constexpr uint32_t RoundUpToGranule(uint32_t length) {
+    return (length + kCommandBufferGranule - 1) & ~(kCommandBufferGranule - 1);
+}
+
 } // namespace
 
 ParkedCommand::ParkedCommand(AddressSpaceManager& addrSpaceMgr,
@@ -156,7 +166,7 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
         bufferMeta.address = request.dataIOVA;
     } else if (request.transferLength > 0) {
         const kern_return_t kr = addrSpaceMgr_.AllocatePhysicalRange(
-            owner_, request.transferLength, &bufferHandle, &bufferMeta);
+            owner_, RoundUpToGranule(request.transferLength), &bufferHandle, &bufferMeta);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Async, "CommandExecutor: failed to allocate command buffer: 0x%08x", kr);
             return false;

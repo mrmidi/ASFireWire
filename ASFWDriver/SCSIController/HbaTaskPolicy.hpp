@@ -129,6 +129,34 @@ struct ReportLunsData {
     return data;
 }
 
+// ---------------------------------------------------------------------------
+// Short transfers
+// ---------------------------------------------------------------------------
+
+// Short transfers go through a driver-owned buffer instead of the family's
+// task buffer:
+//  * data-out under 512 bytes whose length is not a multiple of four, as
+//    Apple's SBP-2 transport double-buffers them (IOFireWireSerialBusProtocol-
+//    Transport.cpp SetCommandBuffers, kDoubleBufferCommandSizeCheckThreshold);
+//    SBP-2 leaves the bytes of a partial last quadlet undefined;
+//  * every data-in under 512 bytes. A target may write its whole response
+//    whatever the allocation length and data_size say, and a small task
+//    buffer from the family shares its page — the unit the DMA mapping
+//    exposes — with other kernel memory. HW 2026-11-07 (Leaf Valeo 11): the
+//    target wrote its full 36-byte INQUIRY data into every INQUIRY, standard
+//    or VPD, with data_size 4, 5 and 6 alike (4 is quadlet-aligned, so the
+//    alignment rule alone would not cover it); vendor reads of 64 B and
+//    61,440 B stopped exactly at data_size. Before this, the 6-byte INQUIRY's
+//    overrun landed in a neighbouring kalloc.16 element and panicked.
+inline constexpr uint64_t kShortTransferBounceLimit = 512;
+
+[[nodiscard]] constexpr bool ShouldBounceTransfer(uint64_t length, bool dataIn) {
+    if (length == 0 || length >= kShortTransferBounceLimit) {
+        return false;
+    }
+    return dataIn || (length & 3u) != 0;
+}
+
 // Bytes to copy into the task buffer (REPORT LUNS data, a bounced data-in):
 // never more than the task asked for, the source holds, or the task buffer
 // maps.

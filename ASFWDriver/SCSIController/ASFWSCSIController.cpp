@@ -661,7 +661,43 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     // fRequestedTransferCount bytes, which is exactly what request.transferLength
     // carries and what the target is told; there is no second length to check
     // it against without that call.
-    if (request.transferLength > 0) {
+    //
+    // Short transfers (HbaTaskPolicy::ShouldBounceTransfer) are the exception:
+    // they go through the command executor's own buffer (no dataIOVA). Data-out
+    // is copied from the task buffer before submission; data-in is copied back
+    // on completion, at most the requested length.
+    const bool bounce = SBP2::HbaTaskPolicy::ShouldBounceTransfer(
+        request.transferLength, request.direction == SBP2::SCSI::DataDirection::FromTarget);
+    IOBufferMemoryDescriptor* bounceBufferRaw = nullptr;
+    IOMemoryMap* bounceMapRaw = nullptr;
+    kern_return_t bounceKr = kIOReturnSuccess;
+    if (bounce) {
+        bounceKr = UserGetDataBuffer(parallelRequest.fTargetID,
+                                     parallelRequest.fControllerTaskIdentifier, &bounceBufferRaw);
+        if (bounceKr == kIOReturnSuccess && bounceBufferRaw != nullptr) {
+            bounceKr = bounceBufferRaw->CreateMapping(0, 0, 0, 0, 0, &bounceMapRaw);
+        }
+    }
+    const TaskBufferMap bounceTask = AdoptTaskBuffer(bounceBufferRaw, bounceMapRaw);
+    if (bounce) {
+        const kern_return_t kr = bounceKr;
+        const bool mapped = kr == kIOReturnSuccess && bounceTask.Bytes() != nullptr &&
+                            bounceTask.Length() >= request.transferLength;
+        if (!mapped) {
+            ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x: short-transfer buffer mapping failed kr=0x%x",
+                     opcode, kr);
+            resp.fServiceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+            ParallelTaskCompletion(completion, resp);
+            if (response != nullptr) {
+                *response = kIOReturnSuccess;
+            }
+            return kIOReturnSuccess;
+        }
+        if (request.direction == SBP2::SCSI::DataDirection::ToTarget) {
+            request.outgoingPayload.assign(bounceTask.Bytes(),
+                                           bounceTask.Bytes() + request.transferLength);
+        }
+    } else if (request.transferLength > 0) {
         if (parallelRequest.fBufferIOVMAddr == 0 ||
             parallelRequest.fBufferIOVMAddr + request.transferLength > (uint64_t{1} << 32)) {
             ASFW_LOG(Controller, "[SCSIHBA] task buffer not DMA-mapped below 4 GiB (iova=0x%llx len=%u)",
@@ -681,6 +717,16 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     completion->retain();
     this->retain();
 
+    // A bounced data-in is copied back on completion: keep the task buffer
+    // and its mapping alive until then (released before ParallelTaskCompletion,
+    // like the OSAction above).
+    IOBufferMemoryDescriptor* bounceBuffer = bounceTask.buffer.get();
+    IOMemoryMap* bounceMap = bounceTask.map.get();
+    if (bounceMap != nullptr) {
+        bounceBuffer->retain();
+        bounceMap->retain();
+    }
+
     const SCSITargetIdentifier targetID = parallelRequest.fTargetID;
     const uint64_t taskID = parallelRequest.fControllerTaskIdentifier;
     const bool dataIn = (request.direction == SBP2::SCSI::DataDirection::FromTarget);
@@ -688,14 +734,23 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
 
     bridge->SubmitTask(std::move(request),
         [this, completion, targetID, taskID, dataIn, requestedLength,
-         opcode](const SBP2::SCSI::CommandResult& result) {
+         opcode, bounceBuffer, bounceMap](const SBP2::SCSI::CommandResult& result) {
             SCSIUserParallelResponse asyncResp{};
             asyncResp.version = kScsiUserParallelTaskResponseCurrentVersion1;
             asyncResp.fTargetID = targetID;
             asyncResp.fControllerTaskIdentifier = taskID;
             FillResponseFromResult(asyncResp, result);
 
-            if (dataIn && asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE) {
+            if (bounceMap != nullptr && dataIn &&
+                asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE) {
+                const uint64_t copied = SBP2::HbaTaskPolicy::CopyBackLength(
+                    requestedLength, result.payload.size(), bounceMap->GetLength());
+                if (copied > 0) {
+                    memcpy(reinterpret_cast<void*>(bounceMap->GetAddress()), result.payload.data(),
+                           static_cast<size_t>(copied));
+                }
+                asyncResp.fBytesTransferred = copied;
+            } else if (dataIn && asyncResp.fServiceResponse == kSCSIServiceResponse_TASK_COMPLETE) {
                 asyncResp.fBytesTransferred =
                     std::min<uint64_t>(result.inPlaceBytes, requestedLength);
             } else if (!dataIn &&
@@ -721,6 +776,12 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
                          key, asc, ascq, (uint64_t)asyncResp.fBytesTransferred);
             }
 
+            // Drop the task-buffer mapping before the kernel takes the task
+            // (and its buffer) back.
+            if (bounceMap != nullptr) {
+                bounceMap->release();
+                bounceBuffer->release();
+            }
             ParallelTaskCompletion(completion, asyncResp);
             completion->release();
             this->release();

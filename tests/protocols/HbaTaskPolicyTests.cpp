@@ -141,6 +141,27 @@ TEST(HbaTaskPolicyTests, ReportLunsCopyStopsAtTheAllocationLength) {
     EXPECT_EQ(Policy::CopyBackLength(64, data.length, 4), 4u);
 }
 
+TEST(HbaTaskPolicyTests, EveryShortDataInBounces) {
+    // The family's probe lengths seen on HW; the target wrote 36 bytes into each.
+    for (uint64_t length : {4u, 5u, 6u, 36u, 134u, 255u, 511u}) {
+        EXPECT_TRUE(Policy::ShouldBounceTransfer(length, true)) << length;
+    }
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(0, true));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(512, true));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(61440, true));  // image reads stay in place
+}
+
+TEST(HbaTaskPolicyTests, ShortUnalignedDataOutBouncesLikeApple) {
+    // Apple double-buffers lengths under 512 that are not quadlet multiples.
+    EXPECT_TRUE(Policy::ShouldBounceTransfer(2, false));
+    EXPECT_TRUE(Policy::ShouldBounceTransfer(511, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(36, false));  // vendor 0x0F command
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(0, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(4, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(512, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(513, false));
+}
+
 TEST(HbaTaskPolicyTests, CopyBackNeverExceedsRequestSourceOrMapping) {
     EXPECT_EQ(Policy::CopyBackLength(6, 36, 16384), 6u);   // target delivered more
     EXPECT_EQ(Policy::CopyBackLength(6, 4, 16384), 4u);    // target delivered less
