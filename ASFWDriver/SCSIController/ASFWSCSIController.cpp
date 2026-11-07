@@ -504,6 +504,23 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
     auto bridge = SBP2::SBP2BridgeHub::Get();
     const bool ready = bridge && bridge->IsReady();
 
+    // The family's attach probe: its TEST UNIT READY gets the answer the
+    // readiness gate learned on this login (see HbaTaskPolicy::IsAttachProbeTUR).
+    auto* lifecycle = static_cast<SBP2::TargetLifecycle*>(ivars->lifecycle);
+    if (bridge && lifecycle != nullptr &&
+        SBP2::HbaTaskPolicy::IsAttachProbeTUR(parallelRequest.fTargetID, opcode,
+                                              lifecycle->IsCreatingTarget())) {
+        if (const auto answer = bridge->AttachProbeAnswer()) {
+            FillResponseFromResult(resp, *answer);
+            lifecycle->NoteAttachProbeTURAnswered();
+            ParallelTaskCompletion(completion, resp);
+            if (response != nullptr) {
+                *response = kIOReturnSuccess;
+            }
+            return kIOReturnSuccess;
+        }
+    }
+
     using SBP2::HbaTaskPolicy::Disposition;
     const Disposition disposition =
         SBP2::HbaTaskPolicy::Classify(parallelRequest.fTargetID, opcode, ready);

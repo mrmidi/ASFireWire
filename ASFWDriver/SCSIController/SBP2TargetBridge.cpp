@@ -70,7 +70,12 @@ void SBP2TargetBridge::Start() {
                     self->SubmitTask(std::move(request), std::move(callback));
                 }
             },
-            [](uint64_t guid, bool loggedIn) {
+            [weak](uint64_t guid, bool loggedIn) {
+                // Keep what the gate learned before the HBA hears the edge:
+                // the target it creates runs the family's attach probe at once.
+                if (auto self = weak.lock()) {
+                    self->RecordAttachProbeAnswer(loggedIn);
+                }
                 SBP2BridgeHub::NotifyTargetState(guid, loggedIn);
             });
     }
@@ -122,6 +127,7 @@ void SBP2TargetBridge::Shutdown() {
         guid = sessionGuid_;
         sessionHandle_ = 0;
         sessionGuid_ = 0;
+        attachProbeAnswer_.reset();
         drained.swap(pending_);
     }
 
@@ -185,6 +191,23 @@ void SBP2TargetBridge::Shutdown() {
     if (handle != 0) {
         SBP2BridgeHub::NotifyTargetState(guid, false);
     }
+}
+
+void SBP2TargetBridge::RecordAttachProbeAnswer(bool loggedIn) {
+    std::optional<SCSI::CommandResult> answer;
+    if (loggedIn && readinessGate_) {
+        answer = readinessGate_->AttachProbeAnswer();
+    }
+    IOLockGuard g(lock_);
+    attachProbeAnswer_ = std::move(answer);
+}
+
+std::optional<SCSI::CommandResult> SBP2TargetBridge::AttachProbeAnswer() const {
+    IOLockGuard g(lock_);
+    if (stopping_) {
+        return std::nullopt;
+    }
+    return attachProbeAnswer_;
 }
 
 bool SBP2TargetBridge::IsReady() const {

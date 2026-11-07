@@ -103,3 +103,15 @@ TEST(HbaTaskPolicyTests, TransferCapMatchesAppleAndCoversHasselbladCalibrationRe
     EXPECT_GE(Policy::kMaxTransferBytes, 1'966'080ull);
     EXPECT_GE(Policy::kMaxTransferBytes, 5'242'880ull);
 }
+
+// --- Attach probe, REPORT LUNS, short transfers --------------------------------
+
+TEST(HbaTaskPolicyTests, OnlyTarget0TURsInsideTheCreateCallAreAttachProbe) {
+    EXPECT_TRUE(Policy::IsAttachProbeTUR(0, Policy::kOpTestUnitReady, true));
+    // Every TUR after the create returns goes to the target (disk drivers send their own).
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, Policy::kOpTestUnitReady, false));
+    // Only TEST UNIT READY; INQUIRY and the rest of the probe go to the target.
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, kInquiry, true));
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, Policy::kOpRequestSense, true));
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(1, Policy::kOpTestUnitReady, true));
+}

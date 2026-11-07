@@ -41,9 +41,11 @@ using ASFW::Protocols::SBP2::AddressSpaceManager;
 using ASFW::Protocols::SBP2::SBP2BridgeHub;
 using ASFW::Protocols::SBP2::SBP2TargetBridge;
 using ASFW::Protocols::SBP2::SessionRegistry;
+using ASFW::Protocols::SBP2::TargetReadinessGate;
 using ASFW::Protocols::SBP2::Wire::LoginORB;
 using ASFW::Protocols::SBP2::Wire::LoginResponse;
 using ASFW::Protocols::SBP2::Wire::StatusBlock;
+using ASFW::Protocols::SBP2::Wire::TaskManagementORB;
 using ASFW::Testing::FakeSessionScheduler;
 using ASFW::Testing::FakeTimerScheduler;
 namespace SCSI = ASFW::Protocols::SBP2::SCSI;
@@ -412,6 +414,79 @@ TEST(SBP2TargetBridgeTests, ReplugAfterUnplugLogsInAgainAndReannounces) {
 
     EXPECT_TRUE(rig.edges.back().second);
     EXPECT_TRUE(rig.bridge->IsReady());
+}
+
+// --- Targets that never answer TEST UNIT READY ---------------------------------
+
+// HW 2026-11-06 (Leaf Valeo 11): INQUIRY is answered, TEST UNIT READY never is
+// (no status block), while management ORBs (LUN reset) are. The readiness gate
+// gives up after kNoAnswerLimit unanswered probes, announces, and leaves GOOD as
+// the answer for the family's attach-probe TUR.
+TEST(SBP2TargetBridgeTests, TargetSilentOnTURIsAnnouncedWithGoodAttachProbeAnswer) {
+    BridgeRig rig;
+    rig.UpsertDevice(Generation{1}, 0x00);
+    rig.Drain();
+    rig.CompleteLogin();
+    EXPECT_FALSE(rig.bridge->AttachProbeAnswer().has_value());
+
+    // Completes every pending write; returns the ORB address of the last
+    // 8-byte (ORB_POINTER / management agent) write, 0 if none.
+    auto ackAll = [&rig]() {
+        uint64_t orb = 0;
+        while (rig.bus.PendingWriteCount() > 0) {
+            const auto& write = rig.bus.PendingWriteAt(0);
+            if (write.data.size() == 8) {
+                orb = DecodeAddressFromWritePayload(write.data);
+            }
+            EXPECT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+            rig.Drain();
+        }
+        return orb;
+    };
+
+    uint64_t probeOrb = ackAll();  // first readiness TUR fetched, never answered
+    for (uint32_t probe = 0; probe < TargetReadinessGate::kNoAnswerLimit; ++probe) {
+        ASSERT_NE(0u, probeOrb) << "probe " << probe << " was not submitted";
+        ASSERT_TRUE(rig.edges.empty());
+        rig.AdvanceMs(2'001);  // gate TUR timeout → AGENT_RESET + LUN reset
+        const uint64_t mgmtOrb = ackAll();
+        ASSERT_NE(0u, mgmtOrb);
+        // Answer the LUN reset (the management ORB has its own status FIFO).
+        const uint64_t mgmtStatus =
+            ReadORBAddress(rig.addressManager, mgmtOrb, offsetof(TaskManagementORB, statusFIFOAddressHi),
+                           offsetof(TaskManagementORB, statusFIFOAddressLo));
+        StatusBlock status{};
+        status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+        status.orbOffsetHi = OSSwapHostToBigInt16(static_cast<uint16_t>((mgmtOrb >> 32) & 0xFFFFu));
+        status.orbOffsetLo = OSSwapHostToBigInt32(static_cast<uint32_t>(mgmtOrb & 0xFFFF'FFFFu));
+        rig.addressManager.ApplyRemoteWrite(
+            mgmtStatus,
+            std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+        rig.Drain();
+        // AGENT_RESET after the LUN reset delivers the result to the gate,
+        // which re-probes at once until it gives up.
+        probeOrb = ackAll();
+    }
+    EXPECT_EQ(0u, probeOrb) << "no probe after the gate gave up";
+
+    ASSERT_EQ(1u, rig.edges.size());
+    EXPECT_TRUE(rig.edges.back().second);
+    const auto answer = rig.bridge->AttachProbeAnswer();
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(0, answer->transportStatus);
+    EXPECT_TRUE(answer->scsiStatusValid);
+    EXPECT_EQ(0x00, answer->scsiStatus);
+}
+
+TEST(SBP2TargetBridgeTests, AnsweringTargetLeavesItsOwnAnswerAndUnplugClearsIt) {
+    BridgeRig rig;
+    rig.BringUp();  // readiness TUR → GOOD
+    auto answer = rig.bridge->AttachProbeAnswer();
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(0x00, answer->scsiStatus);
+
+    rig.Unplug();
+    EXPECT_FALSE(rig.bridge->AttachProbeAnswer().has_value());
 }
 
 } // namespace

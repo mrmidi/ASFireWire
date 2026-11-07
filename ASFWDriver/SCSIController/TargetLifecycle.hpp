@@ -48,12 +48,27 @@ public:
     [[nodiscard]] bool IsStopping() const { return stopping_; }
     [[nodiscard]] bool IsTargetAttached() const { return targetAttached_; }
 
+    // True only while createTarget() (UserCreateTargetForID(0)) runs. The SCSI
+    // family runs its whole attach probe for the new target inside that call —
+    // TEST UNIT READY, INQUIRY, VPD, REPORT LUNS, logical-unit creation — and
+    // nothing else can reach target 0 before it returns (no logical unit is
+    // published yet). HW 2026-11-06/07 (Leaf Valeo 11, macOS 26.7.1): every
+    // probe CDB arrived before the call returned, the last INQUIRY 8 ms before.
+    // Read from the HBA task queues.
+    [[nodiscard]] bool IsCreatingTarget() const { return creatingTarget_; }
+
+    // The HBA answered one attach-probe TEST UNIT READY locally; counted for
+    // the one summary line OnEdge logs after the create returns.
+    void NoteAttachProbeTURAnswered() { ++attachProbeTURsAnswered_; }
+
 private:
     Ops ops_;
     // Target 0 exists kernel-side (created at login, destroyed at logout).
     // Written on the lifecycle queue only.
     std::atomic<bool> targetAttached_{false};
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> creatingTarget_{false};
+    std::atomic<uint32_t> attachProbeTURsAnswered_{0};
 };
 
 } // namespace ASFW::Protocols::SBP2

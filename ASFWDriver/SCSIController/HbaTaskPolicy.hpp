@@ -79,4 +79,23 @@ inline constexpr uint8_t kOpRelease10     = 0x57;
     return Disposition::Forward;
 }
 
+// ---------------------------------------------------------------------------
+// The SCSI family's attach probe
+// ---------------------------------------------------------------------------
+
+// The family probes a new target inside UserCreateTargetForID(0)
+// (TargetLifecycle::IsCreatingTarget): TEST UNIT READY, INQUIRY, VPD, REPORT
+// LUNS, then the same for the logical unit it creates. Its TEST UNIT READYs
+// are answered from what the readiness gate learned on this login a moment
+// before (SBP2TargetBridge::AttachProbeAnswer) instead of being sent again;
+// every later TEST UNIT READY goes to the target. The family needs a completed
+// TUR to accept the target (IOSCSITargetDevice VerifyLogicalUnitPresence takes
+// only TASK_COMPLETE); a target that does not implement TUR and stays silent
+// would otherwise fail the attach after the family's 10 s timeout and a LUN
+// reset per TUR.
+[[nodiscard]] constexpr bool IsAttachProbeTUR(uint64_t targetID, uint8_t opcode,
+                                              bool creatingTarget) {
+    return creatingTarget && targetID == kBridgedTargetID && opcode == kOpTestUnitReady;
+}
+
 } // namespace ASFW::Protocols::SBP2::HbaTaskPolicy
