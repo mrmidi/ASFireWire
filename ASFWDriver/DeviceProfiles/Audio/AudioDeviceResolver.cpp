@@ -26,6 +26,19 @@ FindUnit(const Discovery::DeviceRecord& device, uint32_t directoryOffset) noexce
     return FindUnit(device.identity, directoryOffset);
 }
 
+// The row's name, or the product name its specifier table gives this unit.
+[[nodiscard]] std::string ModelNameFor(const AudioDeviceDefinition& definition,
+                                       const Discovery::UnitIdentityEvidence& unit) {
+    if (unit.specifierId.has_value()) {
+        for (const auto& entry : definition.modelNamesBySpecifier) {
+            if (entry.unitSpecifierId == *unit.specifierId && entry.modelName != nullptr) {
+                return entry.modelName;
+            }
+        }
+    }
+    return definition.modelName != nullptr ? definition.modelName : "";
+}
+
 } // namespace
 
 std::expected<StaticAudioEndpointPlan, CatalogResolutionError>
@@ -163,7 +176,7 @@ AudioDeviceCatalog::ResolveWithDefinitions(
         .streamTraits = first.streamTraits,
         .bootloaderCue = first.bootloaderCue,
         .vendorName = first.vendorName != nullptr ? first.vendorName : "",
-        .modelName = first.modelName != nullptr ? first.modelName : "",
+        .modelName = ModelNameFor(first, unit),
     };
     for (const auto& match : matches) {
         plan.candidates.push_back(match.definition->id);

@@ -417,13 +417,13 @@ struct Digi00xCapture {
 
 constexpr Digi00xCapture kDigi00xCaptures[] = {
     {"002 Console", 0x00a07e0000a30000ULL, 0x0000A3, 0x000001,
-     DeviceDefinitionId::Digi002Console, "Digi 002"},
+     DeviceDefinitionId::Digi00xConsole, "Digi 002"},
     {"002 Rack", 0x00a07e0000a40000ULL, 0x0000A4, 0x000002,
-     DeviceDefinitionId::Digi002Rack, "Digi 002 Rack"},
+     DeviceDefinitionId::Digi00xRack, "Digi 002 Rack"},
     {"003 Console", 0x00a07e0000aa0000ULL, 0x0000AA, 0x000001,
-     DeviceDefinitionId::Digi003Console, "Digi 003"},
+     DeviceDefinitionId::Digi00xConsole, "Digi 003"},
     {"003 Rack", 0x00a07e0000ab0000ULL, 0x0000AB, 0x000002,
-     DeviceDefinitionId::Digi003Rack, "Digi 003 Rack"},
+     DeviceDefinitionId::Digi00xRack, "Digi 003 Rack"},
 };
 
 [[nodiscard]] Discovery::DeviceRecord MakeDigi00x(uint64_t guid, uint32_t specifierId,
@@ -468,7 +468,7 @@ TEST(AudioDeviceCatalog, CapturedDigi00xUnitsResolveToTheRegisterFamily) {
     }
 }
 
-TEST(AudioDeviceCatalog, Digi00xRowsRequireVendorVersionSpecifierAndUnitModel) {
+TEST(AudioDeviceCatalog, Digi00xRowsRequireVendorVersionAndUnitModel) {
     const auto device = MakeDigi00x(0x00a07e0000aa0000ULL, 0x0000AA, kDigi00xConsoleModelId);
 
     auto wrongVendor = device;
@@ -491,18 +491,41 @@ TEST(AudioDeviceCatalog, Digi00xRowsRequireVendorVersionSpecifierAndUnitModel) {
     EXPECT_FALSE(AudioDeviceCatalog::Resolve(missingModel,
                                               missingModel.identity.units[0]).has_value());
 
-    // A specifier no capture has shown is not recognised.
-    auto unlistedSpecifier = device;
-    unlistedSpecifier.identity.units[0].specifierId = 0x0000AC;
-    EXPECT_FALSE(AudioDeviceCatalog::Resolve(unlistedSpecifier,
-                                              unlistedSpecifier.identity.units[0]).has_value());
+}
 
-    // Specifier and model must agree: a 003 Console code with the Rack model
-    // is neither row.
-    auto mismatched = device;
-    mismatched.identity.units[0].modelId = kDigi00xRackModelId;
-    EXPECT_FALSE(AudioDeviceCatalog::Resolve(mismatched,
-                                              mismatched.identity.units[0]).has_value());
+// As Linux, the specifier does not decide recognition: it only picks the
+// product name. The model id decides Console or Rack.
+TEST(AudioDeviceCatalog, Digi00xSpecifierOnlyPicksTheName) {
+    struct Case {
+        const char* label;
+        std::optional<uint32_t> specifierId;
+        uint32_t unitModelId;
+        DeviceDefinitionId expected;
+        const char* modelName;
+    };
+    const Case cases[] = {
+        {"unlisted console specifier", 0x0000AC, kDigi00xConsoleModelId,
+         DeviceDefinitionId::Digi00xConsole, "Digi 002/003"},
+        {"unlisted rack specifier", 0x0000AD, kDigi00xRackModelId,
+         DeviceDefinitionId::Digi00xRack, "Digi 002/003 Rack"},
+        {"no specifier", std::nullopt, kDigi00xRackModelId,
+         DeviceDefinitionId::Digi00xRack, "Digi 002/003 Rack"},
+        // A console specifier on a rack model: the model decides the row, and
+        // the rack row has no name for a console code.
+        {"console specifier, rack model", 0x0000AA, kDigi00xRackModelId,
+         DeviceDefinitionId::Digi00xRack, "Digi 002/003 Rack"},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.label);
+        auto device = MakeDigi00x(0x00a07e0000000000ULL, 0, c.unitModelId);
+        device.identity.units[0].specifierId = c.specifierId;
+        const auto plan = AudioDeviceCatalog::Resolve(device, device.identity.units[0]);
+        ASSERT_TRUE(plan.has_value());
+        ASSERT_EQ(plan->candidates.size(), 1U);
+        EXPECT_EQ(plan->candidates[0], c.expected);
+        EXPECT_EQ(plan->family, AudioFamilyProviderId::Digi00xRegister);
+        EXPECT_EQ(plan->modelName, c.modelName);
+    }
 }
 
 // Same OUI and unit version as the Mbox Pro (DICE). Neither row may claim the

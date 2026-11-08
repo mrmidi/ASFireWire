@@ -54,7 +54,7 @@ constexpr auto kDefinitions = ConcatArrays(
     Definitions::kPrismDefinitions
 );
 
-static_assert(kDefinitions.size() == 64U, "Catalog definition count mismatch");
+static_assert(kDefinitions.size() == 62U, "Catalog definition count mismatch");
 
 // No safety rule is currently defined.
 //

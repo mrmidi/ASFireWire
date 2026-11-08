@@ -57,9 +57,9 @@ TEST(Digi00xWiring, ASupportedRowValidates) {
     // The shape the catalog rows take once the family streams.
     auto row = AudioDeviceCatalog::Definitions()[0];
     for (const auto& definition : AudioDeviceCatalog::Definitions()) {
-        if (definition.id == DeviceDefinitionId::Digi003Console) row = definition;
+        if (definition.id == DeviceDefinitionId::Digi00xConsole) row = definition;
     }
-    ASSERT_EQ(row.id, DeviceDefinitionId::Digi003Console);
+    ASSERT_EQ(row.id, DeviceDefinitionId::Digi00xConsole);
     row.family = AudioFamilyProviderId::Digi00xRegister;
     row.probePolicy = ProbePolicyId::Digi00xRegister;
     row.profileBuilder = ProfileBuilderId::Digi00x;

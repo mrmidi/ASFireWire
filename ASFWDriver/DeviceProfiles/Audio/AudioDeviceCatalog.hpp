@@ -73,10 +73,8 @@ enum class DeviceDefinitionId : uint32_t {
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
     MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
     PrismSoundOrpheus,
-    Digi002Console,
-    Digi002Rack,
-    Digi003Console,
-    Digi003Rack,
+    Digi00xConsole,
+    Digi00xRack,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -353,6 +351,14 @@ enum class CatalogResolutionError : uint8_t {
     InvalidUnit,
 };
 
+/// A product name chosen by the unit's specifier_id, for a row whose identity
+/// (vendor + model + version) covers several products. A unit whose specifier
+/// is not listed keeps the row's modelName.
+struct SpecifierModelName final {
+    uint32_t unitSpecifierId{0};
+    const char* modelName{nullptr};
+};
+
 struct AudioDeviceDefinition final {
     DeviceDefinitionId id{DeviceDefinitionId::Unknown};
     uint32_t variantId{0};
@@ -372,6 +378,7 @@ struct AudioDeviceDefinition final {
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
     const char* modelName{nullptr};
+    std::span<const SpecifierModelName> modelNamesBySpecifier{};
 };
 
 struct AudioSafetyRule final {

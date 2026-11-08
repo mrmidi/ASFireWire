@@ -13,8 +13,9 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 //
 // The model id lives in the unit directory only (the root directory has none),
 // so the generic Definition() helper, which constrains the root model, cannot
-// express these rows. The 002 and 003 share model ids; the per-product unit
-// specifier tells them apart (AudioDeviceIds.hpp). They use a vendor register
+// express these rows. As Linux, one row per model id (Console, Rack) matches
+// vendor + version + model; the 002 and 003 share model ids, so the unit
+// specifier picks the product name (AudioDeviceIds.hpp). They use a vendor register
 // protocol, not AV/C: the unit is not a TA 61883 unit, so no FCP may be sent
 // (CommandFilterFor() returns BlockAll for the Digi00xRegister probe). Every
 // captured GUID has a zero serial field, so two identical units would share a
@@ -27,17 +28,24 @@ namespace ASFW::DeviceProfiles::Audio::Definitions {
 // a presentation time (amdtp-dot.c CIP_UNAWARE_SYT; a 002 Console sends 0x0000
 // in every packet), so receive timing comes from packet continuity. Rates, geometry
 // and the wire format come from the Digi00x profile builder.
-constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
-                                                  uint32_t unitSpecifierId,
-                                                  uint32_t unitModelId,
-                                                  const char* modelName) {
+inline constexpr std::array kDigi00xConsoleNames{
+    SpecifierModelName{kDigi002ConsoleSpecifierId, kDigi002ConsoleModelName},
+    SpecifierModelName{kDigi003ConsoleSpecifierId, kDigi003ConsoleModelName},
+};
+inline constexpr std::array kDigi00xRackNames{
+    SpecifierModelName{kDigi002RackSpecifierId, kDigi002RackModelName},
+    SpecifierModelName{kDigi003RackSpecifierId, kDigi003RackModelName},
+};
+
+constexpr AudioDeviceDefinition Digi00xDefinition(
+    DeviceDefinitionId id, uint32_t unitModelId, const char* modelName,
+    std::span<const SpecifierModelName> namesBySpecifier) {
     return AudioDeviceDefinition{
         .id = id,
         .variantId = static_cast<uint32_t>(id),
         .clauses = {IdentityMatchClause{
                         .rootVendorId = MaskedValue32{kAvidVendorId},
                         .unitModelId = MaskedValue32{unitModelId},
-                        .unitSpecifierId = MaskedValue32{unitSpecifierId},
                         .unitVersion = MaskedValue32{kDigi00xUnitVersion},
                     },
                     IdentityMatchClause{}},
@@ -56,6 +64,7 @@ constexpr AudioDeviceDefinition Digi00xDefinition(DeviceDefinitionId id,
         },
         .vendorName = kDigidesignVendorName,
         .modelName = modelName,
+        .modelNamesBySpecifier = namesBySpecifier,
     };
 }
 
@@ -73,14 +82,10 @@ inline constexpr std::array kAvidDefinitions{
                SupportDisposition::Supported, kAvidVendorName,
                kMboxProModelName, std::nullopt, BootloaderCuePolicy::None,
                kDiceTraits),
-    Digi00xDefinition(DeviceDefinitionId::Digi002Console, kDigi002ConsoleSpecifierId,
-                      kDigi00xConsoleModelId, kDigi002ConsoleModelName),
-    Digi00xDefinition(DeviceDefinitionId::Digi002Rack, kDigi002RackSpecifierId,
-                      kDigi00xRackModelId, kDigi002RackModelName),
-    Digi00xDefinition(DeviceDefinitionId::Digi003Console, kDigi003ConsoleSpecifierId,
-                      kDigi00xConsoleModelId, kDigi003ConsoleModelName),
-    Digi00xDefinition(DeviceDefinitionId::Digi003Rack, kDigi003RackSpecifierId,
-                      kDigi00xRackModelId, kDigi003RackModelName),
+    Digi00xDefinition(DeviceDefinitionId::Digi00xConsole, kDigi00xConsoleModelId,
+                      kDigi00xConsoleModelName, kDigi00xConsoleNames),
+    Digi00xDefinition(DeviceDefinitionId::Digi00xRack, kDigi00xRackModelId,
+                      kDigi00xRackModelName, kDigi00xRackNames),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions
