@@ -68,7 +68,8 @@ public:
     // Hardware, 003 Console, optimized build, 5-minute loopback soaks
     // (2026-11-05): at 64 the capture ring starved 28 times (up to 114 frames
     // of zeros on every input), because receive processing can run up to ~8 ms
-    // after the packets arrive; at 256 it never starved.
+    // after the packets arrive; at 256 there were 0 dropouts in one soak and
+    // 2 short ones (~41 frames) in another.
     [[nodiscard]] uint32_t TxSafetyOffsetFrames(double) const noexcept override { return 64U; }
     [[nodiscard]] uint32_t RxSafetyOffsetFrames(double) const noexcept override { return 256U; }
     [[nodiscard]] uint32_t TxReportedLatencyFrames(double) const noexcept override { return 128U; }
