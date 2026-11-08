@@ -58,10 +58,11 @@ public:
     // The bootstrap is the generic non-blocking cadence, which covers both
     // rates the family streams (Linux replays at every rate).
     [[nodiscard]] bool RxReplayBootstrapSupportsRate(uint32_t rateHz) const noexcept override {
-        return rateHz == 44100U || rateHz == 48000U;
+        return ::ASFW::Audio::Digi00x::IsStreamedRate(rateHz);
     }
     [[nodiscard]] std::vector<uint32_t> SupportedSampleRates() const override {
-        return {44100U, 48000U};
+        return {::ASFW::Audio::Digi00x::kStreamedRatesHz.begin(),
+                ::ASFW::Audio::Digi00x::kStreamedRatesHz.end()};
     }
     // TX: the value the other replayed register families (RME, MOTU) declare;
     // no playback starvation on hardware. RX: 256 frames, as generic AV/C.
@@ -79,7 +80,8 @@ public:
     [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override { return 2000U; }
 
 private:
-    static constexpr uint32_t kRateHz = 48000U;
+    // Geometry is the same at every streamed rate.
+    static constexpr uint32_t kRateHz = ::ASFW::Audio::Digi00x::kDefaultStreamedRateHz;
 
     [[nodiscard]] static ::ASFW::Audio::Wire::PcmSlotMap PcmMap() noexcept {
         return Encoding::Digi00x::PcmAfterMidiSlotMap(

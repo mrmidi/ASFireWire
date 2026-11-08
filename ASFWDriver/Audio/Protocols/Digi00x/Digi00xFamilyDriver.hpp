@@ -38,13 +38,6 @@
 
 namespace ASFW::Audio::Digi00x {
 
-/// The rates this family streams today (1x only).
-inline constexpr std::array<uint32_t, 2> kStreamedRatesHz{44100, 48000};
-
-[[nodiscard]] constexpr bool IsStreamedRate(uint32_t hz) noexcept {
-    return hz == kStreamedRatesHz[0] || hz == kStreamedRatesHz[1];
-}
-
 class Digi00xFamilyDriver final : public FamilyDriver {
 public:
     explicit Digi00xFamilyDriver(Protocols::Ports::ProtocolRegisterIO& io) noexcept
@@ -53,7 +46,7 @@ public:
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override { cancel_ = cancel; }
 
     [[nodiscard]] IOReturn LoadGeometry() override {
-        caps_ = MakeCaps(rateHz_ != 0 ? rateHz_ : kStreamedRatesHz[1]);
+        caps_ = MakeCaps(rateHz_ != 0 ? rateHz_ : kDefaultStreamedRateHz);
         return kIOReturnSuccess;
     }
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override { return caps_; }

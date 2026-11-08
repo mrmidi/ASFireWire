@@ -64,7 +64,7 @@ public:
         const Discovery::DeviceRecord& record,
         DeviceProfiles::Audio::ProfileBuilderId builder,
         const char* name) {
-        constexpr uint32_t kRate = Digi00x::kStreamedRatesHz[1];
+        constexpr uint32_t kRate = Digi00x::kDefaultStreamedRateHz;
         const uint32_t pcm = Digi00x::PcmChannelsForRate(kRate).value_or(0);
         const uint32_t slots = Digi00x::DataBlockQuadletsForRate(kRate).value_or(0);
         Model::ASFWAudioDevice config{};

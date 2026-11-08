@@ -47,6 +47,24 @@ enum class OpticalMode : uint32_t { kAdat = 0, kSpdif = 1 };
 
 inline constexpr std::array<uint32_t, 4> kSupportedRatesHz{44100, 48000, 88200, 96000};
 
+/// The rates this family streams today (1x only). Every streamed-rate list in
+/// the driver (profile, adapter, clock requests) derives from this one.
+inline constexpr std::array<uint32_t, 2> kStreamedRatesHz{44100, 48000};
+
+/// The rate a stream opens at before the host asks for another.
+inline constexpr uint32_t kDefaultStreamedRateHz = 48000;
+
+[[nodiscard]] constexpr bool IsStreamedRate(uint32_t hz) noexcept {
+    for (const uint32_t rate : kStreamedRatesHz) {
+        if (rate == hz) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static_assert(IsStreamedRate(kDefaultStreamedRateHz));
+
 [[nodiscard]] constexpr std::optional<RateCode> RateCodeForHz(uint32_t hz) noexcept {
     for (uint32_t code = 0; code < kSupportedRatesHz.size(); ++code) {
         if (kSupportedRatesHz[code] == hz) {
