@@ -14,6 +14,10 @@ namespace {
 
 constexpr uint8_t kInquiry = 0x12;
 constexpr uint8_t kRead10 = 0x28;
+constexpr uint8_t kReserve6 = 0x16;
+constexpr uint8_t kRelease6 = 0x17;
+constexpr uint8_t kReserve10 = 0x56;
+constexpr uint8_t kRelease10 = 0x57;
 
 // Target IDs the family's per-ID loops visit for a reported highest ID.
 // willTerminate uses `<` (OSS IOSCSIParallelInterfaceController.cpp); start's
@@ -64,19 +68,19 @@ TEST(HbaTaskPolicyTests, BringUpScanReachesTheScannerOnlyThroughTarget0) {
 TEST(HbaTaskPolicyTests, OtherTargetsAnswerNothingEvenSyntheticOnes) {
     for (bool ready : {true, false}) {
         for (uint8_t op : {Policy::kOpTestUnitReady, Policy::kOpRequestSense,
-                           Policy::kOpReserve6, Policy::kOpRelease10, kRead10}) {
+                           kReserve6, kRelease10, kRead10}) {
             EXPECT_EQ(Disposition::NotPresent, Policy::Classify(1, op, ready))
                 << "op 0x" << std::hex << int(op) << " ready " << ready;
         }
     }
 }
 
-TEST(HbaTaskPolicyTests, ReserveReleaseNeverReachTheWire) {
-    for (bool ready : {true, false}) {
-        for (uint8_t op : {Policy::kOpReserve6, Policy::kOpRelease6,
-                           Policy::kOpReserve10, Policy::kOpRelease10}) {
-            EXPECT_EQ(Disposition::SyntheticGood, Policy::Classify(0, op, ready));
-        }
+// #139: the Minolta FS-V2 hung on the SCAN after a preview while RELEASE was
+// answered locally. RESERVE/RELEASE go to the target like any other command.
+TEST(HbaTaskPolicyTests, ReserveReleaseReachTheTarget) {
+    for (uint8_t op : {kReserve6, kRelease6, kReserve10, kRelease10}) {
+        EXPECT_EQ(Disposition::Forward, Policy::Classify(0, op, true));
+        EXPECT_EQ(Disposition::Busy, Policy::Classify(0, op, false));
     }
 }
 
