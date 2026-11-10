@@ -103,3 +103,68 @@ TEST(HbaTaskPolicyTests, TransferCapMatchesAppleAndCoversHasselbladCalibrationRe
     EXPECT_GE(Policy::kMaxTransferBytes, 1'966'080ull);
     EXPECT_GE(Policy::kMaxTransferBytes, 5'242'880ull);
 }
+
+// --- Attach probe, REPORT LUNS, short transfers --------------------------------
+
+TEST(HbaTaskPolicyTests, OnlyTarget0TURsInsideTheCreateCallAreAttachProbe) {
+    EXPECT_TRUE(Policy::IsAttachProbeTUR(0, Policy::kOpTestUnitReady, true));
+    // Every TUR after the create returns goes to the target (disk drivers send their own).
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, Policy::kOpTestUnitReady, false));
+    // Only TEST UNIT READY; INQUIRY and the rest of the probe go to the target.
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, kInquiry, true));
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(0, Policy::kOpRequestSense, true));
+    EXPECT_FALSE(Policy::IsAttachProbeTUR(1, Policy::kOpTestUnitReady, true));
+}
+
+TEST(HbaTaskPolicyTests, ReportLunsListsTheOneLoginLunAsLun0) {
+    const auto all = Policy::BuildReportLunsData(0x00);
+    ASSERT_EQ(all.length, 16u);
+    const uint8_t expected[16] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(all.bytes[i], expected[i]) << "byte " << i;
+    }
+    const auto everything = Policy::BuildReportLunsData(0x02);
+    EXPECT_EQ(everything.length, 16u);
+    EXPECT_EQ(everything.bytes[3], 8u);
+    // Well-known LUNs only: none.
+    const auto wellKnown = Policy::BuildReportLunsData(0x01);
+    EXPECT_EQ(wellKnown.length, 8u);
+    EXPECT_EQ(wellKnown.bytes[3], 0u);
+}
+
+TEST(HbaTaskPolicyTests, ReportLunsCopyStopsAtTheAllocationLength) {
+    const auto data = Policy::BuildReportLunsData(0x00);
+    // The family asks for the 16-byte header first; a shorter allocation truncates.
+    EXPECT_EQ(Policy::CopyBackLength(16, data.length, 4096), 16u);
+    EXPECT_EQ(Policy::CopyBackLength(8, data.length, 4096), 8u);
+    EXPECT_EQ(Policy::CopyBackLength(64, data.length, 4096), 16u);
+    EXPECT_EQ(Policy::CopyBackLength(64, data.length, 4), 4u);
+}
+
+TEST(HbaTaskPolicyTests, EveryShortDataInBounces) {
+    // The family's probe lengths seen on HW; the target wrote 36 bytes into each.
+    for (uint64_t length : {4u, 5u, 6u, 36u, 134u, 255u, 511u}) {
+        EXPECT_TRUE(Policy::ShouldBounceTransfer(length, true)) << length;
+    }
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(0, true));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(512, true));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(61440, true));  // image reads stay in place
+}
+
+TEST(HbaTaskPolicyTests, ShortUnalignedDataOutBouncesLikeApple) {
+    // Apple double-buffers lengths under 512 that are not quadlet multiples.
+    EXPECT_TRUE(Policy::ShouldBounceTransfer(2, false));
+    EXPECT_TRUE(Policy::ShouldBounceTransfer(511, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(36, false));  // vendor 0x0F command
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(0, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(4, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(512, false));
+    EXPECT_FALSE(Policy::ShouldBounceTransfer(513, false));
+}
+
+TEST(HbaTaskPolicyTests, CopyBackNeverExceedsRequestSourceOrMapping) {
+    EXPECT_EQ(Policy::CopyBackLength(6, 36, 16384), 6u);   // target delivered more
+    EXPECT_EQ(Policy::CopyBackLength(6, 4, 16384), 4u);    // target delivered less
+    EXPECT_EQ(Policy::CopyBackLength(6, 36, 5), 5u);       // short mapping
+    EXPECT_EQ(Policy::CopyBackLength(0, 36, 16384), 0u);
+}

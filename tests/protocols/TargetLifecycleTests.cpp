@@ -172,4 +172,50 @@ TEST(TargetLifecycleTests, StopDuringCreateSkipsLaterDestroy) {
     EXPECT_EQ((Calls{"destroy", "create"}), hba.calls);
 }
 
+// --- Attach-probe window ------------------------------------------------------
+
+TEST(TargetLifecycleTests, CreatingTargetIsTrueOnlyInsideTheCreateCall) {
+    FakeHBA hba;
+    TargetLifecycle lifecycle(hba.Ops());
+    std::vector<bool> seen;
+    hba.duringCreate = [&] { seen.push_back(lifecycle.IsCreatingTarget()); };
+
+    EXPECT_FALSE(lifecycle.IsCreatingTarget());
+    lifecycle.OnEdge(kGuid, true);
+    ASSERT_EQ(seen.size(), 1u);
+    EXPECT_TRUE(seen[0]);
+    EXPECT_FALSE(lifecycle.IsCreatingTarget());
+
+    // The pre-create destroy and the logout destroy are outside the window.
+    hba.duringCreate = nullptr;
+    lifecycle.OnEdge(kGuid, false);
+    EXPECT_FALSE(lifecycle.IsCreatingTarget());
+}
+
+TEST(TargetLifecycleTests, FailedCreateClosesTheWindowToo) {
+    FakeHBA hba;
+    hba.createResult = kIOReturnError;
+    TargetLifecycle lifecycle(hba.Ops());
+    bool inside = false;
+    hba.duringCreate = [&] { inside = lifecycle.IsCreatingTarget(); };
+    lifecycle.OnEdge(kGuid, true);
+    EXPECT_TRUE(inside);
+    EXPECT_FALSE(lifecycle.IsCreatingTarget());
+    EXPECT_FALSE(lifecycle.IsTargetAttached());
+}
+
+TEST(TargetLifecycleTests, AnsweredProbeTURsAreCountedPerCreate) {
+    FakeHBA hba;
+    TargetLifecycle lifecycle(hba.Ops());
+    hba.duringCreate = [&] {
+        lifecycle.NoteAttachProbeTURAnswered();
+        lifecycle.NoteAttachProbeTURAnswered();
+    };
+    lifecycle.OnEdge(kGuid, true);   // logs one summary line (2) and resets the count
+    lifecycle.OnEdge(kGuid, false);
+    hba.duringCreate = nullptr;
+    lifecycle.OnEdge(kGuid, true);   // no answered TURs, no summary line
+    EXPECT_TRUE(lifecycle.IsTargetAttached());
+}
+
 } // namespace

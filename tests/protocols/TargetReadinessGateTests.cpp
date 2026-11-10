@@ -40,6 +40,12 @@ CommandResult MakeResult(int transport, bool statusValid, uint8_t status,
 }
 
 CommandResult Good() { return MakeResult(0, true, 0x00); }
+// The target had the ORB (ORB_POINTER write acknowledged) and wrote no status
+// block before the ORB timer expired.
+CommandResult NoStatus() { return MakeResult(kIOReturnTimeout, false, 0x00); }
+// The probe's ORB_POINTER write failed or was never acknowledged (FetchAgent):
+// the target may not have seen the ORB.
+CommandResult PointerWriteFailed() { return MakeResult(-1, false, 0x00); }
 CommandResult Warming205() { return MakeResult(0, true, 0x02, 0x02, 0x05, 0x00); }
 CommandResult Warming204() { return MakeResult(0, true, 0x02, 0x02, 0x04, 0x01); }
 CommandResult PowerOnUA() { return MakeResult(0, true, 0x02, 0x06, 0x29, 0x00); }
@@ -87,6 +93,10 @@ TEST(TargetReadinessGateTests, ClassifyTable) {
     // Other CHECKs (e.g. 5/24 illegal request) do not block announcement.
     EXPECT_EQ(TargetReadinessGate::Classify(MakeResult(0, true, 0x02, 0x05, 0x24, 0x00)),
               Probe::Ready);
+    // No status block at all: the target does not answer this probe.
+    EXPECT_EQ(TargetReadinessGate::Classify(NoStatus()), Probe::NoAnswer);
+    // The ORB never reached the target: a transport failure, paced.
+    EXPECT_EQ(TargetReadinessGate::Classify(PointerWriteFailed()), Probe::RetryDelayed);
     // CHECK with undecodable autosense: fail open.
     CommandResult bare = MakeResult(0, true, 0x02, 0x02, 0x04, 0x01);
     bare.senseData.clear();
@@ -243,6 +253,129 @@ TEST(TargetReadinessGateTests, TransportErrorRetriesPacedThenAnnouncesWhenReady)
     rig.CompleteProbe(Good());
     ASSERT_EQ(rig.notified.size(), 1u);
     EXPECT_TRUE(rig.notified[0].second);
+}
+
+// --- Targets that never answer TEST UNIT READY --------------------------------
+
+TEST(TargetReadinessGateTests, SilentTargetFailsOpenAfterNoAnswerLimit) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    rig.CompleteProbe(NoStatus());
+    // Re-probed at once: the executor already reset the agent and the LUN.
+    EXPECT_EQ(rig.scheduler.PendingCount(), 0u);
+    ASSERT_EQ(rig.probes.size(), 2u);
+    EXPECT_TRUE(rig.notified.empty());
+    EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
+
+    rig.CompleteProbe(NoStatus());
+    static_assert(TargetReadinessGate::kNoAnswerLimit == 2);
+    ASSERT_EQ(rig.notified.size(), 1u);
+    EXPECT_TRUE(rig.notified[0].second);
+    EXPECT_EQ(rig.probes.size(), 2u);
+    // Present (logged in) but silent on TUR: the attach probe gets GOOD.
+    const auto& answer = rig.gate.AttachProbeAnswer();
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(answer->transportStatus, 0);
+    EXPECT_TRUE(answer->scsiStatusValid);
+    EXPECT_EQ(answer->scsiStatus, 0x00);
+    EXPECT_TRUE(answer->senseData.empty());
+}
+
+TEST(TargetReadinessGateTests, UnansweredCountIsConsecutive) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    rig.CompleteProbe(NoStatus());
+    ASSERT_EQ(rig.probes.size(), 2u);
+    // A real (warming) answer in between resets the count.
+    rig.CompleteProbe(Warming204());
+    rig.scheduler.Advance(kSecondNs);
+    ASSERT_EQ(rig.probes.size(), 3u);
+    rig.CompleteProbe(NoStatus());
+    EXPECT_TRUE(rig.notified.empty());
+    ASSERT_EQ(rig.probes.size(), 4u);
+    rig.CompleteProbe(Good());
+    ASSERT_EQ(rig.notified.size(), 1u);
+    ASSERT_TRUE(rig.gate.AttachProbeAnswer().has_value());
+    EXPECT_EQ(rig.gate.AttachProbeAnswer()->scsiStatus, 0x00);
+}
+
+TEST(TargetReadinessGateTests, BusResetFailuresStayPacedAndNeverCountAsSilence) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    for (int i = 0; i < 3; ++i) {
+        rig.CompleteProbe(MakeResult(-536870165 /* kIOReturnAborted */, false, 0x00));
+        EXPECT_TRUE(rig.notified.empty());
+        EXPECT_EQ(rig.scheduler.PendingCount(), 1u);
+        rig.scheduler.Advance(kSecondNs);
+    }
+    EXPECT_EQ(rig.probes.size(), 4u);
+}
+
+// A failed ORB_POINTER write says nothing about TEST UNIT READY: the target may
+// never have received the ORB. It must not count toward kNoAnswerLimit.
+TEST(TargetReadinessGateTests, FailedPointerWritesStayPacedAndNeverFailOpen) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    for (uint32_t i = 0; i < TargetReadinessGate::kNoAnswerLimit; ++i) {
+        rig.CompleteProbe(PointerWriteFailed());
+        EXPECT_TRUE(rig.notified.empty());
+        EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
+        EXPECT_EQ(rig.scheduler.PendingCount(), 1u);  // paced, not re-probed at once
+        EXPECT_EQ(rig.probes.size(), i + 1);
+        rig.scheduler.Advance(kSecondNs);
+    }
+    // Still probing; the next probe went out after the paced delay.
+    EXPECT_EQ(rig.probes.size(), TargetReadinessGate::kNoAnswerLimit + 1);
+    EXPECT_TRUE(rig.notified.empty());
+    EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
+}
+
+TEST(TargetReadinessGateTests, DeviceAnswerIsKeptForTheAttachProbe) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    // Operational NOT READY (medium not present): announced, answer replayed.
+    rig.CompleteProbe(MakeResult(0, true, 0x02, 0x02, 0x3A, 0x00));
+    ASSERT_EQ(rig.notified.size(), 1u);
+    const auto& answer = rig.gate.AttachProbeAnswer();
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(answer->scsiStatus, 0x02);
+    ASSERT_GE(answer->senseData.size(), 13u);
+    EXPECT_EQ(answer->senseData[2], 0x02);
+    EXPECT_EQ(answer->senseData[12], 0x3A);
+}
+
+TEST(TargetReadinessGateTests, GoodWithOmittedStatusIsKeptAsGood) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    rig.CompleteProbe(MakeResult(0, false, 0x00));
+    ASSERT_TRUE(rig.gate.AttachProbeAnswer().has_value());
+    EXPECT_TRUE(rig.gate.AttachProbeAnswer()->scsiStatusValid);
+    EXPECT_EQ(rig.gate.AttachProbeAnswer()->scsiStatus, 0x00);
+}
+
+TEST(TargetReadinessGateTests, DownEdgeClearsTheAttachProbeAnswer) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    rig.CompleteProbe(Good());
+    ASSERT_TRUE(rig.gate.AttachProbeAnswer().has_value());
+    rig.gate.OnEdge(kGuid, false);
+    EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
+    // A fresh gate run starts without an answer until it finishes.
+    rig.gate.OnEdge(kGuid, true);
+    EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
+}
+
+TEST(TargetReadinessGateTests, BudgetExhaustionLeavesNoAttachProbeAnswer) {
+    GateRig rig;
+    rig.gate.OnEdge(kGuid, true);
+    for (uint32_t i = 0; i < TargetReadinessGate::kProbeBudget - 1; ++i) {
+        rig.CompleteProbe(Warming205());
+        rig.scheduler.Advance(kSecondNs);
+    }
+    rig.CompleteProbe(Warming205());
+    ASSERT_EQ(rig.notified.size(), 1u);
+    // Still warming: nothing definite, so the family's own TUR goes to the target.
+    EXPECT_FALSE(rig.gate.AttachProbeAnswer().has_value());
 }
 
 } // namespace

@@ -794,7 +794,7 @@ TEST(LoginSessionTests, SubmittedImmediateORBStartsTimeoutWhenFetchAgentWriteIsI
 
     rig.AdvanceMs(1);
     EXPECT_EQ(1, callbackCount);
-    EXPECT_EQ(-1, callbackStatus);
+    EXPECT_EQ(kIOReturnTimeout, callbackStatus);  // write acknowledged: the target had the ORB
     // Deregister before the ORBs leave scope, as CommandExecutor does.
     rig.ClearCommandTracking();
 }

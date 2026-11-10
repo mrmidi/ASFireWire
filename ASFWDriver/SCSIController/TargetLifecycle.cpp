@@ -50,7 +50,16 @@ void TargetLifecycle::OnEdge(uint64_t guid, bool loggedIn) {
             // DriverKit shim refuses to destroy a family-created node.
             ASFW_LOG(Controller, "[SCSIHBA] pre-create destroy: 0x%x", destroyKr);
         }
+        attachProbeTURsAnswered_ = 0;
+        creatingTarget_ = true;
         const kern_return_t kr = ops_.createTarget();
+        creatingTarget_ = false;
+        const uint32_t answered = attachProbeTURsAnswered_.exchange(0);
+        if (answered != 0) {
+            ASFW_LOG(Controller,
+                     "[SCSIHBA] attach probe: %u TEST UNIT READY answered from the readiness gate",
+                     answered);
+        }
         if (kr == kIOReturnSuccess) {
             targetAttached_ = true;
             ASFW_LOG(Controller,

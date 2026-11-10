@@ -37,6 +37,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace ASFW::Protocols::SBP2 {
 
@@ -66,6 +67,13 @@ public:
     // True when the SBP-2 session is logged in (commands can flow).
     [[nodiscard]] bool IsReady() const;
 
+    // What the readiness gate learned for the current login, for the SCSI
+    // family's attach-probe TEST UNIT READY (TargetReadinessGate::
+    // AttachProbeAnswer). Empty without a gate, before the gate finished, after
+    // a down edge, or when the gate failed open without a definite answer.
+    // Callable from any queue.
+    [[nodiscard]] std::optional<SCSI::CommandResult> AttachProbeAnswer() const;
+
     // Queue one SCSI task. The callback fires exactly once, on the driver's
     // Default queue, with the command result (synthetic aborted/not-ready result
     // if the task never reached the wire). Callable from any queue.
@@ -80,6 +88,8 @@ private:
     // Default-queue context only.
     void OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>& unit);
     void OnLoginStateChanged(uint64_t guid, bool loggedIn);
+    // Copy the gate's attach-probe answer on its up edge; clear it on down.
+    void RecordAttachProbeAnswer(bool loggedIn);
     void AdoptExistingUnits();
     void Pump();
 
@@ -117,6 +127,9 @@ private:
     mutable uint32_t hbaReaders_{0};
     uint64_t sessionHandle_{0};
     uint64_t sessionGuid_{0};
+    // RecordAttachProbeAnswer (Default queue) → AttachProbeAnswer (HBA queues).
+    // Guarded by lock_.
+    std::optional<SCSI::CommandResult> attachProbeAnswer_;
 
     Discovery::IUnitRegistry::CallbackHandle unitCallbackHandle_{0};
     bool unitCallbackRegistered_{false};
