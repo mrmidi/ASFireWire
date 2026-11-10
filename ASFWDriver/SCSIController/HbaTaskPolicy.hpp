@@ -41,15 +41,6 @@ enum class Disposition {
 
 inline constexpr uint8_t kOpTestUnitReady = 0x00;
 inline constexpr uint8_t kOpRequestSense  = 0x03;
-inline constexpr uint8_t kOpReserve6      = 0x16;
-inline constexpr uint8_t kOpRelease6      = 0x17;
-inline constexpr uint8_t kOpReserve10     = 0x56;
-inline constexpr uint8_t kOpRelease10     = 0x57;
-
-[[nodiscard]] constexpr bool IsReserveRelease(uint8_t opcode) {
-    return opcode == kOpReserve6 || opcode == kOpRelease6 ||
-           opcode == kOpReserve10 || opcode == kOpRelease10;
-}
 
 [[nodiscard]] constexpr Disposition Classify(uint64_t targetID, uint8_t opcode,
                                              bool sessionReady) {
@@ -59,14 +50,9 @@ inline constexpr uint8_t kOpRelease10     = 0x57;
     if (targetID != kBridgedTargetID) {
         return Disposition::NotPresent;
     }
-    // RESERVE/RELEASE never reach the wire. This HBA owns the only initiator on
-    // the bus, so a reservation is uncontended and trivially GOOD for any
-    // single-initiator SBP-2 target. (The working Sequoia stack, VueScan via
-    // IOFireWireSBP2Lib, never sent them, and LS-9000 firmware wedges on a
-    // RESERVE(6) retry after UNIT ATTENTION.)
-    if (IsReserveRelease(opcode)) {
-        return Disposition::SyntheticGood;
-    }
+    // RESERVE/RELEASE are forwarded like any CDB, as Apple's SBP-2 transport
+    // does. The Minolta FS-V2 needs RELEASE after each SCAN: answering it
+    // locally hung the next SCAN (#139).
     if (!sessionReady) {
         // Suspended window: every data-carrying command, INQUIRY included,
         // answers BUSY so the initiator's bounded retries land after the

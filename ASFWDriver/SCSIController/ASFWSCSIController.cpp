@@ -592,10 +592,6 @@ kern_return_t IMPL(ASFWSCSIController, UserProcessParallelTask)
             resp.fCompletionStatus = kSCSITaskStatus_BUSY;
             break;
         case Disposition::SyntheticGood:
-            if (SBP2::HbaTaskPolicy::IsReserveRelease(opcode)) {
-                ASFW_LOG(Controller, "[SCSIHBA] opcode 0x%02x (RESERVE/RELEASE) → synthetic GOOD",
-                         opcode);
-            }
             break;
         case Disposition::Forward:
             break;
