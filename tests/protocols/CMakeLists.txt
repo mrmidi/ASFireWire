@@ -471,3 +471,8 @@ add_protocols_test(OrpheusControlWriteTests
 )
 
 
+
+# Digi 002/003 register codes, geometry and handshake values
+add_protocols_test(Digi00xRegistersTests
+    Digi00xRegistersTests.cpp
+)

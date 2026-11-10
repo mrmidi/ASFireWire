@@ -22,6 +22,10 @@ using ASFW::DeviceProfiles::Audio::kSPro24DspModelId;
 using ASFW::DeviceProfiles::Audio::kTerraTecVendorId;
 using ASFW::DeviceProfiles::Audio::kPhase88RackFwModelId;
 using ASFW::DeviceProfiles::Audio::kMackieVendorId;
+using ASFW::DeviceProfiles::Audio::kAvidVendorId;
+using ASFW::DeviceProfiles::Audio::kDigi003ConsoleSpecifierId;
+using ASFW::DeviceProfiles::Audio::kDigi00xConsoleModelId;
+using ASFW::DeviceProfiles::Audio::kDigi00xUnitVersion;
 using ASFW::DeviceProfiles::Audio::kMidasVendorId;
 using ASFW::DeviceProfiles::Audio::kMidasVeniceModelId;
 using ASFW::DeviceProfiles::Audio::kMAudioVendorId;
@@ -50,7 +54,8 @@ constexpr uint32_t kFireworksVersion = 0x010000;
 [[nodiscard]] DeviceRecord MakeRecord(uint32_t vendorId,
                                       std::optional<uint32_t> modelId,
                                       uint32_t unitSpecifier,
-                                      uint32_t unitVersion) {
+                                      uint32_t unitVersion,
+                                      std::optional<uint32_t> unitModelId = std::nullopt) {
     DeviceRecord record{};
     record.instanceId = ASFW::Discovery::DeviceInstanceId{1};
     record.deviceIncarnation = 1;
@@ -73,6 +78,7 @@ constexpr uint32_t kFireworksVersion = 0x010000;
     unit.unitDirectoryOffset = 5;
     unit.specifierId = unitSpecifier;
     unit.version = unitVersion;
+    unit.modelId = unitModelId;
     record.identity.units.push_back(unit);
     const auto plan = ASFW::DeviceProfiles::Audio::AudioDeviceCatalog::Resolve(record);
     EXPECT_TRUE(plan.has_value());
@@ -309,6 +315,51 @@ TEST(DuplexStreamProfileTests, Onyx400FUsesBeBoBOrderingWithoutPreStreamClockLoc
     EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kReceive);
     EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kTransmit);
     EXPECT_TRUE(profile.captureTrustConfiguredStride);
+}
+
+// Digi 002 / 003: the IRM picks any channel, host transmit starts first, and
+// capture timing ignores SYT (hardware, 2026-11-05: a 002 Console sends capture
+// SYT 0x0000, so a start timed by SYT waited for a clock anchor in vain).
+TEST(DuplexStreamProfileTests, Digi00xCaptureIsSytUnawareAndTransmitStartsFirst) {
+    const DeviceRecord record = MakeRecord(kAvidVendorId, std::nullopt, kDigi003ConsoleSpecifierId,
+                                           kDigi00xUnitVersion, kDigi00xConsoleModelId);
+    ASSERT_NE(record.audioPolicy, nullptr);
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 18,
+        .hostOutputPcmChannels = 18,
+        .deviceToHostAm824Slots = 19,
+        .hostToDeviceAm824Slots = 19,
+        .sampleRateHz = 48000,
+        .deviceToHostStreamCount = 1,
+        .hostToDeviceStreamCount = 1,
+    };
+
+    const DuplexStreamProfile profile = DuplexStreamProfileResolver::Resolve(record, caps);
+
+    EXPECT_TRUE(profile.captureSytUnaware);
+    EXPECT_FALSE(profile.captureTrustConfiguredStride);
+    // PCM follows the MIDI data channel: CoreAudio input N reads slot N
+    // (hardware, 2026-11-05: without the map, analog input 1 arrived on
+    // CoreAudio input 2 and input 1 read the MIDI slot).
+    ASSERT_EQ(profile.captureChannelMap.channelCount, 18U);
+    for (uint32_t channel = 0; channel < 18; ++channel)
+        EXPECT_EQ(profile.captureChannelMap.slotForChannel[channel], channel + 1) << channel;
+    EXPECT_FALSE(profile.captureChannelMap.HasDelay());
+    EXPECT_EQ(profile.captureStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.playbackStreams[0].allowedIsoChannels, ~uint64_t{0});
+    EXPECT_EQ(profile.startOrder.startOrder[0], DuplexHostDirection::kTransmit);
+    EXPECT_EQ(profile.startOrder.startOrder[1], DuplexHostDirection::kReceive);
+}
+
+TEST(DuplexStreamProfileTests, Onyx400FCaptureStillUsesSytCadence) {
+    DeviceRecord record = MakeRecord(kMackieVendorId, kOnyx400FModelId,
+                                     kTa1394AvcSpecifier, kFireworksVersion);
+    AudioStreamRuntimeCaps caps{
+        .hostInputPcmChannels = 10, .hostOutputPcmChannels = 10,
+        .deviceToHostAm824Slots = 11, .hostToDeviceAm824Slots = 11,
+        .sampleRateHz = 44100, .deviceToHostStreamCount = 1, .hostToDeviceStreamCount = 1,
+    };
+    EXPECT_FALSE(DuplexStreamProfileResolver::Resolve(record, caps).captureSytUnaware);
 }
 
 TEST(DuplexStreamProfileTests, WeissIntStartsHostTransmitFirstWithoutPreEnableSourceLock) {

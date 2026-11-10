@@ -83,6 +83,7 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
     timingLossReported_ = false;
     ++cursorEpoch_;
     packetizer_.Reset(initialDbc);
+    payloadWriter_.ResetStreamState();
 }
 
 bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
@@ -231,6 +232,7 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
         streamPolicy.cadencePacketsCarryDataBlocks;
     policy.cadenceSlotWord = streamPolicy.cadenceSlotWord;
     policy.dbcIsEndEvent = streamPolicy.dbcIsEndEvent;
+    policy.dotScramblePcm = streamPolicy.dotScramblePcm;
     policy.clearPayloadBeforeExposure = true;
     policy.playbackChannelMap = streamPolicy.playbackChannelMap;
     return policy;

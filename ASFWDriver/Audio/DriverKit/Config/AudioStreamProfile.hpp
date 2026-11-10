@@ -60,6 +60,12 @@ struct AudioStreamTxPolicy final {
     uint32_t motuPresentationOffsetFrames{
         Encoding::Motu::kDefaultPresentationOffsetFrames};
     ::ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
+    /// The device ignores SYT: send CIP_SYT_NO_INFO (0xFFFF) and accept a
+    /// replayed capture packet without one (Linux CIP_UNAWARE_SYT). Families
+    /// timed by a stamper say so through ITxDeviceTimingStamper instead.
+    bool sytUnaware{false};
+    /// Digi 002/003 playback scrambling (AmdtpTxPolicy::dotScramblePcm).
+    bool dotScramblePcm{false};
 
 };
 
@@ -92,6 +98,12 @@ public:
     [[nodiscard]] virtual AudioStreamTxPolicy TxStreamPolicy() const noexcept { return {}; }
     [[nodiscard]] virtual TxClockSource TransmitClockSource() const noexcept {
         return TxClockSource::kRxReplay;
+    }
+    // The rates at which kRxReplayAfterBootstrap may start. Its bootstrap
+    // cadence was brought up at 48 kHz (RME); a profile that has run it at
+    // other rates says so here.
+    [[nodiscard]] virtual bool RxReplayBootstrapSupportsRate(uint32_t rateHz) const noexcept {
+        return rateHz == 48000U;
     }
 
     // Profiles with unequal playback streams override this geometry. Uniform

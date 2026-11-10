@@ -73,6 +73,8 @@ enum class DeviceDefinitionId : uint32_t {
     MotuUltraliteMk3Hybrid, MotuAudioExpress, Motu828mk3Hybrid, Motu896mk3Hybrid, MotuTrack16, Motu4pre,
     MotuV4hdSubdevice0, MotuV4hdSubdevice1, MotuV4hdSubdevice2, MotuV4hdSubdevice3,
     PrismSoundOrpheus,
+    Digi00xConsole,
+    Digi00xRack,
 };
 
 enum class AudioFamilyProviderId : uint8_t {
@@ -87,9 +89,11 @@ enum class AudioFamilyProviderId : uint8_t {
     MotuRegister,
     /// RME Fireface direct-register protocol. AV/C/FCP stays blocked.
     RmeRegister,
+    /// Digidesign Digi 002/003 register protocol. No AV/C at all.
+    Digi00xRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = RmeRegister,
+    kLastValid = Digi00xRegister,
 };
 
 enum class ProbePolicyId : uint8_t {
@@ -113,9 +117,11 @@ enum class ProbePolicyId : uint8_t {
     /// MOTU: clock/format registers, read directly. No FCP is ever sent.
     MotuRegister,
     RmeRegister,
+    /// Digi 002/003: rate and streaming registers, read directly. No FCP.
+    Digi00xRegister,
 
     /// Alias for the last real member; see the note on ProfileBuilderId.
-    kLastValid = RmeRegister,
+    kLastValid = Digi00xRegister,
 };
 
 /// Device preparation that must run before an identity can become anything
@@ -178,7 +184,9 @@ enum class ProfileBuilderId : uint16_t {
     Motu828, Motu896, Motu896mk3, MotuUltraliteMk3, MotuTravelerMk3,
     MotuTrack16,
     Orpheus,
-    kLastValid = Orpheus,
+    /// All four Digi 002/003 models: one fixed geometry.
+    Digi00x,
+    kLastValid = Digi00x,
 };
 
 /// Concrete protocol class chosen by the catalog. This is deliberately
@@ -200,7 +208,8 @@ enum class ProtocolImplementationId : uint8_t {
     RmeFireface,
     GenericAvc,
     Orpheus,
-    kLastValid = Orpheus,
+    Digi00x,
+    kLastValid = Digi00x,
 };
 
 /// AMDTP cadence a device must be driven at regardless of what it reports.
@@ -256,6 +265,13 @@ struct StreamWirePolicy final {
 
     /// RME Fireface headerless LE PCM with signed data in the upper 24 bits.
     bool headerlessUpper24LE{false};
+
+    /// The capture-side CIP SYT is not a presentation time, so receive timing
+    /// is established from an unbroken run of packets, one per cycle, instead
+    /// of from SYT cadence. Digi 002 / 003: Linux amdtp-dot.c gives both
+    /// directions CIP_UNAWARE_SYT, and a 002 Console sends SYT 0x0000 in every
+    /// capture packet (hardware, 2026-11-05).
+    bool captureSytUnaware{false};
 };
 
 /// Any of the 64 isochronous channels.
@@ -335,6 +351,14 @@ enum class CatalogResolutionError : uint8_t {
     InvalidUnit,
 };
 
+/// A product name chosen by the unit's specifier_id, for a row whose identity
+/// (vendor + model + version) covers several products. A unit whose specifier
+/// is not listed keeps the row's modelName.
+struct SpecifierModelName final {
+    uint32_t unitSpecifierId{0};
+    const char* modelName{nullptr};
+};
+
 struct AudioDeviceDefinition final {
     DeviceDefinitionId id{DeviceDefinitionId::Unknown};
     uint32_t variantId{0};
@@ -354,6 +378,7 @@ struct AudioDeviceDefinition final {
     BootloaderCuePolicy bootloaderCue{BootloaderCuePolicy::None};
     const char* vendorName{nullptr};
     const char* modelName{nullptr};
+    std::span<const SpecifierModelName> modelNamesBySpecifier{};
 };
 
 struct AudioSafetyRule final {

@@ -7,6 +7,7 @@
 #include "../IEC61883/CipHeader.hpp"
 #include "../IEC61883/DbcCounter.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -44,6 +45,11 @@ public:
     [[nodiscard]] uint8_t CurrentCycleDataFrames() const noexcept;
 
 private:
+    // Builds the per-frame slot defaults from the stream config and TX
+    // policy. Nothing in them changes between packets, so the hot path only
+    // copies them.
+    void BuildFrameDefaults() noexcept;
+
     void WriteDataPacketDefaults(uint8_t* packetBytes,
                                  uint32_t packetCapacityBytes,
                                  uint32_t payloadBytes) noexcept;
@@ -59,6 +65,16 @@ private:
 
     AmdtpStreamConfig streamConfig_{};
     AmdtpTxPolicy txPolicy_{};
+
+    // One data block's default contents, wire order (big-endian), built by
+    // BuildFrameDefaults: encoded silence in the slots the playback map gives
+    // to PCM, defaultNonAudioSlotWord in the slots it leaves free.
+    static constexpr uint32_t kMaxSlots = 255;  // dbs is 8 bits
+    std::array<uint8_t, kMaxSlots * 4> frameDefaults_{};
+    // The non-audio slots, for policies that keep PCM bytes and only arm
+    // the non-audio slots.
+    std::array<uint8_t, kMaxSlots> nonAudioSlots_{};
+    uint32_t nonAudioSlotCount_{0};
 
     IEC61883::CipHeaderBuilder cipBuilder_{};
     IEC61883::DbcCounter dbcCounter_{};

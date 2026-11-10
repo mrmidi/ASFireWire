@@ -57,3 +57,24 @@ TEST(TextDescriptorLeafParseTests, TypeSpecMustBeAtPlus1_NotPlus2) {
     EXPECT_EQ(parsed.error().code,
               ASFW::Discovery::ConfigROMParser::ErrorCode::UnsupportedTextDescriptor);
 }
+
+TEST(TextDescriptorLeafParseTests, TextThatFillsTheLeafNeedsNoNul) {
+    // Digi 002 Rack unit model leaf, read from hardware (issue #249). The text
+    // fills all three text quadlets, so there is no terminating NUL: the leaf
+    // length is the only bound.
+    const std::array<uint32_t, 6> leafWire = {
+        OSSwapHostToBigInt32(0x0005DB50u),  // header: leaf_length=5, crc=0xDB50
+        OSSwapHostToBigInt32(0x00000000u),  // type/specifier
+        OSSwapHostToBigInt32(0x00000000u),  // width/charset/lang (minimal ASCII)
+        OSSwapHostToBigInt32(0x44696769u),  // "Digi"
+        OSSwapHostToBigInt32(0x20303032u),  // " 002"
+        OSSwapHostToBigInt32(0x5261636Bu),  // "Rack"
+    };
+
+    auto parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
+        std::span<const uint32_t>(leafWire),
+        /*leafOffsetQuadlets=*/0);
+
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed.value(), "Digi 002Rack");
+}

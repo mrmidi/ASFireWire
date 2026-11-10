@@ -83,6 +83,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
 
     streamConfig_ = config;
     txPolicy_ = txPolicy;
+    BuildFrameDefaults();
 
     IEC61883::CipHeaderConfig cipConfig{};
     cipConfig.sid = config.sid;
@@ -286,6 +287,49 @@ uint8_t AmdtpTxPacketizer::CurrentCycleDataFrames() const noexcept {
     return cadence_ != nullptr ? cadence_->CurrentCycleDataFrames() : 0;
 }
 
+void AmdtpTxPacketizer::BuildFrameDefaults() noexcept {
+    const uint32_t dbs = streamConfig_.dbs;  // Configure guarantees 1..255
+    const uint32_t pcmSlots = streamConfig_.pcmChannels < dbs
+                                  ? streamConfig_.pcmChannels
+                                  : dbs;
+    const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, dbs);
+
+    std::array<bool, kMaxSlots> isPcmSlot{};
+    for (uint32_t channel = 0; channel < pcmSlots; ++channel) {
+        const uint32_t slot =
+            mapUsable ? txPolicy_.playbackChannelMap.SlotFor(channel) : channel;
+        if (slot < dbs) isPcmSlot[slot] = true;
+    }
+
+    // Arm every PCM slot with encoded silence, so a DATA packet whose PCM
+    // never arrives is still valid on the wire: AM824 MBLA 0x40000000, not
+    // label 0x00. Cross-validated with Linux amdtp-am824.c:209-220
+    // (write_pcm_silence, used at :362 when no PCM is available). Slots
+    // follow the playback channel map as the payload writer does.
+    const uint32_t silence =
+        PcmSlotCodec::EncodeFloat32(0.0f, txPolicy_.hostToDevicePcmEncoding);
+
+    // The non-audio slots are the ones the playback map does not give to PCM,
+    // as in WriteCadencePacketFill. With an identity map they are
+    // [pcmChannels, dbs); a device whose map puts a MIDI data channel first
+    // (Digi 002/003) needs slot 0 initialized and its last PCM slot left as
+    // armed silence.
+    const bool armNonAudio = txPolicy_.initializeNonAudioSlots &&
+                             streamConfig_.dbs > streamConfig_.pcmChannels;
+
+    frameDefaults_.fill(0);
+    nonAudioSlotCount_ = 0;
+    for (uint32_t slot = 0; slot < dbs; ++slot) {
+        uint8_t* dest = frameDefaults_.data() + slot * kBytesPerSlot;
+        if (isPcmSlot[slot]) {
+            WriteBE32(dest, silence);
+        } else if (armNonAudio) {
+            WriteBE32(dest, txPolicy_.defaultNonAudioSlotWord);
+            nonAudioSlots_[nonAudioSlotCount_++] = static_cast<uint8_t>(slot);
+        }
+    }
+}
+
 void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                                                 uint32_t packetCapacityBytes,
                                                 uint32_t payloadBytes) noexcept {
@@ -295,44 +339,29 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                                          AmdtpStreamConfig::PacketFraming::Cip
                                      ? kCipHeaderBytes : 0U;
     uint8_t* payload = packetBytes + headerBytes;
+    const uint32_t frameBytes = streamConfig_.dbs * kBytesPerSlot;
+    const uint32_t frames = payloadBytes / frameBytes;
 
     if (txPolicy_.clearPayloadBeforeExposure) {
-        for (uint32_t i = 0; i < payloadBytes; ++i) {
+        // Whole frames: silence, non-audio words, zeros elsewhere.
+        for (uint32_t frame = 0; frame < frames; ++frame) {
+            uint8_t* dest = payload + frame * frameBytes;
+            for (uint32_t i = 0; i < frameBytes; ++i) {
+                dest[i] = frameDefaults_[i];
+            }
+        }
+        for (uint32_t i = frames * frameBytes; i < payloadBytes; ++i) {
             payload[i] = 0;
         }
-        // Arm every PCM slot with encoded silence, so a DATA packet whose PCM
-        // never arrives is still valid on the wire: AM824 MBLA 0x40000000,
-        // not label 0x00. Cross-validated with Linux amdtp-am824.c:209-220
-        // (write_pcm_silence, used at :362 when no PCM is available). Slots
-        // follow the playback channel map as the payload writer does.
-        const uint32_t silence =
-            PcmSlotCodec::EncodeFloat32(0.0f, txPolicy_.hostToDevicePcmEncoding);
-        if (silence != 0) {
-            const uint32_t dbs = streamConfig_.dbs;
-            const uint32_t pcmSlots = streamConfig_.pcmChannels < dbs
-                                          ? streamConfig_.pcmChannels
-                                          : dbs;
-            const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, dbs);
-            const uint32_t frames = payloadBytes / (dbs * kBytesPerSlot);
-            for (uint32_t frame = 0; frame < frames; ++frame) {
-                for (uint32_t channel = 0; channel < pcmSlots; ++channel) {
-                    const uint32_t slot =
-                        mapUsable ? txPolicy_.playbackChannelMap.SlotFor(channel) : channel;
-                    WriteBE32(payload + (frame * dbs + slot) * kBytesPerSlot, silence);
-                }
-            }
-        }
+        return;
     }
 
-    if (txPolicy_.initializeNonAudioSlots &&
-        streamConfig_.dbs > streamConfig_.pcmChannels) {
-        const uint32_t frames = payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
-        for (uint32_t frame = 0; frame < frames; ++frame) {
-            for (uint32_t s = streamConfig_.pcmChannels; s < streamConfig_.dbs;
-                 ++s) {
-                WriteBE32(payload + (frame * streamConfig_.dbs + s) * kBytesPerSlot,
-                          txPolicy_.defaultNonAudioSlotWord);
-            }
+    // PCM bytes are kept; only the non-audio slots are armed.
+    for (uint32_t frame = 0; frame < frames; ++frame) {
+        uint8_t* block = payload + frame * frameBytes;
+        for (uint32_t i = 0; i < nonAudioSlotCount_; ++i) {
+            WriteBE32(block + nonAudioSlots_[i] * kBytesPerSlot,
+                      txPolicy_.defaultNonAudioSlotWord);
         }
     }
 }

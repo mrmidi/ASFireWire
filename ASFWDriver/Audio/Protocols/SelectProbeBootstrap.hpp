@@ -17,6 +17,7 @@ enum class ProbeBootstrap : uint8_t {
     FireworksEfc,
     MotuRegister,
     RmeRegister,
+    Digi00xRegister,
 };
 
 [[nodiscard]] constexpr ProbeBootstrap SelectProbeBootstrap(
@@ -44,6 +45,7 @@ enum class ProbeBootstrap : uint8_t {
                 case ProbePolicyId::FireworksEfc:
                 case ProbePolicyId::MotuRegister:
                 case ProbePolicyId::RmeRegister:
+                case ProbePolicyId::Digi00xRegister:
                     return ProbeBootstrap::Unsupported;
             }
         case FamilyId::DICE:
@@ -65,6 +67,10 @@ enum class ProbeBootstrap : uint8_t {
         case FamilyId::RmeRegister:
             return policy == ProbePolicyId::RmeRegister
                        ? ProbeBootstrap::RmeRegister
+                       : ProbeBootstrap::Unsupported;
+        case FamilyId::Digi00xRegister:
+            return policy == ProbePolicyId::Digi00xRegister
+                       ? ProbeBootstrap::Digi00xRegister
                        : ProbeBootstrap::Unsupported;
         case FamilyId::None:
             return ProbeBootstrap::Unsupported;

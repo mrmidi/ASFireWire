@@ -63,6 +63,7 @@ void AmdtpPayloadWriter::Configure(const AmdtpStreamConfig& streamConfig,
                                    const AmdtpTxPolicy& txPolicy) noexcept {
     streamConfig_ = streamConfig;
     txPolicy_ = txPolicy;
+    dot_.Reset();
 }
 
 void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
@@ -163,8 +164,13 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const float sample =
                 (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             const uint32_t slot = mapUsable ? playbackMap.SlotFor(ch) : ch;
-            const uint32_t word =
+            uint32_t word =
                 PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
+            if (txPolicy_.dotScramblePcm) {
+                // Wire byte 2 of the big-endian quadlet is bits 15:8 of the word.
+                const auto middle = static_cast<uint8_t>(word >> 8U);
+                word = (word & ~0x0000FF00U) | (static_cast<uint32_t>(dot_.Next(middle)) << 8U);
+            }
             WriteBE32(dest + slot * kBytesPerSlot, word);
 #if ASFW_AUDIO_DEBUG_OUTPUT_PEAK
             const float magnitude = sample < 0.0f ? -sample : sample;

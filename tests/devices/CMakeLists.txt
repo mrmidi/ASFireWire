@@ -40,6 +40,26 @@ add_device_test(FirefaceFamilyDriverTests
     "${ASFW_DRIVER_DIR}/Audio/Protocols/RME/FirefaceSettings.cpp"
 )
 
+# Scripted Digi 002/003 register sequencing and clock health.
+add_device_test(Digi00xFamilyDriverTests
+    Digi00xFamilyDriverTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+
+# Digi 002/003 backend/probe selection, protocol object, nub description and profile.
+add_device_test(Digi00xWiringTests
+    Digi00xWiringTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/MOTU/MotuProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MackieOnyx400FProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/GenericAvcProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/ApogeeDuetProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
+)
+
 # Fireface settings flash decode and configuration-register encode (pure, no bus).
 add_device_test(FirefaceSettingsTests
     FirefaceSettingsTests.cpp

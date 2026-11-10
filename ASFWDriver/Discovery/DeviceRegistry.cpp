@@ -185,7 +185,8 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
         }
         if (endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::DICE ||
             endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::MotuRegister ||
-            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister) {
+            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::RmeRegister ||
+            endpointPlan->family == DeviceProfiles::Audio::AudioFamilyProviderId::Digi00xRegister) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {

@@ -365,6 +365,9 @@ public:
         return route_.generation;
     }
 
+    /// The host's own node on the bus; kInvalidNodeId before the bus is up.
+    [[nodiscard]] FW::NodeId LocalNodeId() const { return busInfo_.GetLocalNodeID(); }
+
     [[nodiscard]] FW::FwSpeed CurrentSpeed() const noexcept {
         return busInfo_.GetSpeed(NodeId());
     }

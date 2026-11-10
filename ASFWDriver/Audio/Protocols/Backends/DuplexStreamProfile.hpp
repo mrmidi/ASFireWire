@@ -14,6 +14,7 @@
 #include "../../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include "../../Wire/AMDTP/PcmSlotMap.hpp"
+#include "../../Wire/Digi00x/Digi00xSlotLayout.hpp"
 #include "../../Wire/MOTU/MotuPortLayout.hpp"
 #include "../../Wire/MOTU/MotuBlockLayout.hpp"
 #include "../../Wire/MOTU/MotuModel.hpp"
@@ -113,6 +114,9 @@ struct DuplexStreamProfile {
     // the RX decode takes its stride from the configured AM824 slot count instead
     // of the CIP header (Linux snd-oxfw SND_OXFW_QUIRK_WRONG_DBS semantics).
     bool captureTrustConfiguredStride{false};
+    // The capture SYT is not a presentation time: receive timing comes from
+    // packet continuity (StreamWirePolicy::captureSytUnaware).
+    bool captureSytUnaware{false};
 
     // MOTU only: PCM chunks per data block, per direction. Its samples are 3-byte chunks
     // rather than quadlet slots, so the am824Slots geometry above does not describe them
@@ -365,6 +369,7 @@ class DuplexStreamProfileResolver final {
             // wrong dbs above 88.2 kHz.
             profile.captureTrustConfiguredStride = true;
         }
+        profile.captureSytUnaware = traits.wire.captureSytUnaware;
 
         // The special-firmware personas cannot answer the BridgeCo channel
         // position query. Their model-specific AM824 slot order is resolved
@@ -373,6 +378,15 @@ class DuplexStreamProfileResolver final {
             profile.captureChannelMap =
                 Families::BeBoB::MAudio::CaptureChannelMapFor(
                     policy->plan.profileBuilder, caps.hostInputPcmChannels);
+            // Digi 002 / 003: a fixed layout with no graph to discover. PCM
+            // follows the MIDI data channel in capture as in playback; without
+            // this map CoreAudio input 1 read the MIDI slot (hardware,
+            // 2026-11-05: analog input 1 arrived on CoreAudio input 2).
+            if (policy->plan.family ==
+                DeviceProfiles::Audio::AudioFamilyProviderId::Digi00xRegister) {
+                static_cast<Wire::PcmSlotMap&>(profile.captureChannelMap) =
+                    Encoding::Digi00x::PcmAfterMidiSlotMap(caps.hostInputPcmChannels);
+            }
         }
 
         // A device's own capture slot order comes from its discovered graph;

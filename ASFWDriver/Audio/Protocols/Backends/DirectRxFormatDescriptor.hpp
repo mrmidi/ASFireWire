@@ -19,6 +19,7 @@ struct DirectRxFormatDescriptor final {
     uint32_t am824Slots{0};
     uint32_t streamChannels{0};
     bool trustConfiguredStride{false};
+    bool sytUnaware{false};
     bool motuV3{false};
     uint32_t motuMessageChunks{2};
     uint32_t motuPcmByteOffset{10};

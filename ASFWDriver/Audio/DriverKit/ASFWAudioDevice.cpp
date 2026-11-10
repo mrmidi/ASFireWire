@@ -502,7 +502,7 @@ kern_return_t ASFWAudioDevice::StartOrJoinWire(IOUserAudioStartStopFlags in_flag
             }
             initialClockAnchorTimeoutMs = profile->InitialClockAnchorTimeoutMs();
             if (!ASFW::Audio::DriverKit::SelectTxClockDomain(ivars, *profile)) {
-                kr = failStart(kIOReturnUnsupported, "MAudioInternalTxTiming");
+                kr = failStart(kIOReturnUnsupported, "SelectTxClockDomain");
                 return;
             }
 

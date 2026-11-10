@@ -83,6 +83,9 @@ struct AmdtpTxPolicy final {
     /// devices count the end, and Linux sets CIP_DBC_IS_END_EVENT on every MOTU transmit
     /// stream for it (amdtp-motu.c:465, applied at amdtp-stream.c:1040-1046).
     bool dbcIsEndEvent{false};
+    /// Digi 002/003: XOR the middle sample byte of every PCM slot with the
+    /// running double-oh-three salt (Wire/Digi00x/DotScrambler.hpp).
+    bool dotScramblePcm{false};
 
     /// Logical host PCM channel -> AM824 slot mapping.
     ASFW::Audio::Wire::PcmSlotMap playbackChannelMap{};
