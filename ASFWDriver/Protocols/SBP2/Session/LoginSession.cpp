@@ -598,6 +598,14 @@ void LoginSession::BuildLoginORB() noexcept {
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&loginORBBuffer_),
                                  sizeof(loginORBBuffer_)});
 
+    // Clear the response area for every attempt, so a status block for an
+    // attempt the target did not answer with a response can never be paired
+    // with a previous attempt's response.
+    const Wire::LoginResponse cleared{};
+    addrSpaceMgr_.WriteLocalData(
+        this, loginResponseHandle_, 0,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&cleared), sizeof(cleared)});
+
     EncodeOrbAddress(loginORBAddressBE_, localNode, loginORBMeta_);
 }
 
@@ -759,6 +767,19 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block) 
         (void)Apply(Fsm::Ev::LoginRejected{});
         return;
     }
+    // sbp_status 0 alone is not acceptance: the resp field must say REQUEST
+    // COMPLETE and the dead bit must be clear (SBP-2 status block; Linux
+    // sbp2.c STATUS_GET_RESPONSE / STATUS_GET_DEAD). HW 2026-11-06 (Leaf
+    // Valeo 11): a login sent ~0.7 s after a driver restart, inside the
+    // previous, never-logged-out login's reconnect_hold, was answered in
+    // 0.6 ms with sbp_status 0 and no login response written; taking it as
+    // accepted left a zero command block agent and every ORB timed out.
+    if (block.Response() != Wire::StatusBlock::kRespRequestComplete || block.DeadBit() != 0) {
+        ASFW_LOG_SBP2( "LoginSession: login not accepted — resp=%u dead=%u, retrying (%u/%u)",
+                 block.Response(), block.DeadBit(), loggingIn->retries + 1, Fsm::kLoginRetryMax);
+        (void)Apply(Fsm::Ev::LoginRejected{});
+        return;
+    }
 
     // Login succeeded — read the login response the device wrote to our space.
     std::vector<uint8_t> responseData;
@@ -774,6 +795,18 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block) 
 
     Wire::LoginResponse resp{};
     std::memcpy(&resp, responseData.data(), sizeof(resp));
+
+    // A login response is at least 12 bytes (length, login_ID, command block
+    // agent) and names a command block agent; an empty one means the target
+    // never wrote it (see the resp/dead check above).
+    const uint16_t responseLength = OSSwapBigToHostInt16(resp.length);
+    const bool agentNamed = resp.commandBlockAgentAddressHi != 0 || resp.commandBlockAgentAddressLo != 0;
+    if (responseLength < 12 || !agentNamed) {
+        ASFW_LOG_SBP2( "LoginSession: login response not written (length=%u agent=%{public}s), retrying (%u/%u)",
+                 responseLength, agentNamed ? "set" : "zero", loggingIn->retries + 1, Fsm::kLoginRetryMax);
+        (void)Apply(Fsm::Ev::LoginRejected{});
+        return;
+    }
 
     Fsm::HeldLogin login{};
     login.id = OSSwapBigToHostInt16(resp.loginID);
