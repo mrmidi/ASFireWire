@@ -461,6 +461,14 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
             return failure;
         }
 
+        if (control != UINT32_MAX) {
+            if (auto stoppedAccess = hardware_->TryBeginAccess()) {
+                // As for RX: retire only this quiesced context's masked event
+                // (Linux ohci.c:2105-2107), leaving other contexts untouched.
+                stoppedAccess.WriteAndFlush(Register32::kIsoXmitIntEventClear, 1u << contextIndex_);
+            }
+        }
+
         if (controlBlock_) {
             controlBlock_->statusWord.store(IsochTxQueueStatus::kStopped, std::memory_order_release);
         }

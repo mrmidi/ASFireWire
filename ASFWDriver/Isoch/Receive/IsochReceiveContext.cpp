@@ -210,6 +210,15 @@ kern_return_t IsochReceiveContext::Stop() {
         return failure;
     }
 
+    if (control != UINT32_MAX) {
+        if (auto access = hardware_->TryBeginAccess()) {
+            // Masked context events are invisible to the interrupt drain
+            // (Linux ohci.c:2094-2107). Once ACTIVE is clear, retire only our
+            // stopped context's pending event before a later restart.
+            access.WriteAndFlush(Driver::Register32::kIsoRecvIntEventClear, contextMask);
+        }
+    }
+
     IOLockLock(lock_);
     Transition(IRPolicy::State::Stopped, 0, "Stop");
     IOLockUnlock(lock_);

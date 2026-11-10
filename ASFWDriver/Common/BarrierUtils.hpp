@@ -16,6 +16,19 @@ void FullBarrier();    // full fence for rare cases
 // MMIO barrier for programming device registers
 inline void IoBarrier() { OSSynchronizeIO(); }
 
+// DriverKit 27 IOLib.h:235-239 documents OSSynchronizeIO as DMB ST on
+// Apple Silicon (also verified in the installed DriverKit library). It does
+// not order reads. RX needs completion -> payload reads -> status rearm.
+// Use the full system domain for device DMA, not a C++ inner-shareable fence.
+// This orders accesses; it is not cache maintenance or a DMA completion wait.
+inline void DmaOwnershipBarrier() {
+#if defined(__aarch64__)
+    __builtin_arm_dmb(0xf); // DMB SY: all loads/stores, full system domain.
+#else
+    OSSynchronizeIO(); // DriverKit x86_64: MFENCE.
+#endif
+}
+
 // Convenience wrappers for raw MMIO 32-bit accesses
 inline void Write32(volatile uint32_t* addr, uint32_t value) {
     *addr = value;
