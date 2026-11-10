@@ -148,27 +148,48 @@ void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint
         }
         return;
 
-    case 0x38: // Legacy non-standard fallback for Management_Agent_Offset
-        if (keyType == EntryType::kCSROffset) {
+    case 0x38: // Command_Set_Spec_ID (immediate); legacy CSR fallback for Management_Agent_Offset
+        if (keyType == EntryType::kImmediate) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Command_Set_Spec_Id, .value = value, .entryType = keyType});
+        } else if (keyType == EntryType::kCSROffset) {
             entries.push_back(
                 RomEntry{.key = CfgKey::Management_Agent_Offset, .value = value, .entryType = keyType});
         }
         return;
 
-    case 0x39: // Unit_Characteristics (SBP-2) — immediate
+    case 0x39: // Command_Set (SBP-2) — immediate
+        if (keyType == EntryType::kImmediate) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Command_Set, .value = value, .entryType = keyType});
+        }
+        return;
+
+    case 0x3A: // Unit_Characteristics (SBP-2) — immediate
         if (keyType == EntryType::kImmediate) {
             entries.push_back(
                 RomEntry{.key = CfgKey::Unit_Characteristics, .value = value, .entryType = keyType});
         }
         return;
 
-    case 0x3A: // Fast_Start (SBP-2) — leaf
-        if (keyType == EntryType::kLeaf && targetOffsetQuadlets != 0) {
+    case 0x3B: // Command_Set_Revision (SBP-2) — immediate
+        if (keyType == EntryType::kImmediate) {
             entries.push_back(
-                RomEntry{.key = CfgKey::Fast_Start,
-                         .value = value,
-                         .entryType = keyType,
-                         .leafOffsetQuadlets = targetOffsetQuadlets});
+                RomEntry{.key = CfgKey::Command_Set_Revision, .value = value, .entryType = keyType});
+        }
+        return;
+
+    case 0x3C: // Firmware_Revision (SBP-2) — immediate
+        if (keyType == EntryType::kImmediate) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Firmware_Revision, .value = value, .entryType = keyType});
+        }
+        return;
+
+    case 0x3E: // Fast_Start (SBP-2) — immediate
+        if (keyType == EntryType::kImmediate) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Fast_Start, .value = value, .entryType = keyType});
         }
         return;
     default:

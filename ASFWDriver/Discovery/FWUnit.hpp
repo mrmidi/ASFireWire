@@ -35,6 +35,10 @@ public:
     std::optional<uint32_t> GetManagementAgentOffset() const { return managementAgentOffset_; }
     std::optional<uint32_t> GetUnitCharacteristics() const { return unitCharacteristics_; }
     std::optional<uint32_t> GetFastStart() const { return fastStart_; }
+    std::optional<uint32_t> GetCommandSetSpecID() const { return commandSetSpecId_; }
+    std::optional<uint32_t> GetCommandSet() const { return commandSet_; }
+    std::optional<uint32_t> GetCommandSetRevision() const { return commandSetRevision_; }
+    std::optional<uint32_t> GetFirmwareRevision() const { return firmwareRevision_; }
 
     std::string_view GetVendorName() const { return vendorName_; }
     std::string_view GetProductName() const { return productName_; }
@@ -73,6 +77,10 @@ private:
     std::optional<uint32_t> managementAgentOffset_;
     std::optional<uint32_t> unitCharacteristics_;
     std::optional<uint32_t> fastStart_;
+    std::optional<uint32_t> commandSetSpecId_;
+    std::optional<uint32_t> commandSet_;
+    std::optional<uint32_t> commandSetRevision_;
+    std::optional<uint32_t> firmwareRevision_;
 
     std::string vendorName_;
     std::string productName_;
