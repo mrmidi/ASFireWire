@@ -3,6 +3,7 @@
 #include "../Model/Topology/State.hpp"
 #include "../Model/Topology/Topology.hpp"
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace ASFW::Audio::Controls {
@@ -43,6 +44,9 @@ struct CompositeInputType {
 /// Pure policy: no device addresses, protocol tokens, or DriverKit pointers.
 [[nodiscard]] std::vector<CoreAudioControl> ProjectCoreAudioControls(
     const AudioModel::Topology&, const AudioModel::DeviceState&);
+/// CoreAudio can remember a provider exposing only the device clock selector.
+/// Providers with device-stored mixer settings retain hardware authority.
+[[nodiscard]] bool ShouldRestoreProviderControls(std::span<const CoreAudioControl>);
 /// Linear 0..1 control position in the currently applicable scalar domain.
 /// This is a position translator, not a dB-to-amplitude conversion.
 [[nodiscard]] std::optional<double> ScalarToPosition(const AudioModel::ScalarDomain&, double);

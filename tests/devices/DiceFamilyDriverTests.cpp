@@ -128,7 +128,7 @@ TEST(DiceFamilyDriverTests, ProtocolRegisterIOUsesNegotiatedSpeedAndDiceReaderUs
     tx.ReadGlobalStateFull(MakeGeneralSections(),
                            [&globalStatus](IOReturn status, const ASFW::Audio::DICE::GlobalState& state) {
                                globalStatus = status;
-                               EXPECT_EQ(state.clockSelect, 0U);
+                               EXPECT_EQ(state.clockSelect, static_cast<uint32_t>(ClockSource::Internal));
                            });
     ASSERT_TRUE(globalStatus.has_value());
     EXPECT_EQ(*globalStatus, kIOReturnSuccess);

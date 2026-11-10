@@ -160,7 +160,7 @@ inline constexpr DiceDeviceImage kLegacyTestDeviceImage{
     .owner = kOwnerNoOwner,
     .notification = 0x00000010U,
     .nickname = "",
-    .clockSelect = 0,
+    .clockSelect = static_cast<uint32_t>(ClockSource::Internal),
     .enable = 0,
     .status = kLocked48kStatus,
     .extStatus = 0,

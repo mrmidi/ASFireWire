@@ -262,6 +262,15 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
         dev.rateRouteIncarnation = route.deviceIncarnation;
         dev.rateRouteEpoch = route.routeEpoch;
         dev.rateBusGeneration = route.generation.value;
+        // A catalog endpoint is not subject to the legacy 48 kHz ceiling.
+        // Keep its observed, described mode instead of starting the wire with
+        // another mode's provisional layout. Linux dice-stream.c:608-646 also
+        // inspects the current clock mode before reading its stream formats.
+        const auto observed = std::ranges::find(*formations, caps.sampleRateHz,
+            &Runtime::RateFormation::sampleRateHz);
+        if (observed != formations->end() && observed->protocolSupported &&
+            !observed->layoutProvisional)
+            dev.currentSampleRate = caps.sampleRateHz;
         dev.sampleRates.clear();
         for (const auto& formation : *formations)
             if (Runtime::RateEnabled(formation, dev.currentSampleRate, true))

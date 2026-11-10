@@ -403,6 +403,26 @@ TEST_F(DescribeFixture, PublicationPreservesThePreparedHardwareRate) {
     EXPECT_EQ(rig.bus.Enable(), 0U);
 }
 
+TEST_F(DescribeFixture, PublicationKeepsTheObservedHighRateFormation) {
+    namespace Dice = ASFW::Audio::DICE;
+    uint32_t selection = 0;
+    ASSERT_TRUE(Dice::DiceClockSelectForRate(96000, Dice::ClockSource::Internal, selection));
+    rig.bus.Device().SetGlobalQuad(Dice::GlobalOffset::kClockSelect, selection);
+    rig.bus.Device().SetAchievedClock(Dice::ClockRateIndex::k96000, true);
+    const auto result = Describe(adapter, MakeInput(rig), rig.timer);
+    ASSERT_TRUE(result.has_value());
+    const auto* device = std::get_if<ASFWAudioDevice>(&*result);
+    ASSERT_NE(device, nullptr);
+    ASSERT_TRUE(device->usesRateFormations);
+    EXPECT_EQ(device->currentSampleRate, 96000U);
+    const auto formation = std::ranges::find(device->rateFormationCandidates, 96000U,
+        &ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+    ASSERT_NE(formation, device->rateFormationCandidates.end());
+    EXPECT_FALSE(formation->layoutProvisional);
+    EXPECT_EQ(rig.waitClock.Sleeps(), 0U);
+    EXPECT_EQ(rig.bus.Enable(), 0U);
+}
+
 TEST(DiceFamilyAdapterTests, StudioLiveWideStreamsAreDescribedWithoutTruncation) {
     const SessionShape shape{"studiolive-3242", 0x000a92, 0x000014, 0x000a92,
         ASFW::Testing::Session::kDiceUnitVersion,

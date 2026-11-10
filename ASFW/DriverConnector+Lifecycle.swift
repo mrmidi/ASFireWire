@@ -247,18 +247,7 @@ extension ASFWDriverConnector {
             }
 
             buffer.withUnsafeBytes { rawPtr in
-                let base = rawPtr.baseAddress!
-                let scalarCountOffset = MemoryLayout<mach_msg_header_t>.size + MemoryLayout<mach_msg_body_t>.size + MemoryLayout<mach_msg_port_descriptor_t>.size
-                let count = base.load(fromByteOffset: scalarCountOffset, as: UInt32.self).littleEndian
-                let scalarsOffset = scalarCountOffset + MemoryLayout<UInt32>.size
-                let messageBytes = Int(base.load(as: mach_msg_header_t.self).msgh_size)
-                guard count >= 2, count <= 16,
-                      scalarsOffset + Int(count) * MemoryLayout<UInt64>.size <= messageBytes,
-                      messageBytes <= rawPtr.count else { return }
-                // Packed Mach data is not guaranteed to align UInt64 values.
-                let scalars = (0..<Int(count)).map {
-                    base.loadUnaligned(fromByteOffset: scalarsOffset + $0 * 8, as: UInt64.self)
-                }
+                guard let scalars = decodeStatusNotification(rawPtr) else { return }
                 if scalars[1] == ControlParameterChange.notificationReason {
                     if let change = ControlParameterChange(scalars: scalars) {
                         controlChangeSubject.send(change)
@@ -347,5 +336,32 @@ extension ASFWDriverConnector {
         } else {
             log("IOServiceAddMatchingNotification (terminated) failed: \(interpretIOReturn(termResult))", level: .error)
         }
+    }
+}
+
+/// Decode the 64-bit IOKit async-completion envelope, not a complex Mach
+/// message with a scalar-count field. Layout: SDK OSMessageNotification.h;
+/// behavior: Apple xnu iokit/Kernel/IOUserClient.cpp::_sendAsyncResult64.
+nonisolated func decodeStatusNotification(_ bytes: UnsafeRawBufferPointer) -> [UInt64]? {
+    let headerSize = MemoryLayout<mach_msg_header_t>.size
+    let contentOffset = headerSize + MemoryLayout<OSNotificationHeader64>.size
+    let resultSize = MemoryLayout<IOAsyncCompletionContent>.size
+    guard bytes.count >= contentOffset + resultSize else { return nil }
+    let message = bytes.loadUnaligned(as: mach_msg_header_t.self)
+    let notification = bytes.loadUnaligned(fromByteOffset: headerSize, as: OSNotificationHeader64.self)
+    let contentSize = Int(notification.size)
+    guard message.msgh_id == kOSNotificationMessageID,
+          message.msgh_bits & UInt32(MACH_MSGH_BITS_COMPLEX) == 0,
+          notification.type & UInt32(kIOKitNoticationTypeMask) == kIOAsyncCompletionNotificationType,
+          Int(message.msgh_size) <= bytes.count,
+          contentSize >= resultSize,
+          contentOffset + contentSize <= Int(message.msgh_size),
+          (contentSize - resultSize).isMultiple(of: MemoryLayout<UInt64>.size),
+          bytes.loadUnaligned(fromByteOffset: contentOffset, as: IOReturn.self) == kIOReturnSuccess
+    else { return nil }
+    let count = (contentSize - resultSize) / MemoryLayout<UInt64>.size
+    guard (2...Int(kMaxAsyncArgs)).contains(count) else { return nil }
+    return (0..<count).map {
+        bytes.loadUnaligned(fromByteOffset: contentOffset + resultSize + $0 * 8, as: UInt64.self)
     }
 }

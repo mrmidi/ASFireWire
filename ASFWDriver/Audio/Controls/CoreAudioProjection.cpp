@@ -9,6 +9,13 @@
 #include <tuple>
 
 namespace ASFW::Audio::Controls {
+bool ShouldRestoreProviderControls(std::span<const CoreAudioControl> controls) {
+    return !controls.empty() && std::ranges::all_of(controls, [](const auto& control) {
+        return control.kind == CoreAudioControlKind::Selector && control.classId == 'clck' &&
+            control.scope == 'glob' && control.element == 0 && control.settable;
+    });
+}
+
 namespace {
 namespace AM = AudioModel;
 struct Mapping { AM::ParameterSemantic semantic; uint32_t classId; CoreAudioControlKind kind; };
@@ -213,7 +220,17 @@ std::vector<CoreAudioControl> ProjectCoreAudioControls(const AM::Topology& t, co
         if ((mapping->kind == CoreAudioControlKind::Level && !std::holds_alternative<AM::ScalarDomain>(domain)) ||
             (mapping->kind == CoreAudioControlKind::Boolean && !std::holds_alternative<AM::BooleanDomain>(domain)) ||
             (mapping->kind == CoreAudioControlKind::Selector && !std::holds_alternative<AM::EnumDomain>(domain))) continue;
-        const auto placement = Place(t, state, p.target);
+        std::optional<Placement> placement;
+        if (const auto* node = std::get_if<AM::NodeId>(&p.target);
+            node && p.semantic == AM::ParameterSemantic::ClockSource) {
+            // A device clock source is a global/master selector, independent
+            // of the PCM signal graph. Clock-only nodes have no audio ports.
+            // AudioDriverKitTypes.h: Global scope and ClockSourceControl.
+            if (std::ranges::find(t.nodes, *node, &AM::Node::id) == t.nodes.end()) continue;
+            placement = Placement{'glob', 0};
+        } else {
+            placement = Place(t, state, p.target);
+        }
         if (!placement) continue; // no guessed channel numbers or private scope
         result.push_back({p.id, mapping->kind, mapping->classId, placement->scope, placement->element,
             p.access == AM::ParameterAccess::ReadWrite, p.name, domain, s->second.value,

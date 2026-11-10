@@ -83,6 +83,85 @@ TEST(CoreAudioProjection, SemanticClassesHaveOneMappingTable) {
     }
 }
 
+TEST(CoreAudioProjection, DeviceClockSourceIsGlobalWithoutAnAudioSignalPath) {
+    AM::Topology topology;
+    AM::DeviceState state;
+    topology.revision = state.topologyRevision = 7;
+    topology.nodes = {{AM::NodeId{1}, "Clock"}};
+    topology.parameters = {{AM::ParameterId{1}, AM::NodeId{1}, AM::ParameterSemantic::ClockSource,
+        AM::EnumDomain{{{12, "Internal"}, {5, "ADAT"}}}, "Sync Source"}};
+    state.parameters.emplace(AM::ParameterId{1}, AM::ParameterState{int64_t{5}});
+    ASSERT_TRUE(AM::validate(topology));
+    ASSERT_TRUE(AM::validateState(topology, state));
+
+    const auto controls = ProjectCoreAudioControls(topology, state);
+    ASSERT_EQ(controls.size(), 1U);
+    EXPECT_EQ(controls.front().classId, uint32_t{'clck'});
+    EXPECT_EQ(controls.front().scope, uint32_t{'glob'});
+    EXPECT_EQ(controls.front().element, 0U);
+    EXPECT_EQ(controls.front().kind, CoreAudioControlKind::Selector);
+    EXPECT_EQ(std::get<int64_t>(controls.front().value), 5);
+    EXPECT_TRUE(controls.front().settable);
+
+    // An unobserved or obsolete selection cannot become a HAL default.
+    state.parameters.at(AM::ParameterId{1}).value = int64_t{9};
+    EXPECT_TRUE(ProjectCoreAudioControls(topology, state).empty());
+}
+
+TEST(CoreAudioProjection, HostRemembersAProviderWithOnlyTheDeviceClockSelector) {
+    AM::Topology topology;
+    AM::DeviceState state;
+    topology.revision = state.topologyRevision = 7;
+    topology.nodes = {{AM::NodeId{1}, "Clock"}};
+    topology.parameters = {{AM::ParameterId{1}, AM::NodeId{1}, AM::ParameterSemantic::ClockSource,
+        AM::EnumDomain{{{12, "Internal"}, {5, "ADAT"}}}, "Sync Source"}};
+    // A power cycle reports Internal before CoreAudio restores the user's ADAT
+    // preference. Both observed states must opt into the same restore policy.
+    for (const int64_t source : {12, 5}) {
+        state.parameters[AM::ParameterId{1}] = AM::ParameterState{source};
+        auto controls = ProjectCoreAudioControls(topology, state);
+        ASSERT_EQ(controls.size(), 1U);
+        EXPECT_TRUE(ShouldRestoreProviderControls(controls));
+        controls.front().settable = false;
+        EXPECT_FALSE(ShouldRestoreProviderControls(controls));
+    }
+}
+
+TEST(CoreAudioProjection, DeviceStoredProviderSettingsKeepHardwareAuthority) {
+    EXPECT_FALSE(ShouldRestoreProviderControls({}));
+    Fixture f;
+    auto controls = ProjectCoreAudioControls(f.topology, f.state);
+    ASSERT_EQ(controls.size(), 1U);
+    EXPECT_FALSE(ShouldRestoreProviderControls(controls));
+
+    // The ADK restore flag covers the whole device. A clock selector must not
+    // opt a mixed clock/mixer provider into restoring gain or phantom power.
+    CoreAudioControl clock{
+        .parameter = AM::ParameterId{11}, .kind = CoreAudioControlKind::Selector,
+        .classId = 'clck', .scope = 'glob', .element = 0, .settable = true,
+        .name = "Sync Source", .domain = AM::EnumDomain{{{12, "Internal"}, {5, "ADAT"}}},
+        .value = int64_t{5},
+    };
+    controls.push_back(clock);
+    EXPECT_FALSE(ShouldRestoreProviderControls(controls));
+    controls.front().kind = CoreAudioControlKind::Boolean;
+    controls.front().classId = 'phan';
+    EXPECT_FALSE(ShouldRestoreProviderControls(controls));
+}
+
+TEST(CoreAudioProjection, AmbiguousDeviceClockSourcesAreNotPublished) {
+    AM::Topology topology;
+    AM::DeviceState state;
+    topology.revision = state.topologyRevision = 7;
+    topology.nodes = {{AM::NodeId{1}, "Clock A"}, {AM::NodeId{2}, "Clock B"}};
+    for (uint32_t id : {1U, 2U}) {
+        topology.parameters.push_back({AM::ParameterId{id}, AM::NodeId{id}, AM::ParameterSemantic::ClockSource,
+            AM::EnumDomain{{{12, "Internal"}, {5, "ADAT"}}}, "Sync Source"});
+        state.parameters.emplace(AM::ParameterId{id}, AM::ParameterState{int64_t{5}});
+    }
+    EXPECT_TRUE(ProjectCoreAudioControls(topology, state).empty());
+}
+
 TEST(CoreAudioProjection, CompositeInputTypeUsesConnectorAndNominalLevelAndInactivePath) {
     Fixture f;
     f.topology.nodes.push_back({AM::NodeId{4}, "Jack", AM::EndpointNode{AM::EndpointKind::Physical}});
