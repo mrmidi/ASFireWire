@@ -58,8 +58,14 @@ public:
     /// Terminate the nub for `endpointId` if one is published.
     void TerminateNub(uint64_t endpointId) noexcept override;
 
-    /// Terminate every published nub (service teardown).
+    /// Terminate every published nub (teardown for suspend: the nubs are live
+    /// and a wake publishes fresh ones).
     void TerminateAll() noexcept;
+
+    /// Forget every published nub without terminating it, for a full stop of
+    /// ASFWDriver: the kernel has already terminated its client services, and
+    /// Terminate() on one aborts the dext, as SBP2NubPublisher::Shutdown records.
+    void ReleaseAll() noexcept;
 
     [[nodiscard]] bool HasNub(uint64_t endpointId) const noexcept;
 
