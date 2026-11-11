@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Protocols/AVC/CMP/PCRCodec.hpp"
-#include "Protocols/DV/DVConnectionPlan.hpp"
+#include "Protocols/VideoCapture/VideoConnectionPlan.hpp"
 
 TEST(PCRCodecTests, DecodesAllOutputPlugFields) {
     constexpr uint32_t raw = 0xC53AD955u;
@@ -35,25 +35,25 @@ TEST(PCRCodecTests, DecodesOutputMasterPlugRegister) {
     EXPECT_EQ(ASFW::CMP::MPRBits::GetPlugCount(raw), 3u);
 }
 
-TEST(PCRCodecTests, DVBandwidthMatchesReferenceFormula) {
+TEST(PCRCodecTests, VideoBandwidthMatchesReferenceFormula) {
     constexpr uint32_t opcr = (2u << 14) | 120u;
     const auto units =
-        ASFW::Protocols::DV::CalculateBandwidthUnits(opcr, 2);
+        ASFW::Protocols::VideoCapture::CalculateBandwidthUnits(opcr, 2);
     ASSERT_TRUE(units.has_value());
     EXPECT_EQ(*units, 1004u);
 }
 
-TEST(PCRCodecTests, DVChannelSelectionSkipsBusyAndBroadcastChannels) {
+TEST(PCRCodecTests, VideoChannelSelectionSkipsBusyAndBroadcastChannels) {
     ASFW::IRM::ResourceSnapshot snapshot{};
     snapshot.channelsAvailable31_0 = ASFW::IRM::ChannelToBitMask(7);
     snapshot.channelsAvailable63_32 = ASFW::IRM::ChannelToBitMask(63);
 
     const auto channel =
-        ASFW::Protocols::DV::FirstAvailableChannel(snapshot);
+        ASFW::Protocols::VideoCapture::FirstAvailableChannel(snapshot);
     ASSERT_TRUE(channel.has_value());
     EXPECT_EQ(*channel, 7u);
 
     snapshot.channelsAvailable31_0 = 0;
     EXPECT_FALSE(
-        ASFW::Protocols::DV::FirstAvailableChannel(snapshot).has_value());
+        ASFW::Protocols::VideoCapture::FirstAvailableChannel(snapshot).has_value());
 }

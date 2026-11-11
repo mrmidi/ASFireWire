@@ -1,13 +1,15 @@
 //
-//  DVCaptureView.swift
+//  VideoCaptureView.swift
 //  ASFW
 //
-//  Capture DV (MiniDV camcorder) video to a raw .dv file.
+//  Capture DV or HDV video from a tape camcorder to a raw file.
 //
 //  Flow: AV/C tape transport (PLAY) via raw FCP → driver receives the isoch
-//  stream and fills the shared DIF ring → this view drains the ring and
-//  appends chunks to a .dv file. Raw DV files open directly in QuickTime,
-//  iMovie, FFmpeg, DaVinci Resolve, etc.
+//  stream, detects DV or MPEG-2 TS (HDV) and fills the shared ring → this view
+//  drains the ring and writes the stream. DV is reassembled into whole frames
+//  for a .dv file (QuickTime, iMovie, FFmpeg, DaVinci Resolve, etc.). HDV is
+//  written as a 188-byte-packet MPEG-2 transport stream for a .m2t file (VLC,
+//  FFmpeg, DaVinci Resolve, etc.).
 //
 
 import SwiftUI
@@ -17,19 +19,20 @@ import Combine
 // MARK: - Capture Controller
 
 @MainActor
-final class DVCaptureController: ObservableObject {
+final class VideoCaptureController: ObservableObject {
     @Published var isCapturing = false
     @Published var bytesWritten: UInt64 = 0
     @Published var framesSeen: Int = 0
+    @Published var transportStreamPackets: Int = 0
     @Published var droppedFrames: Int = 0
     @Published var duplicateBlocks: Int = 0
     @Published var invalidBlocks: Int = 0
-    @Published var stats = DVCaptureStats()
+    @Published var stats = VideoCaptureStats()
     @Published var systemLabel = "—"
     @Published var lastError: String?
 
-    private var ring: DVCaptureRing?
-    private var fileWriter: DVFileWriter?
+    private var ring: VideoCaptureRing?
+    private var fileWriter: VideoCaptureFileWriter?
     private var captureTask: Task<Void, Never>?
     private var assembler = DVFrameAssembler()
 
@@ -39,23 +42,23 @@ final class DVCaptureController: ObservableObject {
         guard !isCapturing else { return }
         lastError = nil
 
-        guard connector.startDVCapture(deviceGUID: deviceGUID) else {
-            lastError = connector.lastError ?? "startDVCapture failed (is audio receive running?)"
+        guard connector.startVideoCapture(deviceGUID: deviceGUID) else {
+            lastError = connector.lastError ?? "startVideoCapture failed (is audio receive running?)"
             return
         }
 
-        guard let mappedRing = connector.mapDVCaptureRing() else {
-            lastError = "Failed to map DV ring"
-            _ = connector.stopDVCapture()
+        guard let mappedRing = connector.mapVideoCaptureRing() else {
+            lastError = "Failed to map capture ring"
+            _ = connector.stopVideoCapture()
             return
         }
 
-        let writer: DVFileWriter
+        let writer: VideoCaptureFileWriter
         do {
-            writer = try DVFileWriter(url: url)
+            writer = try VideoCaptureFileWriter(url: url)
         } catch {
             lastError = "Could not create \(url.lastPathComponent): \(error.localizedDescription)"
-            _ = connector.stopDVCapture()
+            _ = connector.stopVideoCapture()
             mappedRing.unmap()
             return
         }
@@ -64,6 +67,7 @@ final class DVCaptureController: ObservableObject {
         ring = mappedRing
         bytesWritten = 0
         framesSeen = 0
+        transportStreamPackets = 0
         droppedFrames = 0
         duplicateBlocks = 0
         invalidBlocks = 0
@@ -99,6 +103,24 @@ final class DVCaptureController: ObservableObject {
     private func tick(connector: ASFWDriverConnector) async {
         guard let ring else { return }
 
+        // Nothing is published before the driver locks the format.
+        switch ring.streamFormat {
+        case .mpegTS:
+            await drainTransportStream(ring, connector: connector)
+        case .dv:
+            await drainDV(ring, connector: connector)
+        case .unknown:
+            break
+        }
+        stats = ring.stats
+        if VideoCaptureSessionState(rawValue: stats.sessionState) == .busReset {
+            lastError = "Capture stopped because the FireWire bus reset. Select the camcorder again and restart capture."
+            await shutdown(connector: connector)
+        }
+    }
+
+    private func drainDV(_ ring: VideoCaptureRing,
+                         connector: ASFWDriverConnector) async {
         var completedFrames: [Data] = []
         var dropped = 0
         var duplicates = 0
@@ -115,15 +137,31 @@ final class DVCaptureController: ObservableObject {
         duplicateBlocks += duplicates
         invalidBlocks += invalid
         if systemLabel == "—", let isPAL = assembler.isPAL {
-            systemLabel = isPAL ? "PAL (625/50)" : "NTSC (525/60)"
+            systemLabel = isPAL ? "DV PAL (625/50)" : "DV NTSC (525/60)"
         }
-        if !completedFrames.isEmpty {
-            await write(completedFrames, connector: connector)
+        if !completedFrames.isEmpty,
+           await write(completedFrames, connector: connector) {
+            framesSeen += completedFrames.count
         }
-        stats = ring.stats
-        if DVCaptureSessionState(rawValue: stats.sessionState) == .busReset {
-            lastError = "Capture stopped because the FireWire bus reset. Select the camcorder again and restart capture."
-            await shutdown(connector: connector)
+    }
+
+    // HDV: the driver has already checked each 188-byte packet's sync byte;
+    // they are written back to back as an MPEG-2 transport stream.
+    private func drainTransportStream(_ ring: VideoCaptureRing,
+                                      connector: ASFWDriverConnector) async {
+        var stream = Data()
+        var packets = 0
+        ring.drain { chunk in
+            guard let bytes = chunk.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return
+            }
+            stream.append(bytes, count: chunk.count)
+            packets += 1
+        }
+
+        systemLabel = "HDV (MPEG-2 TS)"
+        if packets > 0, await write([stream], connector: connector) {
+            transportStreamPackets += packets
         }
     }
 
@@ -132,34 +170,36 @@ final class DVCaptureController: ObservableObject {
         if result.droppedFrame { droppedFrames += 1 }
         duplicateBlocks += result.duplicateBlocks
         invalidBlocks += result.invalidBlocks
-        if let frame = result.completedFrame {
-            await write([frame], connector: connector)
+        if let frame = result.completedFrame,
+           await write([frame], connector: connector) {
+            framesSeen += 1
         }
     }
 
-    private func write(_ frames: [Data],
-                       connector: ASFWDriverConnector) async {
-        guard let fileWriter else { return }
+    private func write(_ chunks: [Data],
+                       connector: ASFWDriverConnector) async -> Bool {
+        guard let fileWriter else { return false }
         do {
-            bytesWritten += try await fileWriter.write(frames)
-            framesSeen += frames.count
+            bytesWritten += try await fileWriter.write(chunks)
+            return true
         } catch {
-            lastError = "DV file write failed: \(error.localizedDescription)"
+            lastError = "Capture file write failed: \(error.localizedDescription)"
             await shutdown(connector: connector)
+            return false
         }
     }
 
     private func shutdown(connector: ASFWDriverConnector) async {
         captureTask?.cancel()
         captureTask = nil
-        _ = connector.stopDVCapture()
+        _ = connector.stopVideoCapture()
         ring?.unmap()
         ring = nil
         if let fileWriter {
             do {
                 try await fileWriter.close()
             } catch where lastError == nil {
-                lastError = "Could not finalize DV file: \(error.localizedDescription)"
+                lastError = "Could not finalize capture file: \(error.localizedDescription)"
             } catch { }
         }
         self.fileWriter = nil
@@ -169,9 +209,9 @@ final class DVCaptureController: ObservableObject {
 
 // MARK: - View
 
-struct DVCaptureView: View {
+struct VideoCaptureView: View {
     @ObservedObject var viewModel: DebugViewModel
-    @StateObject private var controller = DVCaptureController()
+    @StateObject private var controller = VideoCaptureController()
 
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?
@@ -186,7 +226,7 @@ struct DVCaptureView: View {
             captureSection
         }
         .formStyle(.grouped)
-        .navigationTitle("DV Capture")
+        .navigationTitle("DV / HDV Capture")
         .onAppear { refreshUnits() }
         .onDisappear {
             Task { await controller.stop(connector: viewModel.connector) }
@@ -265,6 +305,11 @@ struct DVCaptureView: View {
                 Text(outputURL?.lastPathComponent ?? "No file selected")
                     .foregroundColor(.secondary)
             }
+            if let hint = fileExtensionHint {
+                Label(hint, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
 
             if controller.isCapturing {
                 Button {
@@ -295,19 +340,31 @@ struct DVCaptureView: View {
                                : "—")
             LabeledContent("Connection",
                            value: connectionModeLabel(controller.stats.connectionMode))
-            LabeledContent("Frames", value: "\(controller.framesSeen)")
-            LabeledContent("Dropped frames", value: "\(controller.droppedFrames)")
-                .foregroundColor(controller.droppedFrames > 0 ? .orange : .primary)
+            if controller.stats.streamFormat == .mpegTS {
+                LabeledContent("TS packets", value: "\(controller.transportStreamPackets)")
+            } else {
+                LabeledContent("Frames", value: "\(controller.framesSeen)")
+                LabeledContent("Dropped frames", value: "\(controller.droppedFrames)")
+                    .foregroundColor(controller.droppedFrames > 0 ? .orange : .primary)
+            }
             LabeledContent("Written", value: formatBytes(controller.bytesWritten))
             LabeledContent("Isoch packets seen", value: "\(controller.stats.packetsSeen)")
-            LabeledContent("DV source packets", value: "\(controller.stats.dvSourcePackets)")
-            LabeledContent("Non-DV packets", value: "\(controller.stats.nonDvPackets)")
+            LabeledContent("Source packets", value: "\(controller.stats.sourcePackets)")
+            LabeledContent("Rejected packets", value: "\(controller.stats.rejectedPackets)")
             LabeledContent("Ring overruns", value: "\(controller.stats.overruns)")
                 .foregroundColor(controller.stats.overruns > 0 ? .orange : .primary)
             LabeledContent("DBC discontinuities", value: "\(controller.stats.dbcDiscontinuities)")
-            LabeledContent("Invalid DIF chunks", value: "\(controller.stats.invalidDifBlocks)")
-            LabeledContent("Duplicate DIF blocks", value: "\(controller.duplicateBlocks)")
-            if controller.stats.nonDvPackets > 0 {
+            if controller.stats.streamFormat == .mpegTS {
+                LabeledContent("Bad TS sync bytes",
+                               value: "\(controller.stats.invalidSourcePackets)")
+                LabeledContent("Dropped TS fragments",
+                               value: "\(controller.stats.droppedFragments)")
+            } else {
+                LabeledContent("Invalid DIF chunks",
+                               value: "\(controller.stats.invalidSourcePackets)")
+                LabeledContent("Duplicate DIF blocks", value: "\(controller.duplicateBlocks)")
+            }
+            if controller.stats.rejectedPackets > 0 {
                 LabeledContent("Last rejected",
                                value: String(format: "len=%u q0=%08X q1=%08X",
                                              controller.stats.lastRejectLen,
@@ -380,9 +437,25 @@ struct DVCaptureView: View {
         }
     }
 
+    // The format is only known once the stream arrives, and the sandbox only
+    // grants access to the exact file chosen, so a mismatched name is flagged
+    // rather than changed.
+    private var fileExtensionHint: String? {
+        guard let ext = outputURL?.pathExtension.lowercased() else { return nil }
+        switch controller.stats.streamFormat {
+        case .mpegTS where !["m2t", "ts"].contains(ext):
+            return "The camcorder is sending HDV (MPEG-2 TS). Name the file .m2t so players recognise it."
+        case .dv where ext != "dv":
+            return "The camcorder is sending DV. Name the file .dv so players recognise it."
+        default:
+            return nil
+        }
+    }
+
     private func chooseOutputFile() {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "capture.dv"
+        panel.message = "Use .dv for DV tapes and .m2t for HDV tapes."
         panel.canCreateDirectories = true
         if panel.runModal() == .OK {
             outputURL = panel.url

@@ -1,26 +1,36 @@
 //
-//  DriverConnector+DVCapture.swift
+//  DriverConnector+VideoCapture.swift
 //  ASFW
 //
-//  DV (IEC 61883-2) capture control and shared DIF ring access.
+//  Camcorder capture control and shared ring access: DV (IEC 61883-2) and
+//  MPEG-2 TS (IEC 61883-4, as sent by HDV camcorders).
 //
-//  The driver fills a shared-memory SPSC ring with raw 480-byte DIF chunks
-//  (one DV source packet each). This file maps the ring (memory type 1) and
-//  consumes records; the view layer concatenates them into a .dv file.
+//  The driver fills a shared-memory SPSC ring with one record per source
+//  packet: a 480-byte DIF chunk for DV, or a 188-byte TS packet for HDV. The
+//  driver locks the format from the stream and publishes it before the first
+//  record. This file maps the ring (memory type 1) and consumes records; the
+//  view layer writes them to a .dv or .m2t file.
 //
-//  Ring layout is ABI with ASFWDriver/Protocols/DV/DVCaptureSink.hpp:
+//  Ring layout is ABI with ASFWDriver/Protocols/VideoCapture/VideoCaptureSink.hpp:
 //    +0   magic 'ASDV' (0x41534456)
-//    +4   version (u16) = 3
+//    +4   version (u16) = 4
 //    +6   negotiated channel (u8), connection mode (u8)
 //    +8   numRecords (u32)
-//    +12  recordBytes (u32) = 480
+//    +12  recordBytes (u32) = 480, record stride
 //    +16  dataOffsetBytes (u32) = 192
 //    +20  session state (u32, driver-owned atomic)
 //    +24  packetsSeen (u32)
-//    +28  dvSourcePackets (u32)
-//    +32  nonDvPackets (u32)
+//    +28  sourcePackets (u32, records published)
+//    +32  rejectedPackets (u32)
 //    +36  overruns (u32)
+//    +40  lastRejectLen, +44 lastRejectQ0, +48 lastRejectQ1 (host order)
+//    +52  lastXferStatus (u32)
+//    +56  dbcDiscontinuities (u32)
+//    +60  invalidSourcePackets (u32, bad DIF ID or TS sync byte)
 //    +64  writeIndex (u32, driver-owned, free-running records)
+//    +68  streamFormat (u32, 0 unknown, 1 DV, 2 MPEG-2 TS)
+//    +72  sourcePacketBytes (u32, 480 or 188)
+//    +76  droppedFragments (u32, incomplete TS source packets)
 //    +128 readIndex (u32, app-owned, free-running records)
 //    +192 record data (numRecords × 480 bytes)
 //
@@ -28,25 +38,33 @@
 import Foundation
 import IOKit
 
-// MARK: - DV Ring Stats
+// MARK: - Capture Ring Stats
 
-struct DVCaptureStats {
+enum VideoStreamFormat: UInt32 {
+    case unknown = 0
+    case dv = 1
+    case mpegTS = 2
+}
+
+struct VideoCaptureStats {
     var sessionState: UInt32 = 0
     var channel: UInt8 = 0xFF
     var connectionMode: UInt8 = 0
     var packetsSeen: UInt32 = 0
-    var dvSourcePackets: UInt32 = 0
-    var nonDvPackets: UInt32 = 0
+    var sourcePackets: UInt32 = 0
+    var rejectedPackets: UInt32 = 0
     var overruns: UInt32 = 0
     var lastRejectLen: UInt32 = 0
     var lastRejectQ0: UInt32 = 0
     var lastRejectQ1: UInt32 = 0
     var lastXferStatus: UInt32 = 0
     var dbcDiscontinuities: UInt32 = 0
-    var invalidDifBlocks: UInt32 = 0
+    var invalidSourcePackets: UInt32 = 0
+    var streamFormat: VideoStreamFormat = .unknown
+    var droppedFragments: UInt32 = 0
 }
 
-enum DVCaptureSessionState: UInt32 {
+enum VideoCaptureSessionState: UInt32 {
     case initializing = 0
     case active = 1
     case stopped = 2
@@ -56,10 +74,10 @@ enum DVCaptureSessionState: UInt32 {
 
 // MARK: - Mapped Ring
 
-/// Consumer-side view of the shared DV ring. Single consumer only.
-final class DVCaptureRing {
+/// Consumer-side view of the shared capture ring. Single consumer only.
+final class VideoCaptureRing {
     static let magic: UInt32 = 0x41534456 // 'ASDV'
-    static let version: UInt16 = 3
+    static let version: UInt16 = 4
     static let headerBytes = 192
     static let recordBytes = 480
 
@@ -82,7 +100,7 @@ final class DVCaptureRing {
         self.dataOffset = dataOffset
     }
 
-    static func map(connection: io_connect_t) -> DVCaptureRing? {
+    static func map(connection: io_connect_t) -> VideoCaptureRing? {
         var address: mach_vm_address_t = 0
         var length: mach_vm_size_t = 0
         let options = UInt32(kIOMapAnywhere | kIOMapDefaultCache)
@@ -97,17 +115,17 @@ final class DVCaptureRing {
         let recBytes = pointer.load(fromByteOffset: 12, as: UInt32.self)
         let dataOffset = pointer.load(fromByteOffset: 16, as: UInt32.self)
 
-        guard magic == DVCaptureRing.magic,
-              version == DVCaptureRing.version,
-              recBytes == UInt32(DVCaptureRing.recordBytes),
+        guard magic == VideoCaptureRing.magic,
+              version == VideoCaptureRing.version,
+              recBytes == UInt32(VideoCaptureRing.recordBytes),
               numRecords > 0,
-              dataOffset == UInt32(DVCaptureRing.headerBytes),
+              dataOffset == UInt32(VideoCaptureRing.headerBytes),
               UInt64(dataOffset) + UInt64(numRecords) * UInt64(recBytes) <= UInt64(length) else {
             IOConnectUnmapMemory64(connection, 1, mach_task_self_, address)
             return nil
         }
 
-        return DVCaptureRing(base: pointer,
+        return VideoCaptureRing(base: pointer,
                              mappedAddress: address,
                              connection: connection,
                              numRecords: numRecords,
@@ -122,8 +140,14 @@ final class DVCaptureRing {
 
     deinit { unmap() }
 
-    /// Drain all available records, invoking the handler with each 480-byte chunk.
-    /// Returns the number of records consumed.
+    /// Stream format the driver locked, or `.unknown` before the first record.
+    var streamFormat: VideoStreamFormat {
+        VideoStreamFormat(rawValue: atomicLoad(68)) ?? .unknown
+    }
+
+    /// Drain all available records, invoking the handler with each source
+    /// packet (480 bytes for DV, 188 for MPEG-2 TS). Returns the number of
+    /// records consumed.
     ///
     @discardableResult
     func drain(_ handler: (UnsafeRawBufferPointer) -> Void) -> Int {
@@ -131,13 +155,19 @@ final class DVCaptureRing {
         let readPointer = (base + 128).assumingMemoryBound(to: UInt32.self)
         let w = ASFWAtomicLoadU32Acquire(writePointer)
         var r = ASFWAtomicLoadU32Acquire(readPointer)
+        // The driver publishes the record size before the first record, so it
+        // is visible once writeIndex has been acquired past that record.
+        let recordPayload = Int(atomicLoad(72))
+        guard recordPayload > 0, recordPayload <= VideoCaptureRing.recordBytes else {
+            return 0
+        }
         var consumed = 0
 
         while r != w {
             let idx = Int(r % numRecords)
             let chunk = UnsafeRawBufferPointer(
-                start: base + dataOffset + idx * DVCaptureRing.recordBytes,
-                count: DVCaptureRing.recordBytes
+                start: base + dataOffset + idx * VideoCaptureRing.recordBytes,
+                count: recordPayload
             )
             handler(chunk)
             r &+= 1
@@ -150,26 +180,29 @@ final class DVCaptureRing {
         return consumed
     }
 
-    var stats: DVCaptureStats {
-        func atomicLoad(_ offset: Int) -> UInt32 {
-            ASFWAtomicLoadU32Acquire(
-                (base + offset).assumingMemoryBound(to: UInt32.self))
-        }
-        return DVCaptureStats(
+    var stats: VideoCaptureStats {
+        VideoCaptureStats(
             sessionState: atomicLoad(20),
             channel: base.load(fromByteOffset: 6, as: UInt8.self),
             connectionMode: base.load(fromByteOffset: 7, as: UInt8.self),
             packetsSeen: atomicLoad(24),
-            dvSourcePackets: atomicLoad(28),
-            nonDvPackets: atomicLoad(32),
+            sourcePackets: atomicLoad(28),
+            rejectedPackets: atomicLoad(32),
             overruns: atomicLoad(36),
             lastRejectLen: atomicLoad(40),
             lastRejectQ0: atomicLoad(44),
             lastRejectQ1: atomicLoad(48),
             lastXferStatus: atomicLoad(52),
             dbcDiscontinuities: atomicLoad(56),
-            invalidDifBlocks: atomicLoad(60)
+            invalidSourcePackets: atomicLoad(60),
+            streamFormat: streamFormat,
+            droppedFragments: atomicLoad(76)
         )
+    }
+
+    private func atomicLoad(_ offset: Int) -> UInt32 {
+        ASFWAtomicLoadU32Acquire(
+            (base + offset).assumingMemoryBound(to: UInt32.self))
     }
 }
 
@@ -177,55 +210,55 @@ final class DVCaptureRing {
 
 extension ASFWDriverConnector {
 
-    /// Start DV capture for a discovered device. The driver resolves its
+    /// Start video capture for a discovered device. The driver resolves its
     /// generation/node and negotiates CMP/IRM resources (with broadcast fallback).
-    func startDVCapture(deviceGUID: UInt64) -> Bool {
+    func startVideoCapture(deviceGUID: UInt64) -> Bool {
         guard isConnected, connection != 0 else { return false }
 
         var input: [UInt64] = [deviceGUID]
         let kr = IOConnectCallScalarMethod(
             connection,
-            Method.startDVCapture.rawValue,
+            Method.startVideoCapture.rawValue,
             &input, 1,
             nil, nil
         )
 
         if kr != KERN_SUCCESS {
-            log("startDVCapture failed: \(interpretIOReturn(kr))", level: .error)
+            log("startVideoCapture failed: \(interpretIOReturn(kr))", level: .error)
             return false
         }
-        log("Started DV capture for GUID \(String(format: "%016llX", deviceGUID))",
+        log("Started video capture for GUID \(String(format: "%016llX", deviceGUID))",
             level: .info)
         return true
     }
 
-    /// Stop DV capture.
-    func stopDVCapture() -> Bool {
+    /// Stop video capture.
+    func stopVideoCapture() -> Bool {
         guard isConnected, connection != 0 else { return false }
 
         let kr = IOConnectCallScalarMethod(
             connection,
-            Method.stopDVCapture.rawValue,
+            Method.stopVideoCapture.rawValue,
             nil, 0,
             nil, nil
         )
 
         if kr != KERN_SUCCESS {
-            log("stopDVCapture failed: \(interpretIOReturn(kr))", level: .error)
+            log("stopVideoCapture failed: \(interpretIOReturn(kr))", level: .error)
             return false
         }
-        log("Stopped DV capture", level: .info)
+        log("Stopped video capture", level: .info)
         return true
     }
 
-    /// Map the shared DV ring. Call after startDVCapture succeeds.
-    func mapDVCaptureRing() -> DVCaptureRing? {
+    /// Map the shared capture ring. Call after startVideoCapture succeeds.
+    func mapVideoCaptureRing() -> VideoCaptureRing? {
         guard isConnected, connection != 0 else { return nil }
-        guard let ring = DVCaptureRing.map(connection: connection) else {
-            log("mapDVCaptureRing: mapping failed", level: .error)
+        guard let ring = VideoCaptureRing.map(connection: connection) else {
+            log("mapVideoCaptureRing: mapping failed", level: .error)
             return nil
         }
-        log("Mapped DV capture ring", level: .info)
+        log("Mapped video capture ring", level: .info)
         return ring
     }
 }

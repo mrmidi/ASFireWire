@@ -45,7 +45,15 @@ struct CIPHeader {
      */
     uint8_t dataBlockSize{0};
 
-    /** 
+    /**
+     * Fraction Number (FN).
+     * A source packet is split into 2^FN data blocks. 0 for audio and DV;
+     * 3 for MPEG-2 TS (HDV): eight 24-byte blocks per 192-byte source packet.
+     * Reference: IEC 61883-1 (CIP header), IEC 61883-4 (MPEG-2 TS)
+     */
+    uint8_t fractionNumber{0};
+
+    /**
      * Source Packet Header (SPH) flag.
      * If true (1), indicates the source packet has its own payload header.
      * Reference: IEC 61883-1 §6.2.1
@@ -105,6 +113,7 @@ struct CIPHeader {
         CIPHeader h;
         h.sourceNodeId       = (q0 >> 24) & 0x3F;
         h.dataBlockSize      = (q0 >> 16) & 0xFF;
+        h.fractionNumber     = (q0 >> 14) & 0x3;
         h.sourcePacketHeader = (q0 >> 10) & 0x1;
         h.dataBlockCounter   = q0 & 0xFF;
         

@@ -108,9 +108,9 @@ enum {
     kMethodStartIsochTransmit = 36,
     kMethodStopIsochTransmit = 37,
 
-    // DV capture (raw DIF stream via shared ring, memory type 1)
-    kMethodStartDVCapture = 50,
-    kMethodStopDVCapture = 51,
+    // Video capture (DV or HDV stream via shared ring, memory type 1)
+    kMethodStartVideoCapture = 50,
+    kMethodStopVideoCapture = 51,
 };
 
 namespace {
@@ -397,10 +397,10 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().StopIsochTransmit(arguments);
     case kMethodMotuCapture:
         return runtimeState.Isoch().MotuCapture(arguments);
-    case kMethodStartDVCapture:
-        return runtimeState.Isoch().StartDVCapture(arguments);
-    case kMethodStopDVCapture:
-        return runtimeState.Isoch().StopDVCapture(arguments);
+    case kMethodStartVideoCapture:
+        return runtimeState.Isoch().StartVideoCapture(arguments);
+    case kMethodStopVideoCapture:
+        return runtimeState.Isoch().StopVideoCapture(arguments);
     default:
         return std::nullopt;
     }
@@ -910,7 +910,7 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
         return kIOReturnNotReady;
     }
 
-    // Type 0: shared status memory. Type 1: DV capture ring. Type 2: the
+    // Type 0: shared status memory. Type 1: video capture ring. Type 2: the
     // selected audio endpoint's existing output ring, mapped read-only.
     if (type == 0) {
         return ivars->driver->CopySharedStatusMemory(options, memory);
@@ -918,7 +918,7 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
     if (type == 1) {
         const uint64_t ownerToken = static_cast<uint64_t>(
             reinterpret_cast<uintptr_t>(this));
-        return ivars->driver->CopyDVCaptureMemory(
+        return ivars->driver->CopyVideoCaptureMemory(
             ownerToken, options, memory);
     }
     if (type == 2) {

@@ -94,9 +94,9 @@ public:
         kMethodStartIsochReceive       = 32,
         kMethodStopIsochReceive        = 33,
 
-        // DV capture (raw DIF stream via shared ring, memory type 1)
-        kMethodStartDVCapture          = 50,
-        kMethodStopDVCapture           = 51,
+        // Video capture (DV or HDV stream via shared ring, memory type 1)
+        kMethodStartVideoCapture          = 50,
+        kMethodStopVideoCapture           = 51,
     };
 
     kern_return_t
