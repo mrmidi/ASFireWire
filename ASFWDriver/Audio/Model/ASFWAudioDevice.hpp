@@ -12,7 +12,9 @@
 #include "AvcVolumeMapping.hpp"
 #include "../Wire/AMDTP/PcmSlotMap.hpp"
 #include "../Runtime/ResolvedAudioConfiguration.hpp"
+#include "../../Midi/Capabilities/MidiEndpointCapabilities.hpp"
 
+#include <optional>
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
@@ -96,6 +98,13 @@ struct ASFWAudioDevice {
     /// audio side must offer exactly them, not a profile's list; see
     /// PropertyKeys::kDeviceSampleRates.
     bool deviceSampleRates{false};
+
+    /// The MIDI this endpoint carries, as its family adapter supplies it: the
+    /// format, the slot and the ports for each direction. Empty means the
+    /// family supplies none, and the endpoint gets no MIDI service whatever its
+    /// streams' midiPorts say. Read in the core driver by
+    /// MidiEndpointPublication; not a nub property.
+    std::optional<::ASFW::Midi::MidiEndpointCapabilities> midi{};
 
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.

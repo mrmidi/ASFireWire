@@ -668,6 +668,7 @@
 		0CAB84610B4928A1A1FBCA20 /* MackieOnyx400FProfile.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MackieOnyx400FProfile.hpp; sourceTree = "<group>"; };
 		0CAD6C89CA15A16B87FE87CF /* SBP2PageTable.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SBP2PageTable.hpp; sourceTree = "<group>"; };
 		0CD134ED5E9A65D7A8A6943D /* AvcDeviceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcDeviceHeader.swift; sourceTree = "<group>"; };
+		0CDCF3EA8FC1947A292BBE35 /* Digi00xMidi.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Digi00xMidi.hpp; sourceTree = "<group>"; };
 		0D0166324F7667585F28B95B /* ROMScanner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ROMScanner.hpp; sourceTree = "<group>"; };
 		0D264DCA6E0A2799CC954891 /* ConfigROMHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMHandler.hpp; sourceTree = "<group>"; };
 		0D3B65B0B131441C74E60F71 /* AudioConsoleRackBank.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConsoleRackBank.swift; sourceTree = "<group>"; };
@@ -1303,6 +1304,7 @@
 		971D5A9356A91973832BB8F5 /* BarrierUtils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BarrierUtils.cpp; sourceTree = "<group>"; };
 		97D1AAF25F197D7B5F812B04 /* ControlConsoleLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlConsoleLayoutTests.swift; sourceTree = "<group>"; };
 		97EFF933F516C381F32E2718 /* DiceFamilyDriver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiceFamilyDriver.hpp; sourceTree = "<group>"; };
+		9807C721E5EC96C9E945E5D9 /* MidiWireFormat.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MidiWireFormat.hpp; sourceTree = "<group>"; };
 		982FFE07B6260250EA17D68F /* OrpheusVendorCodec.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = OrpheusVendorCodec.cpp; sourceTree = "<group>"; };
 		983FFE1617FDE6BE97522EEB /* CompareSwapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareSwapView.swift; sourceTree = "<group>"; };
 		98A85E0CF7896060CCA24844 /* OHCIHelpers.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OHCIHelpers.hpp; sourceTree = "<group>"; };
@@ -1471,6 +1473,7 @@
 		BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioTransportControlBlock.hpp; sourceTree = "<group>"; };
 		BB91D09055210849EAF0DE1C /* MusicSubunitDescriptor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MusicSubunitDescriptor.hpp; sourceTree = "<group>"; };
 		BB9EA32B6F51C816943CEC75 /* TopologyMapService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TopologyMapService.cpp; sourceTree = "<group>"; };
+		BBF2EE85B92E1305305F1439 /* MidiWireCodec.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MidiWireCodec.hpp; sourceTree = "<group>"; };
 		BC389C347FC4129A24CD6B55 /* MCPSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPSettingsView.swift; sourceTree = "<group>"; };
 		BC54AD9BD749D537A0D2BF05 /* ASFWDriver.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWDriver.cpp; sourceTree = "<group>"; };
 		BCCC16C6B560CCA8DCD16838 /* AnalyzerPlotAxes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerPlotAxes.swift; sourceTree = "<group>"; };
@@ -1757,6 +1760,7 @@
 		F806076064BE18612AD246E1 /* HWNamespaceAlias.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HWNamespaceAlias.hpp; sourceTree = "<group>"; };
 		F85DA69DD2CC891F9D6FDE3C /* AVCExchangeLogWire.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCExchangeLogWire.hpp; sourceTree = "<group>"; };
 		F8B5576036EFE84BD74E7EFA /* AddressSpaceManager.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AddressSpaceManager.hpp; sourceTree = "<group>"; };
+		F9257E93B48236E3F29CC42F /* MidiStreamProjection.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MidiStreamProjection.hpp; sourceTree = "<group>"; };
 		F9741333A3F544B641641494 /* SaffireMixerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaffireMixerViewModel.swift; sourceTree = "<group>"; };
 		F9997F8020E6C4F5C17D1A2E /* WaterfallTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaterfallTests.swift; sourceTree = "<group>"; };
 		FA21FB623DC8076A7D6A6ACE /* SessionRegistry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SessionRegistry.hpp; sourceTree = "<group>"; };
@@ -1974,6 +1978,7 @@
 			children = (
 				B07148100E98C861CE339219 /* MidiEndpointCapabilities.cpp */,
 				6E720C1D34DA8435E8C3C86B /* MidiEndpointCapabilities.hpp */,
+				F9257E93B48236E3F29CC42F /* MidiStreamProjection.hpp */,
 			);
 			path = Capabilities;
 			sourceTree = "<group>";
@@ -2736,6 +2741,7 @@
 				8FEAA5E97D34E8168D6984DD /* CIP */,
 				8EAE958185312211120C139A /* Digi00x */,
 				23FF3BFBD4615EA56B53E83D /* IEC61883 */,
+				9C9D45E2C8965671E9E0F075 /* Midi */,
 				6B25D62280DDE4FBC450B9B3 /* MOTU */,
 				A7E96D302593CA3F182D2EF4 /* RawPcm24In32 */,
 			);
@@ -3266,6 +3272,7 @@
 		8EAE958185312211120C139A /* Digi00x */ = {
 			isa = PBXGroup;
 			children = (
+				0CDCF3EA8FC1947A292BBE35 /* Digi00xMidi.hpp */,
 				A69E5E7F94CED05BF7EFC164 /* Digi00xSlotLayout.hpp */,
 				C35863C3DE730DA51D433BDC /* DotScrambler.hpp */,
 			);
@@ -3347,6 +3354,15 @@
 				2FF5BE7F9DF540EEA9608B64 /* rtl */,
 			);
 			path = tools;
+			sourceTree = "<group>";
+		};
+		9C9D45E2C8965671E9E0F075 /* Midi */ = {
+			isa = PBXGroup;
+			children = (
+				BBF2EE85B92E1305305F1439 /* MidiWireCodec.hpp */,
+				9807C721E5EC96C9E945E5D9 /* MidiWireFormat.hpp */,
+			);
+			path = Midi;
 			sourceTree = "<group>";
 		};
 		9D9CD8063E69E242DF67651C = {

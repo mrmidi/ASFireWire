@@ -168,4 +168,14 @@ enum class MidiDirection : uint8_t {
     uint64_t guid,
     uint64_t streamEpoch) noexcept;
 
+/// One direction as a family declares it: its own format and an explicit MIDI
+/// slot, for a family whose MIDI slot is not the one after the PCM (the Digi
+/// 002 / 003 carries MIDI in slot 0). The declaration is checked the same way a
+/// projected one is: the slot must lie inside the data block (`dbs`) and must
+/// not be a PCM slot (`pcmSlots`, bit n = slot n carries PCM; a DBS above 64
+/// cannot be checked and is rejected).
+[[nodiscard]] MidiDirectionCapabilities DeclareMidiDirection(
+    ::ASFW::Encoding::MidiWireFormat format, uint8_t portCount, uint8_t midiSlotIndex,
+    uint8_t dbs, uint8_t pcmChannels, uint64_t pcmSlots) noexcept;
+
 } // namespace ASFW::Midi
