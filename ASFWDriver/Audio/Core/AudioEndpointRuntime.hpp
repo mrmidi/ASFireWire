@@ -509,6 +509,7 @@ public:
                 .midiSlotIndex = midiAttachment_.sources.midiSlotIndex,
                 .portCount = midiAttachment_.sources.portCount,
                 .dbcAligned = midiAttachment_.sources.dbcAligned,
+                .format = midiAttachment_.sources.format,
             };
         }
         IOLockUnlock(lock_);

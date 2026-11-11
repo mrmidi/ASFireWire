@@ -63,7 +63,8 @@ public:
                                                   uint32_t* outDestinationSlotIndex,
                                                   uint32_t* outDestinationDbs,
                                                   uint32_t* outDestinationPcmChannels,
-                                                  uint32_t* outDbcAligned);
+                                                  uint32_t* outDbcAligned,
+                                                  uint32_t* outWireFormat);
 
     virtual kern_return_t StartAudioStreaming(uint32_t sampleRateHz);
     virtual kern_return_t StopAudioStreaming();

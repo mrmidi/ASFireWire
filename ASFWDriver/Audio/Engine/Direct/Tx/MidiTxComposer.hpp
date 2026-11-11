@@ -51,6 +51,7 @@
 #include <cstdint>
 
 #include "../../../Wire/AM824/MpxMidiMux.hpp"
+#include "../../../Wire/Midi/MidiWireCodec.hpp"
 #include "../../../Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "../../../../Midi/Transport/MidiTransportBlock.hpp"
 #include "../../../../Midi/Transport/MidiTxReservation.hpp"
@@ -103,7 +104,8 @@ public:
             return false;
         }
         config_ = config;
-        scope_.ConfigureLimiter(config.sampleRateHz, config.sytIntervalFrames);
+        scope_.ConfigureLimiter(config.sampleRateHz, config.sytIntervalFrames,
+                                ASFW::Encoding::MidiTxPacingFor(config.geometry.format));
         configured_ = true;
         ResetForRun();
         return true;
@@ -179,7 +181,8 @@ public:
             const uint8_t dbc = slot->packetBytes.load(std::memory_order_relaxed)[3];
             ASFW::Midi::MidiPacketReservation reservation{};
             if (!scope_.Begin(*block, epoch, static_cast<uint32_t>(packet), reservation,
-                              ASFW::Encoding::MpxMidiPortsInPacket(blocks, dbc, config_.geometry))) {
+                              ASFW::Encoding::MidiPortsInPacket(blocks, dbc, config_.geometry),
+                              blocks)) {
                 break;
             }
             if (reservation.Any()) {
@@ -188,7 +191,7 @@ public:
                     bytes.hasByteForPort[port] = reservation.hasByteForPort[port];
                     bytes.byteForPort[port] = reservation.byteForPort[port];
                 }
-                ASFW::Encoding::WriteMpxMidiSlot(
+                ASFW::Encoding::WriteMidiSlot(
                     slot->packetBytes.load(std::memory_order_relaxed) + kCipHeaderBytes, blocks, dbc,
                     config_.geometry, bytes);
                 for (uint32_t port = 0; port < ASFW::Encoding::kMpxMidiPorts; ++port) {

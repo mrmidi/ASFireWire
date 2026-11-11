@@ -11,6 +11,9 @@
 #include <vector>
 
 #include "Audio/Wire/Digi00x/Digi00xMidi.hpp"
+#include "Audio/Wire/Midi/MidiWireCodec.hpp"
+
+#include <algorithm>
 
 using namespace ASFW::Encoding;
 namespace Dg = ASFW::Encoding::Digi00x;
@@ -182,4 +185,95 @@ TEST(Digi00xMidiTests, RoundTrip_PortOneAndConsole) {
     EXPECT_EQ(sink.runs[0].bytes, (std::vector<uint8_t>{0x7F}));
     EXPECT_EQ(sink.runs[1].port, Dg::kControlPort);
     EXPECT_EQ(sink.runs[1].bytes, (std::vector<uint8_t>{0xB0}));
+}
+
+// ---------------------------------------------------------------------------
+// Host -> device pacing (kMidiTxPacing): drive the UART model exactly as the
+// reservation does -- every port aged on every DATA packet by the blocks it
+// carries, a byte taken only for a port the packet has a block for -- over the
+// device's own packet sequence, with every port always holding a byte, and
+// measure where each byte lands on the wire.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct PacingRun {
+    double minGapUs{1e9};
+    double meanGapUs{0};
+    uint32_t bytes{0};
+};
+
+// Non-blocking cadence: each 8 kHz cycle carries the frames the rate has
+// accumulated (48 kHz: 6 every cycle; 44.1 kHz: 5 or 6).
+PacingRun RunPacing(uint32_t rateHz, uint8_t port, uint32_t cycles) {
+    MpxMidiRateLimiter limiter;
+    limiter.Configure(rateHz, /*sytIntervalFrames=*/8, Dg::kMidiTxPacing);
+    const MpxMidiGeometry geometry{.dbs = 19, .midiSlotIndex = 0, .portCount = 3,
+                                   .format = MidiWireFormat::kDigi00x};
+    uint64_t accumulated = 0;
+    uint64_t blockClock = 0;  // data blocks since the run began
+    uint8_t dbc = 0;
+    int64_t lastByteBlock = -1;
+    double gapSum = 0;
+    PacingRun run;
+    for (uint32_t cycle = 0; cycle < cycles; ++cycle) {
+        const uint64_t due = (static_cast<uint64_t>(cycle) + 1) * rateHz / 8000;
+        const auto blocks = static_cast<uint32_t>(due - accumulated);
+        accumulated = due;
+        const uint32_t mask = Dg::PortsInPacket(blocks, dbc, geometry);
+        for (uint32_t p = 0; p < Dg::kMidiPortSlots; ++p) {
+            const bool mayEmit = limiter.AgeAndMayEmit(p, blocks);
+            if (!mayEmit || ((mask >> p) & 1u) == 0) continue;
+            limiter.Debit(p);
+            if (p != port) continue;
+            uint32_t f = 0;
+            while (f < blocks && Dg::PortForBlock(dbc, f) != port) ++f;
+            const auto at = static_cast<int64_t>(blockClock + f);
+            if (lastByteBlock >= 0) {
+                const double gapUs = 1e6 * static_cast<double>(at - lastByteBlock) / rateHz;
+                run.minGapUs = std::min(run.minGapUs, gapUs);
+                gapSum += gapUs;
+            }
+            lastByteBlock = at;
+            ++run.bytes;
+        }
+        blockClock += blocks;
+        dbc = static_cast<uint8_t>(dbc + blocks);
+    }
+    if (run.bytes > 1) run.meanGapUs = gapSum / (run.bytes - 1);
+    return run;
+}
+
+} // namespace
+
+TEST(Digi00xMidiPacing, EveryByteIsAtLeast500UsAfterThePreviousOneOnItsPort) {
+    for (const uint32_t rate : {44100u, 48000u}) {
+        for (const uint8_t port : {Dg::kMidiPort1, Dg::kMidiPort2, Dg::kControlPort}) {
+            const auto run = RunPacing(rate, port, 80000);  // 10 s
+            SCOPED_TRACE(testing::Message() << rate << " Hz port " << int{port});
+            ASSERT_GT(run.bytes, 1000U);
+            // Three rotations of the port's block, 24 blocks, every time.
+            const double rotations = 1e6 * 24.0 / rate;
+            EXPECT_GE(run.minGapUs, 500.0);
+            EXPECT_NEAR(run.minGapUs, rotations, 0.5);
+            EXPECT_NEAR(run.meanGapUs, rotations, 0.5);
+        }
+    }
+}
+
+TEST(Digi00xMidiPacing, AnIdlePortStillWaitsTheWholeIntervalForItsSecondByte) {
+    MpxMidiRateLimiter limiter;
+    limiter.Configure(48000, 8, Dg::kMidiTxPacing);
+    ASSERT_TRUE(limiter.AgeAndMayEmit(0, 6));
+    limiter.Debit(0);
+    // 48000 / (2300 * 6) = 3.5: the charge needs four packets to drain.
+    for (int packet = 1; packet <= 3; ++packet) {
+        EXPECT_FALSE(limiter.AgeAndMayEmit(0, 6)) << "packet " << packet;
+    }
+    EXPECT_TRUE(limiter.AgeAndMayEmit(0, 6));
+}
+
+TEST(Digi00xMidiPacing, TheCodecSelectsThePacingByFormat) {
+    EXPECT_EQ(MidiTxPacingFor(MidiWireFormat::kDigi00x), Dg::kMidiTxPacing);
+    EXPECT_EQ(MidiTxPacingFor(MidiWireFormat::kAm824Mpx), kAm824MidiPacing);
 }

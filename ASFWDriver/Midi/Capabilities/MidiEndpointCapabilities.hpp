@@ -23,6 +23,7 @@
 #include <cstdint>
 
 #include "../../Audio/Protocols/AudioTypes.hpp"
+#include "../../Audio/Wire/Midi/MidiWireFormat.hpp"
 
 namespace ASFW::Midi {
 
@@ -102,6 +103,8 @@ struct MidiDirectionCapabilities final {
     /// the CIP_UNALIGHED_DBC quirk only to specific families. Make it false
     /// only with a reference that names the device.
     bool dbcAligned{true};
+    /// How bytes are laid into the MIDI slot; selects the codec on both sides.
+    ::ASFW::Encoding::MidiWireFormat format{::ASFW::Encoding::MidiWireFormat::kAm824Mpx};
 
     [[nodiscard]] constexpr bool Usable() const noexcept {
         return status == MidiCapabilityStatus::kOk && portCount > 0;

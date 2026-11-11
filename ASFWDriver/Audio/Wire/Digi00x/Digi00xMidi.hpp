@@ -33,6 +33,7 @@
 #pragma once
 
 #include "../AM824/MpxMidiMux.hpp"   // MpxMidiGeometry, MpxMidiPacketBytes, counters
+#include "../AM824/MpxMidiRateLimiter.hpp"  // MidiTxPacing
 
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +49,28 @@ inline constexpr uint8_t kMidiPortSlots = 3;
 /// Byte 0 of the MIDI data channel in every block.
 inline constexpr uint8_t kMidiLabel = 0x80;
 inline constexpr uint8_t kMaxMidiBytesPerQuadlet = 2;
+
+/// Host to device pacing, per port: every byte at least 500 us after the
+/// previous one.
+///
+/// Linux feeds the Digi at 3093 B/s, the AM824 UART model (amdtp-dot.c). On
+/// the hardware here that is not enough: fed bytes faster than it sends them,
+/// the device occasionally emits one byte a place late, after the byte that
+/// followed it, and CoreMIDI drops the two messages around it. Loopback runs on
+/// a 002 Rack (MIDI Out 1 to In 1), counting runs with a late byte: 7 of 132
+/// with the UART model; with bytes at least 375 us apart, 0 of 132 at 48 kHz
+/// but 2 of 66 at 44.1 kHz; with 500 us, 0 of 66 at both rates. The vendor
+/// driver on the same loop sends about one byte per 525 us. The 500 us figure
+/// comes from those measurements, not from a document.
+///
+/// Even spacing makes every byte wait until its charge (the sample rate) has
+/// drained at bytesPerSecond per data block, and a port's block comes round
+/// every 8 blocks ((DBC + block) % 8), so bytes are a whole number of
+/// rotations apart. Every rate from 2050 to 2550 B/s waits three rotations, 24
+/// blocks, at both rates: 500 us at 48 kHz, 544 us at 44.1 kHz, the spacing
+/// the measurements above used. 2300 sits in the middle of that range. Bytes
+/// then go at about 2000 B/s (48 kHz) and 1840 B/s (44.1 kHz).
+inline constexpr MidiTxPacing kMidiTxPacing{.bytesPerSecond = 2300, .evenSpacing = true};
 
 /// The port code in the high nibble of byte 3, or 0xFF for no port.
 [[nodiscard]] constexpr uint8_t PortCode(uint8_t port) noexcept {
