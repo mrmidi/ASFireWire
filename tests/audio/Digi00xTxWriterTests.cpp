@@ -204,4 +204,12 @@ TEST(Digi00xTxWriter, TheProfileMakesTheEngineSytUnawareAndScrambling) {
     EXPECT_TRUE(profile.TxStreamPolicy().dotScramblePcm);
 }
 
+// MIDI rides in the isoch packets, so the wire must run with no CoreAudio
+// client: up before publication, and kept across StopIO.
+TEST(Digi00xTxWriter, TheProfileKeepsTheWireFromAttachToDetach) {
+    const ASFW::Isoch::Audio::Digi00x::Profiles::Digi00xProfile profile{"Digi 003"};
+    EXPECT_TRUE(profile.StartsWireBeforePublication());
+    EXPECT_TRUE(profile.RetainsWireAcrossStopIO());
+}
+
 } // namespace
