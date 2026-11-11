@@ -10,6 +10,7 @@
 #include "../../Audio/Protocols/AudioTypes.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Capabilities/MidiEndpointCapabilities.hpp"
+#include "../Capabilities/MidiStreamProjection.hpp"
 
 namespace ASFW::Midi {
 
@@ -17,40 +18,23 @@ namespace {
 
 constexpr const char* kManufacturerName = "FireWire";
 
-// The published description carries the per-stream wire geometry the audio side
-// was given (pcm channels, DBS, MIDI ports). The capability projection takes the
-// shape discovery produced, so rebuild exactly that shape from it.
-void FillStreams(const std::vector<ASFW::Audio::Model::ASFWAudioWireStream>& streams,
-                 ASFW::Audio::AudioStreamWireInfo* out, uint32_t& count) noexcept {
-    count = 0;
-    for (const auto& stream : streams) {
-        if (count >= ASFW::Audio::kMaxAudioStreamsPerDirection) break;
-        auto& info = out[count++];
-        info.pcmChannels = static_cast<uint16_t>(stream.pcmChannels);
-        info.am824Slots = static_cast<uint16_t>(stream.am824Slots);
-        info.midiPorts = static_cast<uint16_t>(stream.midiPorts);
-    }
-}
-
 } // namespace
 
 MidiEndpointCapabilities MidiEndpointPublication::Project(
     const uint64_t guid, const ASFW::Audio::Model::ASFWAudioDevice& description) noexcept {
-    ASFW::Audio::AudioStreamRuntimeCaps caps{};
-    FillStreams(description.captureStreams, caps.deviceToHostStreams, caps.deviceToHostStreamCount);
-    FillStreams(description.playbackStreams, caps.hostToDeviceStreams, caps.hostToDeviceStreamCount);
-    // The stream epoch is a runtime value the endpoint owns; the projection's
-    // copy of it is not used for publication.
-    return ProjectMidiCapabilities(caps, guid, /*streamEpoch=*/0);
+    return ProjectStreamMidi(guid, description);
 }
 
 void MidiEndpointPublication::OnEndpointPublished(
     const uint64_t guid, const ASFW::Audio::AudioBackendKind kind,
     const ASFW::Audio::Model::ASFWAudioDevice& description) noexcept {
-    // Family gate: the MIDI geometry comes from DICE's stream-format registers.
-    if (kind != ASFW::Audio::AudioBackendKind::Dice) return;
-
-    const MidiEndpointCapabilities caps = Project(guid, description);
+    // The family adapter decides what MIDI the endpoint carries. One that
+    // supplied none gets no service, whatever its streams' midiPorts say.
+    (void)kind;
+    if (!description.midi.has_value()) return;
+    MidiEndpointCapabilities caps = *description.midi;
+    caps.guid = guid;
+    caps.streamEpoch = 0;  // the endpoint owns the runtime epoch
     if (!caps.AnyUsable()) {
         // A device that reports no MIDI is the ordinary case and says nothing.
         // A device that reports some but whose geometry is rejected is not: say

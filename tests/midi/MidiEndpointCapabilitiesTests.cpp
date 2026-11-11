@@ -288,3 +288,58 @@ TEST(MidiEntityLayout, ARejectedDirectionContributesNoEntities) {
     EXPECT_FALSE(ASFW::Midi::NubKeys::EntityHasSource(caps, 0));
     EXPECT_TRUE(ASFW::Midi::NubKeys::EntityHasDestination(caps, 0));
 }
+
+// A family that declares its own slot (the Digi 002 / 003: MIDI in slot 0,
+// PCM in slots 1-18) is checked the same way a projected geometry is.
+namespace {
+constexpr uint64_t kPcmAfterSlot0 = ((uint64_t{1} << 18) - 1U) << 1;
+using ASFW::Encoding::MidiWireFormat;
+} // namespace
+
+TEST(DeclareMidiDirection, ASlotOutsideThePcmIsAccepted) {
+    const auto d = DeclareMidiDirection(MidiWireFormat::kDigi00x, 2, 0, 19, 18, kPcmAfterSlot0);
+    EXPECT_EQ(d.status, MidiCapabilityStatus::kOk);
+    EXPECT_TRUE(d.Usable());
+    EXPECT_EQ(d.portCount, 2U);
+    EXPECT_EQ(d.midiSlotIndex, 0U);
+    EXPECT_EQ(d.dbs, 19U);
+    EXPECT_EQ(d.pcmChannels, 18U);
+    EXPECT_EQ(d.format, MidiWireFormat::kDigi00x);
+}
+
+TEST(DeclareMidiDirection, ASlotOnAPcmChannelIsRefused) {
+    // Where the trailing-slot projection would put it: PCM channel 18.
+    const auto d = DeclareMidiDirection(MidiWireFormat::kDigi00x, 1, 18, 19, 18, kPcmAfterSlot0);
+    EXPECT_EQ(d.status, MidiCapabilityStatus::kSlotOverlapsPcm);
+    EXPECT_FALSE(d.Usable());
+}
+
+TEST(DeclareMidiDirection, ASlotOutsideTheBlockIsRefused) {
+    const auto d = DeclareMidiDirection(MidiWireFormat::kDigi00x, 1, 19, 19, 18, kPcmAfterSlot0);
+    EXPECT_EQ(d.status, MidiCapabilityStatus::kSlotOutOfRange);
+}
+
+TEST(DeclareMidiDirection, AnInconsistentGeometryIsRefused) {
+    // DBS must be the PCM plus the one MIDI slot, and the PCM mask must name
+    // exactly the PCM channels.
+    EXPECT_EQ(DeclareMidiDirection(MidiWireFormat::kDigi00x, 1, 0, 20, 18, kPcmAfterSlot0).status,
+              MidiCapabilityStatus::kGeometryInconsistent);
+    EXPECT_EQ(DeclareMidiDirection(MidiWireFormat::kDigi00x, 1, 0, 19, 18, (kPcmAfterSlot0 & ~(uint64_t{1} << 18))).status,
+              MidiCapabilityStatus::kGeometryInconsistent);
+}
+
+TEST(DeclareMidiDirection, NoPortsIsNoMidiAndTooManyIsRefused) {
+    EXPECT_EQ(DeclareMidiDirection(MidiWireFormat::kDigi00x, 0, 0, 19, 18, kPcmAfterSlot0).status,
+              MidiCapabilityStatus::kNoMidi);
+    EXPECT_EQ(DeclareMidiDirection(MidiWireFormat::kDigi00x, 9, 0, 19, 18, kPcmAfterSlot0).status,
+              MidiCapabilityStatus::kPortCountUnsupported);
+}
+
+// The trailing-slot projection keeps the IEC 61883-6 format.
+TEST(DeclareMidiDirection, AProjectedDirectionIsMpx) {
+    AudioStreamRuntimeCaps caps{};
+    caps.hostToDeviceStreamCount = 1;
+    caps.hostToDeviceStreams[0] = AudioStreamWireInfo{.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1};
+    const auto projected = ProjectMidiCapabilities(caps, 1, 0);
+    EXPECT_EQ(projected.hostToDevice.format, MidiWireFormat::kAm824Mpx);
+}

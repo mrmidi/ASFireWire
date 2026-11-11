@@ -113,4 +113,40 @@ MidiEndpointCapabilities ProjectMidiCapabilities(
     return out;
 }
 
+MidiDirectionCapabilities DeclareMidiDirection(
+    const ::ASFW::Encoding::MidiWireFormat format, const uint8_t portCount,
+    const uint8_t midiSlotIndex, const uint8_t dbs, const uint8_t pcmChannels,
+    const uint64_t pcmSlots) noexcept {
+    MidiDirectionCapabilities out{};
+    if (portCount == 0) {
+        out.status = MidiCapabilityStatus::kNoMidi;
+        return out;
+    }
+    if (portCount > kMidiPortsPerMpxSlot) {
+        out.status = MidiCapabilityStatus::kPortCountUnsupported;
+        return out;
+    }
+    if (dbs == 0 || dbs > 64 || static_cast<uint32_t>(pcmChannels) + 1u != dbs ||
+        static_cast<uint32_t>(__builtin_popcountll(pcmSlots)) != pcmChannels) {
+        out.status = MidiCapabilityStatus::kGeometryInconsistent;
+        return out;
+    }
+    if (midiSlotIndex >= dbs) {
+        out.status = MidiCapabilityStatus::kSlotOutOfRange;
+        return out;
+    }
+    if ((pcmSlots >> midiSlotIndex) & 1u) {
+        out.status = MidiCapabilityStatus::kSlotOverlapsPcm;
+        return out;
+    }
+    out.status = MidiCapabilityStatus::kOk;
+    out.portCount = portCount;
+    out.streamIndex = static_cast<uint8_t>(kMidiStreamIndex);
+    out.midiSlotIndex = midiSlotIndex;
+    out.dbs = dbs;
+    out.pcmChannels = pcmChannels;
+    out.format = format;
+    return out;
+}
+
 } // namespace ASFW::Midi

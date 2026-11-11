@@ -61,7 +61,9 @@ public:
                                 uint32_t*, uint32_t*)> midiTransportProvider{};
     kern_return_t CopyMidiTransportMemory(IOMemoryDescriptor** outMemory, uint32_t* outPorts,
                                           uint32_t* outSlotIndex, uint32_t* outDbs,
-                                          uint32_t* outPcmChannels, uint32_t* outDbcAligned) {
+                                          uint32_t* outPcmChannels, uint32_t* outDbcAligned,
+                                          uint32_t* outWireFormat) {
+        if (outWireFormat) *outWireFormat = 0;  // MPX unless a test says otherwise
         if (!midiTransportProvider) return kIOReturnNotReady;
         return midiTransportProvider(outMemory, outPorts, outSlotIndex, outDbs, outPcmChannels,
                                      outDbcAligned);

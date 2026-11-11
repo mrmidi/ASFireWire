@@ -20,6 +20,7 @@
 #include "../Protocols/Digi00x/Digi00xFamilyDriver.hpp"
 #include "../Protocols/Digi00x/Digi00xRegisters.hpp"
 #include "../Wire/Digi00x/Digi00xSlotLayout.hpp"
+#include "../../Midi/Capabilities/MidiEndpointCapabilities.hpp"
 #include "../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 
 
@@ -88,7 +89,30 @@ public:
         config.playbackStreams.push_back({.pcmChannels = pcm, .am824Slots = slots, .midiPorts = 0,
                                           .channelOffset = 0, .pcmSlotMap = pcmAfterMidi});
         config.resolvedGeometryRequired = true;
+        config.midi = DeclareMidi(record.guid, pcm, slots);
         return config;
+    }
+
+    /// Every model has MIDI In 1 and MIDI Out 1 and 2, in data channel 0 in
+    /// the Digi's own format. With one source and two destinations, the MIDI
+    /// device publishes MIDI 1 (in and out) and MIDI 2 (out only). The
+    /// Consoles' control port is left for later; its bytes are counted, not
+    /// delivered.
+    [[nodiscard]] static ::ASFW::Midi::MidiEndpointCapabilities DeclareMidi(
+        uint64_t guid, uint32_t pcm, uint32_t slots) noexcept {
+        using Encoding::MidiWireFormat;
+        const uint64_t pcmSlots = pcm >= 64 ? 0
+            : ((uint64_t{1} << pcm) - 1U) << Encoding::Digi00x::kFirstPcmDataChannel;
+        const auto dbs = static_cast<uint8_t>(slots);
+        const auto pcmChannels = static_cast<uint8_t>(pcm);
+        constexpr auto kSlot = static_cast<uint8_t>(Encoding::Digi00x::kMidiDataChannel);
+        return ::ASFW::Midi::MidiEndpointCapabilities{
+            .deviceToHost = ::ASFW::Midi::DeclareMidiDirection(MidiWireFormat::kDigi00x, 1, kSlot, dbs,
+                                                       pcmChannels, pcmSlots),
+            .hostToDevice = ::ASFW::Midi::DeclareMidiDirection(MidiWireFormat::kDigi00x, 2, kSlot, dbs,
+                                                       pcmChannels, pcmSlots),
+            .guid = guid,
+        };
     }
 };
 
