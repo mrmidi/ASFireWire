@@ -75,6 +75,23 @@ inline std::optional<DuetControlWrite> BuildDuetParameterWrite(const DuetControl
         case DuetControlGroup::Knob: before = {ParamsSerdes::BuildKnobStateControl(current.knob)}; after = {ParamsSerdes::BuildKnobStateControl(next.knob)}; break;
         case DuetControlGroup::Action: break;
     }
-    return DuetControlWrite{std::move(next), group, ChangedCommands(before, after)};
+    auto commands = ChangedCommands(before, after);
+    // Found on hardware (Duet FW, 2026-11-05): the device can hold both
+    // XlrIsMicLevel and XlrIsConsumerLevel on at once (decoded as Mic). A
+    // diff of the decoded model then never clears the hidden consumer bit,
+    // and +4 dBu reads back as -10 dBV. A level write always sends both bits.
+    if (id >= DuetControl::InputLevel && id < DuetControl::InputLevel + 2) {
+        const auto ch = static_cast<uint8_t>(id - DuetControl::InputLevel);
+        for (const auto& command : after) {
+            const bool levelBit = command.code == ApogeeVendorCommand::Code::XlrIsMicLevel ||
+                                  command.code == ApogeeVendorCommand::Code::XlrIsConsumerLevel;
+            if (!levelBit || command.index != ch) continue;
+            const bool present = std::ranges::any_of(commands, [&](const auto& c) {
+                return c.code == command.code && c.index == command.index;
+            });
+            if (!present) commands.push_back(command);
+        }
+    }
+    return DuetControlWrite{std::move(next), group, std::move(commands)};
 }
 } // namespace ASFW::Audio::Oxford::Apogee

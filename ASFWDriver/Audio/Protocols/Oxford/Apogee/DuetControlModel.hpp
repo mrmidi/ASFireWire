@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <algorithm>
 #include "ApogeeTypes.hpp"
 #include "../../../Controls/IControlProvider.hpp"
 namespace ASFW::Audio::Oxford::Apogee {
@@ -60,8 +61,14 @@ inline Controls::ControlSnapshot BuildDuetControls(const DuetControlsState& nati
         hostPlayback[ch] = port(2, AM::PortDirection::Output, "Playback", {AM::SignalKind::HostStream, ch + 1});
         const bool instrument = native.input.sources[ch] == InputSource::Phone;
         const double offset = instrument ? 10 : 0;
+        // Found on hardware (Duet FW, 2026-11-05): with an XLR input at a fixed
+        // line level (+4 dBu / -10 dBV) the device reads its gain register back
+        // as 0, below the 10..75 dB mic domain. The unclamped value failed state
+        // validation, so every level change was reported as unconfirmed. The
+        // gain is not applicable in that mode; publish it clamped to its domain.
+        const double gainValue = std::clamp(double(native.input.gains[ch]) - offset, 10 - offset, 75 - offset);
         param(DuetControl::Gain + ch, go, AM::ParameterSemantic::Level, AM::ScalarDomain{10, 75, 1, AM::ScalarUnit::Decibels},
-              "Gain " + std::to_string(ch + 1), double(native.input.gains[ch]) - offset);
+              "Gain " + std::to_string(ch + 1), gainValue);
         auto& gainState = s.parameters.at(AM::ParameterId{DuetControl::Gain + ch});
         gainState.domainOverride = AM::ScalarDomain{10 - offset, 75 - offset, 1, AM::ScalarUnit::Decibels};
         gainState.applicable = instrument || native.input.xlrNominalLevels[ch] == InputXlrNominalLevel::Microphone;

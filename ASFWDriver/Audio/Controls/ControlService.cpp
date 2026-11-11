@@ -8,6 +8,7 @@
 #include "../Model/Topology/Validate.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Protocols/AVC/AVCUnit.hpp"
+#include "../../Logging/Logging.hpp"
 #include <cmath>
 
 namespace ASFW::Audio::Controls {
@@ -37,6 +38,7 @@ void ControlService::SetRoute(uint64_t guid, uint64_t revision, AM::NodeId node,
     if (!snapshot) { done(kIOReturnNotReady, false); return; }
     if (snapshot->topology.revision != revision) { done(kIOReturnNotPermitted, false); return; }
     if (const auto requested = AM::prepareRouteWrite(snapshot->topology, snapshot->state, node, output, input); !requested) {
+        ASFW_LOG(Oxfw, "[Controls] route refused node=0x%08x: %{public}s", node.value, requested.error().message.c_str());
         done(requested.error().kind == AM::StateErrorKind::ReadOnlyParameter ? kIOReturnNotWritable : kIOReturnBadArgument, false);
         return;
     }
@@ -56,9 +58,15 @@ void ControlService::SetParameter(uint64_t guid, uint64_t revision, AM::Paramete
         const auto types = ProjectInputTypes(snapshot->topology, snapshot->state);
         const auto type = std::ranges::find_if(types, [&](const auto& type) { return InputTypeParameterId(type.router) == id; });
         const auto* item = std::get_if<int64_t>(&value);
-        if (type == types.end() || !item) { done(kIOReturnBadArgument, false); return; }
+        if (type == types.end() || !item) {
+            ASFW_LOG(Oxfw, "[Controls] input type 0x%08x refused: %{public}s", id.value, item ? "no such input" : "value is not a choice index");
+            done(kIOReturnBadArgument, false); return;
+        }
         const auto choice = std::ranges::find(type->choices, *item, &InputTypeChoice::value);
-        if (choice == type->choices.end()) { done(kIOReturnBadArgument, false); return; }
+        if (choice == type->choices.end()) {
+            ASFW_LOG(Oxfw, "[Controls] input type 0x%08x refused: choice %lld not offered", id.value, (long long)*item);
+            done(kIOReturnBadArgument, false); return;
+        }
         const auto routerNode = std::ranges::find(snapshot->topology.nodes, type->router, &AM::Node::id);
         const auto& router = std::get<AM::RouterNode>(routerNode->body);
         if (!router.writable) { done(kIOReturnNotWritable, false); return; }
@@ -80,6 +88,7 @@ void ControlService::SetParameter(uint64_t guid, uint64_t revision, AM::Paramete
     }
     if (const auto valid = AM::validateParameterWrite(snapshot->topology, snapshot->state, id, value); !valid) {
         const auto kind = valid.error().kind;
+        ASFW_LOG(Oxfw, "[Controls] parameter 0x%08x refused: %{public}s", id.value, valid.error().message.c_str());
         done(kind == AM::StateErrorKind::ReadOnlyParameter || kind == AM::StateErrorKind::ParameterNotApplicable
             ? kIOReturnNotWritable : kIOReturnBadArgument, false);
         return;

@@ -14,6 +14,7 @@
 #include "ApogeeTransport.hpp"
 #include "../../../Controls/ControlNotifications.hpp"
 #include "../../../Model/Topology/Validate.hpp"
+#include "../../../../Logging/Logging.hpp"
 #include <algorithm>
 #include <bit>
 
@@ -329,7 +330,14 @@ bool ApogeeDuetProtocol::CommitControls() {
     namespace C = ASFW::Audio::Controls;
     auto next = BuildDuetControls(controls_, runtime_.route.routeEpoch,
         controlSnapshot_ ? controlSnapshot_->sequence : 0);
-    if (!AM::validate(next.topology) || !AM::validateState(next.topology, next.state)) return false;
+    if (const auto topo = AM::validate(next.topology); !topo) {
+        ASFW_LOG(Oxfw, "Duet controls rejected: topology %{public}s", topo.error().message.c_str());
+        return false;
+    }
+    if (const auto st = AM::validateState(next.topology, next.state); !st) {
+        ASFW_LOG(Oxfw, "Duet controls rejected: state %{public}s", st.error().message.c_str());
+        return false;
+    }
     if (!controlSnapshot_ || controlSnapshot_->topology.revision != next.topology.revision) {
         const bool rebound = controlSnapshot_.has_value();
         if (rebound) next.sequence = C::ControlNotifications::Shared().NextSequence();
