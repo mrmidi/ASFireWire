@@ -75,6 +75,7 @@ enum class DeviceDefinitionId : uint32_t {
     PrismSoundOrpheus,
     Digi00xConsole,
     Digi00xRack,
+    MAudioProFire2626,
 };
 
 enum class AudioFamilyProviderId : uint8_t {

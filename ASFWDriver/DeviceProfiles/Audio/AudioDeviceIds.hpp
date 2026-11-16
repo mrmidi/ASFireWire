@@ -206,6 +206,16 @@ inline constexpr uint32_t kMAudioFireWire1814BootloaderModelId = 0x00010070;
 inline constexpr uint32_t kMAudioFireWire1814ModelId           = 0x00010071;
 inline constexpr uint32_t kMAudioProjectMixModelId             = 0x00010091;
 
+// ---- M-Audio (DICE / TCAT family) ----
+// The ProFire 2626 is a DICE unit whose unit directory carries version 0x0100C1
+// instead of the DICE interface version 0x000001, so neither the generic DICE
+// rule nor a version-1 catalog row can place it. Linux snd-dice binds it on
+// vendor + model alone for that reason and skips its GUID category check
+// (sound/firewire/dice/dice.c, id table). Config ROM read from hardware on 2026-11-16:
+// ieee1394:ven00000D6Cmo00000010sp00000D6Cver000100C1, GUID 0x000D6C0404000002.
+inline constexpr uint32_t kMAudioProFire2626ModelId   = 0x000010;
+inline constexpr uint32_t kMAudioProFireUnitVersion   = 0x0100C1;
+
 // ---- MOTU (vendor-specific register protocol) ----
 // MOTU does not use model_id: the root directory publishes model_id 0 and the model is
 // identified by Unit_Sw_Version, with Unit_Spec_Id equal to the OUI. Version values from
@@ -265,6 +275,7 @@ inline constexpr const char* kMAudioVendorName        = "M-Audio";
 inline constexpr const char* kMAudioFireWire1814BootloaderModelName = "FireWire 1814 (bootloader)";
 inline constexpr const char* kMAudioFireWire1814ModelName = "FireWire 1814";
 inline constexpr const char* kMAudioProjectMixModelName   = "ProjectMix I/O";
+inline constexpr const char* kMAudioProFire2626ModelName  = "ProFire 2626";
 inline constexpr const char* kMotuVendorName          = "MOTU";
 inline constexpr const char* kMotu828mk2ModelName     = "828mkII";
 inline constexpr const char* kMotu896hdModelName      = "896HD";

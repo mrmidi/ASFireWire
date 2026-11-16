@@ -252,6 +252,46 @@ TEST(AudioDeviceCatalog, TheFireStudioProjectResolvesToItsOwnBuilder) {
     EXPECT_EQ(plan->protocolImplementation, ProtocolImplementationId::DiceTcat);
 }
 
+// The ProFire row is pinned to M-Audio's own unit specifier and version, so it
+// claims the recorded unit and nothing else under the M-Audio OUI: the same
+// model id behind the DICE interface version, or behind a TA 1394 AV/C unit,
+// keeps the path it had without the row.
+TEST(AudioDeviceCatalog, TheProFire2626RowClaimsOnlyItsOwnUnitVersion) {
+    constexpr uint64_t kGuid = 0x000D6C0404000002ULL;
+    const auto profire = MakeDevice(kGuid, kMAudioVendorId, kMAudioProFire2626ModelId,
+                                    {{.offset = 7,
+                                      .specifierId = kMAudioVendorId,
+                                      .version = kMAudioProFireUnitVersion,
+                                      .modelId = kMAudioProFire2626ModelId}});
+    const auto plan = AudioDeviceCatalog::Resolve(profire, profire.identity.units[0]);
+    ASSERT_TRUE(plan.has_value());
+    ASSERT_EQ(plan->candidates.size(), 1U);
+    EXPECT_EQ(plan->candidates[0], DeviceDefinitionId::MAudioProFire2626);
+    EXPECT_EQ(plan->support, SupportDisposition::Supported);
+    EXPECT_EQ(plan->family, AudioFamilyProviderId::DICE);
+    EXPECT_EQ(plan->profileBuilder, ProfileBuilderId::GenericDice);
+    EXPECT_EQ(plan->modelName, kMAudioProFire2626ModelName);
+
+    const auto versionOne = MakeDevice(kGuid, kMAudioVendorId, kMAudioProFire2626ModelId,
+                                       {{.offset = 7,
+                                         .specifierId = kMAudioVendorId,
+                                         .version = kDiceInterfaceVersion,
+                                         .modelId = kMAudioProFire2626ModelId}});
+    const auto generic = AudioDeviceCatalog::Resolve(versionOne, versionOne.identity.units[0]);
+    ASSERT_TRUE(generic.has_value());
+    EXPECT_EQ(generic->support, SupportDisposition::GenericFallback);
+    ASSERT_EQ(generic->candidates.size(), 1U);
+    EXPECT_EQ(generic->candidates[0], DeviceDefinitionId::GenericDice);
+
+    const auto avc = MakeDevice(kGuid, kMAudioVendorId, kMAudioProFire2626ModelId,
+                                {{.offset = 7,
+                                  .specifierId = kTa1394AvcSpecifier,
+                                  .version = kTa1394AvcVersion}});
+    const auto avcPlan = AudioDeviceCatalog::Resolve(avc, avc.identity.units[0]);
+    ASSERT_TRUE(avcPlan.has_value());
+    EXPECT_EQ(avcPlan->family, AudioFamilyProviderId::GenericAvc);
+}
+
 // Linux constrains a DICE unit on the interface version alone in its catch-all
 // (dice.c:457-460), and writes Weiss, the PreSonus FireStudio and the TCD3070
 // Saffire without a specifier constraint. The Midas Venice is the live reason:
