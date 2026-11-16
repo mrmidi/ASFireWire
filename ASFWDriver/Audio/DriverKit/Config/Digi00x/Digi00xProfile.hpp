@@ -79,6 +79,14 @@ public:
     // (digi00x-stream.c:10). Generous until measured on hardware.
     [[nodiscard]] uint32_t InitialClockAnchorTimeoutMs() const noexcept override { return 2000U; }
 
+    // The wire runs from attach to detach, as the vendor driver keeps it:
+    // MIDI rides in the isoch packets, so the MIDI ports (and a Console's
+    // control port) work while no CoreAudio client runs. CoreAudio StartIO
+    // joins the kept wire and StopIO leaves it sending silence
+    // (Runtime/WireRetention.hpp).
+    [[nodiscard]] bool RetainsWireAcrossStopIO() const noexcept override { return true; }
+    [[nodiscard]] bool StartsWireBeforePublication() const noexcept override { return true; }
+
 private:
     // Geometry is the same at every streamed rate.
     static constexpr uint32_t kRateHz = ::ASFW::Audio::Digi00x::kDefaultStreamedRateHz;

@@ -287,3 +287,54 @@ TEST(MpxMidiRateLimiter, OutOfRangePortsAreRefused) {
     limiter.RollbackDebit(MpxMidiRateLimiter::kPorts);
     EXPECT_EQ(limiter.UsedFor(MpxMidiRateLimiter::kPorts), 0u);
 }
+
+// The model counts the data blocks each packet carries. A blocking stream's
+// DATA packet carries exactly the SYT interval, so for it nothing changes.
+TEST(MpxMidiRateLimiter, ABlockingStreamAgesTheSameWithOrWithoutTheBlockCount) {
+    MpxMidiRateLimiter implicit;
+    MpxMidiRateLimiter counted;
+    implicit.Configure(48000, 8);
+    counted.Configure(48000, 8);
+    for (int packet = 0; packet < 2000; ++packet) {
+        const uint32_t port = static_cast<uint32_t>(packet) % 8u;
+        const bool a = implicit.AgeAndMayEmit(port);
+        const bool b = counted.AgeAndMayEmit(port, 8);
+        ASSERT_EQ(a, b) << "packet " << packet;
+        if (a) {
+            implicit.Debit(port);
+            counted.Debit(port);
+        }
+    }
+}
+
+// A non-blocking packet of six blocks drains six blocks' worth, not the SYT
+// interval's eight: the modelled rate holds whatever the packet size.
+TEST(MpxMidiRateLimiter, ANonBlockingStreamDrainsByTheBlocksItCarries) {
+    MpxMidiRateLimiter limiter;
+    limiter.Configure(48000, 8);
+    uint32_t bytes = 0;
+    for (int packet = 0; packet < 8000; ++packet) {  // one second at 6 blocks per cycle
+        if (limiter.AgeAndMayEmit(0, 6)) {
+            limiter.Debit(0);
+            ++bytes;
+        }
+    }
+    EXPECT_NEAR(static_cast<double>(bytes), kModelledMidiBytesPerSecond, 40.0);
+}
+
+// The UART model lets an idle port send its first two bytes one packet apart;
+// even spacing does not.
+TEST(MpxMidiRateLimiter, EvenSpacingRemovesTheIdlePortBurst) {
+    MpxMidiRateLimiter uart;
+    MpxMidiRateLimiter even;
+    uart.Configure(48000, 8);
+    even.Configure(48000, 8, MidiTxPacing{.bytesPerSecond = kModelledMidiBytesPerSecond,
+                                          .evenSpacing = true});
+    ASSERT_TRUE(uart.AgeAndMayEmit(0));
+    uart.Debit(0);
+    ASSERT_TRUE(even.AgeAndMayEmit(0));
+    even.Debit(0);
+    EXPECT_TRUE(uart.AgeAndMayEmit(0));   // the burst: one packet later
+    EXPECT_FALSE(even.AgeAndMayEmit(0));  // 48000 / 24744: two packets
+    EXPECT_TRUE(even.AgeAndMayEmit(0));
+}

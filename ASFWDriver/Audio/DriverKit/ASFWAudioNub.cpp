@@ -838,8 +838,9 @@ kern_return_t IMPL(ASFWAudioNub, CopyMidiTransportMemory)
     if (outDestinationDbs) { *outDestinationDbs = 0; }
     if (outDestinationPcmChannels) { *outDestinationPcmChannels = 0; }
     if (outDbcAligned) { *outDbcAligned = 1; }
+    if (outWireFormat) { *outWireFormat = 0; }
     if (!ivars || !outMemory || !outDestinationPorts || !outDestinationSlotIndex ||
-        !outDestinationDbs || !outDestinationPcmChannels || !outDbcAligned) {
+        !outDestinationDbs || !outDestinationPcmChannels || !outDbcAligned || !outWireFormat) {
         return kIOReturnBadArgument;
     }
 
@@ -859,6 +860,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyMidiTransportMemory)
         *outDestinationDbs = destination.dbs;
         *outDestinationPcmChannels = destination.pcmChannels;
         *outDbcAligned = destination.dbcAligned ? 1U : 0U;
+        *outWireFormat = static_cast<uint32_t>(destination.format);
     }
     return kIOReturnSuccess;
 }

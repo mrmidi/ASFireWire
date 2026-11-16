@@ -40,6 +40,11 @@ add_midi_test(MpxMidiTxTests
     MpxMidiTxTests.cpp
 )
 
+# Digi 002 / 003 MIDI data channel encode/decode (issue #249).
+add_midi_test(Digi00xMidiTests
+    Digi00xMidiTests.cpp
+)
+
 # Device -> host consumer: gap-safe drain, epoch handoff.
 add_midi_test(MidiRxDrainTests
     MidiRxDrainTests.cpp

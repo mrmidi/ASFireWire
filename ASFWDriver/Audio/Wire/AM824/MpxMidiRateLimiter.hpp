@@ -22,6 +22,12 @@
 // "the MIDI port's clock might be a bit slow" (amdtp-am824.c:19-22). Keeping
 // that margin is the conservative choice against unknown hardware.
 //
+// The model is per format (MidiTxPacing). Time is counted in the data blocks
+// each packet actually carries, which for a blocking stream's DATA packets is
+// exactly the SYT interval, so the AM824 behaviour above is unchanged. A
+// non-blocking stream (the Digi 002 / 003 sends 6 or 7 blocks in every cycle)
+// needs the real count.
+//
 // Pure logic: no DriverKit dependency, no allocation, no locking.
 //
 
@@ -33,6 +39,22 @@ namespace ASFW::Encoding {
 
 /// Modelled MIDI byte rate. Nominally 3125; Linux uses 3093 for clock margin.
 inline constexpr uint32_t kModelledMidiBytesPerSecond = 3093;
+
+/// How fast, and how evenly, one port may be fed.
+struct MidiTxPacing final {
+    /// Modelled bytes per second per port.
+    uint32_t bytesPerSecond{kModelledMidiBytesPerSecond};
+    /// false: the UART model above, which lets an idle port send its first two
+    /// bytes one packet apart and then holds the average. true: a byte only
+    /// once the previous one has fully drained, so every byte waits the whole
+    /// interval.
+    bool evenSpacing{false};
+
+    friend constexpr bool operator==(const MidiTxPacing&, const MidiTxPacing&) noexcept = default;
+};
+
+/// IEC 61883-6 devices: the 31.25 kbaud UART model.
+inline constexpr MidiTxPacing kAm824MidiPacing{};
 
 /// Per-port UART model for one direction.
 ///
@@ -46,13 +68,17 @@ public:
 
     /// `sampleRateHz` is the stream's rate and `sytIntervalFrames` its
     /// SYT interval -- the data blocks one DATA packet carries at that rate.
-    void Configure(uint32_t sampleRateHz, uint32_t sytIntervalFrames) noexcept {
+    void Configure(uint32_t sampleRateHz, uint32_t sytIntervalFrames,
+                   MidiTxPacing pacing = kAm824MidiPacing) noexcept {
         rate_ = sampleRateHz;
-        drainPerPacket_ = kModelledMidiBytesPerSecond * sytIntervalFrames;
+        bytesPerSecond_ = pacing.bytesPerSecond;
+        sytIntervalFrames_ = sytIntervalFrames;
+        drainPerPacket_ = bytesPerSecond_ * sytIntervalFrames;
         // One byte costs `rate`; the limit is what remains after a packet's
         // worth of drain, so a port that just spent a byte has to wait out
-        // roughly rate/drain packets before it may spend another.
-        limit_ = (rate_ > drainPerPacket_) ? (rate_ - drainPerPacket_ + 1) : 1;
+        // roughly rate/drain packets before it may spend another. Even
+        // spacing waits until the charge has drained completely.
+        limit_ = pacing.evenSpacing || rate_ <= drainPerPacket_ ? 1 : (rate_ - drainPerPacket_ + 1);
         Reset();
     }
 
@@ -65,11 +91,17 @@ public:
     ///
     /// Ages unconditionally: a packet that carries no MIDI still took the wire
     /// time the device needed to clock out what it already has.
-    [[nodiscard]] bool AgeAndMayEmit(uint32_t port) noexcept {
+    ///
+    /// `blocksInPacket` is the data blocks the packet carries; 0 means the SYT
+    /// interval (a blocking stream's DATA packet).
+    [[nodiscard]] bool AgeAndMayEmit(uint32_t port, uint32_t blocksInPacket = 0) noexcept {
         if (port >= kPorts || rate_ == 0) return false;
         uint32_t used = used_[port];
         if (used == 0) return true;
-        used = (used > drainPerPacket_) ? (used - drainPerPacket_) : 0;
+        const uint32_t drain = blocksInPacket == 0 || blocksInPacket == sytIntervalFrames_
+                                   ? drainPerPacket_
+                                   : bytesPerSecond_ * blocksInPacket;
+        used = (used > drain) ? (used - drain) : 0;
         used_[port] = used;
         return used < limit_;
     }
@@ -98,6 +130,8 @@ public:
 
 private:
     uint32_t rate_{0};
+    uint32_t bytesPerSecond_{kModelledMidiBytesPerSecond};
+    uint32_t sytIntervalFrames_{0};
     uint32_t drainPerPacket_{0};
     uint32_t limit_{0};
     uint32_t used_[kPorts]{};

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "ASFWAudioDevice.hpp"
+#include "../../Midi/Capabilities/MidiStreamProjection.hpp"
 
 namespace ASFW::Audio::Model {
 
@@ -42,6 +43,9 @@ WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
     };
     next.playbackStreams = convert(resolved->formation.playback);
     next.captureStreams = convert(resolved->formation.capture);
+    // MIDI projected from the streams moves with them: a formation with a
+    // different PCM count puts the MIDI slot somewhere else.
+    if (next.midiFollowsStreams) next.midi = ::ASFW::Midi::ProjectStreamMidi(next.guid, next);
     // Old per-channel labels may describe unmultiplexed ADAT slots. Keep names
     // only for an unchanged formation; the driver synthesizes names otherwise.
     if (next.playbackStreams != prior.playbackStreams) next.outputChannelNames.clear();

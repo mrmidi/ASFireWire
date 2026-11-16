@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "../Midi/MidiWireFormat.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -47,6 +48,8 @@ struct MpxMidiGeometry final {
     /// Default true: Focusrite implements no unaligned path, and Linux applies
     /// its CIP_UNALIGHED_DBC quirk only to named device families.
     bool dbcAligned{true};
+    /// The byte format in the slot.
+    MidiWireFormat format{MidiWireFormat::kAm824Mpx};
 
     [[nodiscard]] constexpr bool Valid() const noexcept {
         return dbs > 0 && midiSlotIndex < dbs && portCount > 0 &&

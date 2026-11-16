@@ -92,7 +92,8 @@ public:
     [[nodiscard]] bool Begin(MidiTransportBlock& block, uint64_t epoch,
                              uint32_t packetIndex,
                              MidiPacketReservation& out,
-                             uint32_t portMask = 0xFFFF'FFFFu) noexcept {
+                             uint32_t portMask = 0xFFFF'FFFFu,
+                             uint32_t blocksInPacket = 0) noexcept {
         if (outstanding_) return false;
         out = MidiPacketReservation{};
         if (!block.Usable(epoch)) return false;
@@ -102,7 +103,7 @@ public:
             // a byte is available: the packet took the wire time regardless, and
             // ageing only ports that happen to have traffic would let an idle
             // port burst the moment it wakes up.
-            const bool mayEmit = limiter_.AgeAndMayEmit(port);
+            const bool mayEmit = limiter_.AgeAndMayEmit(port, blocksInPacket);
             if (((portMask >> port) & 1u) == 0) continue;
             uint8_t scratch[1];
             if (!mayEmit || block.hostToDevice[port].Peek(scratch) != 1) continue;
@@ -178,9 +179,10 @@ public:
 
     /// Configure the UART model. Must be called before the first Begin, and
     /// again whenever the stream's rate changes.
-    void ConfigureLimiter(uint32_t sampleRateHz,
-                          uint32_t sytIntervalFrames) noexcept {
-        limiter_.Configure(sampleRateHz, sytIntervalFrames);
+    void ConfigureLimiter(uint32_t sampleRateHz, uint32_t sytIntervalFrames,
+                          ASFW::Encoding::MidiTxPacing pacing =
+                              ASFW::Encoding::kAm824MidiPacing) noexcept {
+        limiter_.Configure(sampleRateHz, sytIntervalFrames, pacing);
     }
 
     [[nodiscard]] const ASFW::Encoding::MpxMidiRateLimiter& Limiter()
