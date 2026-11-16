@@ -105,6 +105,11 @@ struct ASFWAudioDevice {
     /// streams' midiPorts say. Read in the core driver by
     /// MidiEndpointPublication; not a nub property.
     std::optional<::ASFW::Midi::MidiEndpointCapabilities> midi{};
+    /// `midi` is projected from the streams above (MidiStreamProjection.hpp),
+    /// not declared, so whatever replaces the streams must project it again:
+    /// WithRateFormation does. A declared one (the Digi's slot 0) does not
+    /// follow the streams.
+    bool midiFollowsStreams{false};
 
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.

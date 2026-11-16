@@ -590,6 +590,7 @@ add_device_test(RmeFamilyAdapterTests
 # MotuProtocol over a recording bus.
 add_device_test(MotuFamilyAdapterTests
     MotuFamilyAdapterTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Host/MotuFamilyAdapter.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/MOTU/MotuProtocol.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Protocols/DeviceProtocolChoice.cpp"
