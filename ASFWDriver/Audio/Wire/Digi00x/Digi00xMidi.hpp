@@ -50,6 +50,11 @@ inline constexpr uint8_t kMidiPortSlots = 3;
 inline constexpr uint8_t kMidiLabel = 0x80;
 inline constexpr uint8_t kMaxMidiBytesPerQuadlet = 2;
 
+/// Each port's block comes round once in 8 blocks, so the first 8 blocks of a
+/// packet are where its bytes go; later blocks (a 2x rate's longer packets)
+/// stay idle, so a byte is written once.
+inline constexpr uint32_t kMidiBlocksPerPacket = 8;
+
 /// Host to device pacing, per port: every byte at least 500 us after the
 /// previous one.
 ///
@@ -163,7 +168,8 @@ inline void WriteMidiSlot(uint8_t* payload, uint32_t blocksInPacket, uint8_t dbc
             payload + (static_cast<size_t>(f) * geometry.dbs +
                        geometry.midiSlotIndex) * 4u;
         const uint8_t port = PortForBlock(dbc, f);
-        const bool send = port < geometry.portCount && bytes.hasByteForPort[port];
+        const bool send = f < kMidiBlocksPerPacket && port < geometry.portCount &&
+                          bytes.hasByteForPort[port];
         slot[0] = kMidiLabel;
         slot[1] = send ? bytes.byteForPort[port] : 0;
         slot[2] = 0;
@@ -176,7 +182,7 @@ inline void WriteMidiSlot(uint8_t* payload, uint32_t blocksInPacket, uint8_t dbc
 [[nodiscard]] constexpr uint32_t PortsInPacket(uint32_t blocksInPacket, uint8_t dbc,
                                                const MpxMidiGeometry& geometry) noexcept {
     uint32_t mask = 0;
-    for (uint32_t f = 0; f < blocksInPacket && f < 8u; ++f) {
+    for (uint32_t f = 0; f < blocksInPacket && f < kMidiBlocksPerPacket; ++f) {
         const uint8_t port = PortForBlock(dbc, f);
         if (port < geometry.portCount) mask |= 1u << port;
     }

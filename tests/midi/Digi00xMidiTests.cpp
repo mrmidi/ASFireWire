@@ -158,6 +158,30 @@ TEST(Digi00xMidiTests, Transmit_PortTheModelLacksStaysIdle) {
     EXPECT_EQ(SlotWord(payload, 2, 0), 0x8000'0000u);
 }
 
+// A 2x rate's packet is longer than one rotation. The writer and
+// PortsInPacket must agree: each port's byte goes into its first block only,
+// and the rest of the packet stays idle.
+TEST(Digi00xMidiTests, Transmit_ALongPacketCarriesEachByteOnce) {
+    auto payload = MakeBlocks(16, {});
+    MpxMidiPacketBytes bytes{};
+    for (const uint8_t port : {Dg::kMidiPort1, Dg::kMidiPort2, Dg::kControlPort}) {
+        bytes.byteForPort[port] = static_cast<uint8_t>(0x40 + port);
+        bytes.hasByteForPort[port] = true;
+    }
+    EXPECT_EQ(Dg::PortsInPacket(16, 0, Geometry(3)), 0b111u);
+    Dg::WriteMidiSlot(payload.data(), 16, 0, Geometry(3), bytes);
+    uint32_t carried = 0;
+    for (uint32_t f = 0; f < 16; ++f) {
+        const uint32_t word = SlotWord(payload, f, 0);
+        if ((word & 0xFu) != 0) ++carried;
+        if (f >= Dg::kMidiBlocksPerPacket) EXPECT_EQ(word, 0x8000'0000u) << "block " << f;
+    }
+    EXPECT_EQ(carried, 3U);
+    EXPECT_EQ(SlotWord(payload, 0, 0), 0x8040'0001u);
+    EXPECT_EQ(SlotWord(payload, 1, 0), 0x8041'0021u);
+    EXPECT_EQ(SlotWord(payload, 2, 0), 0x8042'00E1u);
+}
+
 TEST(Digi00xMidiTests, Transmit_PortsInPacketFollowTheCounter) {
     // Seven blocks from DBC 0 reach ports 0, 1, 2.
     EXPECT_EQ(Dg::PortsInPacket(7, 0, Geometry(3)), 0b111u);
