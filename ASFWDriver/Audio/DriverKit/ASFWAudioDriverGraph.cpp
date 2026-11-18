@@ -9,6 +9,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "AudioDriverKitCompat.hpp"
 #include "ASFWParameterLevelControl.h"
 #include "../Controls/CoreAudioControlProperties.hpp"
 #include "ASFWParameterBooleanControl.h"
@@ -407,7 +408,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     // Restore the user's stream format under the stable GUID-based device UID.
     // HandleChangeSampleRate still validates rates against the published formats.
-    ivars.audioDevice->SetWantsStreamFormatsRestored(true);
+    // DriverKit 24 (macOS 15) lacks the setter, so the host's own default applies there
+    // (issue #246 reports formats are then not persisted across reconnects).
+    if (!ADKCompat::SetWantsStreamFormatsRestored(ivars.audioDevice.get(), true)) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: SetWantsStreamFormatsRestored unavailable (DriverKit < 25), using host default");
+    }
 
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG_V3(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
@@ -821,7 +826,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // phantom and levels), so the host must not re-apply stored values to it
     // when it comes online.
     const bool hostRestore = !providerControls && !ivars.device.parameterControls.empty();
-    ivars.audioDevice->SetWantsControlsRestored(hostRestore);
+    // DriverKit 24 (macOS 15) lacks the setter, so the host's own default applies there
+    // (issue #246 reports control values are then not persisted across reconnects).
+    if (!ADKCompat::SetWantsControlsRestored(ivars.audioDevice.get(), hostRestore)) {
+        ASFW_LOG(Audio, "[Controls] SetWantsControlsRestored unavailable (DriverKit < 25), host default applies");
+    }
     ASFW_LOG(Audio, "[Controls] guid=0x%016llx published=%zu source=%{public}s hostRestore=%u",
              ivars.device.guid, ivars.device.parameterControls.size(),
              providerControls ? "provider" : "avc-config", hostRestore);

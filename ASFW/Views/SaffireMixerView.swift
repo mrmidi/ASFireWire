@@ -26,7 +26,7 @@ struct SaffireMixerView: View {
                     .font(.title2)
             }
             .toggleStyle(.button)
-            .buttonStyle(.glassProminent)
+            .modifier(ProminentGlassButtonStyle())
             .tint(.red)
             .controlSize(.large)
             
@@ -39,6 +39,17 @@ struct SaffireMixerView: View {
         }
         .onDisappear {
             viewModel.stopAutoRefresh()
+        }
+    }
+}
+
+/// `.glassProminent` only exists on macOS 26; macOS 15 gets `.borderedProminent`.
+private struct ProminentGlassButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glassProminent)
+        } else {
+            content.buttonStyle(.borderedProminent)
         }
     }
 }
