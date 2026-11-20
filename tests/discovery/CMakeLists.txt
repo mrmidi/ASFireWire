@@ -118,6 +118,14 @@ add_discovery_test(DeviceIdentityEvidenceTests
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
 )
 
+# M-Audio ProFire 2626: a DICE unit with a non-DICE unit version, run from its
+# recorded Config ROM through the parser, the registry and the catalog.
+add_discovery_test(MAudioProFireIdentityTests
+    MAudioProFireIdentityTests.cpp
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+)
+target_link_libraries(MAudioProFireIdentityTests PRIVATE asfw_configrom_host)
+
 # A same-GUID device can reappear with a different Config-ROM persona after a
 # firmware reset. FWDevice identity is immutable, so discovery must replace it.
 add_discovery_test(DeviceManagerIdentityReplacementTests

@@ -9,6 +9,23 @@
 
 namespace ASFW::DeviceProfiles::Audio::Definitions {
 
+// A DICE row whose selected unit carries M-Audio's own interface version.
+// Definition() pins every DICE row to version 0x000001, which the ProFire's
+// unit directory does not carry; the unit is pinned to the exact specifier and
+// version the hardware reports instead, so a non-DICE M-Audio unit that shares
+// the OUI and model id still cannot match.
+constexpr AudioDeviceDefinition MAudioProFireDefinition(DeviceDefinitionId id, uint32_t model,
+                                                        const char* modelName) {
+    auto definition = Definition(id, kMAudioVendorId, model, AudioFamilyProviderId::DICE,
+                                 ProbePolicyId::DiceTcat, ProfileBuilderId::GenericDice,
+                                 ProtocolImplementationId::DiceTcat,
+                                 SupportDisposition::Supported, kMAudioVendorName, modelName,
+                                 std::nullopt, BootloaderCuePolicy::None, kDiceTraits);
+    definition.clauses[0].unitSpecifierId = MaskedValue32{kMAudioVendorId};
+    definition.clauses[0].unitVersion = MaskedValue32{kMAudioProFireUnitVersion};
+    return definition;
+}
+
 inline constexpr std::array kMAudioDefinitions{
     // ---- M-Audio "special firmware" ----
     // The bootloader persona is never an audio endpoint. The two operational
@@ -54,6 +71,14 @@ inline constexpr std::array kMAudioDefinitions{
                                   .resource = {.irmChannelMask = kAnyIsoChannel},
                                   .start = {.startShape = StreamStartShape::MAudioSpecial,
                                             .startRatePinHz = 48000U}}),
+
+    // ---- ProFire (DICE II / TCAT) ----
+    // Not BeBoB: the ProFire line is a standard TCAT DICE device behind a
+    // non-standard unit version (AudioDeviceIds.hpp). Linux's snd-dice binds it
+    // on vendor + model and reads its stream formats from the device, so it
+    // takes the generic DICE profile: channels and rates come from its registers.
+    MAudioProFireDefinition(DeviceDefinitionId::MAudioProFire2626, kMAudioProFire2626ModelId,
+                            kMAudioProFire2626ModelName),
 };
 
 } // namespace ASFW::DeviceProfiles::Audio::Definitions
