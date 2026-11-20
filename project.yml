@@ -221,6 +221,10 @@ targets:
         CURRENT_PROJECT_VERSION: 33
         DEVELOPMENT_TEAM: F6YA6B56LR
         ENABLE_HARDENED_RUNTIME: YES
+        # Incoming connections for the MCP Control server, which listens on
+        # 127.0.0.1:8765. Matches com.apple.security.network.server in
+        # App.entitlements; without it the sandboxed Release build cannot bind.
+        ENABLE_INCOMING_NETWORK_CONNECTIONS: YES
         ENABLE_PREVIEWS: YES
         ENABLE_USER_SELECTED_FILES: readwrite
         # Microphone (audio input) for the Round-Trip Latency loopback. Matches
