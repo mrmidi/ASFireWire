@@ -166,6 +166,34 @@ TEST(Digi00xWiring, TheNubDescriptionDeclaresMidiInSlotZeroInTheDigiFormat) {
         EXPECT_EQ(streams->front().midiPorts, 0U);
 }
 
+// A Console adds its control port (code 0xE, host port 2) in both directions,
+// published as MIDI 3; a Rack does not have one (the test above).
+TEST(Digi00xWiring, AConsoleDeclaresItsControlPortAsAThirdPort) {
+    for (const uint64_t guid : {0x00a07e0000aa0000ULL, 0x00a07e0000a30000ULL}) {
+        ASFW::Discovery::DeviceRecord record{};
+        record.guid = guid;
+        record.vendorId = kAvidVendorId;
+        const auto config = Audio::Host::Digi00xFamilyAdapter::BuildNubConfig(
+            record, ProfileBuilderId::Digi00x, "Digi 003");
+        ASSERT_TRUE(config.midi.has_value());
+        const auto& midi = *config.midi;
+        EXPECT_TRUE(midi.deviceToHost.Usable());
+        EXPECT_TRUE(midi.hostToDevice.Usable());
+        EXPECT_EQ(midi.deviceToHost.portCount, 3U);
+        EXPECT_EQ(midi.hostToDevice.portCount, 3U);
+        EXPECT_EQ(midi.deviceToHost.midiSlotIndex, 0U);
+    }
+}
+
+TEST(Digi00xWiring, TheUnitSpecifierDecidesConsoleOverTheGuid) {
+    ASFW::Discovery::DeviceRecord record{};
+    record.guid = 0x00a07e0000aa0000ULL;
+    record.unitSpecId = 0x0000AB;  // 003 Rack
+    EXPECT_FALSE(Audio::Host::Digi00xFamilyAdapter::IsConsole(record));
+    record.unitSpecId = 0x0000AA;  // 003 Console
+    EXPECT_TRUE(Audio::Host::Digi00xFamilyAdapter::IsConsole(record));
+}
+
 TEST(Digi00xWiring, TheAdapterRefusesOtherFamilies) {
     Audio::Host::Digi00xFamilyAdapter adapter;
     EXPECT_FALSE(adapter.ActsOn(Audio::DuplexRestartReason::kRecoverAfterCycleInconsistent));
