@@ -215,6 +215,40 @@ TEST(ResolvedAudioConfigurationTests, ModelProjectionUsesIndependentDuplexShapes
     EXPECT_FALSE(ASFW::Audio::Model::WithRateFormation(prior, 88200));
 }
 
+// MIDI projected from the streams (DICE) moves with the formation: at 96 kHz
+// this device carries 8 PCM channels, so the MIDI slot is 8, not 16. Declared
+// MIDI (the Digi's slot 0) does not follow the streams.
+TEST(ResolvedAudioConfigurationTests, StreamProjectedMidiFollowsTheSelectedFormation) {
+    ASFW::Audio::Model::ASFWAudioDevice prior;
+    prior.guid = 0x1234;
+    prior.currentSampleRate = 48000; prior.outputChannelCount = 16; prior.inputChannelCount = 16;
+    prior.rateFormationCandidates = {Formation(48000, 16), Formation(96000, 8)};
+    const auto at48 = ASFW::Audio::Model::WithRateFormation(prior, 48000);
+    ASSERT_TRUE(at48);
+    auto projected = *at48;
+    projected.midi = ASFW::Midi::ProjectStreamMidi(projected.guid, projected);
+    projected.midiFollowsStreams = true;
+    ASSERT_TRUE(projected.midi->hostToDevice.Usable());
+    ASSERT_EQ(projected.midi->hostToDevice.midiSlotIndex, 16U);
+
+    const auto at96 = ASFW::Audio::Model::WithRateFormation(projected, 96000);
+    ASSERT_TRUE(at96);
+    ASSERT_TRUE(at96->midi.has_value());
+    for (const auto* d : {&at96->midi->hostToDevice, &at96->midi->deviceToHost}) {
+        EXPECT_TRUE(d->Usable());
+        EXPECT_EQ(d->midiSlotIndex, 8U);
+        EXPECT_EQ(d->dbs, 9U);
+        EXPECT_EQ(d->pcmChannels, 8U);
+    }
+    EXPECT_EQ(at96->midi->guid, prior.guid);
+
+    auto declared = projected;
+    declared.midiFollowsStreams = false;
+    const auto declaredAt96 = ASFW::Audio::Model::WithRateFormation(declared, 96000);
+    ASSERT_TRUE(declaredAt96);
+    EXPECT_EQ(declaredAt96->midi->hostToDevice.midiSlotIndex, 16U);
+}
+
 TEST(ResolvedAudioConfigurationTests, StreamCountCannotOverflowFixedProductionArrays) {
     auto formation = Formation(48000, 2);
     // assign can reallocate: its fill value must not alias the old storage.

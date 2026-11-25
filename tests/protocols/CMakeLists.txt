@@ -443,18 +443,21 @@ add_protocols_test(AvcFeatureControlTests
 )
 
 target_sources(AvcGoldenTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
 
 target_sources(AvcDiscoveryLifecycleTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
 
 target_sources(AvcAudioConfigTests PRIVATE
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Controls/AvcControlProjection.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"

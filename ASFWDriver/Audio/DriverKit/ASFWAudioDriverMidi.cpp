@@ -35,8 +35,9 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
     uint32_t dbs = 0;
     uint32_t pcmChannels = 0;
     uint32_t dbcAligned = 1;
-    const kern_return_t kr =
-        nub->CopyMidiTransportMemory(&raw, &ports, &slotIndex, &dbs, &pcmChannels, &dbcAligned);
+    uint32_t wireFormat = 0;
+    const kern_return_t kr = nub->CopyMidiTransportMemory(&raw, &ports, &slotIndex, &dbs,
+                                                          &pcmChannels, &dbcAligned, &wireFormat);
     // The ordinary outcome for an endpoint without MIDI: nothing to say.
     if (kr != kIOReturnSuccess || raw == nullptr) return;
     ivars.midiBuffer = ASFW::Common::AdoptRetained(raw);
@@ -50,7 +51,8 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
     // would point into a different block layout and MIDI would overwrite audio.
     const bool cip = txConfig.packetFraming == ASFW::Encoding::AudioPacketFraming::kCip;
     if (!cip || dbs != txConfig.dbs || pcmChannels != txConfig.pcmChannels ||
-        slotIndex >= dbs || ports > ASFW::Encoding::kMpxMidiPorts) {
+        slotIndex >= dbs || ports > ASFW::Encoding::kMpxMidiPorts ||
+        !ASFW::Encoding::IsMidiWireFormat(wireFormat)) {
         ASFW_LOG_ERROR(Midi,
                        "[MidiTx] not composing: geometry mismatch seam(dbs=%u pcm=%u slot=%u "
                        "ports=%u) stream(dbs=%u pcm=%u cip=%u)",
@@ -87,6 +89,7 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
         .midiSlotIndex = static_cast<uint8_t>(slotIndex),
         .portCount = static_cast<uint8_t>(ports),
         .dbcAligned = dbcAligned != 0,
+        .format = static_cast<ASFW::Encoding::MidiWireFormat>(wireFormat),
     };
     config.sampleRateHz = txConfig.sampleRate;
     config.sytIntervalFrames = txConfig.framesPerDataPacket;
@@ -100,8 +103,8 @@ void BindMidiTx(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.midiTxReportedBytes = 0;
     ivars.runtime.midiTxReportedAnomalies = 0;
     ivars.runtime.midiTxBlock = block;
-    ASFW_LOG(Midi, "[MidiTx] composing ports=%u slot=%u dbs=%u rate=%u syt=%u",
-             ports, slotIndex, dbs, txConfig.sampleRate,
+    ASFW_LOG(Midi, "[MidiTx] composing ports=%u slot=%u dbs=%u format=%u rate=%u syt=%u",
+             ports, slotIndex, dbs, wireFormat, txConfig.sampleRate,
              static_cast<uint32_t>(txConfig.framesPerDataPacket));
 }
 

@@ -6,6 +6,7 @@
 // publish/refresh steps around it are the host's.
 
 #include "DiceFamilyAdapter.hpp"
+#include "../../Midi/Capabilities/MidiStreamProjection.hpp"
 
 #include "../Model/RateConfiguration.hpp"
 #include "../Protocols/Backends/DiceRuntimeDeviceConfig.hpp"
@@ -231,6 +232,11 @@ void PublishStreams(const ResolvedDirectionGeometry& direction,
 
     PublishStreams(resolvedGeometry.playback, dev.playbackStreams);
     PublishStreams(resolvedGeometry.capture, dev.captureStreams);
+    // DICE reports MIDI ports in its stream-format registers, as MPX-MIDI in
+    // the slot after the PCM. The projection follows the streams: selecting a
+    // rate formation below (and any later one) projects it again.
+    dev.midi = ASFW::Midi::ProjectStreamMidi(guid, dev);
+    dev.midiFollowsStreams = true;
     // A DICE device only reaches here with a usable verdict, so the audio side
     // must never substitute profile constants for what the device reported.
     dev.resolvedGeometryRequired = !dev.playbackStreams.empty();

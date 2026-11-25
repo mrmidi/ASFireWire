@@ -474,7 +474,8 @@ add_audio_test(TxCycleAnchorTests
     TxCycleAnchorTests.cpp
 )
 
-add_audio_test(ResolvedAudioConfigurationTests ResolvedAudioConfigurationTests.cpp)
+add_audio_test(ResolvedAudioConfigurationTests ResolvedAudioConfigurationTests.cpp
+    "${ASFW_DRIVER_DIR}/Midi/Capabilities/MidiEndpointCapabilities.cpp")
 
 add_audio_test(DeviceConfigurationStateMachineTests
     DeviceConfigurationStateMachineTests.cpp
